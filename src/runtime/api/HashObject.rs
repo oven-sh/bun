@@ -46,7 +46,7 @@ pub(crate) struct Wyhash;
 impl HashAlgorithm for Wyhash {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        bun_wyhash::Wyhash::hash(seed, input)
+        bun_core::wyhash::Wyhash::hash(seed, input)
     }
 }
 
@@ -55,7 +55,7 @@ impl HashAlgorithm for Adler32 {
     type Output = u32;
     fn hash(_seed: u64, input: &[u8]) -> u32 {
         // Single-arg, seed ignored.
-        bun_hash::Adler32::hash(input)
+        bun_core::hash::Adler32::hash(input)
     }
 }
 
@@ -74,7 +74,7 @@ impl HashAlgorithm for CityHash32 {
     fn hash(_seed: u64, input: &[u8]) -> u32 {
         // Single-arg, seed ignored (the JS seed is never read; CityHash32
         // has no seeded variant here).
-        bun_hash::CityHash32::hash(input)
+        bun_core::hash::CityHash32::hash(input)
     }
 }
 
@@ -82,7 +82,7 @@ pub(crate) struct CityHash64;
 impl HashAlgorithm for CityHash64 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        bun_hash::CityHash64::hash_with_seed(input, seed)
+        bun_core::hash::CityHash64::hash_with_seed(input, seed)
     }
 }
 
@@ -92,7 +92,7 @@ impl HashAlgorithm for XxHash32 {
     fn hash(seed: u64, input: &[u8]) -> u32 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input
-        bun_hash::XxHash32::hash(seed as u32, input)
+        bun_core::hash::XxHash32::hash(seed as u32, input)
     }
 }
 
@@ -102,7 +102,7 @@ impl HashAlgorithm for XxHash64 {
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input
-        bun_hash::XxHash64::hash(seed, input)
+        bun_core::hash::XxHash64::hash(seed, input)
     }
 }
 
@@ -116,7 +116,7 @@ impl HashAlgorithm for XxHash3 {
         //
         // The seed is truncated to u32 before widening back to XxHash3's
         // native u64 — preserve that truncation for output stability.
-        bun_highway::xxhash3_64(seed as u32 as u64, input)
+        bun_core::highway::xxhash3_64(seed as u32 as u64, input)
     }
 }
 
@@ -124,7 +124,7 @@ pub(crate) struct Murmur32v2;
 impl HashAlgorithm for Murmur32v2 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        bun_hash::Murmur2_32::hash_with_seed(input, seed as u32)
+        bun_core::hash::Murmur2_32::hash_with_seed(input, seed as u32)
     }
 }
 
@@ -132,7 +132,7 @@ pub(crate) struct Murmur32v3;
 impl HashAlgorithm for Murmur32v3 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        bun_hash::Murmur3_32::hash_with_seed(input, seed as u32)
+        bun_core::hash::Murmur3_32::hash_with_seed(input, seed as u32)
     }
 }
 
@@ -140,7 +140,7 @@ pub(crate) struct Murmur64v2;
 impl HashAlgorithm for Murmur64v2 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        bun_hash::Murmur2_64::hash_with_seed(input, seed)
+        bun_core::hash::Murmur2_64::hash_with_seed(input, seed)
     }
 }
 
@@ -148,7 +148,7 @@ pub(crate) struct Rapidhash;
 impl HashAlgorithm for Rapidhash {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        bun_hash::RapidHash::hash(seed, input)
+        bun_core::hash::RapidHash::hash(seed, input)
     }
 }
 

@@ -1,6 +1,6 @@
 //! `DevServer.Assets` — content-addressable store on `/_bun/asset/{hash}.ext`.
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Output, fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 
@@ -53,7 +53,7 @@ impl Assets {
         mut contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
-    ) -> Result<EntryIndex, bun_alloc::AllocError> {
+    ) -> Result<EntryIndex, bun_core::alloc_impl::AllocError> {
         debug_assert!(self.owner().magic == Magic::Valid);
         // Invariant: `files.count() == refs.len()`, re-checked before each
         // return below.
@@ -157,7 +157,7 @@ impl Assets {
         &mut self,
         content_hash: u64,
         ref_count: u32,
-    ) -> Result<Option<&mut *mut StaticRoute>, bun_alloc::AllocError> {
+    ) -> Result<Option<&mut *mut StaticRoute>, bun_core::alloc_impl::AllocError> {
         // Invariant: `files.count() == refs.len()`. `gop.value_ptr` borrows
         // `self.files` mutably, so re-derive the slot via
         // `values_mut()[index]` after the invariant assert.
@@ -224,7 +224,7 @@ impl Assets {
     }
 
     /// `Assets.reindexIfNeeded`.
-    pub fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub fn reindex_if_needed(&mut self) -> Result<(), bun_core::alloc_impl::AllocError> {
         if self.needs_reindex {
             self.files.re_index()?;
             self.needs_reindex = false;

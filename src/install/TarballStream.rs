@@ -22,13 +22,14 @@ use core::ffi::{c_int, c_void};
 use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
-use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_core::paths::resolve_path::{self, platform};
+#[allow(unused_imports)]
+use bun_core::paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
@@ -44,7 +45,7 @@ use crate::package_manager_real::PackageManager;
 // materialise a `&'static` borrow of the inner `Request` lifetime.
 type Task = crate::package_manager_task::Task<'static>;
 
-bun_output::declare_scope!(TarballStream, hidden);
+bun_core::declare_scope!(TarballStream, hidden);
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
 type OSPathZMut<'a> = &'a mut OSPathSliceZ;
@@ -162,7 +163,7 @@ pub struct TarballStream {
     /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
     /// read-only `request_extract()` accessor in `open_destination` goes
     /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
-    extract_task: bun_ptr::ParentRef<Task>,
+    extract_task: bun_core::ptr::ParentRef<Task>,
     network_task: *mut NetworkTask,
     package_manager: *mut PackageManager,
 }
@@ -192,7 +193,7 @@ impl TarballStream {
         // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
         // `tag == Tag::Extract`). Safe `From<NonNull>` construction — caller
         // passes a non-null `*mut Task`.
-        let extract_task = bun_ptr::ParentRef::<Task>::from(
+        let extract_task = bun_core::ptr::ParentRef::<Task>::from(
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)"),
         );
         let tarball = &extract_task.request_extract().tarball;
@@ -535,7 +536,7 @@ impl TarballStream {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
                                 let msg = (*(*this).archive.unwrap()).error_string();
-                                bun_output::scoped_log!(
+                                bun_core::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
                                     bstr::BStr::new(msg)
@@ -563,7 +564,7 @@ impl TarballStream {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
                                 let msg = (*(*this).archive.unwrap()).error_string();
-                                bun_output::scoped_log!(
+                                bun_core::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
                                     bstr::BStr::new(msg)
@@ -641,7 +642,7 @@ impl TarballStream {
                 return Ok(());
             }
             _ => {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     TarballStream,
                     "archive_read_open: {}",
                     // SAFETY: archive is a valid handle (guard not yet dropped).
@@ -791,7 +792,7 @@ impl TarballStream {
         if path.len() >= 2
             && path[0] == ('.' as OSPathChar)
             && path[1] == ('.' as OSPathChar)
-            && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
+            && (path.len() == 2 || path[2] == bun_core::paths::SEP as OSPathChar)
         {
             self.phase = Phase::WantData;
             self.out_fd = None;
@@ -799,7 +800,7 @@ impl TarballStream {
         }
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute_windows_wtf16(&path[..]) {
+            if bun_core::paths::is_absolute_windows_wtf16(&path[..]) {
                 self.phase = Phase::WantData;
                 self.out_fd = None;
                 return Ok(());
@@ -1333,7 +1334,7 @@ fn open_output_file(
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
                 bun_sys::E::EPERM | bun_sys::E::ENOENT => 'brk: {
-                    let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
+                    let Some(dir) = bun_core::paths::Dirname::dirname::<u16>(path_slice) else {
                         return Err(e.to_zig_err().into());
                     };
                     let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
@@ -1350,7 +1351,7 @@ fn open_output_file(
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
                 bun_sys::E::EACCES | bun_sys::E::ENOENT => 'brk: {
-                    let Some(dir) = bun_paths::dirname(path_slice) else {
+                    let Some(dir) = bun_core::paths::dirname(path_slice) else {
                         return Err(e.to_zig_err().into());
                     };
                     let _ = dest_fd.make_path(dir);
@@ -1388,7 +1389,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
             Err(e) => match e.get_errno() {
                 bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}
                 _ => {
-                    let Some(dir) = bun_paths::dirname(path_slice) else {
+                    let Some(dir) = bun_core::paths::dirname(path_slice) else {
                         return;
                     };
                     let _ = dest_fd.make_path(dir);
@@ -1422,7 +1423,7 @@ fn make_symlink(
         // would normalize back under the fake root while the kernel still
         // resolves the raw `..` components and escapes the extraction
         // directory.
-        let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
+        let symlink_dir = bun_core::paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
         let mut seen_named_component = false;
         for component in target_bytes.split(|c| *c == b'/') {
@@ -1466,7 +1467,7 @@ fn make_symlink(
     match bun_sys::symlinkat(target, dest_fd, path) {
         Ok(()) => true,
         Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {
-            let Some(dir) = bun_paths::dirname(path_slice) else {
+            let Some(dir) = bun_core::paths::dirname(path_slice) else {
                 return false;
             };
             let _ = dest_fd.make_path(dir);

@@ -5,7 +5,7 @@ pub enum Error {
     #[error("BufferTooSmall")]
     BufferTooSmall,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
 }
 
 impl Error {

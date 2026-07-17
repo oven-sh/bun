@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use crate::lexer::T;
 use crate::p::P;
@@ -700,7 +700,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let call_args = p.parse_call_args()?;
             (call_args.list, call_args.loc)
         } else {
-            (bun_alloc::AstAlloc::vec(), bun_ast::Loc::EMPTY)
+            (bun_core::alloc_impl::AstAlloc::vec(), bun_ast::Loc::EMPTY)
         };
 
         Ok(p.new_expr(
@@ -808,8 +808,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
-        let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
-            bun_alloc::ArenaVec::new_in(p.arena);
+        let mut properties: bun_core::alloc_impl::ArenaVec<'_, G::Property> =
+            bun_core::alloc_impl::ArenaVec::new_in(p.arena);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread: bun_ast::Loc = bun_ast::Loc::default();
 

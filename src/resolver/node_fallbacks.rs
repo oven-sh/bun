@@ -112,7 +112,7 @@ type FallbackEntry = (
 // reads go through `map()`, which initializes via `INIT.call_once(init_modules)`
 // before touching the cells.
 static MODULES: bun_core::RacyCell<Option<Box<[FallbackEntry]>>> = bun_core::RacyCell::new(None);
-static MAP: bun_core::RacyCell<Option<bun_collections::StringHashMap<FallbackModule>>> =
+static MAP: bun_core::RacyCell<Option<bun_core::collections::StringHashMap<FallbackModule>>> =
     bun_core::RacyCell::new(None);
 static INIT: std::sync::Once = std::sync::Once::new();
 
@@ -144,7 +144,7 @@ fn init_modules() {
         fallback_module_init!("zlib", "node-fallbacks/zlib.js"),
     ]);
 
-    let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
+    let mut m = bun_core::collections::StringHashMap::<FallbackModule>::default();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
     // thread observes `MODULES`/`MAP` until this returns.
     unsafe {
@@ -165,7 +165,7 @@ fn init_modules() {
 }
 
 #[inline]
-pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+pub(crate) fn map() -> &'static bun_core::collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
     unsafe { (*MAP.get()).as_ref().unwrap() }

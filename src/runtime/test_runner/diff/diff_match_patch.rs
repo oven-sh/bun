@@ -23,8 +23,8 @@
 use core::any::TypeId;
 use core::fmt;
 
-use bun_alloc::AllocError;
-use bun_collections::StringHashMap;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::StringHashMap;
 
 #[derive(Clone, Copy)]
 pub struct Config {
@@ -744,7 +744,7 @@ pub(crate) fn diff_lines_to_chars<'a, Unit: DiffUnit>(
     text2: &'a [Unit],
 ) -> Result<LinesToCharsResult<'a, Unit>, DiffError> {
     let mut line_array: Vec<&'a [Unit]> = Vec::new();
-    // `bun_collections::StringHashMap` copies each key into an owned
+    // `bun_core::collections::StringHashMap` copies each key into an owned
     // `Box<[u8]>` (one allocation per unique line).
     let mut line_hash: StringHashMap<usize> = StringHashMap::default();
     // e.g. line_array[4] == "Hello\n"
@@ -1369,7 +1369,7 @@ fn diff_common_overlap<Unit: DiffUnit>(text1_in: &[Unit], text2_in: &[Unit]) -> 
 
 // ───────────────────────── helpers ─────────────────────────
 
-use bun_ptr::owned::alloc_dupe_slice as dupe;
+use bun_core::ptr::owned::alloc_dupe_slice as dupe;
 
 use bun_core::concat_boxed as concat;
 

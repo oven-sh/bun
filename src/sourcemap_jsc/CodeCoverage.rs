@@ -3,8 +3,8 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_ast::Loc;
-use bun_collections::VecExt;
-use bun_collections::bit_set::DynamicBitSet;
+use bun_core::collections::VecExt;
+use bun_core::collections::bit_set::DynamicBitSet;
 use bun_core::{self, ZigStringSlice, strings};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
@@ -45,7 +45,7 @@ impl Report {
         let mut intersected = self
             .executable_lines
             .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            .unwrap_or_else(|_| bun_core::alloc_impl::out_of_memory());
         intersected.set_intersection(&self.lines_which_have_executed);
 
         let total_count: f64 = self.executable_lines.count() as f64;
@@ -205,7 +205,7 @@ pub mod text {
 
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            filename = bun_core::paths::resolve_path::relative(base_path, filename);
         }
 
         write_format_with_values::<ENABLE_COLORS>(
@@ -223,7 +223,7 @@ pub mod text {
         let mut executable_lines_that_havent_been_executed = report
             .lines_which_have_executed
             .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            .unwrap_or_else(|_| bun_core::alloc_impl::out_of_memory());
         executable_lines_that_havent_been_executed.toggle_all();
 
         // This sets statements in executed scopes
@@ -296,7 +296,7 @@ pub mod lcov {
     ) -> bun_io::Result<()> {
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            filename = bun_core::paths::resolve_path::relative(base_path, filename);
         }
 
         // TN: test name
@@ -426,11 +426,11 @@ pub struct ByteRangeMapping {
     pub source_url: ZigStringSlice,
 }
 
-// Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
+// Keys are already wyhashes (`bun_core::wyhash::hash` of the source URL — see
 // `ByteRangeMapping__find`), so use the identity context instead of
 // re-hashing them.
 pub type ByteRangeMappingHashMap =
-    bun_collections::HashMap<u64, ByteRangeMapping, bun_collections::IdentityContext<u64>>;
+    bun_core::collections::HashMap<u64, ByteRangeMapping, bun_core::collections::IdentityContext<u64>>;
 
 thread_local! {
     // Lazily-initialized per-thread map. Stored behind `Box` so the address of the
@@ -490,7 +490,7 @@ impl ByteRangeMapping {
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
-    ) -> Result<Report, bun_alloc::AllocError> {
+    ) -> Result<Report, bun_core::alloc_impl::AllocError> {
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
         let mut executable_lines: Bitset;
@@ -831,7 +831,7 @@ impl ByteRangeMapping {
     ) -> ByteRangeMapping {
         ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+                .unwrap_or_else(|_| bun_core::alloc_impl::out_of_memory()),
             source_id,
             source_url,
         }
@@ -853,7 +853,7 @@ pub(crate) extern "C" fn ByteRangeMapping__generate(
     let map = unsafe { &mut *thread_map() };
 
     let slice = str_.to_utf8();
-    let hash = bun_wyhash::hash(slice.slice());
+    let hash = bun_core::wyhash::hash(slice.slice());
     let source_contents = source_contents_str.to_utf8();
 
     let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
@@ -876,7 +876,7 @@ pub(crate) extern "C" fn ByteRangeMapping__find(
     let map_ptr = thread_map_opt()?;
     // SAFETY: map_ptr points into this thread's owned Box; valid until thread exit.
     let map = unsafe { &mut *map_ptr.as_ptr() };
-    let hash = bun_wyhash::hash(slice.slice());
+    let hash = bun_core::wyhash::hash(slice.slice());
     let entry = map.get_mut(&hash)?;
     Some(NonNull::from(entry))
 }

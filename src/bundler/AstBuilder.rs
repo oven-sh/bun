@@ -8,12 +8,12 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 
-use bun_alloc::AllocError as OOM;
+use bun_core::alloc_impl::AllocError as OOM;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 
@@ -33,7 +33,7 @@ use bun_js_parser as js_parser;
 
 use crate::options;
 
-use bun_paths::fs::{Path as FsPath, PathName};
+use bun_core::paths::fs::{Path as FsPath, PathName};
 
 pub struct AstBuilder<'a, 'bump> {
     pub bump: &'bump Bump,
@@ -211,7 +211,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let ref_ = self.new_symbol(SymbolKind::Import, import_id)?;
             if self.hot_reloading {
                 self.get_symbol(ref_).namespace_alias =
-                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    Some(bun_core::alloc_impl::ast_box(G::NamespaceAlias {
                         namespace_ref,
                         alias: bun_ast::StoreStr::new(import_id),
                         import_record_index: record,
@@ -323,7 +323,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // move-only, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
             top_level_symbols_to_parts
-                .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
+                .put_assume_capacity(ref_, bun_core::alloc_impl::AstAlloc::vec_from_slice(&[1]));
         }
         top_level_symbols_to_parts.re_index()?;
 
@@ -374,7 +374,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                 },
                             )?;
                         }
@@ -527,7 +527,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                 },
                             )?;
                         }
@@ -563,15 +563,15 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(crate::BundledAst {
             parts,
             module_scope: module_scope_value,
-            symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
+            symbols: bun_core::alloc_impl::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
             exports_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             module_ref: self.module_ref,
-            import_records: bun_alloc::vec_from_iter_in(
+            import_records: bun_core::alloc_impl::vec_from_iter_in(
                 core::mem::take(&mut self.import_records),
                 self.bump,
             ),
-            export_star_import_records: bun_alloc::AstAlloc::vec(),
+            export_star_import_records: bun_core::alloc_impl::AstAlloc::vec(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,
             named_imports: core::mem::take(&mut self.named_imports),

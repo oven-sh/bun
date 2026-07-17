@@ -4,11 +4,11 @@
 //! role as a framework, Bake is tool for frameworks to build on top of.
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use core::ptr::NonNull;
 
-use bun_alloc::Arena; // = bumpalo::Bump
-use bun_collections::ArrayHashMap;
+use bun_core::alloc_impl::Arena; // = bumpalo::Bump
+use bun_core::collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
@@ -16,7 +16,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_core::{ZStr, strings};
 use bun_options_types::schema as bun_schema;
-use bun_paths::{self as paths, PathBuffer};
+use bun_core::paths::{self as paths, PathBuffer};
 
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
@@ -112,7 +112,7 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
     // PORTING.md sanctions this only inside the bake `from_js` self-referential
     // pattern — do NOT generalize.
-    unsafe { bun_ptr::detach_ref(r) }
+    unsafe { bun_core::ptr::detach_ref(r) }
 }
 
 /// Copy `bytes` plus a trailing NUL into the bump arena.
@@ -293,7 +293,7 @@ impl StringRefList {
         // `UserOptions`, so no read outlives the holder. NOT process-lifetime
         // — a real `'bump` lifetime should eventually be threaded here (see
         // file-level TODO(lifetime)); `assume` makes the lie grep-able until then.
-        unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
+        unsafe { bun_core::ptr::Interned::assume(slice) }.as_bytes()
     }
 }
 
@@ -742,10 +742,10 @@ impl Framework {
             }
         };
         // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
-        // `Path` alias is `bun_paths::fs::Path<'static>`, populated from the
+        // `Path` alias is `bun_core::paths::fs::Path<'static>`, populated from the
         // `FilenameStore` singleton). No widen needed; the previous
         // `arena_erase` here laundered an already-`'static` slice and falsely
-        // implied arena ownership. See `bun_ptr::Interned` for the type that
+        // implied arena ownership. See `bun_core::ptr::Interned` for the type that
         // `Path::text` should eventually become.
         *path = result.path().unwrap().text;
     }
@@ -1002,7 +1002,7 @@ impl Framework {
                         } else if exts_js.is_array() {
                             let mut it_2 = exts_js.array_iterator(global)?;
                             let mut extensions =
-                                bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
+                                bun_core::alloc_impl::ArenaVec::<&'static [u8]>::with_capacity_in(
                                     exts_js.get_length(global)? as usize,
                                     arena,
                                 );
@@ -1024,7 +1024,7 @@ impl Framework {
                                     slice
                                 } else {
                                     // Concatenate "." + slice into the arena.
-                                    let mut v = bun_alloc::ArenaVec::<u8>::with_capacity_in(
+                                    let mut v = bun_core::alloc_impl::ArenaVec::<u8>::with_capacity_in(
                                         1 + slice.len(),
                                         arena,
                                     );
@@ -1052,7 +1052,7 @@ impl Framework {
                     'exts: {
                         if exts_js.is_array() {
                             let mut it_2 = array.array_iterator(global)?;
-                            let mut dirs = bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
+                            let mut dirs = bun_core::alloc_impl::ArenaVec::<&'static [u8]>::with_capacity_in(
                                 len as usize,
                                 arena,
                             );
@@ -1110,7 +1110,7 @@ impl Framework {
     /// that we populate here.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+        let mut built_in_modules = bun_core::collections::StringArrayHashMap::new();
         for (k, v) in self.built_in_modules.iter() {
             let bv = match *v {
                 BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.into()),
@@ -1218,7 +1218,7 @@ impl Framework {
             Mode::Development => bun_bundler::options::Format::InternalBakeDev,
             Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
         };
-        out.options.out_extensions = bun_collections::StringHashMap::new();
+        out.options.out_extensions = bun_core::collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
 
@@ -1392,7 +1392,7 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
         // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
-        // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
+        // backed; see note in `resolve_helper` above and `bun_core::ptr::Interned`).
         Ok(res) => Some(res.path_const().unwrap().text),
         Err(_) => {
             r.log_mut().reset();

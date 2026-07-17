@@ -124,7 +124,7 @@ mod host {
     use core::mem::size_of;
 
     use bun_core::strings;
-    use bun_simdutf_sys::simdutf;
+    use bun_core::simdutf_sys::simdutf;
 
     #[inline]
     fn eql_comptime(a: &[u8], b: &'static [u8]) -> bool {

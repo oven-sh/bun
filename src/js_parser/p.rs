@@ -1,18 +1,18 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 // This file defines the `P` parser struct (generic over typescript/jsx/scan_only
 // const params) and its core methods.
 
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
+use bun_core::collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::Output;
 use bun_core::strings;
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
@@ -39,7 +39,7 @@ use bun_ast::{
 };
 
 // In this AST crate, lists are arena-backed.
-type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
+type BumpVec<'a, T> = bun_core::alloc_impl::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
@@ -143,7 +143,7 @@ impl<'a> ImportRecordList<'a> {
             Self::Owned(v) => v,
             // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
             // this arm at runtime; the copy keeps the type checker happy.
-            Self::Borrowed(v) => bun_alloc::vec_from_iter_in(v.drain(..), arena),
+            Self::Borrowed(v) => bun_core::alloc_impl::vec_from_iter_in(v.drain(..), arena),
         }
     }
 }
@@ -1266,7 +1266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Render the sanitized-identifier formatter into the bump arena.
                     let name: &'a [u8] = {
                         use core::fmt::Write as _;
-                        let mut buf = bun_alloc::ArenaString::new_in(self.arena);
+                        let mut buf = bun_core::alloc_impl::ArenaString::new_in(self.arena);
                         write!(
                             &mut buf,
                             "{}",
@@ -2051,7 +2051,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 alias_loc: bun_ast::Loc::default(),
                 namespace_ref: self.bun_app_namespace_ref,
                 import_record_index: import_record_i,
-                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                 alias_is_star: false,
                 is_exported: false,
             },
@@ -2119,7 +2119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .path
                 .name()
                 .non_unique_name_string_base();
-            let mut buf = bun_alloc::ArenaString::new_in(arena);
+            let mut buf = bun_core::alloc_impl::ArenaString::new_in(arena);
             write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
             buf.into_bump_str().as_bytes()
         };
@@ -2169,7 +2169,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_core::alloc_impl::ast_box(js_ast::NamespaceAlias {
                         namespace_ref,
                         alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
@@ -2186,7 +2186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias_loc: bun_ast::Loc::default(),
                     namespace_ref,
                     import_record_index: import_record_i,
-                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                     alias_is_star: false,
                     is_exported: false,
                 },
@@ -2317,7 +2317,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         alias_loc: bun_ast::Loc::EMPTY,
                         namespace_ref,
                         import_record_index,
-                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                         alias_is_star: false,
                         is_exported: false,
                     },
@@ -3217,7 +3217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_core::alloc_impl::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: self.bun_app_namespace_ref,
                         alias: js_ast::StoreStr::new(b"Response"),
                         was_originally_property_access: false,
@@ -4080,7 +4080,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            let name: &'a [u8] = bun_alloc::arena_format!(
+            let name: &'a [u8] = bun_core::arena_format!(
                 in self.arena,
                 "import_{}",
                 bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
@@ -4116,7 +4116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                        symbol.namespace_alias = Some(bun_core::alloc_impl::ast_box(js_ast::NamespaceAlias {
                             namespace_ref: stmt.namespace_ref,
                             alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
@@ -4198,7 +4198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_core::alloc_impl::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
                         alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,
@@ -4653,14 +4653,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
             StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
-            StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
+            StrictModeFeature::EvalOrArguments => bun_core::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
                 bstr::BStr::new(detail)
             )
             .into_bump_str()
             .as_bytes(),
-            StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
+            StrictModeFeature::ReservedWord => bun_core::arena_format!(
                 in self.arena,
                 "\"{}\" is a reserved word and",
                 bstr::BStr::new(detail)
@@ -4693,7 +4693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {}
             }
             if why.is_empty() {
-                why = bun_alloc::arena_format!(
+                why = bun_core::arena_format!(
                     in self.arena,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
                     bstr::BStr::new(self.source.text_for_range(where_))
@@ -4820,8 +4820,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Runtime equivalent of `generated_symbol_name!`. Same bytes as the
     /// macro produces; arena-owned for symbol lifetime.
     fn hash_generated_name(&self, name: &'static [u8]) -> &'a [u8] {
-        let hash = bun_wyhash::hash(name);
-        bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash))
+        let hash = bun_core::wyhash::hash(name);
+        bun_core::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash))
             .into_bump_str()
             .as_bytes()
     }
@@ -5192,7 +5192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> ! {
         // `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
         // bump-backed `String` — one contiguous text output.
-        let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.arena);
+        let mut panic_stream = bun_core::alloc_impl::ArenaString::with_capacity_in(32 * 1024, self.arena);
 
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
@@ -5300,7 +5300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let arena = self.arena;
         let mut opts = PrependTempRefsOpts::default();
-        let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
+        let mut part_stmts = bun_core::alloc_impl::vec_from_iter_in(stmts.iter().copied(), arena);
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
 
@@ -5324,7 +5324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
-                    let mut decls = bun_alloc::AstAlloc::vec();
+                    let mut decls = bun_core::alloc_impl::AstAlloc::vec();
                     VecExt::append(
                         &mut decls,
                         Decl {
@@ -5365,7 +5365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if m.is_empty() {
                         None
                     } else {
-                        Some(bun_alloc::ast_box(m))
+                        Some(bun_core::alloc_impl::ast_box(m))
                     }
                 },
                 declared_symbols: self.declared_symbols.to_owned_slice(),
@@ -6669,7 +6669,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // borrow lifetime to satisfy `handle_identifier`'s
                 // `Option<&'a [u8]>` param.
                 let original_name: &'a [u8] =
-                    unsafe { bun_collections::detach_lifetime(original_name) };
+                    unsafe { bun_core::collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,
@@ -6757,13 +6757,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `bun_paths::fs::Path` lacks a package-name method
+// `bun_core::paths::fs::Path` lacks a package-name method
 // (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
 // the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     let mut name_to_use = path.pretty;
-    if let Some(node_modules) = strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
-        name_to_use = &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..];
+    if let Some(node_modules) = strings::last_index_of(path.text, bun_core::paths::NODE_MODULES_NEEDLE) {
+        name_to_use = &path.text[node_modules + bun_core::paths::NODE_MODULES_NEEDLE.len()..];
     }
 
     let pkgname = {
@@ -7171,7 +7171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             } else {
                                 self.new_expr(
                                     E::Array {
-                                        items: bun_alloc::AstAlloc::vec(),
+                                        items: bun_core::alloc_impl::AstAlloc::vec(),
                                         ..Default::default()
                                     },
                                     bun_ast::Loc::EMPTY,
@@ -7307,7 +7307,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             let arr = self.new_expr(
                                 E::Array {
-                                    items: bun_alloc::AstAlloc::vec(),
+                                    items: bun_core::alloc_impl::AstAlloc::vec(),
                                     ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -7766,7 +7766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             n
         } else {
             self.temp_ref_count += 1;
-            bun_alloc::arena_format!(in self.arena, "__bun_temp_ref_{:x}$", self.temp_ref_count)
+            bun_core::arena_format!(in self.arena, "__bun_temp_ref_{:x}$", self.temp_ref_count)
                 .into_bump_str()
                 .as_bytes()
         };
@@ -8173,10 +8173,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let final_ = ctx.hasher.final_();
         let hash_data =
             self.arena
-                .alloc_slice_fill_default::<u8>(bun_base64::encode_len_from_size(
+                .alloc_slice_fill_default::<u8>(bun_core::base64::encode_len_from_size(
                     core::mem::size_of_val(&final_),
                 ));
-        let _written = bun_base64::encode(hash_data, &final_.to_ne_bytes());
+        let _written = bun_core::base64::encode(hash_data, &final_.to_ne_bytes());
         debug_assert!(_written == hash_data.len());
 
         let have_custom_hooks = ctx.user_hooks.count() > 0;
@@ -8648,7 +8648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         ctx.top_level
                             .entry(r#ref)
-                            .or_insert_with(bun_alloc::AstAlloc::vec)
+                            .or_insert_with(bun_core::alloc_impl::AstAlloc::vec)
                             .push(ctx.part_index);
                     },
                 );
@@ -8657,7 +8657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Pulling in the exports of this module always pulls in the export part
             top_level_symbols_to_parts
                 .entry(self.exports_ref)
-                .or_insert_with(bun_alloc::AstAlloc::vec)
+                .or_insert_with(bun_core::alloc_impl::AstAlloc::vec)
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
@@ -8672,7 +8672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
             {
                 use core::fmt::Write as _;
-                let mut buf = bun_alloc::ArenaString::new_in(arena);
+                let mut buf = bun_core::alloc_impl::ArenaString::new_in(arena);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
                 break 'brk self
                     .new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_str().as_bytes())
@@ -8753,7 +8753,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             exports_ref: self.exports_ref,
             wrapper_ref,
             module_ref: self.module_ref,
-            export_star_import_records: bun_alloc::AstAlloc::vec_from_slice(
+            export_star_import_records: bun_core::alloc_impl::AstAlloc::vec_from_slice(
                 self.export_star_import_records.as_slice(),
             ),
             approximate_newline_count: self.lexer.approximate_newline_count,
@@ -8835,7 +8835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
-            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::default();
+            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_core::alloc_impl::AstAlloc>::default();
             inner_map.ensure_total_capacity(ns.count())?;
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];
@@ -8963,8 +8963,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
         let scope_obj = arena.alloc(Scope {
             members: Default::default(),
-            children: bun_alloc::AstAlloc::vec(),
-            generated: bun_alloc::AstAlloc::vec(),
+            children: bun_core::alloc_impl::AstAlloc::vec(),
+            generated: bun_core::alloc_impl::AstAlloc::vec(),
             kind: js_ast::scope::Kind::Entry,
             label_ref: Ref::NONE,
             parent: None,
@@ -8997,14 +8997,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let unwrap_all_requires = 'brk: {
             if opts.bundle && opts.output_format != options::Format::Cjs {
-                // `bun_paths::fs::Path<'static>` is the
+                // `bun_core::paths::fs::Path<'static>` is the
                 // crate-local minimal stub (no `pretty`, no `package_name()`),
                 // so reuse the free `path_package_name` body via a borrowed
-                // `bun_paths::fs::Path` view over the same `text`. `pretty`
+                // `bun_core::paths::fs::Path` view over the same `text`. `pretty`
                 // is irrelevant once `node_modules/` is found in `text`; when
                 // it isn't, the result won't match any `unwrap_commonjs_packages`
-                // entry anyway. (Goes away if `bun_paths::fs::Path<'static>` is
-                // ever unified with the resolver `bun_paths::fs::Path`.)
+                // entry anyway. (Goes away if `bun_core::paths::fs::Path<'static>` is
+                // ever unified with the resolver `bun_core::paths::fs::Path`.)
                 let path_view = fs::Path {
                     text: source.path.text,
                     pretty: source.path.text,
@@ -9557,7 +9557,7 @@ impl LowerUsingDeclarationsContext {
             );
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number::new(1.0), loc);
-            let mut decls = bun_alloc::AstAlloc::vec();
+            let mut decls = bun_core::alloc_impl::AstAlloc::vec();
             VecExt::append(
                 &mut decls,
                 Decl {

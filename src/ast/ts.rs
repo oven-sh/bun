@@ -1,7 +1,7 @@
 use crate::Loc;
-use bun_alloc::AstAlloc;
-use bun_collections::StringArrayHashMap;
-use bun_collections::array_hash_map::StringContext;
+use bun_core::alloc_impl::AstAlloc;
+use bun_core::collections::StringArrayHashMap;
+use bun_core::collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;

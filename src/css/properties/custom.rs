@@ -30,10 +30,10 @@ use crate::properties::animation::AnimationName;
 use crate::rules::supports::SupportsCondition;
 
 use bun_core::strings;
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 use crate::generics::{CssEql, CssHash, DeepClone};
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 
 // ─── leaf fn inlines ───────────────────────────────────────────────────────
 // `TokenList::{parse,to_css}` bottom out on a handful of leaf fns from

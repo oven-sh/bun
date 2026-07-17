@@ -2,7 +2,7 @@ use bstr::BStr;
 use std::io::Write as _;
 
 use bun_ast::{ExprData, e as E};
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_core::collections::{StringArrayHashMap, StringHashMap};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
@@ -12,7 +12,7 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
-use bun_url::URL;
+use bun_core::url::URL;
 
 use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
@@ -72,7 +72,7 @@ impl AuditCommand {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
-                    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+                    let mut cwd_buf = bun_core::paths::PathBuffer::uninit();
                     if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
                         Output::err_generic(
                             "No package.json was found for directory \"{s}\"",
@@ -111,7 +111,7 @@ impl AuditCommand {
         audit_level: Option<AuditLevel>,
         audit_prod_only: bool,
         ignore_list: &[&[u8]],
-    ) -> Result<u32, bun_alloc::AllocError> {
+    ) -> Result<u32, bun_core::alloc_impl::AllocError> {
         bun_core::pretty_error!(
             "<r><b>bun audit <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
@@ -207,7 +207,7 @@ fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
 
 fn build_dependency_tree(
     pm: &mut PackageManager,
-) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_alloc::AllocError> {
+) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_core::alloc_impl::AllocError> {
     let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::default();
 
     let packages = pm.lockfile.packages.slice();
@@ -248,7 +248,7 @@ fn build_dependency_tree(
 fn build_production_package_set(
     pm: &mut PackageManager,
     prod_set: &mut StringHashMap<()>,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let packages = pm.lockfile.packages.slice();
@@ -309,7 +309,7 @@ struct PackageVersions {
 fn collect_packages_for_audit(
     pm: &mut PackageManager,
     prod_only: bool,
-) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
+) -> Result<CollectPackagesResult, bun_core::alloc_impl::AllocError> {
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let mut packages_list: Vec<PackageVersions> = Vec::new();
@@ -421,9 +421,9 @@ fn collect_packages_for_audit(
 fn send_audit_request(
     pm: &mut PackageManager,
     body: &[u8],
-) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+) -> Result<Box<[u8]>, bun_core::alloc_impl::AllocError> {
     libdeflate::load();
-    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
+    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_core::alloc_impl::AllocError)?;
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = Vec::with_capacity(max_compressed_size);
@@ -507,7 +507,7 @@ fn send_audit_request(
 fn parse_vulnerability(
     package_name: &[u8],
     vuln: &E::ObjectJSON,
-) -> Result<VulnerabilityInfo, bun_alloc::AllocError> {
+) -> Result<VulnerabilityInfo, bun_core::alloc_impl::AllocError> {
     let mut vulnerability = VulnerabilityInfo {
         severity: Box::<[u8]>::from(b"moderate" as &[u8]),
         title: Box::<[u8]>::from(b"Vulnerability found" as &[u8]),
@@ -552,7 +552,7 @@ fn find_dependency_paths(
     target_package: &[u8],
     dependency_tree: &StringHashMap<Vec<Box<[u8]>>>,
     pm: &mut PackageManager,
-) -> Result<Vec<DependencyPath>, bun_alloc::AllocError> {
+) -> Result<Vec<DependencyPath>, bun_core::alloc_impl::AllocError> {
     let mut paths: Vec<DependencyPath> = Vec::new();
 
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
@@ -723,7 +723,7 @@ fn print_enhanced_audit_report(
     dependency_tree: &StringHashMap<Vec<Box<[u8]>>>,
     audit_level: Option<AuditLevel>,
     ignore_list: &[&[u8]],
-) -> Result<u32, bun_alloc::AllocError> {
+) -> Result<u32, bun_core::alloc_impl::AllocError> {
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = bun_ast::Log::init();
 

@@ -11,7 +11,7 @@ pub enum Error {
     #[error(transparent)]
     Lexer(#[from] crate::lexer::Error),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
 }

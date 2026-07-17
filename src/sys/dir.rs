@@ -78,7 +78,7 @@ impl Dir {
     /// Resolve this dir's absolute path via `/proc/self/fd` (Linux),
     /// `F_GETPATH` (macOS), or `GetFinalPathNameByHandle` (Windows).
     #[inline]
-    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
+    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_core::paths::PathBuffer) -> Maybe<&'b mut [u8]> {
         get_fd_path(self.fd, buf)
     }
     /// Close now. Equivalent to dropping `self` but discards the syscall
@@ -301,7 +301,7 @@ pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
 
 /// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
 fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_core::paths::PathBuffer::default();
     let len = path.len().min(buf.0.len() - 1);
     buf.0[..len].copy_from_slice(&path[..len]);
     buf.0[len] = 0;
@@ -323,8 +323,8 @@ impl Dir {
     /// Single-level `mkdirat` (mode 0o755) relative to
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `EEXIST` for callers to branch on.
-    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_errno::SystemErrno> {
-        let mut buf = bun_paths::PathBuffer::default();
+    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::errno::SystemErrno> {
+        let mut buf = bun_core::paths::PathBuffer::default();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
         buf.0[len] = 0;
@@ -332,7 +332,7 @@ impl Dir {
         let z = ZStr::from_buf(&buf.0[..], len);
         match mkdirat(self.fd, z, 0o755) {
             Ok(()) => Ok(()),
-            Err(e) if e.get_errno() == E::EEXIST => Err(bun_errno::SystemErrno::EEXIST),
+            Err(e) if e.get_errno() == E::EEXIST => Err(bun_core::errno::SystemErrno::EEXIST),
             Err(e) => Err(e.into()),
         }
     }
@@ -342,14 +342,14 @@ impl Dir {
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
-        let mut tbuf = bun_paths::PathBuffer::default();
+        let mut tbuf = bun_core::paths::PathBuffer::default();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
         tbuf.0[tlen] = 0;
         // SAFETY: NUL-terminated above.
         let tz = ZStr::from_buf(&tbuf.0[..], tlen);
 
-        let mut lbuf = bun_paths::PathBuffer::default();
+        let mut lbuf = bun_core::paths::PathBuffer::default();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
         lbuf.0[llen] = 0;

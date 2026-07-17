@@ -8,13 +8,13 @@ use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
-use bun_paths::resolve_path::{self as path_handler, platform};
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_core::paths::resolve_path::{self as path_handler, platform};
+use bun_core::paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::fs::{FileSystem, Path as FsPath};
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Wyhash (final4 variant). Must stay stable so on-disk
 // `.pile` filenames/hashes remain interchangeable across versions.
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 bun_core::declare_scope!(cache, visible);
 
@@ -467,7 +467,7 @@ impl Entry {
                     // `(dead, &mut [])` on WTF allocation failure; `len > 0`
                     // (handled above), so an empty slice means OOM.
                     if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
+                        return Err(crate::CrateError::Alloc(bun_core::alloc_impl::AllocError));
                     }
                     // errdefer scratch.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(scratch, |s| s.deref());
@@ -500,7 +500,7 @@ impl Entry {
                     // WTF allocation failure; `len > 0` here (handled above), so
                     // an empty slice means OOM.
                     if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
+                        return Err(crate::CrateError::Alloc(bun_core::alloc_impl::AllocError));
                     }
                     // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
@@ -525,7 +525,7 @@ impl Entry {
                     // See LATIN1 branch above — empty slice for nonzero `char_len`
                     // signals WTF allocation failure.
                     if chars.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
+                        return Err(crate::CrateError::Alloc(bun_core::alloc_impl::AllocError));
                     }
                     let errdefer = scopeguard::guard(string, |s| s.deref());
 
@@ -651,7 +651,7 @@ impl RuntimeTranspilerCache {
         };
         let needed = bytes.len() * 2 + suffix.len();
         if buf.len() < needed {
-            return Err(crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC));
+            return Err(crate::CrateError::Sys(bun_core::errno::SystemErrno::ENOSPC));
         }
         let i = bun_core::fmt::bytes_to_hex_lower(&bytes, &mut buf[..bytes.len() * 2]);
         buf[i..i + suffix.len()].copy_from_slice(suffix);
@@ -940,7 +940,7 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        // `bun_paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
+        // `bun_core::paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
         // doesn't carry `is_file()`; inline the same check the resolver
         // `Path::is_file` performs (`namespace == "" || namespace == "file"`).
         if !(source.path.namespace.is_empty() || source.path.namespace == b"file") {
@@ -989,7 +989,7 @@ impl RuntimeTranspilerCache {
                 );
             }
         }
-        bun_analytics::features::transpiler_cache.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::transpiler_cache.fetch_add(1, Ordering::Relaxed);
 
         #[cfg(bun_debug)]
         {

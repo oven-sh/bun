@@ -9,12 +9,12 @@ use crate::{
     DeclarationList, Feature, Parser, PrintErr, Printer, PropertyCategory, PropertyHandlerContext,
     Result as CssResult, SmallList, Targets,
 };
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use super::border_image::BorderImageHandler;
 use super::border_radius::BorderRadiusHandler;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shorthand type aliases

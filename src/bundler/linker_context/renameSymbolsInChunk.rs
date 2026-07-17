@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -120,7 +120,7 @@ pub unsafe fn rename_symbols_in_chunk(
             // closure-level note above), upholding the "no drop, no grow"
             // contract of `from_borrowed_slice_dangerous`.
             symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
-                <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
+                <Vec<_> as bun_core::collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
             }),
         }
     };
@@ -410,7 +410,7 @@ pub unsafe fn rename_symbols_in_chunk(
                     &mut sorted,
                 );
             }
-            r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
+            r.number_scope_pool.hive.used = bun_core::collections::hive_array::HiveBitSet::init_empty();
         }
     }
 

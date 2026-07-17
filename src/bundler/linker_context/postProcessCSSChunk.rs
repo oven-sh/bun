@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::MultiArrayList;
+use bun_core::collections::MultiArrayList;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 

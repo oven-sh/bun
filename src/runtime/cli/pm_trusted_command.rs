@@ -1,8 +1,8 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_alloc::Arena as Bump;
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
@@ -18,7 +18,7 @@ use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
     PackageID, PackageManager, Resolution,
 };
-use bun_paths::AutoAbsPath;
+use bun_core::paths::AutoAbsPath;
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
@@ -153,7 +153,7 @@ impl UntrustedCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(bun_install::Error::Sys(bun_core::errno::SystemErrno::ENOENT)) => continue,
                     Err(e) => return Err(e.into()),
                 };
 
@@ -353,7 +353,7 @@ impl TrustCommand {
                 .map_err(crate::Error::from)
             {
                 Ok(d) => d,
-                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
+                Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT)) => {
                     node_modules_path.set_length(nm_saved);
                     continue;
                 }
@@ -390,7 +390,7 @@ impl TrustCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(bun_install::Error::Sys(bun_core::errno::SystemErrno::ENOENT)) => continue,
                     Err(e) => return Err(e.into()),
                 };
 
@@ -628,7 +628,7 @@ impl TrustCommand {
                     .as_mut()
                     .unwrap()
                     .put(
-                        bun_semver::string::Builder::string_hash(name)
+                        bun_core::semver::string::Builder::string_hash(name)
                             as install::TruncatedPackageNameHash,
                         Box::<[u8]>::from(&**name),
                     )?;

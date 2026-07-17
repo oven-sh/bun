@@ -1,14 +1,14 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
-use bun_collections::StringArrayHashMap;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::StringArrayHashMap;
 
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
-use bun_semver as semver;
-use bun_semver::{ExternalString, String};
+use bun_core::semver as semver;
+use bun_core::semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
 use crate::bin::Bin;
@@ -145,7 +145,7 @@ impl From<crate::Error> for MigratePnpmLockfileError {
         // Preserve the known error variants; only collapse genuinely-unknown
         // tags to InvalidPnpmLockfile.
         match e {
-            crate::Error::Alloc(bun_alloc::AllocError) => Self::OutOfMemory,
+            crate::Error::Alloc(bun_core::alloc_impl::AllocError) => Self::OutOfMemory,
             crate::Error::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidPnpmLockfile,
         }
@@ -242,7 +242,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     // YAML tree. Clone the tree out of the Store into `yaml_arena` (which
     // lives for the whole function) so `root` survives those resets.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
-    let yaml_arena = bun_alloc::Arena::new();
+    let yaml_arena = bun_core::alloc_impl::Arena::new();
     let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
@@ -433,7 +433,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 continue;
             }
 
-            let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
+            let mut pkg_json_path = bun_core::paths::AutoAbsPath::init_top_level_dir();
             let _ = pkg_json_path.append(importer_path); // OOM/capacity error is non-actionable here
             let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
@@ -488,7 +488,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             StringArrayHashMap::new();
 
         {
-            let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
+            let mut pkg_json_path = bun_core::paths::AutoAbsPath::init_top_level_dir();
             let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
             let pkg_json = match manager
@@ -556,7 +556,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     ..Default::default()
                 };
 
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+                let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
                 let abs_path: Box<[u8]> = Box::from(path_buf.slice());
                 let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
@@ -677,13 +677,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if dep.version.tag == dependency::VersionTag::Workspace {
                                 let mut link_path_buf =
-                                    bun_paths::AutoAbsPath::init_top_level_dir();
+                                    bun_core::paths::AutoAbsPath::init_top_level_dir();
                                 let _ = link_path_buf.append(workspace_path); // OOM/capacity error is non-actionable here
                                 let _ = link_path_buf.join(&[link_path]); // path-buffer overflow unreachable for bounded inputs
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
                                     let mut workspace_path_buf =
-                                        bun_paths::AutoAbsPath::init_top_level_dir();
+                                        bun_core::paths::AutoAbsPath::init_top_level_dir();
                                     // OOM/capacity error is non-actionable here
                                     let _ = workspace_path_buf.append(
                                         existing_workspace_path.slice(string_bytes!(lockfile)),
@@ -712,7 +712,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 ..Default::default()
                             };
 
-                            let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
+                            let mut abs_link_path = bun_core::paths::AutoAbsPath::init_top_level_dir();
                             let _ = abs_link_path.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
 
                             let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
@@ -972,7 +972,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if dep.behavior.is_workspace() {
                 let ws = *dep.version.workspace();
                 let workspace_path = ws.slice(string_buf);
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+                let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
@@ -1003,7 +1003,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
                 strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
             {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+                let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
@@ -1068,7 +1068,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
                 strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
             {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+                let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
@@ -1115,7 +1115,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 | dependency::VersionTag::Workspace => {
                     let maybe_symlink_or_folder_or_workspace_path =
                         strings::without_prefix(version_without_suffix, b"link:");
-                    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+                    let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
                     let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                     if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
                         lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
@@ -1555,7 +1555,7 @@ fn parse_append_importer_dependencies(
                     continue;
                 }
 
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+                let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
                 let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
 
@@ -1612,10 +1612,10 @@ fn update_package_json_after_migration(
     dir: Fd,
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
+    let mut pkg_json_path = bun_core::paths::AutoAbsPath::init_top_level_dir();
     let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
-    let bump = bun_alloc::Arena::new();
+    let bump = bun_core::alloc_impl::Arena::new();
 
     let root_pkg_json = match manager
         .workspace_package_json_cache
@@ -1792,7 +1792,7 @@ fn update_package_json_after_migration(
             // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let arena = bun_alloc::Arena::new();
+            let arena = bun_core::alloc_impl::Arena::new();
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&yaml_source, log, &arena) else {
                 break 'read_pnpm_workspace_yaml;
             };
@@ -1901,7 +1901,7 @@ fn update_package_json_after_migration(
                 needs_update = true;
             }
         } else if !use_array_format {
-            let mut ws_props = bun_alloc::AstAlloc::vec();
+            let mut ws_props = bun_core::alloc_impl::AstAlloc::vec();
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {

@@ -1,4 +1,4 @@
-//! Test-only bridge exposing `bun_collections::LinearFifo::ordered_remove_item`
+//! Test-only bridge exposing `bun_core::collections::LinearFifo::ordered_remove_item`
 //! to `bun:internal-for-testing` (see `src/js/internal-for-testing.ts`).
 //!
 //! `LinearFifo` is an internal Rust ring buffer with no JS-visible surface of
@@ -15,7 +15,7 @@
 //! "TestingAPIs.orderedRemoveProbe", 1)` — the path is only the codegen key;
 //! the implementation is this Rust function (see `dispatch_js2native.rs`).
 
-use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
+use bun_core::collections::linear_fifo::{LinearFifo, StaticBuffer};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 /// A 16-slot static buffer matches the real `weak_refs` FIFO in the dev

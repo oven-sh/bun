@@ -111,7 +111,7 @@ pub trait StatementData: Sized {
     /// Store-append `self` and wrap.
     fn store_alloc(self) -> Data;
     /// Arena-allocate `self` and wrap.
-    fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data;
+    fn arena_alloc(self, bump: &bun_core::alloc_impl::Arena) -> Data;
 }
 
 impl Stmt {
@@ -134,7 +134,7 @@ impl Stmt {
     }
 
     fn allocate_data<T: StatementData>(
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         orig_data: T,
         loc: crate::Loc,
     ) -> Stmt {
@@ -160,7 +160,7 @@ impl Stmt {
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
     pub fn allocate<T: StatementData>(
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         orig_data: T,
         loc: crate::Loc,
     ) -> Stmt {
@@ -170,7 +170,7 @@ impl Stmt {
         Stmt::allocate_data(bump, orig_data, loc)
     }
 
-    pub fn allocate_expr(bump: &bun_alloc::Arena, expr: Expr) -> Stmt {
+    pub fn allocate_expr(bump: &bun_core::alloc_impl::Arena, expr: Expr) -> Stmt {
         Stmt::allocate(
             bump,
             S::SExpr {
@@ -197,7 +197,7 @@ macro_rules! impl_statement_data {
                     Data::$variant(data::Store::append(self))
                 }
                 #[inline]
-                fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
+                fn arena_alloc(self, bump: &bun_core::alloc_impl::Arena) -> Data {
                     // `StoreRef::from_bump` is the settled crate-wide arena-ref
                     // convention (see its docs in nodes.rs); expr.rs
                     // `arena_alloc` does the same. No separate `&'bump` ref
@@ -213,7 +213,7 @@ macro_rules! impl_statement_data {
                 #[inline]
                 fn store_alloc(self) -> Data { Data::$ivariant(self) }
                 #[inline]
-                fn arena_alloc(self, _bump: &bun_alloc::Arena) -> Data { Data::$ivariant(self) }
+                fn arena_alloc(self, _bump: &bun_core::alloc_impl::Arena) -> Data { Data::$ivariant(self) }
             }
         )*
     };

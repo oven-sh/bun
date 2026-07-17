@@ -52,8 +52,8 @@ impl EventLoopTaskNoContext {
     /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
     /// route mutation through the VM's safe interior accessors (e.g.
     /// `event_loop_shared()`).
-    pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
-        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
+    pub fn get_vm(&self) -> Option<bun_core::ptr::BackRef<VirtualMachine>> {
+        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_core::ptr::BackRef::from)
     }
 }
 

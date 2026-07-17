@@ -128,7 +128,7 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     // needed.
     let scope = npm::registry::Scope {
         url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
-        url: bun_url::OwnedURL::from_href(Box::from(registry.slice())),
+        url: bun_core::url::OwnedURL::from_href(Box::from(registry.slice())),
         ..Default::default()
     };
 

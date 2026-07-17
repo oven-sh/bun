@@ -26,7 +26,7 @@ impl CounterStyleRule {
 }
 
 impl CounterStyleRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             declarations: super::dc::decl_block_static(&self.declarations, bump),

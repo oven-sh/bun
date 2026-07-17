@@ -11,7 +11,7 @@ use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
-use bun_ptr::Interned;
+use bun_core::ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys::{Fd, FdDirExt, FdExt};
 
@@ -667,7 +667,7 @@ pub fn run_as_worker(
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
     // own arena the same way and notes the dropped read).
-    let mut arena = bun_alloc::MimallocArena::new();
+    let mut arena = bun_core::alloc_impl::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm_ref.event_loop()).ensure_waker() };
     vm_ref.arena = Some(NonNull::from(&mut arena));

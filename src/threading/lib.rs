@@ -53,11 +53,11 @@ pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
 /// Used by `Mutex` debug deadlock detection and `Condition` (Windows).
 ///
 /// Delegates to the tier-0 implementation in
-/// [`bun_safety::thread_id::current`] (which uses `pthread_threadid_np` on
+/// [`bun_core::safety::thread_id::current`] (which uses `pthread_threadid_np` on
 /// Darwin / `pthread_getthreadid_np` on FreeBSD / `gettid` on Linux),
 /// widened to `u64` so callers can store it
 /// in an `AtomicU64` regardless of the platform's native `ThreadId` width.
 #[inline]
 pub fn current_thread_id() -> u64 {
-    bun_safety::thread_id::current() as u64
+    bun_core::safety::thread_id::current() as u64
 }

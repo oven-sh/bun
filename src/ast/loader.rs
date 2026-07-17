@@ -118,7 +118,7 @@ impl From<Loader> for LoaderOptional {
 }
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
-pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;
+pub type LoaderHashTable = bun_core::collections::StringArrayHashMap<Loader>;
 
 bun_core::comptime_string_map! {
     pub static LOADER_NAMES: Loader = {

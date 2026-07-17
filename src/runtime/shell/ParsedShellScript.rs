@@ -255,7 +255,7 @@ fn create_parsed_shell_script_impl(
     // `shargs.script_ast = script` below. The arena reference is taken via raw
     // pointer so the `&shargs` borrow doesn't outlive the call (the returned
     // `ast::Script` is lifetime-erased).
-    let arena_ptr: *const bun_alloc::Arena = shargs.arena();
+    let arena_ptr: *const bun_core::alloc_impl::Arena = shargs.arena();
     let script_ast = {
         // SAFETY: `shargs` lives on this stack frame for the whole block; arena
         // is not moved/dropped while `out_parser`/`out_lex_result` borrow it.
@@ -311,6 +311,6 @@ fn create_parsed_shell_script_impl(
     // SAFETY: pointer just created above; wrapper now owns it but we need one more field write.
     unsafe { (*parsed_shell_script_ptr).this_jsvalue = JsRef::init_weak(this_jsvalue) };
 
-    bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
+    bun_core::analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_jsvalue)
 }

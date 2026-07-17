@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use bstr::ByteSlice;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::{self, fmt::quote};
 use bun_core::{MutableString, StringBuilder, strings};
 use bun_http::{
@@ -13,7 +13,7 @@ use bun_http::{
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
 use bun_threading::thread_pool::Batch;
-use bun_url::URL;
+use bun_core::url::URL;
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
@@ -25,10 +25,10 @@ use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 // impl lives in `bun_resolver`, which this crate can't reach without a cycle).
 pub struct FilenameStoreAppender<'a>(pub &'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_core::alloc_impl::AllocError> {
         self.0.append(s)
     }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_core::alloc_impl::AllocError> {
         self.0.append_lower_case(s)
     }
 }
@@ -69,7 +69,7 @@ pub struct NetworkTask {
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
     // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
     // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
-    pub package_manager: bun_ptr::ParentRef<PackageManager>,
+    pub package_manager: bun_core::ptr::ParentRef<PackageManager>,
     pub callback: Callback,
     /// Key in patchedDependencies in package.json
     // `'static` because NetworkTask is stored lifetime-less in
@@ -134,18 +134,18 @@ pub struct DedupeMapEntry {
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
-impl bun_collections::IdentityHash for crate::package_manager_task::Id {
+impl bun_core::collections::IdentityHash for crate::package_manager_task::Id {
     #[inline]
     fn identity_hash(self) -> u64 {
         self.get()
     }
 }
 
-// `bun_collections::HashMap` uses the same 80% max load factor for all maps.
+// `bun_core::collections::HashMap` uses the same 80% max load factor for all maps.
 pub(crate) type DedupeMap = HashMap<
     crate::package_manager_task::Id,
     DedupeMapEntry,
-    bun_collections::IdentityContext<crate::package_manager_task::Id>,
+    bun_core::collections::IdentityContext<crate::package_manager_task::Id>,
 >;
 
 impl NetworkTask {
@@ -399,7 +399,7 @@ bun_core::oom_from_alloc!(ForManifestError);
 impl From<ForManifestError> for crate::Error {
     fn from(e: ForManifestError) -> Self {
         match e {
-            ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForManifestError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
     }
@@ -445,7 +445,7 @@ impl NetworkTask {
             // `OwnedString` derefs the WTF-backed result on scope exit —
             // covers both the
             // success path and the InvalidURL early returns below.
-            let tmp = bun_core::OwnedString::new(bun_url::join(
+            let tmp = bun_core::OwnedString::new(bun_core::url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
                 &bun_core::String::borrow_utf8(encoded_name),
             ));
@@ -592,7 +592,7 @@ impl NetworkTask {
                 // `self.unsafe_http_client.request_header_buf` below and
                 // outlives the request. Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
-                last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
+                last_modified = unsafe { bun_core::ptr::detach_lifetime(appended) };
             }
         } else {
             let header_buf: &'static str = if needs_extended {
@@ -627,13 +627,13 @@ impl NetworkTask {
         // the HTTP request. `AsyncHTTP::init` demands `'static` borrows
         // because the HTTP thread reads them concurrently. See the
         // identical pattern in `s3/simple_request.rs`.
-        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
+        let url = URL::parse(unsafe { bun_core::ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
         // `'static` erasure remains unsafe — the buffer is leaked into the
         // HTTP client below (`ManuallyDrop`), so it genuinely outlives this frame.
         let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
+            unsafe { bun_core::ptr::detach_lifetime(header_builder.content.written_slice()) };
         // `header_builder.content` is intentionally leaked (ownership
         // transfers to the HTTP client). Forget it so
         // `StringBuilder::drop` doesn't free the buffer that `headers_buf` /
@@ -690,7 +690,7 @@ impl NetworkTask {
             // referenced by the `PackageManifest` we just cloned into
             // `self.callback`. Both outlive the HTTP request.
             self.http_mut().client.if_modified_since =
-                unsafe { bun_ptr::detach_lifetime(last_modified) };
+                unsafe { bun_core::ptr::detach_lifetime(last_modified) };
         }
 
         Ok(())
@@ -723,7 +723,7 @@ bun_core::oom_from_alloc!(ForTarballError);
 impl From<ForTarballError> for crate::Error {
     fn from(e: ForTarballError) -> Self {
         match e {
-            ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForTarballError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
             ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
         }
@@ -829,7 +829,7 @@ impl NetworkTask {
             // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
             // `'static` erasure remains unsafe — buffer is leaked below.
             header_buf =
-                unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
+                unsafe { bun_core::ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
         // `header_builder.content` is intentionally leaked (ownership
         // transfers to the HTTP client). Forget it so
@@ -841,7 +841,7 @@ impl NetworkTask {
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
         // `'static` borrow because the HTTP thread reads it concurrently. See
         // the identical pattern in `for_manifest` above.
-        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
+        let url = URL::parse(unsafe { bun_core::ptr::detach_lifetime(&self.url_buf) });
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
@@ -972,7 +972,7 @@ impl NetworkTask {
             // provenance is required for `for_manifest`/`for_tarball`'s
             // `assume_mut`, so callers pass `*mut` (not `*const`).
             addr_of_mut!((*slot).package_manager)
-                .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
+                .write(bun_core::ptr::ParentRef::from_raw_mut(package_manager));
             addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
             // Struct-default fields.
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());

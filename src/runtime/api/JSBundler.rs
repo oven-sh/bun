@@ -8,7 +8,7 @@ use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
 use bun_bundler::BundleV2;
 use bun_bundler::options;
-use bun_collections::{StringMap, StringSet};
+use bun_core::collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
@@ -105,7 +105,7 @@ pub mod js_bundler {
             // Normalize backslashes to forward slashes for cross-platform consistency.
             // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
             // (uses sep_windows constant, not sep which varies by target).
-            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+            bun_core::paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
                 key.as_mut_slice(),
             );
 
@@ -879,7 +879,7 @@ pub mod js_bundler {
                     }
 
                     if entry_points.len() == 1 {
-                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                        let d = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(
                             &entry_points[0],
                         );
                         break 'brk ZigStringSlice::from_utf8_never_free(if d.is_empty() {
@@ -894,7 +894,7 @@ pub mod js_bundler {
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
                     break 'brk ZigStringSlice::from_utf8_never_free(
-                        bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
+                        bun_core::paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
                             .unwrap_or(b"."),
                     );
                 };
@@ -911,7 +911,7 @@ pub mod js_bundler {
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let mut rootdir_buf = bun_core::paths::PathBuffer::uninit();
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
@@ -1203,24 +1203,24 @@ pub mod js_bundler {
 
                     if compile.outfile.is_empty() {
                         let entry_point: &[u8] = &this.entry_points.keys()[0];
-                        let mut outfile = bun_paths::basename(entry_point);
-                        let ext = bun_paths::extension(outfile);
+                        let mut outfile = bun_core::paths::basename(entry_point);
+                        let ext = bun_core::paths::extension(outfile);
                         if !ext.is_empty() {
                             outfile = &outfile[0..outfile.len() - ext.len()];
                         }
 
                         if outfile == b"index" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                            let d = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(
                                 entry_point,
                             );
-                            outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
+                            outfile = bun_core::paths::basename(if d.is_empty() { b"index" } else { d });
                         }
 
                         if outfile == b"bun" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                            let d = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(
                                 entry_point,
                             );
-                            outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
+                            outfile = bun_core::paths::basename(if d.is_empty() { b"bun" } else { d });
                         }
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
@@ -1240,17 +1240,17 @@ pub mod js_bundler {
                         // build's output inside its own (temp) directory and is
                         // also the more intuitive default for a programmatic API.
                         // Explicit `outfile`/`outdir` are unaffected.
-                        let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                        let entry_dir = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(
                             entry_point,
                         );
                         if this.outdir.is_empty()
                             && !entry_dir.is_empty()
-                            && bun_paths::is_absolute(entry_dir)
+                            && bun_core::paths::is_absolute(entry_dir)
                         {
                             compile.outfile.append_slice_exact(entry_dir)?;
                             compile
                                 .outfile
-                                .append_slice_exact(core::slice::from_ref(&bun_paths::SEP))?;
+                                .append_slice_exact(core::slice::from_ref(&bun_core::paths::SEP))?;
                         }
                         compile.outfile.append_slice_exact(outfile)?;
                     }
@@ -1467,7 +1467,7 @@ pub mod js_bundler {
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
     }
 
-    bun_output::declare_scope!(BUNDLER_DEFERRED, hidden);
+    bun_core::declare_scope!(BUNDLER_DEFERRED, hidden);
 
     /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
     /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
@@ -1485,7 +1485,7 @@ pub mod js_bundler {
             }
             self.called_defer = true;
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 BUNDLER_DEFERRED,
                 "JSBundlerPlugin__onDefer(0x{:x}, {})",
                 std::ptr::from_ref(self) as usize,
@@ -1836,7 +1836,7 @@ pub mod js_bundler {
             0 => {
                 // SAFETY: C++ caller passes the live `*mut Resolve` it received from
                 // `Resolve::dispatch` as `ctx` when `which == 0`; sole owner on the JS thread.
-                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
+                let resolve = unsafe { bun_core::ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
@@ -1844,7 +1844,7 @@ pub mod js_bundler {
             1 => {
                 // SAFETY: C++ caller passes the live `*mut Load` it received from
                 // `Load::dispatch` as `ctx` when `which == 1`; sole owner on the JS thread.
-                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
+                let load = unsafe { bun_core::ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);

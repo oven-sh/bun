@@ -60,7 +60,7 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
+    // Intrusive refcount: the handle type is `bun_core::ptr::IntrusiveRc<NativeBrotli>`; the
     // `ref_count` field below is read/written by that wrapper, and `deinit` is the
     // drop body invoked when the count reaches zero.
 
@@ -69,13 +69,13 @@ mod _impl {
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[bun_jsc::JsClass]
-    #[derive(bun_ptr::CellRefCounted)]
+    #[derive(bun_core::ptr::CellRefCounted)]
     #[ref_count(destroy = Self::destroy_on_zero)]
     pub struct NativeBrotli {
         pub ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
-        pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
@@ -139,7 +139,7 @@ mod _impl {
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
-                global_this: bun_ptr::BackRef::new(global_this),
+                global_this: bun_core::ptr::BackRef::new(global_this),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

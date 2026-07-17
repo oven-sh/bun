@@ -1,7 +1,7 @@
 //! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
@@ -146,7 +146,7 @@ pub enum AnyRoute {
     /// Serve a file from disk
     File(core::ptr::NonNull<FileRoute>),
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
-    Html(bun_ptr::RefPtr<html_bundle::Route>),
+    Html(bun_core::ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
     FrameworkRouter(crate::bake::framework_router::TypeIndex),
 }
@@ -160,8 +160,8 @@ impl AnyRoute {
     // instead of repeating a raw `NonNull::as_ref` per arm.
     pub fn memory_cost(&self) -> usize {
         match self {
-            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).memory_cost(),
-            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).memory_cost(),
+            AnyRoute::Static(p) => bun_core::ptr::BackRef::from(*p).memory_cost(),
+            AnyRoute::File(p) => bun_core::ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::Html(r) => r.data().memory_cost(),
             AnyRoute::FrameworkRouter(_) => {
                 core::mem::size_of::<crate::bake::FileSystemRouterType>()
@@ -171,11 +171,11 @@ impl AnyRoute {
 
     pub fn ref_(&self) {
         match self {
-            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).ref_(),
-            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).ref_(),
+            AnyRoute::Static(p) => bun_core::ptr::BackRef::from(*p).ref_(),
+            AnyRoute::File(p) => bun_core::ptr::BackRef::from(*p).ref_(),
             AnyRoute::Html(r) => {
                 // SAFETY: RefPtr keeps the pointee live while held in the route table.
-                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
+                unsafe { bun_core::ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
             }
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -193,8 +193,8 @@ impl AnyRoute {
 
     pub fn set_server(&self, server: Option<AnyServer>) {
         match self {
-            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).server.set(server),
-            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).set_server(server),
+            AnyRoute::Static(p) => bun_core::ptr::BackRef::from(*p).server.set(server),
+            AnyRoute::File(p) => bun_core::ptr::BackRef::from(*p).set_server(server),
             AnyRoute::Html(r) => r.data().server.set(server),
             AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server
         }
@@ -222,7 +222,7 @@ bitflags::bitflags! {
 
 // ─── NewServer ───────────────────────────────────────────────────────────────
 /// Number of HTTP method tokens — must match the variant count of
-/// `bun_http_types::Method::Method` (`ACL`..`UNSUBSCRIBE`). Sizes
+/// `bun_core::http_types::Method::Method` (`ACL`..`UNSUBSCRIBE`). Sizes
 /// [`NewServer::method_name_cache`]; the lookup falls back to a fresh intern if
 /// a future variant ever pushes the index past the end, so this is a perf knob,
 /// not a correctness invariant.
@@ -241,7 +241,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// Potentially null before listen() is called, and once .destroy() is called.
     // LIFETIMES.tsv = STATIC → `&'static VirtualMachine`. `BackRef` for safe
     // `Deref` while keeping the struct `'static` (process-lifetime VM).
-    pub vm: bun_ptr::BackRef<jsc::VirtualMachine>,
+    pub vm: bun_core::ptr::BackRef<jsc::VirtualMachine>,
     pub global_this: *const jsc::JSGlobalObject,
     /// Packed tagged-pointer wire-format `AnyServer` for this
     /// server (`u49` heap addr | `u15` variant tag), computed once in
@@ -280,7 +280,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
     /// through any owner. The
     /// counted ref held here is released in `Drop for NewServer`.
-    pub plugins: Option<bun_ptr::BackRef<ServePlugins>>,
+    pub plugins: Option<bun_core::ptr::BackRef<ServePlugins>>,
 
     pub dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
@@ -449,7 +449,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[inline(always)]
     pub fn plugins_ref(&self) -> Option<&ServePlugins> {
         // `BackRef::get` encapsulates the deref under the counted-ref invariant.
-        self.plugins.as_ref().map(bun_ptr::BackRef::get)
+        self.plugins.as_ref().map(bun_core::ptr::BackRef::get)
     }
 
     /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
@@ -515,7 +515,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Build the server's base URL string (`http(s)://host:port/`, or a
     /// `unix://`/abstract-socket URL) from the configured listen address.
     /// Errors only on allocation failure.
-    pub fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
+    pub fn get_url_as_string(&self) -> Result<bun_core::String, bun_core::alloc_impl::AllocError> {
         use bun_core::fmt::{URLFormatter, URLProto};
         use std::io::Write as _;
         let fmt = match &self.config.address {
@@ -556,7 +556,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         let mut buf = Vec::new();
-        write!(&mut buf, "{}", fmt).map_err(|_| bun_alloc::AllocError)?;
+        write!(&mut buf, "{}", fmt).map_err(|_| bun_core::alloc_impl::AllocError)?;
         Ok(bun_core::String::clone_utf8(&buf))
     }
 
@@ -619,7 +619,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
         should_deinit_context: Option<request_context::DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
-        method: Option<bun_http_types::Method::Method>,
+        method: Option<bun_core::http_types::Method::Method>,
     ) -> Option<PreparedRequest<SSL, DEBUG>> {
         jsc::mark_binding!();
         // SAFETY: `this`/`resp` are live for the duration of the uWS callback;
@@ -640,15 +640,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // a length-gated match (316a83f) the
         // second call is cheap, but the resolved value is also what `create`
         // wants — passing `None` made it parse a second time.
-        let method = method.or_else(|| bun_http_types::Method::Method::which(req.method()));
+        let method = method.or_else(|| bun_core::http_types::Method::Method::which(req.method()));
 
         let request_body_length: Option<usize> = 'len: {
             if method
-                .unwrap_or(bun_http_types::Method::Method::OPTIONS)
+                .unwrap_or(bun_core::http_types::Method::Method::OPTIONS)
                 .has_request_body()
             {
                 let len: usize = if let Some(cl) = req.header(b"content-length") {
-                    bun_http_types::parse_content_length(cl)
+                    bun_core::http_types::parse_content_length(cl)
                 } else {
                     0
                 };
@@ -749,7 +749,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )));
         // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
         // carries the allocation's provenance, as `init_ref` requires.
-        ctx_mut.request_weakref = unsafe { bun_ptr::WeakPtr::init_ref(request_object) };
+        ctx_mut.request_weakref = unsafe { bun_core::ptr::WeakPtr::init_ref(request_object) };
 
         // (H3 eager-url/header population is unreachable on this path.)
 
@@ -904,7 +904,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let original_state = ctx_mut.defer_deinit_until_callback_completes;
         let should_deinit_context = core::cell::Cell::new(false);
         ctx_mut.defer_deinit_until_callback_completes =
-            Some(bun_ptr::BackRef::new(&should_deinit_context));
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context));
         ctx_mut.on_response(server, prepared.js_request, response_value);
         // SAFETY: re-borrow after `on_response` returned (which may have run
         // arbitrary JS but cannot free `ctx` while `defer_deinit_...` is set).
@@ -1023,7 +1023,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             this,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
         ) else {
@@ -1074,7 +1074,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             match &user_route.route.method {
                 server_config::RouteMethod::Any => None,
@@ -1158,7 +1158,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Read-only access goes through `BackRef` (safe `Deref`); each use
         // materialises a fresh short-lived `&Self`, so the JS-reentrant calls
         // below never see an outstanding shared borrow.
-        let this_ref = bun_ptr::BackRef::from(
+        let this_ref = bun_core::ptr::BackRef::from(
             core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
         );
         let vm = this_ref.vm_mut();
@@ -1917,7 +1917,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             method_name_cache: [const { core::cell::Cell::new(JSValue::ZERO) }; N_HTTP_METHODS],
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
-            vm: bun_ptr::BackRef::new(jsc::VirtualMachine::get()),
+            vm: bun_core::ptr::BackRef::new(jsc::VirtualMachine::get()),
             dev_server: None,
             app: None,
             listener: None,
@@ -1995,9 +1995,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if SSL {
-            bun_analytics::features::https_server.fetch_add(1, Ordering::Relaxed);
+            bun_core::analytics::features::https_server.fetch_add(1, Ordering::Relaxed);
         } else {
-            bun_analytics::features::http_server.fetch_add(1, Ordering::Relaxed);
+            bun_core::analytics::features::http_server.fetch_add(1, Ordering::Relaxed);
         }
 
         Ok(server)
@@ -2008,7 +2008,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// the JS `RouteList` value for codegen-backed user routes, or `.zero` when
     /// there are none.
     fn set_routes(&mut self) -> JSValue {
-        use bun_http_types::Method as http_method;
+        use bun_core::http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
@@ -2067,7 +2067,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
             websocket.global_object =
-                bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
+                bun_core::ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
             websocket.handler.server = Some(any_server);
             websocket
@@ -2088,8 +2088,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // BackRef invariant) so the two `&mut self.*` accesses do not overlap
         // from rustc's POV. Replaces the `Option<*mut _>` + per-site
         // `unsafe { &*p }` pattern with one safe accessor.
-        let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
-            self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
+        let websocket_ptr: Option<bun_core::ptr::BackRef<WebSocketServerContext>> =
+            self.config.websocket.as_ref().map(bun_core::ptr::BackRef::new);
 
         for user_route in self.user_routes.iter_mut() {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
@@ -2337,7 +2337,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if !serve_plugins_config.is_empty() {
                     self.plugins =
                         core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config.clone()))
-                            .map(bun_ptr::BackRef::from);
+                            .map(bun_core::ptr::BackRef::from);
                 }
             }
         }
@@ -2503,7 +2503,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `&Self` from the same raw provenance, so the listen-trampoline /
         // `set_routes()` `&mut *this` re-derives never overlap an outstanding
         // shared borrow.
-        let this_ref = bun_ptr::BackRef::from(
+        let this_ref = bun_core::ptr::BackRef::from(
             core::ptr::NonNull::new(this).expect("listen: this non-null (from init())"),
         );
 
@@ -2933,7 +2933,7 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { bun_ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
+        let server = unsafe { bun_core::ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
         let socket = if socket.is_null() {
             None
         } else {
@@ -3257,7 +3257,7 @@ pub type DebugHTTPSServer = NewServer<true, true>;
 
 // ─── AnyServer ───────────────────────────────────────────────────────────────
 // §Dispatch: the
-// `bun_ptr::impl_tagged_ptr_union!` macro would impl a foreign trait for a
+// `bun_core::impl_tagged_ptr_union!` macro would impl a foreign trait for a
 // foreign tuple type (orphan rule), so it can only be invoked from inside
 // `bun_ptr`. Per §Dispatch ("store `(tag: u8, ptr: *mut ())` as two fields"),
 // hand-roll the tag here. AnyServer is cold-path (per-request, not per-tick).
@@ -3453,7 +3453,7 @@ impl AnyServer {
             AnyServerTag::DebugHTTPSServer => 1021,
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
-        bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
+        bun_core::ptr::TaggedPointer::init(self.ptr, tag).to() as u64
     }
 
     /// Shared borrow of the process-static VM. Routes through
@@ -3663,7 +3663,7 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.reload_static_routes())
     }
 
-    pub fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
+    pub fn get_url_as_string(&self) -> Result<bun_core::String, bun_core::alloc_impl::AllocError> {
         any_server_dispatch!(self, |s| s.get_url_as_string())
     }
 }
@@ -3720,7 +3720,7 @@ pub mod http_server_agent {
     pub fn notify_server_routes_updated(
         this: &HTTPServerAgent,
         server: AnyServer,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let Some(agent) = this.agent else {
             return Ok(());
         };
@@ -3733,7 +3733,7 @@ pub mod http_server_agent {
         any_server_dispatch!(&server, |s| {
             routes
                 .try_reserve(s.user_routes.len())
-                .map_err(|_| bun_alloc::AllocError)?;
+                .map_err(|_| bun_core::alloc_impl::AllocError)?;
             for user_route in &s.user_routes {
                 max_id = max_id.max(user_route.id);
                 routes.push(Route {

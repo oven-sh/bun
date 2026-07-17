@@ -7,6 +7,9 @@
 #![feature(allocator_api)]
 #![feature(thread_local)]
 
+#[allow(unused_imports)]
+pub(crate) use crate as alloc_impl;
+
 use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};

@@ -6,10 +6,10 @@ use core::mem::ManuallyDrop;
 use bun_ast::{Loc, Log};
 use bun_core::Output;
 use bun_core::StringOrTinyString;
-use bun_semver as semver;
+use bun_core::semver as semver;
 use bun_sys::{Fd, File};
 use bun_threading::thread_pool;
-use bun_wyhash::Wyhash11;
+use bun_core::wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
@@ -37,7 +37,7 @@ pub struct Task<'a> {
     pub err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
     /// `None` only in `uninit()`; every scheduled task overwrites it.
-    pub package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
+    pub package_manager: Option<bun_core::ptr::ParentRef<PackageManager>>,
     /// default: `None`
     pub apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
@@ -316,7 +316,7 @@ impl<'a> Task<'a> {
                     // threads) via the `ParentRef` safe `Deref`. Wrap as
                     // `BackRef` so the `&PackageManager` autoref does not stay
                     // live across the `&mut *manager` below.
-                    let scope = bun_ptr::BackRef::new(
+                    let scope = bun_core::ptr::BackRef::new(
                         manager_ref.scope_for_package_name(manifest.name.slice()),
                     );
                     let package_manifest = match npm::Registry::get_package_metadata(

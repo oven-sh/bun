@@ -1,4 +1,4 @@
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
 use bun_core::{OwnedString, String as BunString};
 use bun_css::targets::{Browsers, Targets};
@@ -104,7 +104,7 @@ pub(crate) fn testing_impl(
     // because the rule tree stores lifetime-erased refs (see the css_parser.rs
     // notes on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let alloc: &'static Arena = unsafe { bun_core::ptr::detach_lifetime_ref(&arena) };
 
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
@@ -314,7 +314,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // erased crate-wide until 'bump threads through the rule tree — see the
     // css_parser.rs notes). The arena strictly outlives the parsed
     // `stylesheet` below.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let alloc: &'static Arena = unsafe { bun_core::ptr::detach_lifetime_ref(&arena) };
 
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.

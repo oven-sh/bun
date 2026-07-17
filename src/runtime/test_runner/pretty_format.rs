@@ -2,7 +2,7 @@ use core::cell::{Cell, RefCell};
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
 
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::{fmt as bun_fmt, Output};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
@@ -313,7 +313,7 @@ pub mod visited {
 
     // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `INIT` allocates an empty map,
     // `reset` clears retaining capacity (handled by callers via `.clear()`).
-    impl bun_collections::pool::ObjectPoolType for Map {
+    impl bun_core::collections::pool::ObjectPoolType for Map {
         const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
             Some(|| Ok(Map::default()));
         #[inline]
@@ -326,8 +326,8 @@ pub mod visited {
     // list, capped at 16 nodes. `object_pool!` wires the per-monomorphization
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
     // `UnwiredStorage` which panics on first `get_node()`.
-    bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-    pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
+    bun_core::object_pool!(pub Pool: Map, threadsafe, 16);
+    pub type PoolNode = <Pool as bun_core::collections::pool::ObjectPoolTrait>::Node;
 }
 
 pub struct Formatter<'a> {

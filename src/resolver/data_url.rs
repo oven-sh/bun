@@ -175,8 +175,8 @@ impl<'a> DataURL<'a> {
         Ok(parsed)
     }
 
-    pub fn decode_mime_type(&self) -> bun_http_types::MimeType::MimeType {
-        bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
+    pub fn decode_mime_type(&self) -> bun_core::http_types::MimeType::MimeType {
+        bun_core::http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
     /// Decodes the data from the data URL. Always returns an owned slice.
@@ -186,10 +186,10 @@ impl<'a> DataURL<'a> {
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let len = bun_base64::decode_len(percent_decoded);
+            let len = bun_core::base64::decode_len(percent_decoded);
             let mut buf = vec![0u8; len];
             // errdefer: `buf` drops automatically on error path
-            let result = bun_base64::decode(&mut buf, percent_decoded);
+            let result = bun_core::base64::decode(&mut buf, percent_decoded);
             if !result.is_successful() || result.count != len {
                 return Err(DecodeDataError::Base64DecodeError);
             }
@@ -202,7 +202,7 @@ impl<'a> DataURL<'a> {
     /// Returns the shorter of either a base64-encoded or percent-escaped data URL
     pub fn encode_string_as_shortest_data_url(mime_type: &[u8], text: &[u8]) -> Vec<u8> {
         // Calculate base64 version
-        let base64_encode_len = bun_base64::encode_len(text);
+        let base64_encode_len = bun_core::base64::encode_len(text);
         let total_base64_encode_len =
             b"data:".len() + mime_type.len() + b";base64,".len() + base64_encode_len;
 
@@ -235,7 +235,7 @@ impl<'a> DataURL<'a> {
         base64buf[..b"data:".len()].copy_from_slice(b"data:");
         base64buf[b"data:".len()..b"data:".len() + mime_type.len()].copy_from_slice(mime_type);
         base64buf[b"data:".len() + mime_type.len()..prefix_len].copy_from_slice(b";base64,");
-        let encoded_len = bun_base64::encode(&mut base64buf[prefix_len..], text);
+        let encoded_len = bun_core::base64::encode(&mut base64buf[prefix_len..], text);
         base64buf.truncate(prefix_len + encoded_len);
         base64buf
     }

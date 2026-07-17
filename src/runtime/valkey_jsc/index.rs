@@ -8,7 +8,7 @@
 // Import modules
 pub use super::js_valkey;
 pub use super::valkey;
-pub use bun_valkey::valkey_protocol as protocol;
+pub use bun_core::valkey::valkey_protocol as protocol;
 
 // Export JS client
 pub use super::js_valkey::JSValkeyClient;

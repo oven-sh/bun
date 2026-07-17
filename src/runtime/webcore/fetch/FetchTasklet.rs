@@ -23,7 +23,7 @@ use bun_jsc::{
 };
 use bun_sys::FdExt;
 use bun_threading::Mutex;
-use bun_url::URL as ZigURL;
+use bun_core::url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
@@ -49,13 +49,13 @@ impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
 }
 
-bun_output::declare_scope!(FetchTasklet, visible);
+bun_core::declare_scope!(FetchTasklet, visible);
 
 pub(crate) type ResumableSink = ResumableFetchSink;
 
 use http::signals::BodyReceiveMode;
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
     // ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
@@ -124,7 +124,7 @@ pub struct FetchTasklet {
 
     pub tracker: AsyncTaskTracker,
 
-    pub ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
+    pub ref_count: bun_core::ptr::ThreadSafeRefCount<FetchTasklet>,
 }
 
 // Boxing `AnyBlob` is not viable: the `AnyBlob` arm is constructed/matched in
@@ -270,7 +270,7 @@ impl FetchTasklet {
     #[inline]
     fn from_ctx<'a>(ctx: *mut c_void) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx) }
+        unsafe { bun_core::ptr::callback_ctx::<FetchTasklet>(ctx) }
     }
 
     /// Recover `&mut Self` from a `*mut FetchTasklet` callback arg.
@@ -319,7 +319,7 @@ impl FetchTasklet {
     fn temporary_chunk(chunk: &[u8], done: bool) -> StreamResult {
         // See INVARIANT above. `RawSlice` is non-owning; backing buffer
         // outlives the synchronous `on_data` call.
-        let v = bun_ptr::RawSlice::new(chunk);
+        let v = bun_core::ptr::RawSlice::new(chunk);
         if done {
             StreamResult::TemporaryAndDone(v)
         } else {
@@ -368,7 +368,7 @@ impl FetchTasklet {
     pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the interior-mutable
         // atomic counter.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
 
     /// # Safety
@@ -379,7 +379,7 @@ impl FetchTasklet {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     /// # Safety
@@ -389,7 +389,7 @@ impl FetchTasklet {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deref_from_thread(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
-        if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
+        if !unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
         }
         let self_ = Self::from_raw_ref(this);
@@ -444,7 +444,7 @@ impl FetchTasklet {
     }
 
     fn clear_data(&mut self) {
-        bun_output::scoped_log!(FetchTasklet, "clearData ");
+        bun_core::scoped_log!(FetchTasklet, "clearData ");
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
@@ -494,7 +494,7 @@ impl FetchTasklet {
 
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have been allocated via heap::alloc.
     unsafe fn deinit(this: *mut FetchTasklet) {
-        bun_output::scoped_log!(FetchTasklet, "deinit");
+        bun_core::scoped_log!(FetchTasklet, "deinit");
 
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
@@ -524,7 +524,7 @@ impl FetchTasklet {
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have
     /// been allocated via heap::alloc.
     unsafe fn dealloc_for_shutdown(this: *mut FetchTasklet) {
-        bun_output::scoped_log!(FetchTasklet, "deallocForShutdown");
+        bun_core::scoped_log!(FetchTasklet, "deallocForShutdown");
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
         http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
@@ -637,7 +637,7 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         let buffer_reset = core::cell::Cell::new(true);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FetchTasklet,
             "onBodyReceived success={} has_more={}",
             success,
@@ -706,7 +706,7 @@ impl FetchTasklet {
         }
 
         if let Some(readable) = self.readable_stream_ref.get(&global_this) {
-            bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
+            bun_core::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes.size_hint.set(self.get_size_hint());
                 // body can be marked as used but we still need to pipe the data
@@ -728,11 +728,11 @@ impl FetchTasklet {
         }
 
         if let Some(response) = self.current_response_mut() {
-            bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
+            bun_core::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
             if let Some(readable) = response.get_body_readable_stream(&global_this) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived CurrentResponse BodyReadableStream"
                 );
@@ -770,7 +770,7 @@ impl FetchTasklet {
                         was_string: false,
                     }),
                 );
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
                     // SAFETY: see above.
@@ -783,7 +783,7 @@ impl FetchTasklet {
                 self.scheduled_response_buffer = MutableString::default();
 
                 if matches!(old, BodyValue::Locked(_)) {
-                    bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
+                    bun_core::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
                     // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
                     // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
@@ -804,7 +804,7 @@ impl FetchTasklet {
 
     pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
-        bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
+        bun_core::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
@@ -935,14 +935,14 @@ impl FetchTasklet {
         if let Some(certificate_info) = self.result.certificate_info.take() {
             // we receive some error
             if self.reject_unauthorized && !self.check_server_identity(&certificate_info) {
-                bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
+                bun_core::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
                 drop(certificate_info);
                 // `check_server_identity` already set abort_reason / aborted /
                 // result.fail and scheduled the shutdown of the parked
                 // socket; all that is left is rejecting the promise.
                 let promise_value = self.promise.value_or_empty();
                 if promise_value.is_empty_or_undefined_or_null() {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         FetchTasklet,
                         "onProgressUpdate: promise_value is null"
                     );
@@ -995,7 +995,7 @@ impl FetchTasklet {
         let promise_value = self.promise.value_or_empty();
 
         if promise_value.is_empty_or_undefined_or_null() {
-            bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is null");
+            bun_core::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is null");
             self.promise = jsc::JSPromiseStrong::empty();
             cleanup(self);
             return Ok(());
@@ -1029,7 +1029,7 @@ impl FetchTasklet {
         tracker.will_dispatch(&global_this);
         // defer block:
         let dispatch_cleanup = |this: &mut FetchTasklet| {
-            bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
+            bun_core::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
             this.promise = jsc::JSPromiseStrong::empty();
         };
@@ -1274,7 +1274,7 @@ impl FetchTasklet {
 
     pub(crate) fn on_reject(&mut self) -> BodyValueError {
         debug_assert!(self.result.fail.is_some());
-        bun_output::scoped_log!(FetchTasklet, "onReject");
+        bun_core::scoped_log!(FetchTasklet, "onReject");
 
         if let Some(err) = self.get_abort_error() {
             return err;
@@ -1747,7 +1747,7 @@ impl FetchTasklet {
     }
 
     fn to_response(&mut self) -> Response {
-        bun_output::scoped_log!(FetchTasklet, "toResponse");
+        bun_core::scoped_log!(FetchTasklet, "toResponse");
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
@@ -1789,7 +1789,7 @@ impl FetchTasklet {
     }
 
     fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
-        bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
+        bun_core::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // The response is being abandoned. If the request body is still uploading
         // through a ResumableSink, detach its JS wrapper so the cached
         // `ondrain` closure (and the reader/stream graph it captures) becomes
@@ -1841,7 +1841,7 @@ impl FetchTasklet {
     }
 
     pub(crate) fn on_resolve(&mut self) -> JSValue {
-        bun_output::scoped_log!(FetchTasklet, "onResolve");
+        bun_core::scoped_log!(FetchTasklet, "onResolve");
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
         // The fetch() promise is about to resolve; from here the paused
         // transport should not by itself keep the event loop alive. The body
@@ -1914,7 +1914,7 @@ impl FetchTasklet {
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
             tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
@@ -1989,16 +1989,16 @@ impl FetchTasklet {
         // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
         // owner so the widen is grep-able until then.
         let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
+            unsafe { bun_core::ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
         // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
         let request_body_slice: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
+            unsafe { bun_core::ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
         let hostname: Option<&'static [u8]> = fetch_tasklet
             .hostname
             .as_deref()
             // SAFETY: see block note above — same `FetchTasklet` owner.
-            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
+            .map(|s| unsafe { bun_core::ptr::Interned::assume(s) }.as_bytes());
         let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
@@ -2111,7 +2111,7 @@ impl FetchTasklet {
 
     #[bun_uws::uws_callback]
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
-        bun_output::scoped_log!(FetchTasklet, "abortListener");
+        bun_core::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
         reason.ensure_still_alive();
         this.abort_reason.set(&this.global_this, reason);
@@ -2154,7 +2154,7 @@ impl FetchTasklet {
     // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
     pub(crate) fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
-        bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
+        bun_core::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         let result = (|| {
             if this_ref.signal_aborted() {
                 // already aborted; nothing to drain
@@ -2182,7 +2182,7 @@ impl FetchTasklet {
     }
 
     pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
-        bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
+        bun_core::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
         if self.signal_aborted() {
             return ResumableSinkBackpressure::Done;
         }
@@ -2249,7 +2249,7 @@ impl FetchTasklet {
     }
 
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
-        bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
+        bun_core::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
         let this_ptr = std::ptr::from_mut(self);
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
@@ -2352,7 +2352,7 @@ impl FetchTasklet {
             .unwrap()
             .sync_progress_from(unsafe { &*async_http });
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FetchTasklet,
             "callback success={} receive_mode={:?} has_more={} bytes={}",
             result.is_success(),
@@ -2391,7 +2391,7 @@ impl FetchTasklet {
 
         // metadata should be provided only once
         if let Some(metadata) = task_ref.result.metadata.take().or(prev_metadata) {
-            bun_output::scoped_log!(FetchTasklet, "added callback metadata");
+            bun_core::scoped_log!(FetchTasklet, "added callback metadata");
             if task_ref.metadata.is_none() {
                 task_ref.metadata = Some(metadata);
             }
@@ -2511,7 +2511,7 @@ impl FetchTasklet {
 impl FetchTasklet {
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
-        bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
+        bun_core::scoped_log!(FetchTasklet, "onResponseFinalize");
         let this = self;
         if let Some(response) = this.native_response {
             // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.

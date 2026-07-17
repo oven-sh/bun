@@ -1,6 +1,6 @@
 //! Stage 2 of the JSON parser: recursive descent over the structural index built by
 //! [`crate::json_index`] (stage 1) into the immutable JSON AST (`E::JsonTape` rows).
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
 use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
@@ -13,7 +13,7 @@ use crate::json_index::{self as jidx, StructuralIndex};
 
 type PResult<T = ()> = crate::Result<T>;
 
-type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
+type DupMap = bun_core::collections::HashMap<u64, (), bun_core::collections::IdentityContext<u64>>;
 
 pub(crate) struct Parser<'a, 's, 'i> {
     contents: &'s [u8],
@@ -846,7 +846,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     const DUP_LINEAR_MAX: usize = 32;
 
     fn check_duplicate_key(&mut self, mark: usize, hmark: usize, key: &[u8]) -> bool {
-        let h = bun_wyhash::hash(key);
+        let h = bun_core::wyhash::hash(key);
         let n_prior = self.dup_hashes.len() - hmark;
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {

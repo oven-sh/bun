@@ -11,7 +11,7 @@
 use core::mem::offset_of;
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
 use bun_core::strings;
 
 use super::{
@@ -40,7 +40,7 @@ pub struct InsertEmptyResult<const SIDE: bake::Side> {
     /// `remove_dependencies_for_file` is called first — so every holder
     /// outlives no read past that point (`RawSlice` invariant). Callers compare
     /// it by pointer identity.
-    pub key: bun_ptr::RawSlice<u8>,
+    pub key: bun_core::ptr::RawSlice<u8>,
 }
 
 /// `bun.GenericIndex(u32, Edge)`.
@@ -451,7 +451,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn ensure_stale_bit_capacity(
         &mut self,
         are_new_files_stale: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let want = self.bundled_files.count().max(self.stale_files.bit_length);
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
@@ -479,7 +479,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    fn new_edge(&mut self, edge: Edge<SIDE>) -> Result<EdgeIndex, bun_alloc::AllocError> {
+    fn new_edge(&mut self, edge: Edge<SIDE>) -> Result<EdgeIndex, bun_core::alloc_impl::AllocError> {
         if let Some(index) = self.edges_free_list.pop() {
             self.edges[index.get() as usize] = edge;
             return Ok(index);
@@ -774,7 +774,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         // `&mut self` (server_graph); `client_graph` is a
                         // disjoint sibling field.
                         let client_graph = unsafe { &mut (*dev).client_graph };
-                        let key = bun_ptr::RawSlice::new(
+                        let key = bun_core::ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
                         let client_index =
@@ -1169,7 +1169,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     (file.is_hmr_root, file.html_route_bundle_index)
                 };
                 if is_hmr_root {
-                    let key = bun_ptr::RawSlice::new(
+                    let key = bun_core::ptr::RawSlice::new(
                         &*self.bundled_files.keys()[file_index.get() as usize],
                     );
                     // SAFETY: cross-graph sibling access; `server_graph` disjoint.
@@ -1241,7 +1241,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     (f.is_client_component_boundary, f.kind, f.failed)
                 };
                 if is_scb || kind == FileKind::Css {
-                    let key = bun_ptr::RawSlice::new(
+                    let key = bun_core::ptr::RawSlice::new(
                         &*self.bundled_files.keys()[file_index.get() as usize],
                     );
                     // SAFETY: disjoint sibling `client_graph`.
@@ -1334,7 +1334,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         abs_path: &[u8],
         is_ssr_graph: bool,
-    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+    ) -> Result<FileIndex<SIDE>, bun_core::alloc_impl::AllocError> {
         self.insert_stale_extra(abs_path, is_ssr_graph, false)
     }
 
@@ -1344,7 +1344,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         abs_path: &[u8],
         is_ssr_graph: bool,
         is_route: bool,
-    ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+    ) -> Result<FileIndex<SIDE>, bun_core::alloc_impl::AllocError> {
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
@@ -1369,7 +1369,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
                     // Note: re-derive owned key via `RawSlice` so
                     // `free_file_content` can borrow `&mut self`.
-                    let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
+                    let key = bun_core::ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
                     existing.kind = FileKind::Unknown;
                     self.bundled_files.values_mut()[idx] = existing;
@@ -1403,7 +1403,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         abs_path: &[u8],
         kind: FileKind,
-    ) -> Result<InsertEmptyResult<SIDE>, bun_alloc::AllocError> {
+    ) -> Result<InsertEmptyResult<SIDE>, bun_core::alloc_impl::AllocError> {
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
@@ -1428,7 +1428,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         // Capture the interned-key fat ptr now so the `gop` borrow on
         // `bundled_files` ends before `ensure_stale_bit_capacity` reborrows.
-        let key = bun_ptr::RawSlice::new(&**gop.key_ptr);
+        let key = bun_core::ptr::RawSlice::new(&**gop.key_ptr);
         if !found_existing {
             self.first_dep.push(None);
             self.first_import.push(None);
@@ -1475,7 +1475,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         key: InsertFailureKey<'_>,
         log: &bun_ast::Log,
         is_ssr_graph: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let (idx, found_existing) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
                 let gop = self.bundled_files.get_or_put(abs_path)?;
@@ -1498,7 +1498,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 if found_existing {
                     let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
-                    let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
+                    let key = bun_core::ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
                     existing.failed = true;
                     existing.kind = FileKind::Unknown;
@@ -1539,8 +1539,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
 
         let failure = {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
+            let mut buf = bun_core::paths::path_buffer_pool::get();
+            let key = bun_core::ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
             let owner_display_name = unsafe { (*dev).relative_path(&mut *buf, key.slice()) };
             SerializedFailure::init_from_log(
@@ -1580,7 +1580,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         abs_path: &[u8],
         bv2: &mut bun_bundler::BundleV2<'_>,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let Some(index) = self.get_file_index(abs_path) else {
             return Ok(());
         };
@@ -1612,7 +1612,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // Bust the resolution cache of the dir containing this file.
-        let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
+        let dirname = bun_core::paths::dirname(abs_path).unwrap_or(abs_path);
         let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
 
         // Clear the cached entry from the path→source-index maps.
@@ -1638,7 +1638,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // freed before `entry_points` is consumed).
             // Note: re-derive via `RawSlice` so the immutable key borrow
             // does not conflict with the `&mut entry_points` push below.
-            let owned_path = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[index]);
+            let owned_path = bun_core::ptr::RawSlice::new(&*self.bundled_files.keys()[index]);
             let owned_path = owned_path.slice();
             match SIDE {
                 Side::Client => match &self.bundled_files.values()[index].content {
@@ -1658,7 +1658,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 self.bundled_files.values()[dep.get() as usize].content,
                                 Content::CssRoot(_),
                             ) {
-                                let k = bun_ptr::RawSlice::new(
+                                let k = bun_core::ptr::RawSlice::new(
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
                                 entry_points.append_css(k.slice())?;
@@ -1672,7 +1672,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             let entry = self.edges[edge_index.get() as usize];
                             let dep = entry.dependency;
                             self.stale_files.set(dep.get() as usize);
-                            let k = bun_ptr::RawSlice::new(
+                            let k = bun_core::ptr::RawSlice::new(
                                 &*self.bundled_files.keys()[dep.get() as usize],
                             );
                             let k = k.slice();
@@ -1759,7 +1759,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ChunkKind::InitialResponse => {
                 end_list.extend_from_slice(b"}, {\n  main: ");
                 if !options.initial_response_entry_point.is_empty() {
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_core::paths::path_buffer_pool::get();
                     // SAFETY: `relative_path` reads `dev.root` only.
                     let rel = unsafe {
                         (*dev).relative_path(&mut *buf, options.initial_response_entry_point)
@@ -1793,7 +1793,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if !options.react_refresh_entry_point.is_empty() {
                     end_list.extend_from_slice(b",\n  refresh: ");
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_core::paths::path_buffer_pool::get();
                     // SAFETY: `relative_path` reads `dev.root` only.
                     let rel = unsafe {
                         (*dev).relative_path(&mut *buf, options.react_refresh_entry_point)

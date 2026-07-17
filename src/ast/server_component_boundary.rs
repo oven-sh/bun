@@ -6,9 +6,9 @@
 //!
 //! This is sometimes abbreviated as SCB
 
-use bun_collections::array_hash_map::ArrayHashAdapter;
-use bun_collections::multi_array_list;
-use bun_collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
+use bun_core::collections::array_hash_map::ArrayHashAdapter;
+use bun_core::collections::multi_array_list;
+use bun_core::collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
 
 use super::base::IndexInt;
 use super::use_directive::UseDirective;
@@ -36,7 +36,7 @@ pub struct ServerComponentBoundary {
     pub ssr_source_index: IndexInt,
 }
 
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub trait ServerComponentBoundaryColumns for ServerComponentBoundary {
         use_directive: UseDirective,
         source_index: IndexInt,
@@ -68,7 +68,7 @@ impl List {
         use_directive: UseDirective,
         reference_source_index: IndexInt,
         ssr_source_index: IndexInt,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.list.append(ServerComponentBoundary {
             source_index,
             use_directive,
@@ -135,7 +135,7 @@ impl<'a> Slice<'a> {
     pub fn bit_set(
         &self,
         input_file_count: usize,
-    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
+    ) -> Result<DynamicBitSetUnmanaged, bun_core::alloc_impl::AllocError> {
         let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count)?;
         for &source_index in self.list.items::<"source_index", IndexInt>() {
             scb_bitset.set(source_index as usize);
@@ -153,7 +153,7 @@ pub(crate) struct Adapter<'a> {
 impl<'a> ArrayHashAdapter<IndexInt, ()> for Adapter<'a> {
     #[inline]
     fn hash(&self, key: &IndexInt) -> u32 {
-        bun_wyhash::hash_int(*key)
+        bun_core::wyhash::hash_int(*key)
     }
     #[inline]
     fn eql(&self, a: &IndexInt, _b: &(), b_index: usize) -> bool {

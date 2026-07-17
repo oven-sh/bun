@@ -2,22 +2,23 @@
 //! configuration. Agnostic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
 
-use bun_alloc::ArenaVecExt as _;
-use bun_paths::strings;
+use bun_core::alloc_impl::ArenaVecExt as _;
+use bun_core::paths::strings;
 use core::fmt;
 use core::mem::size_of;
 
-use bun_alloc::{AllocError, Arena, ArenaVec};
-use bun_collections::array_hash_map::ArrayHashContext;
-use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
+use bun_core::alloc_impl::{AllocError, Arena, ArenaVec};
+use bun_core::collections::array_hash_map::ArrayHashContext;
+use bun_core::collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_core::paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
 
-use bun_wyhash;
+#[allow(unused_imports)]
+use bun_core::wyhash as bun_wyhash;
 
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
 
@@ -245,13 +246,13 @@ impl FrameworkRouter {
 pub struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
-    pub data: bun_ptr::RawSlice<u8>,
+    pub data: bun_core::ptr::RawSlice<u8>,
 }
 
 impl EncodedPattern {
     /// `/` is represented by zero bytes
     pub const ROOT: EncodedPattern = EncodedPattern {
-        data: bun_ptr::RawSlice::EMPTY,
+        data: bun_core::ptr::RawSlice::EMPTY,
     };
 
     #[inline]
@@ -279,7 +280,7 @@ impl EncodedPattern {
             debug_assert!(fbs.pos == len);
         }
         Ok(EncodedPattern {
-            data: bun_ptr::RawSlice::new(slice),
+            data: bun_core::ptr::RawSlice::new(slice),
         })
     }
 
@@ -323,7 +324,7 @@ impl EncodedPattern {
                 Part::Group(_) => continue,
             }
         }
-        bun_wyhash::hash(&stack_space[..pos]) as usize
+        bun_core::wyhash::hash(&stack_space[..pos]) as usize
     }
 
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
@@ -359,8 +360,8 @@ impl EncodedPattern {
                     }
                     params.params.resize(param_num + 1).unwrap();
                     params.params.slice()[param_num] = MatchedParamEntry {
-                        key: bun_ptr::RawSlice::new(name),
-                        value: bun_ptr::RawSlice::new(&path[i..end]),
+                        key: bun_core::ptr::RawSlice::new(name),
+                        value: bun_core::ptr::RawSlice::new(&path[i..end]),
                     };
                     param_num += 1;
                     i = if end == path.len() { end } else { end + 1 };
@@ -379,8 +380,8 @@ impl EncodedPattern {
                                 }
                                 params.params.resize(param_num + 1).unwrap();
                                 params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(
+                                    key: bun_core::ptr::RawSlice::new(name),
+                                    value: bun_core::ptr::RawSlice::new(
                                         &path[segment_start..segment_end],
                                     ),
                                 };
@@ -464,7 +465,7 @@ impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
 pub struct StaticPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `StaticPattern` — see `RawSlice` invariant in `bun_ptr`).
-    pub route_path: bun_ptr::RawSlice<u8>,
+    pub route_path: bun_core::ptr::RawSlice<u8>,
 }
 
 impl StaticPattern {
@@ -1214,7 +1215,7 @@ impl<'a> Part<'a> {
             // router drop/reset — strictly after every `Route` holding a
             // `Part<'static>` is gone. NOT process-lifetime; a `'bump`
             // parameter on `Part` would model this more precisely.
-            unsafe { bun_ptr::Interned::assume(s) }.as_bytes()
+            unsafe { bun_core::ptr::Interned::assume(s) }.as_bytes()
         }
         match self {
             Part::Text(s) => Part::Text(d(s)),
@@ -1236,8 +1237,8 @@ pub struct MatchedParams {
 pub struct MatchedParamEntry {
     // Borrow from the input `path`/`pattern` buffers; both outlive the
     // `MatchedParams` stack frame. See `RawSlice` invariant.
-    pub key: bun_ptr::RawSlice<u8>,
-    pub value: bun_ptr::RawSlice<u8>,
+    pub key: bun_core::ptr::RawSlice<u8>,
+    pub value: bun_core::ptr::RawSlice<u8>,
 }
 
 impl MatchedParams {
@@ -1481,14 +1482,14 @@ pub trait InsertionHandler {
 /// `std::collections::HashMap`, which has a different layout, so we rebuild
 /// into a `zig_hash_map` keyed/hashed deterministically before iterating.
 struct ZigStringHashContext;
-impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
+impl bun_core::collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
     #[inline]
     fn ctx_hash(key: &Box<[u8]>) -> u64 {
-        // `bun_wyhash::hash` is the wyhash final4 variant with seed 0.
+        // `bun_core::wyhash::hash` is the wyhash final4 variant with seed 0.
         // (Don't route through `auto_hash`/`OneShotHasher`
         // here: Rust's `<[u8] as Hash>` mixes in a length prefix, which would
         // shift the bucket layout the snapshot below depends on.)
-        bun_wyhash::hash(key)
+        bun_core::wyhash::hash(key)
     }
     #[inline]
     fn ctx_eql(a: &Box<[u8]>, b: &Box<[u8]>) -> bool {
@@ -1539,7 +1540,7 @@ impl FrameworkRouter {
             // deterministic. Absent hash collisions (the common case for small
             // dirs) the bucket order is fully determined by the hash, so
             // re-insertion order is irrelevant.
-            let mut zig_order: bun_collections::zig_hash_map::HashMap<
+            let mut zig_order: bun_core::collections::zig_hash_map::HashMap<
                 Box<[u8]>,
                 *mut bun_resolver::fs::Entry,
                 ZigStringHashContext,
@@ -1726,7 +1727,7 @@ impl FrameworkRouter {
                             }
                             debug_assert!(pos == allocation.len());
                             let pattern = StaticPattern {
-                                route_path: bun_ptr::RawSlice::new(allocation),
+                                route_path: bun_core::ptr::RawSlice::new(allocation),
                             };
                             self.insert(
                                 t_index,

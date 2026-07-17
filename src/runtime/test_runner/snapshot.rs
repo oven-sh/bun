@@ -1,7 +1,8 @@
 use core::ffi::c_ulong;
 use std::io::Write as _;
 
-use bun_collections::{HashMap, StringHashMap};
+use bun_core::collections::{HashMap, StringHashMap};
+#[allow(unused_imports)]
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
 use bun_core;
@@ -9,9 +10,10 @@ use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer};
 use bun_sys::{self};
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
@@ -45,7 +47,7 @@ pub struct Snapshots<'a> {
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
-pub use bun_collections::ArrayHashMap as IndexMap;
+pub use bun_core::collections::ArrayHashMap as IndexMap;
 
 impl<'a> Snapshots<'a> {
     const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
@@ -106,7 +108,7 @@ impl<'a> Snapshots<'a> {
     pub fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
-        // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
+        // bun_core::collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
             .counts
@@ -220,7 +222,7 @@ impl<'a> Snapshots<'a> {
             bun_ast::Loader::Js,
         );
         // Thread a per-call arena — js_parser is bump-allocated.
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_core::alloc_impl::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
         // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
@@ -367,7 +369,7 @@ impl<'a> Snapshots<'a> {
         let vm = VirtualMachine::get().as_mut();
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
-        let mut arena = bun_alloc::Arena::new();
+        let mut arena = bun_core::alloc_impl::Arena::new();
 
         // reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
         let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
@@ -383,7 +385,7 @@ impl<'a> Snapshots<'a> {
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        bun_output::error_writer(),
+                        bun_core::error_writer(),
                     ));
                     success.set(false);
                 }

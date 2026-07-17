@@ -41,12 +41,12 @@ bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 /// `JSGlobalObject`'s own auto-traits (single JS thread).
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct GlobalRef(bun_ptr::BackRef<JSGlobalObject>);
+pub struct GlobalRef(bun_core::ptr::BackRef<JSGlobalObject>);
 
 impl GlobalRef {
     #[inline(always)]
     pub fn new(global: &JSGlobalObject) -> Self {
-        Self(bun_ptr::BackRef::new(global))
+        Self(bun_core::ptr::BackRef::new(global))
     }
 
     /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).

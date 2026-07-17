@@ -14,9 +14,9 @@ use bun_sql::postgres::postgres_types::int4;
 bun_core::declare_scope!(Postgres, visible);
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-// Ported as an embedded `Cell<u32>` driven by `bun_ptr::IntrusiveRc<PostgresSQLStatement>`;
+// Ported as an embedded `Cell<u32>` driven by `bun_core::ptr::IntrusiveRc<PostgresSQLStatement>`;
 // `ref`/`deref` are provided by `IntrusiveRc`, not as inherent methods.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub cached_structure: PostgresCachedStructure,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
@@ -123,7 +123,7 @@ impl Drop for PostgresSQLStatement {
         // `fields` (Vec<FieldDescription>): each element's Drop runs, then the buffer frees.
         // `parameters` (Box<[int4]>): freed by Drop.
         // `cached_structure`, `error_response`, `signature`: Drop.
-        // `bun.default_allocator.destroy(this)`: handled by `bun_ptr::IntrusiveRc` dealloc,
+        // `bun.default_allocator.destroy(this)`: handled by `bun_core::ptr::IntrusiveRc` dealloc,
         // not here — Drop must not free `self`'s storage.
     }
 }

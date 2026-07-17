@@ -6,8 +6,9 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
-use bun_paths::{self, SEP_STR};
-use bun_semver::String as SemverString;
+#[allow(unused_imports)]
+use bun_core::paths::{self, SEP_STR};
+use bun_core::semver::String as SemverString;
 use bun_sys::{self, Fd};
 
 use crate::bun_json::{self, Expr};
@@ -15,7 +16,7 @@ use crate::bun_json::{self, Expr};
 // so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
 use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
 
-bun_output::declare_scope!(Lockfile, hidden);
+bun_core::declare_scope!(Lockfile, hidden);
 
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
@@ -203,7 +204,7 @@ impl Scripts {
         &self,
         lockfile: &Lockfile,
         lockfile_buf: &[u8],
-        cwd_: &mut bun_paths::AutoAbsPath,
+        cwd_: &mut bun_core::paths::AutoAbsPath,
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
@@ -213,7 +214,7 @@ impl Scripts {
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
             #[cfg(windows)]
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
+            let mut cwd_buf = bun_core::paths::PathBuffer::uninit();
 
             #[cfg(not(windows))]
             let cwd: &[u8] = cwd_.slice();
@@ -250,10 +251,10 @@ impl Scripts {
         None
     }
 
-    // Generic over `bun_semver::StringBuilder`
-    // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
+    // Generic over `bun_core::semver::StringBuilder`
+    // so both `lockfile_real::StringBuilder` and `bun_core::semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
+    pub fn parse_count<B: bun_core::semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
@@ -270,7 +271,7 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
+    pub fn parse_alloc<B: bun_core::semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
@@ -289,7 +290,7 @@ impl Scripts {
         &mut self,
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut bun_core::paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
     ) -> Result<Option<List>, crate::Error> {
@@ -334,7 +335,7 @@ impl Scripts {
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut bun_core::paths::AutoAbsPath,
     ) -> Result<(), crate::Error> {
         let json_buf;
         let parsed;
@@ -363,7 +364,7 @@ impl Scripts {
         &mut self,
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut bun_core::paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, crate::Error> {
@@ -425,7 +426,7 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        let needle = bun_paths::NODE_MODULES_NEEDLE;
+        let needle = bun_core::paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
@@ -479,7 +480,7 @@ impl List {
     pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {
             if let Some(script) = maybe_script {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     Lockfile,
                     "enqueue({}, {}) in {}",
                     "prepare",

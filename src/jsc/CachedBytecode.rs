@@ -114,19 +114,19 @@ impl CachedBytecode {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// The `bun_alloc::Allocator` marker trait has no
+// The `bun_core::alloc_impl::Allocator` marker trait has no
 // `alloc`/`free` methods to dispatch through — so "free → deref" semantics
 // cannot ride the trait object. Call sites that would have freed through this
 // allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
 // directly. `is_instance` is preserved for the vtable-identity check in
-// `bun_safety::alloc::has_ptr`.
+// `bun_core::safety::alloc::has_ptr`.
 // ──────────────────────────────────────────────────────────────────────────
 
-impl bun_alloc::Allocator for CachedBytecode {}
+impl bun_core::alloc_impl::Allocator for CachedBytecode {}
 
 impl CachedBytecode {
     /// Concrete-type identity check via the `Allocator::type_id()` hook.
-    pub fn is_instance(alloc: &dyn bun_alloc::Allocator) -> bool {
+    pub fn is_instance(alloc: &dyn bun_core::alloc_impl::Allocator) -> bool {
         alloc.is::<Self>()
     }
 }

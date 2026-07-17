@@ -274,10 +274,10 @@ impl ShellTouchTask {
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     pub fn run_from_thread_pool(this: &mut ShellTouchTask) {
-        use bun_paths::resolve_path::{self, Platform, platform};
+        use bun_core::paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
         // We have to give an absolute path.
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_core::paths::PathBuffer::uninit();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Re-terminate into the path buffer (`filepath` is the bare argv
             // bytes without the trailing NUL).

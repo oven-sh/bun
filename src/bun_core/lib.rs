@@ -75,6 +75,7 @@ pub mod valkey;
 // and the absorbed-crate globs below (explicit wins over all globs).
 pub use util::{Mode, Mutex, MutexGuard, OSPathChar, OSPathSlice, OSPathSliceZ, SEP, Version};
 pub use Global::features;
+pub use alloc_impl::free_sensitive_cstr as free_sensitive;
 
 #[allow(ambiguous_glob_reexports, unused_imports)]
 pub use alloc_impl::*;
@@ -204,7 +205,7 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_ast::StoreSlice<T>` for `*const [T]` struct
-/// fields. Same contract as `bun_ptr::BackRef`: the slice memory is owned
+/// fields. Same contract as `bun_core::ptr::BackRef`: the slice memory is owned
 /// elsewhere (parent struct, leaked `Box`, interned string) and remains valid
 /// for the holder's full lifetime. Stores a fat raw pointer (`*const [T]`,
 /// `usize` len) so it is a byte-for-byte drop-in for the raw `*const [T]`
@@ -408,7 +409,7 @@ pub mod path_sep {
     /// — **no** alphabetic gate on the drive byte, and a
     /// bare `X:` with no trailing separator is **not** absolute.
     ///
-    /// Sunk from `bun_paths::is_absolute` so tier-0 (`util::which`) and
+    /// Sunk from `bun_core::paths::is_absolute` so tier-0 (`util::which`) and
     /// tier-2+ share a single impl.
     #[inline]
     pub const fn is_absolute_native(p: &[u8]) -> bool {
@@ -513,7 +514,7 @@ pub mod vec {
 
     /// Reserve `additional`, advance `len` by `additional`, and return the
     /// newly-exposed (uninitialized) tail.
-    /// Generic free-fn form of `bun_collections::VecExt::writable_slice` so
+    /// Generic free-fn form of `bun_core::collections::VecExt::writable_slice` so
     /// `bun_core::string` can call it without a `bun_collections` edge.
     ///
     /// # Safety
@@ -796,7 +797,7 @@ pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> 
 /// makes the pattern grep-able, attaches a uniform safety contract, and
 /// debug-asserts the non-null precondition the C side guarantees.
 ///
-/// Re-exported from `bun_ptr` so callers can spell `bun_ptr::callback_ctx`.
+/// Re-exported from `bun_ptr` so callers can spell `bun_core::ptr::callback_ctx`.
 ///
 /// # Safety
 /// - `ctx` must be non-null, properly aligned, and point to a live, fully
@@ -1189,7 +1190,7 @@ pub fn handle_error_return_trace<E>(_err: E) {}
 macro_rules! todo_panic {
     ($($arg:tt)*) => {{
         // Recorded in the tier-0 `Global::features` counter (same as
-        // css_parser's todo store). `bun_analytics::features::todo_panic` —
+        // css_parser's todo store). `bun_core::analytics::features::todo_panic` —
         // the set the crash report serializes via `packed_features()` — is a
         // re-export of this same static (see `define_features!`'s `core =`
         // entries in src/analytics/lib.rs), so the bit reaches crash reports.
@@ -2321,7 +2322,7 @@ pub(crate) mod strings_impl {
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0
-    // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
+    // without pulling `bun_core::paths::PathChar` (T1) down. `PathChar` and
     // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
     pub trait PathByte: Copy + Eq + 'static {
         fn from_u8(b: u8) -> Self;
@@ -2400,7 +2401,7 @@ pub(crate) mod strings_impl {
         }
     }
     /// `bun.strings.removeLeadingDotSlash`. Hosted at T0
-    /// so `crate::string` (and `bun_paths::string_paths`) can reach it
+    /// so `crate::string` (and `bun_core::paths::string_paths`) can reach it
     /// without a `bun_paths` edge.
     #[inline(always)]
     pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
@@ -2859,7 +2860,7 @@ pub mod ffi {
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
     /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
     /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
-    /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
+    /// this — `bun_core::errno::posix::errno`, `bun_sys::last_errno`,
     /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
     /// re-deriving the same target_os→symbol mapping.
     ///
@@ -2916,7 +2917,7 @@ pub mod ffi {
 
 pub mod asan {
     //! ASAN/LSAN runtime hooks. `bun_safety` depends on
-    //! `bun_core`, so the implementation lives here and `bun_safety::asan`
+    //! `bun_core`, so the implementation lives here and `bun_core::safety::asan`
     //! re-uses the same `cfg(bun_asan)` gate. Callers in `bun_jsc`,
     //! `bun_runtime`, and `bun_collections` reach the real LSAN/ASAN runtime
     //! through this module — it must NOT be a no-op stub or LSAN root-region

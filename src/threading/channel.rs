@@ -4,8 +4,8 @@
 use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 
-use bun_collections::LinearFifo;
-use bun_collections::linear_fifo::{DynamicBuffer, LinearFifoBuffer, SliceBuffer, StaticBuffer};
+use bun_core::collections::LinearFifo;
+use bun_core::collections::linear_fifo::{DynamicBuffer, LinearFifoBuffer, SliceBuffer, StaticBuffer};
 
 use crate::Condition;
 use crate::Mutex;

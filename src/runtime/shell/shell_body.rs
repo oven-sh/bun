@@ -5,7 +5,7 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
     MarkedArgumentBuffer, PlatformEventLoop,
@@ -16,7 +16,7 @@ use bun_core::strings;
 use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_jsc::MiniEventLoop::MiniEventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_simdutf_sys::simdutf;
+use bun_core::simdutf_sys::simdutf;
 use bun_sys::{self as sys, Fd, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -438,8 +438,8 @@ impl<'a> GlobalMini<'a> {
 // ───────────────────────────── CmdEnvIter ─────────────────────────────
 
 pub struct CmdEnvIter<'a> {
-    pub env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>,
-    pub iter: bun_collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
+    pub env: &'a mut bun_core::collections::StringArrayHashMap<Box<ZStr>>,
+    pub iter: bun_core::collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
 }
 
 pub struct CmdEnvEntry<'a> {
@@ -475,7 +475,7 @@ impl CmdEnvKey<'_> {
 }
 
 impl<'a> CmdEnvIter<'a> {
-    pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
+    pub fn from_env(env: &'a mut bun_core::collections::StringArrayHashMap<Box<ZStr>>) -> Self {
         // Note: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
         // struct can hold both the map ref and the iterator.
         let env_ptr: *mut _ = env;
@@ -982,7 +982,7 @@ impl<'a> ShellSrcBuilder<'a> {
     pub fn append_bun_str<const ALLOW_ESCAPE: bool>(
         &mut self,
         bunstr: BunString,
-    ) -> Result<bool, bun_alloc::AllocError> {
+    ) -> Result<bool, bun_core::alloc_impl::AllocError> {
         let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
             || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
         if invalid {
@@ -1027,7 +1027,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
+    pub fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_core::alloc_impl::AllocError> {
         let size = simdutf::length::utf8::from::utf16::le(utf16);
         self.outbuf.reserve(size);
         strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
@@ -1036,12 +1036,12 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 
-    pub fn append_utf8_impl(&mut self, utf8: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub fn append_utf8_impl(&mut self, utf8: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.outbuf.extend_from_slice(utf8);
         Ok(())
     }
 
-    pub fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         // `allocate_latin1_into_utf8_with_list` appends ALL of `latin1` after `len`,
         // including its leading ASCII run; pre-appending any of it would duplicate it.
         let len = self.outbuf.len();
@@ -1050,7 +1050,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 
-    pub fn append_js_str_ref(&mut self, bunstr: BunString) -> Result<(), bun_alloc::AllocError> {
+    pub fn append_js_str_ref(&mut self, bunstr: BunString) -> Result<(), bun_core::alloc_impl::AllocError> {
         let idx = self.jsstrs_to_escape.len();
         let mut cursor = std::io::Cursor::new(&mut self.jsstr_ref_buf[..]);
         write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_STRING_PREFIX), idx).expect("Impossible");

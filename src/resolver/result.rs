@@ -8,11 +8,11 @@ use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
-use bun_alloc as allocators;
+use bun_core::alloc_impl as allocators;
 use bun_ast::Msg;
 use bun_core::MutableString;
-use bun_paths::SEP_STR;
-use bun_paths::strings;
+use bun_core::paths::SEP_STR;
+use bun_core::paths::strings;
 use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
@@ -306,10 +306,10 @@ impl Result {
         let node_module_root = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
         if let Some(end_) = strings::last_index_of(module, node_module_root) {
             let end: usize = end_ + node_module_root.len();
-            return bun_wyhash::hash(&module[end..]) as u32;
+            return bun_core::wyhash::hash(&module[end..]) as u32;
         }
 
-        bun_wyhash::hash(self.path_pair.primary.text()) as u32
+        bun_core::wyhash::hash(self.path_pair.primary.text()) as u32
     }
 }
 
@@ -382,8 +382,8 @@ pub struct DirEntryResolveQueueItem {
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
     // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
     // safe `.slice()` instead of an open-coded raw-ptr deref.
-    pub unsafe_path: bun_ptr::RawSlice<u8>,
-    pub safe_path: bun_ptr::RawSlice<u8>,
+    pub unsafe_path: bun_core::ptr::RawSlice<u8>,
+    pub safe_path: bun_core::ptr::RawSlice<u8>,
     pub fd: FD,
 }
 
@@ -395,14 +395,14 @@ impl Default for DirEntryResolveQueueItem {
                 index: allocators::NOT_FOUND,
                 status: allocators::ItemStatus::Unknown,
             },
-            unsafe_path: bun_ptr::RawSlice::EMPTY,
-            safe_path: bun_ptr::RawSlice::EMPTY,
+            unsafe_path: bun_core::ptr::RawSlice::EMPTY,
+            safe_path: bun_core::ptr::RawSlice::EMPTY,
             fd: FD::INVALID,
         }
     }
 }
 
-// `bun_alloc::Result` doesn't derive Clone (yet); all its fields are Copy, so
+// `bun_core::alloc_impl::Result` doesn't derive Clone (yet); all its fields are Copy, so
 // hand-roll Clone here for the queue-item move at `dir_info_cached`.
 impl Clone for DirEntryResolveQueueItem {
     fn clone(&self) -> Self {
@@ -432,7 +432,7 @@ pub enum FlushMode {
 }
 
 impl DebugLogs {
-    pub fn init() -> core::result::Result<DebugLogs, bun_alloc::AllocError> {
+    pub fn init() -> core::result::Result<DebugLogs, bun_core::alloc_impl::AllocError> {
         let mutable = MutableString::init(0)?;
         Ok(DebugLogs {
             what: Vec::new(),

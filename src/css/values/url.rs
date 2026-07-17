@@ -104,7 +104,7 @@ impl Url {
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below.
         // Printer arena, not parser source — route to the raw primitive.
-        let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
+        let url: &[u8] = unsafe { bun_core::collections::detach_lifetime(url) };
 
         if dest.minify && !is_internal {
             let mut buf: Vec<u8> = Vec::new();
@@ -145,7 +145,7 @@ impl Url {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         Url {
             import_record_idx: self.import_record_idx,
             loc: self.loc,
@@ -160,7 +160,7 @@ impl Url {
 
     // TODO: dedupe import records??
     // This might not fucking work
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         // Only `import_record_idx` participates in identity (matches `eql`
         // above); `loc` is presentation metadata.
         hasher.update(&self.import_record_idx.to_ne_bytes());

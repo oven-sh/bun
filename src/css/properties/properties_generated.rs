@@ -3143,7 +3143,7 @@ impl PropertyId {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> PropertyId {
+    pub fn deep_clone(&self, _arena: &bun_core::alloc_impl::Arena) -> PropertyId {
         *self
     }
 
@@ -6349,7 +6349,7 @@ impl Property {
         }
     }
 
-    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
+    pub fn deep_clone(&self, arena: &bun_core::alloc_impl::Arena) -> Property {
         match self {
             Property::BackgroundColor(v) => {
                 Property::BackgroundColor(css::generic::deep_clone(v, arena))
@@ -7461,7 +7461,7 @@ impl Property {
     /// It's mostly intended as a performance optimization in the case where mimalloc arena is used,
     /// since it can reclaim the memory and use it for subsequent allocations.
     /// I haven't benchmarked that though, so I don't actually know how much faster it would actually make it.
-    pub fn deinit(&mut self, arena: &bun_alloc::Arena) {
+    pub fn deinit(&mut self, arena: &bun_core::alloc_impl::Arena) {
         let _ = self;
         let _ = arena;
     }

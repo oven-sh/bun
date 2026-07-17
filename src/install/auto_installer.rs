@@ -23,7 +23,7 @@
 use core::mem::{align_of, size_of};
 
 use bun_install_types::resolver_hooks as hooks;
-use bun_semver::{SlicedString, String as SemverString};
+use bun_core::semver::{SlicedString, String as SemverString};
 
 use crate::dependency::{self, DependencyExt as _};
 use crate::lockfile::{self, Package};
@@ -233,8 +233,8 @@ impl hooks::AutoInstaller for PackageManager {
         resolutions_list.reserve(total_dependencies_count as usize);
 
         // --- Cloning
-        let package_name: bun_semver::ExternalString =
-            string_builder.append::<bun_semver::ExternalString>(package_json.name());
+        let package_name: bun_core::semver::ExternalString =
+            string_builder.append::<bun_core::semver::ExternalString>(package_json.name());
         package.name_hash = package_name.hash;
         package.name = package_name.value;
         package.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
@@ -321,15 +321,15 @@ impl hooks::AutoInstaller for PackageManager {
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
     ) -> Result<&'b [u8], bun_core::Error> {
-        // The resolver passes a `bun_paths::PathBuffer`-sized slice
+        // The resolver passes a `bun_core::paths::PathBuffer`-sized slice
         // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
         // signature's `&mut PathBuffer`.
-        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
+        debug_assert!(buf.len() >= bun_core::paths::MAX_PATH_BYTES);
         // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
         // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
         // (asserted above).
-        let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
+        let path_buf: &mut bun_core::paths::PathBuffer =
+            unsafe { &mut *buf.as_mut_ptr().cast::<bun_core::paths::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
         let out = directories::path_for_resolution(self, package_id, &r, path_buf)
             .map_err(bun_core::Error::from)?;
@@ -458,9 +458,9 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
-) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
+) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_core::errno::SystemErrno> {
     // ABI: the resolver-side `extern "Rust"` declaration names
-    // `bun_errno::SystemErrno` (both crates depend on bun_errno; carries the
+    // `bun_core::errno::SystemErrno` (both crates depend on bun_errno; carries the
     // real errno name so resolve.test.ts sees `EACCES` not `Unexpected`). Keep
     // both sides byte-identical or the `Result` layout diverges.
     //
@@ -490,7 +490,7 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
                 other.name(),
                 format_args!("while initializing the auto-install package manager"),
             );
-            bun_errno::SystemErrno::EIO
+            bun_core::errno::SystemErrno::EIO
         }
     })?;
     // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`

@@ -19,7 +19,7 @@ use crate::webcore::blob::{
 };
 use crate::webcore::body;
 
-bun_output::declare_scope!(WriteFile, hidden);
+bun_core::declare_scope!(WriteFile, hidden);
 
 // A tagged result-or-error union. Modeled
 // as a plain Rust enum: it only ever travels through the Rust fn-pointer
@@ -117,11 +117,11 @@ impl FileOpener for WriteFile {
         mkdir_if_not_exists(self, &err, path, display_path)
     }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+    fn loop_(&self) -> *mut bun_core::libuv_sys::uv_loop_t {
         unreachable!("WriteFile is POSIX-only; see WriteFileWindows")
     }
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
+    fn req(&mut self) -> &mut bun_core::libuv_sys::uv_fs_t {
         unreachable!("WriteFile is POSIX-only")
     }
     #[cfg(windows)]
@@ -182,7 +182,7 @@ impl FileCloser for WriteFile {
         WriteFile::update(self)
     }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
+    fn loop_(&self) -> *mut bun_core::libuv_sys::uv_loop_t {
         unreachable!()
     }
 
@@ -191,7 +191,7 @@ impl FileCloser for WriteFile {
         let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
+            let this = unsafe { bun_core::ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
         // reshaped for borrowck — compute the parent raw pointer
@@ -235,7 +235,7 @@ impl WriteFile {
     }
 
     pub fn on_ready(&mut self) {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
+        bun_core::scoped_log!(WriteFile, "WriteFile.onReady()");
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_write_loop_task,
@@ -244,10 +244,10 @@ impl WriteFile {
     }
 
     pub fn on_io_error(this: *mut (), err: &sys::Error) {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
+        bun_core::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
-        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        let this = unsafe { bun_core::ptr::callback_ctx::<WriteFile>(this.cast()) };
+        this.errno = Some(bun_core::errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
             node: Default::default(),
@@ -257,7 +257,7 @@ impl WriteFile {
     }
 
     pub fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
+        bun_core::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
         request.scheduled = false;
         // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
         let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
@@ -363,7 +363,7 @@ impl WriteFile {
                         self.wait_for_writable();
                         return false;
                     } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                        self.errno = Some(bun_core::errno::from_errno(err.errno as i32).into());
                         self.system_error = Some(err.to_system_error().into());
                         return false;
                     }
@@ -433,7 +433,7 @@ impl WriteFile {
 
     #[cfg(not(windows))]
     fn on_finish(&mut self) {
-        bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
+        bun_core::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
         let close_after_io = self.close_after_io;
         if self.do_close(self.is_allowed_to_close()) {
@@ -863,7 +863,7 @@ mod windows_impl {
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
             let rc = unsafe { (*this).io_request.result };
             #[cfg(debug_assertions)]
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 WriteFile,
                 "onOpen({}) = {}",
                 bstr::BStr::new(
@@ -940,7 +940,7 @@ mod windows_impl {
         }
 
         fn mkdirp(&mut self) {
-            bun_output::scoped_log!(WriteFile, "mkdirp");
+            bun_core::scoped_log!(WriteFile, "mkdirp");
             self.mkdirp_if_not_exists = false;
 
             // Compute the raw self pointer first so the immutable borrow of
@@ -1022,8 +1022,8 @@ mod windows_impl {
         fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
-            bun_output::scoped_log!(WriteFile, "mkdirp complete");
+            let this = unsafe { bun_core::ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
+            bun_core::scoped_log!(WriteFile, "mkdirp complete");
             debug_assert!(this.err.is_none());
             this.err = match err_ {
                 bun_sys::Result::Err(e) => Some(e),
@@ -1327,7 +1327,7 @@ pub struct WriteFileWaitFromLockedValueTask {
     /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
     /// (being `Copy`) detaches from `&self` for use across `&mut self` and
     /// past `heap::take(this)`.
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+    pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub mkdirp_if_not_exists: bool,
 }

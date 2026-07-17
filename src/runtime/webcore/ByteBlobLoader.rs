@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::webcore::blob::store::StoreExt as _;

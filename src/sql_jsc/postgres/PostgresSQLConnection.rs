@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -11,11 +11,11 @@ use crate::jsc::{
     VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
-use bun_collections::{OffsetByteList, StringHashMap, StringMap};
+use bun_core::collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_uws as uws;
 use core::ptr::NonNull;
 
@@ -91,7 +91,7 @@ use crate::jsc::verify_error_to_js;
 // impossible (UnsafeCell suppresses `noalias` on `&T`). The codegen shim still
 // emits `this: &mut PostgresSQLConnection`; `&mut T` reborrows to `&T` so the
 // impls below compile against either.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct PostgresSQLConnection {
     pub socket: JsCell<Socket>,
@@ -140,11 +140,11 @@ pub struct PostgresSQLConnection {
     // and never moves (intrusive refcount), so the `RawSlice` backing-outlives-holder
     // invariant holds. Private — reassigning `options_buf` is UAF.
     // Reach via `database()`/`user()`/`password()`/`path()`/`options()`.
-    database: bun_ptr::RawSlice<u8>,
-    user: bun_ptr::RawSlice<u8>,
-    password: bun_ptr::RawSlice<u8>,
-    path: bun_ptr::RawSlice<u8>,
-    options: bun_ptr::RawSlice<u8>,
+    database: bun_core::ptr::RawSlice<u8>,
+    user: bun_core::ptr::RawSlice<u8>,
+    password: bun_core::ptr::RawSlice<u8>,
+    path: bun_core::ptr::RawSlice<u8>,
+    options: bun_core::ptr::RawSlice<u8>,
     options_buf: Box<[u8]>,
 
     pub authentication_state: JsCell<AuthenticationState>,
@@ -1106,11 +1106,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // moved (`move_to_slice` hands back the same allocation), so detach each
     // result to a `RawSlice` immediately — the struct stores them as
     // `RawSlice` (self-referential into `options_buf`).
-    let username: bun_ptr::RawSlice<u8>;
-    let password: bun_ptr::RawSlice<u8>;
-    let database: bun_ptr::RawSlice<u8>;
-    let options: bun_ptr::RawSlice<u8>;
-    let path: bun_ptr::RawSlice<u8>;
+    let username: bun_core::ptr::RawSlice<u8>;
+    let password: bun_core::ptr::RawSlice<u8>;
+    let database: bun_core::ptr::RawSlice<u8>;
+    let options: bun_core::ptr::RawSlice<u8>;
+    let path: bun_core::ptr::RawSlice<u8>;
 
     let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
 
@@ -1131,23 +1131,23 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
         let _ = b.allocate();
         let u = args.username_str.to_utf8_without_ref();
-        username = bun_ptr::RawSlice::new(b.append(u.slice()));
+        username = bun_core::ptr::RawSlice::new(b.append(u.slice()));
         drop(u);
 
         let p = args.password_str.to_utf8_without_ref();
-        password = bun_ptr::RawSlice::new(b.append(p.slice()));
+        password = bun_core::ptr::RawSlice::new(b.append(p.slice()));
         drop(p);
 
         let d = args.database_str.to_utf8_without_ref();
-        database = bun_ptr::RawSlice::new(b.append(d.slice()));
+        database = bun_core::ptr::RawSlice::new(b.append(d.slice()));
         drop(d);
 
         let o = options_str.to_utf8_without_ref();
-        options = bun_ptr::RawSlice::new(b.append(o.slice()));
+        options = bun_core::ptr::RawSlice::new(b.append(o.slice()));
         drop(o);
 
         let _path = path_str.to_utf8_without_ref();
-        path = bun_ptr::RawSlice::new(b.append(_path.slice()));
+        path = bun_core::ptr::RawSlice::new(b.append(_path.slice()));
         drop(_path);
 
         break 'brk b.move_to_slice();
@@ -1298,7 +1298,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
-    bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
+    bun_core::analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
 
@@ -1748,7 +1748,7 @@ impl Reader {
 
         // reshaped for borrowck — capture as `RawSlice` before calling
         // skip(); the read_buffer backing storage is not reallocated by skip().
-        let slice = bun_ptr::RawSlice::new(&remaining[..count]);
+        let slice = bun_core::ptr::RawSlice::new(&remaining[..count]);
         self.skip(count);
         Ok(Data::Temporary(slice))
     }
@@ -1758,7 +1758,7 @@ impl Reader {
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
             // `RawSlice` backref into read_buffer (not reallocated by skip()).
-            let slice = bun_ptr::RawSlice::new(&remain[..zero as usize]);
+            let slice = bun_core::ptr::RawSlice::new(&remain[..zero as usize]);
             self.skip(zero as usize + 1);
             return Ok(Data::Temporary(slice));
         }
@@ -2664,8 +2664,8 @@ impl PostgresSQLConnection {
                             &mechanism_buf[..written]
                         };
                         let response = protocol::SASLInitialResponse {
-                            mechanism: Data::Temporary(bun_ptr::RawSlice::new(b"SCRAM-SHA-256")),
-                            data: Data::Temporary(bun_ptr::RawSlice::new(mechanism)),
+                            mechanism: Data::Temporary(bun_core::ptr::RawSlice::new(b"SCRAM-SHA-256")),
+                            data: Data::Temporary(bun_core::ptr::RawSlice::new(mechanism)),
                         };
 
                         response.write_internal(self.writer())?;
@@ -2718,9 +2718,9 @@ impl PostgresSQLConnection {
                             );
                             return Err(AnyPostgresError::InvalidMessage);
                         }
-                        let server_salt_decoded_base64 = bun_base64::decode_alloc(server_salt_b64)
+                        let server_salt_decoded_base64 = bun_core::base64::decode_alloc(server_salt_b64)
                             .map_err(|e| match e {
-                                bun_base64::DecodeAllocError::DecodingFailed => {
+                                bun_core::base64::DecodeAllocError::DecodingFailed => {
                                     AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
                                 }
                             })?;
@@ -2772,7 +2772,7 @@ impl PostgresSQLConnection {
 
                         // base64 of 32 bytes → ceil(32/3)*4 = 44; +4 slack.
                         let mut client_key_xor_base64_buf = [0u8; 48];
-                        let xor_base64_len = bun_base64::encode(
+                        let xor_base64_len = bun_core::base64::encode(
                             &mut client_key_xor_base64_buf,
                             &client_key_xor_buffer,
                         );
@@ -2789,7 +2789,7 @@ impl PostgresSQLConnection {
                         }
 
                         let response = protocol::SASLResponse {
-                            data: Data::Temporary(bun_ptr::RawSlice::new(payload.as_slice())),
+                            data: Data::Temporary(bun_core::ptr::RawSlice::new(payload.as_slice())),
                         };
 
                         sasl.status = SASLStatus::Continue;
@@ -2922,7 +2922,7 @@ impl PostgresSQLConnection {
                         };
 
                         let response = protocol::PasswordMessage {
-                            password: Data::Temporary(bun_ptr::RawSlice::new(final_password)),
+                            password: Data::Temporary(bun_core::ptr::RawSlice::new(final_password)),
                         };
 
                         self.authentication_state.set(AuthenticationState::Md5);

@@ -5,8 +5,8 @@ use bstr::BStr;
 
 use bun_core::Output;
 use bun_core::String as BunString;
-use bun_paths::strings;
-use bun_url::URL as ZigURL;
+use bun_core::paths::strings;
+use bun_core::url::URL as ZigURL;
 
 use crate::schema_api as api;
 use crate::{ZigStackFrameCode, ZigStackFramePosition};
@@ -46,7 +46,7 @@ impl ZigStackFrame {
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
-    ) -> Result<api::StackFrame, bun_alloc::AllocError> {
+    ) -> Result<api::StackFrame, bun_core::alloc_impl::AllocError> {
         let mut frame: api::StackFrame = api::StackFrame::default();
         if !self.function_name.is_empty() {
             let slicer = self.function_name.to_utf8();
@@ -164,7 +164,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
                     );
                     f.write_str(Output::pretty_fmt!("<d>", true))?;
                     write!(f, "{}", BStr::new(root_path))?;
-                    f.write_str(bun_paths::SEP_STR)?;
+                    f.write_str(bun_core::paths::SEP_STR)?;
                     f.write_str(Output::pretty_fmt!("<r><cyan>", true))?;
                     write!(f, "{}", BStr::new(relative_path))?;
                 } else {

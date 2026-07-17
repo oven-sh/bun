@@ -70,7 +70,7 @@ impl<'a> Tmpfile<'a> {
             // SAFETY: basename returns a suffix of `destname`, which is NUL-terminated,
             // so the suffix is also NUL-terminated at the same position.
             let basename: &ZStr = unsafe {
-                let b = bun_paths::basename(destname.as_bytes());
+                let b = bun_core::paths::basename(destname.as_bytes());
                 ZStr::from_raw(b.as_ptr(), b.len())
             };
             while retry {

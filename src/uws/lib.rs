@@ -26,10 +26,10 @@ pub use bun_uws_sys::{
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
 /// thunk that recovers `Self` from `*mut c_void` and lowers `&[T]` params to
-/// `(ptr, len)` pairs. See `bun_jsc_macros::uws_callback` for the full
+/// `(ptr, len)` pairs. See `bun_macros::uws_callback` for the full
 /// contract. With `panic = "abort"` Rust panics terminate in the crash-handler
 /// hook, so no `catch_unwind` wrapper is emitted.
-pub use bun_jsc_macros::uws_callback;
+pub use bun_macros::uws_callback;
 pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
@@ -168,7 +168,7 @@ pub mod ssl_wrapper {
     }
 
     use crate::us_bun_verify_error_t;
-    use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
+    use bun_core::ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 
@@ -369,7 +369,7 @@ pub mod ssl_wrapper {
     // SAFETY: SSLWrapper is an inline field of the owning socket; handler vtable
     // re-entry may write `flags`/`ssl` but never frees the wrapper (only
     // `deinit()` clears `ssl`/`ctx`); single JS thread.
-    unsafe impl<T: Copy> bun_ptr::LaunderedSelf for SSLWrapper<T> {}
+    unsafe impl<T: Copy> bun_core::ptr::LaunderedSelf for SSLWrapper<T> {}
 
     impl<T: Copy> SSLWrapper<T> {
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to

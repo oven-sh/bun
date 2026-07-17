@@ -7,10 +7,10 @@
 use crate::mal_prelude::*;
 use core::mem::MaybeUninit;
 
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_ast::Loc;
-use bun_collections::{HashMap, VecExt};
+use bun_core::collections::{HashMap, VecExt};
 use bun_core::strings;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -109,7 +109,7 @@ impl LinkerContext<'_> {
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
-        let mut aliases = bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(
+        let mut aliases = bun_core::alloc_impl::ArenaVec::<&[u8]>::with_capacity_in(
             unsafe { (*resolved_exports).count() },
             arena,
         );
@@ -169,10 +169,10 @@ impl LinkerContext<'_> {
             meta.sorted_and_filtered_export_aliases,
             js_meta::SortedAndFilteredExportAliases,
             id
-        ) = bun_alloc::AstAlloc::vec_from_iter(
+        ) = bun_core::alloc_impl::AstAlloc::vec_from_iter(
             export_aliases
                 .iter()
-                .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
+                .map(|s| bun_core::alloc_impl::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
         );
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
@@ -397,7 +397,7 @@ impl LinkerContext<'_> {
 
         // 1 property per export
         let mut properties =
-            bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
+            bun_core::alloc_impl::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
 
         let mut ns_export_symbol_uses = PartSymbolUseMap::default();
         ns_export_symbol_uses
@@ -493,7 +493,7 @@ impl LinkerContext<'_> {
                     // SAFETY: `alias` borrows the worker arena which outlives the
                     // link pass; `E::String::data: &'static [u8]` is the arena
                     // erasure used throughout the AST.
-                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    E::String::init(unsafe { bun_core::ptr::detach_lifetime(alias) }),
                     loc,
                 )),
                 value: Some(Expr::allocate(

@@ -71,7 +71,7 @@ impl SourceLocation {
 /// section is a single `HashMap::get`, and this never runs on a release path.
 #[cfg(any(debug_assertions, bun_asan))]
 fn intern_location_file(file: &'static str) -> *const c_char {
-    use bun_collections::HashMap;
+    use bun_core::collections::HashMap;
     use bun_threading::Guarded;
     use std::ffi::{CStr, CString};
     static CACHE: Guarded<Option<HashMap<usize, Box<CStr>>>> = Guarded::new(None);

@@ -10,7 +10,7 @@ use std::io::Write as _;
 
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_core::collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
@@ -20,9 +20,9 @@ use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
 #[cfg(windows)]
-use bun_paths::WPathBuffer;
-use bun_paths::strings;
-use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_core::paths::WPathBuffer;
+use bun_core::paths::strings;
+use bun_core::paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_which::which;
@@ -55,7 +55,7 @@ macro_rules! path_literal {
 /// `&'static Arena` per PORTING.md §AST crates. Route through the shared
 /// `cli::cli_arena()` (a `LazyLock` — `MimallocArena` is `Sync`).
 #[inline]
-fn runner_arena() -> &'static bun_alloc::Arena {
+fn runner_arena() -> &'static bun_core::alloc_impl::Arena {
     crate::cli::cli_arena()
 }
 
@@ -593,7 +593,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let env_is_none = env.is_none();
         // Process-lifetime arena singleton for the runner's transpiler;
         // threads an `&'static Arena` per PORTING.md §AST crates.
-        let arena: &'static bun_alloc::Arena = runner_arena();
+        let arena: &'static bun_core::alloc_impl::Arena = runner_arena();
         // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot.
@@ -847,7 +847,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // a backref into it.
             let url_str: &'static [u8] =
                 unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
-            let url = bun_url::URL::parse(url_str);
+            let url = bun_core::url::URL::parse(url_str);
 
             if !url.is_http() && !url.is_https() {
                 bun_core::err_generic!(
@@ -1141,7 +1141,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         bun_jsc::initialize(false);
-        bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
@@ -1380,7 +1380,7 @@ impl Run {
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.
             bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+            bun_core::analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
         // ── Heap profiler ───────────────────────────────────────────────────
@@ -1395,7 +1395,7 @@ impl Run {
                 dir,
                 text_format: opts.text_format,
             });
-            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+            bun_core::analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
         self.add_conditional_globals();
@@ -1544,7 +1544,7 @@ impl Run {
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
-            // `bun_alloc::Arena = bumpalo::Bump` has no
+            // `bun_core::alloc_impl::Arena = bumpalo::Bump` has no
             // per-heap collect, so this is a no-op unless the arena type
             // changes. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
@@ -1953,10 +1953,10 @@ impl RunCommand {
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
-            bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
+            bun_core::paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
         let found_node = env_loader
             .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
+                bun_core::paths::fs::FileSystem::instance(),
                 if force_using_bun {
                     bun_node_exe.as_bytes()
                 } else {
@@ -2000,7 +2000,7 @@ impl RunCommand {
                 &mut optional_bun_self_path,
             ) {
                 Ok(()) => {}
-                Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
+                Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError)) => bun_core::out_of_memory(),
                 Err(other) => panic!(
                     "unexpected error from createFakeTemporaryNodeExecutable: {}",
                     other.name()
@@ -3117,7 +3117,7 @@ pub enum Filter {
 }
 
 type DoneChannel =
-    bun_threading::Channel<u32, bun_collections::linear_fifo::StaticBuffer<u32, 256>>;
+    bun_threading::Channel<u32, bun_core::collections::linear_fifo::StaticBuffer<u32, 256>>;
 
 /// One pending remote-image download. Lives on the heap so its
 /// `async_http.task` (embedded in ThreadPool.Task) has a stable
@@ -3170,7 +3170,7 @@ impl RunCommand {
     pub fn ls(ctx: &mut ContextData) -> crate::Result<()> {
         let args = ctx.args.clone();
 
-        let arena: &'static bun_alloc::Arena = runner_arena();
+        let arena: &'static bun_core::alloc_impl::Arena = runner_arena();
         let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         this_transpiler.options.env.prefix = Box::default();
@@ -3184,7 +3184,7 @@ impl RunCommand {
     /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
     fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
+        // SAFETY: bun_core::paths::PathBuffer and bun_core::PathBuffer are
         // layout-identical newtypes over [u8; MAX_PATH_BYTES].
         let cwd = bun_core::getcwd(unsafe {
             &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
@@ -3308,7 +3308,7 @@ impl RunCommand {
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
-                bun_url::URL::parse(url_static),
+                bun_core::url::URL::parse(url_static),
                 Default::default(),
                 b"",
                 response_buffer_ptr,
@@ -3935,7 +3935,7 @@ impl BunXFastPath {
     /// rules. Writes into `buffer` and returns the number of u16s written.
     #[cfg(windows)]
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
-        let mut wbuf = [0u16; bun_paths::MAX_WPATH];
+        let mut wbuf = [0u16; bun_core::paths::MAX_WPATH];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
 
         if warg.is_empty() {
@@ -4101,7 +4101,7 @@ impl BunXFastPath {
         // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
         let out_buf = unsafe {
             let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
-            ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
+            ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_core::paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {

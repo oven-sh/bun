@@ -8,7 +8,7 @@ use crate::jsc::{
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
+use bun_core::ptr::AsCtxPtr;
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -37,7 +37,7 @@ pub use js::to_js;
 // `UnsafeCell` (which both `Cell` and `JsCell` wrap) suppresses LLVM `noalias`
 // on `&T`, structurally eliminating the PROVEN_CACHED miscompiles that the
 // previous `from_mut(self)` raw-pointer dances papered over.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
     pub statement: Cell<Option<*mut PostgresSQLStatement>>,
     pub query: BunString,
@@ -129,9 +129,9 @@ impl PostgresSQLQuery {
     /// `heap::alloc` payload (held by the connection's request FIFO), so the
     /// [`ScopedRef::new`] precondition (live, non-null) is always satisfied.
     #[inline]
-    pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+    pub fn ref_guard(&self) -> bun_core::ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+        unsafe { bun_core::ptr::ScopedRef::new(self.as_ctx_ptr()) }
     }
 
     /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
@@ -184,7 +184,7 @@ impl PostgresSQLQuery {
 
     pub fn finalize(self: Box<Self>) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
+        bun_core::ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
     }
 
     pub fn on_write_fail(

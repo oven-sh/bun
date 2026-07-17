@@ -138,7 +138,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
         let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             protos: JsCell::new(None),
             handlers: JsCell::new(None),
             local_binding: JsCell::new(None),

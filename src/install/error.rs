@@ -238,9 +238,9 @@ pub enum Error {
     InvalidBinContent,
 
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
@@ -262,9 +262,9 @@ pub enum Error {
     #[error(transparent)]
     Zlib(#[from] bun_zlib::ZlibError),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
+    Paths(#[from] bun_core::paths::Error),
     #[error(transparent)]
-    PathOptions(#[from] bun_paths::path_options::Error),
+    PathOptions(#[from] bun_core::paths::path_options::Error),
     #[error(transparent)]
     Fmt(#[from] core::fmt::Error),
 }
@@ -466,7 +466,7 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
     fn from(e: crate::lockfile_real::tree::SubtreeError) -> Self {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
-            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::OutOfMemory => Self::Alloc(bun_core::alloc_impl::AllocError),
             E::DependencyLoop => Self::DependencyLoop,
         }
     }
@@ -476,7 +476,7 @@ impl From<crate::lockfile_real::bun_lock::ParseError> for Error {
     fn from(e: crate::lockfile_real::bun_lock::ParseError) -> Self {
         match e {
             crate::lockfile_real::bun_lock::ParseError::OutOfMemory => {
-                Self::Alloc(bun_alloc::AllocError)
+                Self::Alloc(bun_core::alloc_impl::AllocError)
             }
             _ => Self::InvalidLockfile,
         }
@@ -487,7 +487,7 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
     fn from(e: crate::pnpm::MigratePnpmLockfileError) -> Self {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
-            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::OutOfMemory => Self::Alloc(bun_core::alloc_impl::AllocError),
             E::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidLockfile,
         }

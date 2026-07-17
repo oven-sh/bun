@@ -1,7 +1,7 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
 use crate::Error;
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 // `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
 // exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of
@@ -14,8 +14,8 @@ use crate::bun_json::Expr;
 use bun_ast::Indentation;
 use bun_ast::{Log, Source};
 #[cfg(windows)]
-use bun_paths::PathBuffer;
-use bun_paths::is_absolute;
+use bun_core::paths::PathBuffer;
+use bun_core::paths::is_absolute;
 
 use crate::bun_json as json;
 use crate::initialize_store;
@@ -37,7 +37,7 @@ pub struct MapEntry {
     /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)
     /// can allocate those nodes here instead of in the resettable `Store` —
     /// the cached `root` outlives `initialize_store()` resets.
-    pub json_arena: bun_alloc::Arena,
+    pub json_arena: bun_core::alloc_impl::Arena,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
     /// stay valid; freed when the entry drops.
     pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
@@ -50,7 +50,7 @@ impl Default for MapEntry {
             source: Source::default(),
             indentation: Indentation::default(),
             _path_storage: bun_core::ZBox::default(),
-            json_arena: bun_alloc::Arena::new(),
+            json_arena: bun_core::alloc_impl::Arena::new(),
             stale_contents: Vec::new(),
         }
     }
@@ -63,7 +63,7 @@ impl MapEntry {
     /// writes the printed JSON back into `source.contents`. The caller then
     /// invokes this to restore the invariant `root == parse(source)`.
     pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
-        let json_bump = bun_alloc::Arena::new();
+        let json_bump = bun_core::alloc_impl::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
         self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
         self.json_arena = json_bump;
@@ -76,7 +76,7 @@ pub type Map = StringHashMap<MapEntry>;
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
-    bump: &bun_alloc::Arena,
+    bump: &bun_core::alloc_impl::Arena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
     Ok(json::parse_package_json_utf8_with_opts(
@@ -146,7 +146,7 @@ impl WorkspacePackageJSONCache {
         #[cfg(windows)]
         let path: &[u8] = {
             buf[..abs_package_json_path.len()].copy_from_slice(abs_package_json_path);
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
+            bun_core::paths::dangerously_convert_path_to_posix_in_place::<u8>(
                 &mut buf[..abs_package_json_path.len()],
             );
             &buf[..abs_package_json_path.len()]
@@ -180,7 +180,7 @@ impl WorkspacePackageJSONCache {
             initialize_store();
         }
 
-        let json_bump = bun_alloc::Arena::new();
+        let json_bump = bun_core::alloc_impl::Arena::new();
         let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {
@@ -223,7 +223,7 @@ impl WorkspacePackageJSONCache {
         let path: &[u8] = {
             let text = source.path.text();
             buf[..text.len()].copy_from_slice(text);
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..text.len()]);
+            bun_core::paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..text.len()]);
             &buf[..text.len()]
         };
 
@@ -236,7 +236,7 @@ impl WorkspacePackageJSONCache {
             initialize_store();
         }
 
-        let json_bump = bun_alloc::Arena::new();
+        let json_bump = bun_core::alloc_impl::Arena::new();
         let parsed = match parse_package_json(source, log, &json_bump, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {

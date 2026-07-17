@@ -18,7 +18,7 @@ extern "C" fn same_value_iterator(
     item: JSValue,
 ) {
     // SAFETY: entry_ is &mut ExpectedEntry passed through forEach's opaque ctx; non-null for the duration of the iteration.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
+    let entry = unsafe { bun_core::ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
     // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
     let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
         return;

@@ -4,7 +4,7 @@ use core::ptr;
 use crate as jsc;
 use crate::SysErrorJsc;
 use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
-use bun_alloc::mimalloc;
+use bun_core::alloc_impl::mimalloc;
 use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
@@ -514,7 +514,7 @@ impl ArrayBuffer {
         // Only meaningful when mimalloc is the global allocator; otherwise the
         // probe always returns false and we'd drop the deallocator for buffers we own.
         if self.len > 0
-            && bun_alloc::USE_MIMALLOC
+            && bun_core::alloc_impl::USE_MIMALLOC
             // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
             && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
         {
@@ -942,7 +942,7 @@ impl MarkedArrayBuffer {
         }
     }
 
-    pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
+    pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_core::alloc_impl::AllocError> {
         // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
         // pointer because the buffer is later freed via the default allocator
         // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
@@ -1003,7 +1003,7 @@ impl MarkedArrayBuffer {
         if self.owns_buffer {
             self.owns_buffer = false;
             // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
-            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
+            unsafe { bun_core::alloc_impl::default_alloc::free(self.buffer.ptr.cast()) };
         }
     }
 
@@ -1055,7 +1055,7 @@ impl MarkedArrayBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
-pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
+pub use bun_core::alloc_impl::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
 // LAYERING: `BlobArrayBuffer_deallocator` releases a
 // `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`
@@ -1137,11 +1137,11 @@ bun_opaque::opaque_ffi! {
     pub struct JSCArrayBuffer;
 }
 
-pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
+pub type JSCArrayBufferRef = bun_core::ptr::ExternalShared<JSCArrayBuffer>;
 
 // SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal
 // `RefCounted<ArrayBuffer>` count; the pointee remains alive while count > 0.
-unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
+unsafe impl bun_core::ptr::ExternalSharedDescriptor for JSCArrayBuffer {
     unsafe fn ext_ref(this: *mut Self) {
         // `opaque_ref` is the centralised ZST-handle non-null deref proof;
         // trait contract guarantees `this` is a valid `JSC::ArrayBuffer*`.

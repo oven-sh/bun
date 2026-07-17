@@ -6,7 +6,7 @@
 //! `context_data` storage stay in `cli.rs`.
 
 use crate::schema::api;
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 
 use crate::bundle_enums;
 use crate::code_coverage_options::CodeCoverageOptions;

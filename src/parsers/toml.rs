@@ -20,11 +20,11 @@
 //! - strings are UTF-8; non-ASCII content is re-encoded to UTF-16 EStrings
 //!   so both the JS conversion and the printer paths agree
 
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVec;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVec;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_ast::{self, E, Expr, Loc, Log, Source};
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::{self, StackCheck};
 
 /// Tracks how a table or array came to exist, which decides whether later
@@ -62,8 +62,8 @@ enum PErr {
     StackOverflow,
 }
 
-impl From<bun_alloc::AllocError> for PErr {
-    fn from(_: bun_alloc::AllocError) -> Self {
+impl From<bun_core::alloc_impl::AllocError> for PErr {
+    fn from(_: bun_core::alloc_impl::AllocError) -> Self {
         PErr::Oom
     }
 }
@@ -173,7 +173,7 @@ impl TOML {
         match parser.parse_root() {
             Ok(root) => Ok(root),
             Err(PErr::Syntax) => Err(crate::Error::SyntaxError),
-            Err(PErr::Oom) => Err(crate::Error::Alloc(bun_alloc::AllocError)),
+            Err(PErr::Oom) => Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError)),
             Err(PErr::StackOverflow) => Err(crate::Error::StackOverflow),
         }
     }
@@ -367,7 +367,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// Returns the position of the first content byte.
     fn init_document(&mut self) -> PResult<usize> {
         // A TOML document must be valid UTF-8 as a whole.
-        let validation = bun_simdutf_sys::simdutf::validate::with_errors::utf8(self.src);
+        let validation = bun_core::simdutf_sys::simdutf::validate::with_errors::utf8(self.src);
         if !validation.is_successful() {
             return Err(self.err(validation.count, b"Invalid UTF-8 byte sequence"));
         }

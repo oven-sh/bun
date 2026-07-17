@@ -19,10 +19,10 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::{ZigString, strings};
-use bun_http_types::MimeType::MimeType;
-use bun_url::URL;
+use bun_core::http_types::MimeType::MimeType;
+use bun_core::url::URL;
 
 #[cfg(unix)]
 use super::SizeType;
@@ -123,8 +123,8 @@ fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
     if sliced.is_empty() {
         return None;
     }
-    let ext = strings::trim(bun_paths::extension(sliced), b".");
-    bun_http_types::MimeType::by_extension_no_default(ext)
+    let ext = strings::trim(bun_core::paths::extension(sliced), b".");
+    bun_core::http_types::MimeType::by_extension_no_default(ext)
 }
 
 impl StoreExt for Store {
@@ -158,8 +158,8 @@ impl StoreExt for Store {
                 mime_type,
                 credentials,
             )),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mime_type: bun_core::http_types::MimeType::NONE,
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -179,8 +179,8 @@ impl StoreExt for Store {
 
         Ok(Store::new(Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mime_type: bun_core::http_types::MimeType::NONE,
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -198,8 +198,8 @@ impl StoreExt for Store {
 
         Ok(Store::new(Store {
             data: Data::File(File::init(pathlike, mime_type)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mime_type: bun_core::http_types::MimeType::NONE,
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -210,8 +210,8 @@ impl StoreExt for Store {
     fn init_mmap(slice: &'static mut [u8]) -> StoreRef {
         StoreRef::from(Store::new(Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mime_type: bun_core::http_types::MimeType::NONE,
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         }))
     }
@@ -336,7 +336,7 @@ impl S3Ext for S3 {
             store: StoreRef,
             // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
             // wrapper can outlive the constructing frame while reads stay safe.
-            global: bun_ptr::BackRef<JSGlobalObject>,
+            global: bun_core::ptr::BackRef<JSGlobalObject>,
         }
 
         impl Wrapper {
@@ -399,7 +399,7 @@ impl S3Ext for S3 {
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount.
                 store: unsafe { StoreRef::retained(NonNull::from(store)) },
-                global: bun_ptr::BackRef::new(global_this),
+                global: bun_core::ptr::BackRef::new(global_this),
             }))
             .cast::<c_void>(),
             proxy,
@@ -427,7 +427,7 @@ impl S3Ext for S3 {
             store: StoreRef,
             resolved_list_options: S3ListObjectsOptions,
             // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
-            global: bun_ptr::BackRef<JSGlobalObject>,
+            global: bun_core::ptr::BackRef<JSGlobalObject>,
         }
 
         impl Wrapper {
@@ -498,7 +498,7 @@ impl S3Ext for S3 {
             // intrusive refcount.
             store: unsafe { StoreRef::retained(NonNull::from(store)) },
             resolved_list_options: options,
-            global: bun_ptr::BackRef::new(global_this),
+            global: bun_core::ptr::BackRef::new(global_this),
         }));
 
         s3_client::list_objects(
@@ -523,13 +523,13 @@ impl BytesExt for Bytes {
         // `LinuxMemFdAllocator` but without the stateful fd. Body is fully
         // safe (`bun_sys::munmap` is a safe wrapper); the safe fn item coerces
         // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
-        fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
+        fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_core::alloc_impl::Alignment, _: usize) {
             if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
                 bun_core::debug_warn!("Blob mmap-store munmap failed: {:?}", err);
             }
         }
-        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable =
-            bun_alloc::AllocatorVTable::free_only(free);
+        static MMAP_FREE_VTABLE: bun_core::alloc_impl::AllocatorVTable =
+            bun_core::alloc_impl::AllocatorVTable::free_only(free);
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
         // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
         // exactly the same range.
@@ -538,7 +538,7 @@ impl BytesExt for Bytes {
                 slice.as_mut_ptr(),
                 slice.len() as SizeType,
                 slice.len() as SizeType,
-                bun_alloc::StdAllocator {
+                bun_core::alloc_impl::StdAllocator {
                     ptr: core::ptr::null_mut(),
                     vtable: &MMAP_FREE_VTABLE,
                 },
@@ -559,7 +559,7 @@ impl BytesExt for Bytes {
             Vec::new()
         } else if core::ptr::eq(
             std::ptr::from_ref(self.allocator.vtable),
-            std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),
+            std::ptr::from_ref(bun_core::alloc_impl::basic::C_ALLOCATOR.vtable),
         ) {
             let len = self.len as usize;
             let cap = self.cap as usize;
@@ -579,7 +579,7 @@ impl BytesExt for Bytes {
         };
         self.len = 0;
         self.cap = 0;
-        self.allocator = bun_alloc::basic::C_ALLOCATOR;
+        self.allocator = bun_core::alloc_impl::basic::C_ALLOCATOR;
         super::Internal {
             bytes,
             was_string: false,

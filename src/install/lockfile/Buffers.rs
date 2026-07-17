@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use bun_collections::DynamicBitSet as Bitset;
+use bun_core::collections::DynamicBitSet as Bitset;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
@@ -34,7 +34,7 @@ pub struct Buffers {
 // needed.
 
 impl Buffers {
-    pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
+    pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.trees
             .reserve(that.trees.len().saturating_sub(self.trees.len()));
         self.resolutions.reserve(
@@ -356,7 +356,7 @@ where
     save_generic_field!(
         extern_strings,
         "extern_strings",
-        bun_semver::ExternalString,
+        bun_core::semver::ExternalString,
         "\n<semver.ExternalString.ExternalString> 16 sizeof, 8 alignof\n"
     );
 
@@ -467,7 +467,7 @@ pub(crate) fn load(
     }
 
     // -- extern_strings --
-    load_generic_field!(extern_strings, "extern_strings", bun_semver::ExternalString);
+    load_generic_field!(extern_strings, "extern_strings", bun_core::semver::ExternalString);
 
     // -- string_bytes --
     load_generic_field!(string_bytes, "string_bytes", u8);
@@ -504,7 +504,7 @@ pub(crate) fn load(
                 this.legacy_package_to_dependency_id(Some(&mut visited), package_id)?;
         }
         visited.set_range_value(
-            bun_collections::bit_set::Range {
+            bun_core::collections::bit_set::Range {
                 start: 0,
                 end: this.dependencies.len(),
             },

@@ -6,7 +6,7 @@ use super::encode_int::encode_length_int;
 use super::new_writer::NewWriter;
 use crate::mysql::capabilities::Capabilities;
 use crate::shared::data::Data;
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 
 bun_core::declare_scope!(MySQLConnection, hidden);
 

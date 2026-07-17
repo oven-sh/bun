@@ -1,7 +1,7 @@
 use crate::jsc::JSValue;
-use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_core::collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_jsc::JsCell;
-use bun_ptr::ParentRef;
+use bun_core::ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -294,7 +294,7 @@ impl MySQLRequestQueue {
         Some(q.peek_item(0))
     }
 
-    /// [`current`] as a [`bun_ptr::ThisPtr`] — one audited deref site here
+    /// [`current`] as a [`bun_core::ptr::ThisPtr`] — one audited deref site here
     /// replaces the per-caller `unsafe { &*ptr }` / `ScopedRef::new(ptr)` pair.
     /// The queue holds a ref on every stored request, so the pointee is live;
     /// `JSMySQLQuery` is a separate heap allocation (never aliases the queue or
@@ -304,10 +304,10 @@ impl MySQLRequestQueue {
     ///
     /// [`current`]: Self::current
     #[inline]
-    pub(crate) fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
+    pub(crate) fn current_ref(&self) -> Option<bun_core::ptr::ThisPtr<JSMySQLQuery>> {
         // SAFETY: `current()` returns a pointer the queue holds a ref on
         // (taken in `add()`); non-null and live until `discard()`/`read_item()`.
-        self.current().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
+        self.current().map(|p| unsafe { bun_core::ptr::ThisPtr::new(p) })
     }
 
     pub(crate) fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {

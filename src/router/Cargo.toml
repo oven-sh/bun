@@ -26,14 +26,12 @@ bun_collections.workspace = true
 bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_http_types.workspace = true
-bun_paths.workspace = true
 bun_ptr.workspace = true
 # `bun_resolver` is acyclic from this crate (resolver does not depend on
 # router); router consumes the real `bun_resolver::fs::{FileSystem,DirEntry}`
 # now that the `bun_sys::fs::DirEntry` opaque-seam workaround is gone.
 bun_resolver.workspace = true
 bun_sys.workspace = true
-bun_url.workspace = true
 bun_wyhash.workspace = true
 
 [dev-dependencies]

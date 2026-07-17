@@ -1,11 +1,11 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::fmt;
 use std::io::Write as _;
 
 use crate::cli::Command;
 use crate::cli::publish_command as Publish;
-use bun_alloc::AllocError;
-use bun_collections::StringHashMap;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::StringHashMap;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::package_manager::LogLevel;
@@ -20,18 +20,18 @@ use bun_parsers::json as JSON;
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
-use bun_paths::{self as path, PathBuffer, SEP_STR};
+use bun_core::paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
-// alias re-exported at `bun_ptr::CowString`).
-use bun_ptr::cow_slice::CowSlice;
+// alias re-exported at `bun_core::ptr::CowString`).
+use bun_core::ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
 use bun_glob::matcher::MatchResult as GlobMatchResult;
-use bun_paths::resolve_path;
-use bun_semver as Semver;
+use bun_core::paths::resolve_path;
+use bun_core::semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
@@ -47,18 +47,18 @@ fn dir_open_dir_z(dir: &Dir, path: &ZStr, opts: bun_sys::OpenDirOptions) -> crat
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
-/// (freed at process exit). `bun_alloc::Arena`
+/// (freed at process exit). `bun_core::alloc_impl::Arena`
 /// (= `bumpalo::Bump`) is `!Sync`, so a `static LazyLock` is out; store the
 /// arena directly in a `thread_local!` and hand out a `'static` borrow — the
 /// CLI is single-threaded and the slot lives for the thread's lifetime.
-fn pack_bump() -> &'static bun_alloc::Arena {
+fn pack_bump() -> &'static bun_core::alloc_impl::Arena {
     thread_local! {
-        static BUMP: bun_alloc::Arena = bun_alloc::Arena::new();
+        static BUMP: bun_core::alloc_impl::Arena = bun_core::alloc_impl::Arena::new();
     }
     // SAFETY: `BUMP` is never dropped (thread = process lifetime in `bun pm
     // pack`), and `Arena` is `!Sync` so no cross-thread aliasing, so the
     // borrow can be erased to `'static`.
-    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
+    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_core::alloc_impl::Arena>(b) })
 }
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
@@ -233,7 +233,7 @@ impl PackCommand {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if cause.value == bun_install::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic(
@@ -921,7 +921,7 @@ fn iterate_bundled_deps(
             // ignore node_modules if it isn't a directory, or doesn't exist
             if matches!(
                 err,
-                crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT)
+                crate::Error::Sys(bun_core::errno::SystemErrno::ENOTDIR | bun_core::errno::SystemErrno::ENOENT)
             ) {
                 return Ok(bundled_pack_queue);
             }
@@ -3591,7 +3591,7 @@ fn edit_root_package_json(
     ) {
         Ok(w) => w,
         Err(err) => {
-            if err == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
+            if err == bun_js_printer::Error::Alloc(bun_core::alloc_impl::AllocError) {
                 return Err(AllocError);
             }
             Output::err_generic(
@@ -4127,7 +4127,7 @@ pub mod bindings {
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball);
         sha512.r#final(&mut sha512_digest);
-        let base64_buf = bun_base64::encode_alloc(&sha512_digest);
+        let base64_buf = bun_core::base64::encode_alloc(&sha512_digest);
         let integrity_value = bun_string_jsc::create_utf8_for_js(global, &base64_buf)?;
 
         struct EntryInfo {

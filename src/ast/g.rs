@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use crate::base::Ref;
 use crate::binding::Binding as BindingNodeIndex;
@@ -23,7 +23,7 @@ pub struct Decl {
 }
 
 // Inherent assoc types are nightly; free alias.
-pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
+pub type DeclList = Vec<Decl, bun_core::alloc_impl::AstAlloc>;
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,
@@ -70,7 +70,7 @@ impl Default for Class {
     fn default() -> Self {
         Self {
             class_keyword: crate::Range::NONE,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: bun_core::alloc_impl::AstAlloc::vec(),
             class_name: None,
             extends: None,
             body_loc: crate::Loc::EMPTY,
@@ -127,14 +127,14 @@ pub struct Comment {
 }
 
 pub struct ClassStaticBlock {
-    pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
+    pub stmts: Vec<Stmt, bun_core::alloc_impl::AstAlloc>,
     pub loc: crate::Loc,
 }
 
 impl Default for ClassStaticBlock {
     fn default() -> Self {
         Self {
-            stmts: bun_alloc::AstAlloc::vec(),
+            stmts: bun_core::alloc_impl::AstAlloc::vec(),
             loc: crate::Loc::default(),
         }
     }
@@ -167,7 +167,7 @@ pub struct Property {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
+pub type PropertyList = Vec<Property, bun_core::alloc_impl::AstAlloc>;
 
 impl Default for Property {
     fn default() -> Self {
@@ -176,7 +176,7 @@ impl Default for Property {
             kind: PropertyKind::Normal,
             flags: flags::PROPERTY_NONE,
             class_static_block: None,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: bun_core::alloc_impl::AstAlloc::vec(),
             key: None,
             value: None,
             ts_metadata: TypeScript::Metadata::MNone,
@@ -204,13 +204,13 @@ impl Property {
 
     pub fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Property, bun_alloc::AllocError> {
+        bump: &bun_core::alloc_impl::Arena,
+    ) -> core::result::Result<Property, bun_core::alloc_impl::AllocError> {
         let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
                 loc: csb_ref.loc,
-                stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
+                stmts: bun_core::alloc_impl::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
             });
             class_static_block = Some(crate::StoreRef::from_bump(new_block));
         }
@@ -260,9 +260,9 @@ pub struct FnBody {
 
 impl FnBody {
     pub fn init_return_expr(
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         expr: ExprNodeIndex,
-    ) -> core::result::Result<FnBody, bun_alloc::AllocError> {
+    ) -> core::result::Result<FnBody, bun_core::alloc_impl::AllocError> {
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(crate::s::Return { value: Some(expr) }, expr.loc)
         });
@@ -307,8 +307,8 @@ impl Default for Fn {
 impl Fn {
     pub fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Fn, bun_alloc::AllocError> {
+        bump: &bun_core::alloc_impl::Arena,
+    ) -> core::result::Result<Fn, bun_core::alloc_impl::AllocError> {
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
@@ -343,7 +343,7 @@ pub struct Arg {
 impl Default for Arg {
     fn default() -> Self {
         Self {
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: bun_core::alloc_impl::AstAlloc::vec(),
             binding: BindingNodeIndex::default(),
             default: None,
             is_typescript_ctor_field: false,
@@ -355,8 +355,8 @@ impl Default for Arg {
 impl Arg {
     pub fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
-    ) -> core::result::Result<Arg, bun_alloc::AllocError> {
+        bump: &bun_core::alloc_impl::Arena,
+    ) -> core::result::Result<Arg, bun_core::alloc_impl::AllocError> {
         Ok(Arg {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self

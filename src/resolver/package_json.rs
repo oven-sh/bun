@@ -1,11 +1,11 @@
 use bun_ast as js_ast;
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
-use bun_semver as Semver;
-use bun_semver::String as SemverString;
+use bun_core::paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
+use bun_core::semver as Semver;
+use bun_core::semver::String as SemverString;
 
 use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
@@ -38,11 +38,11 @@ pub mod install_stubs {
         pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
     }
 }
-// Deliberately a bare alias rather than `bun_collections::StringMap` (which
+// Deliberately a bare alias rather than `bun_core::collections::StringMap` (which
 // wraps the same `StringArrayHashMap<Box<[u8]>>` with a `dupe_keys` flag the
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
-pub use bun_collections::StringHashMapUnownedKey;
+pub use bun_core::collections::StringHashMapUnownedKey;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -217,9 +217,9 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
 impl PackageJSON {
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
-    fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
+    fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_core::alloc_impl::AllocError> {
         let mut normalized = path.to_vec();
-        bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
+        bun_core::paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
     }
 }
@@ -240,7 +240,7 @@ pub enum SideEffects {
     Mixed(MixedPatterns),
 }
 
-pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
+pub type SideEffectsMap = bun_core::collections::HashMap<StringHashMapUnownedKey, ()>;
 
 pub type GlobList = Vec<Box<[u8]>>;
 
@@ -301,7 +301,7 @@ impl SideEffects {
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
 /// Thin extension trait that delegates to
-/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
+/// `bun_core::paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
 /// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
 /// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
 /// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
@@ -453,7 +453,7 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
-                if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
+                if err != crate::Error::Sys(bun_core::errno::SystemErrno::EISDIR) {
                     r_log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -489,7 +489,7 @@ impl PackageJSON {
             ));
         }
 
-        // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
+        // `bun_ast::Source.path` is the lightweight `bun_core::paths::fs::Path<'static>` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
         //
@@ -503,7 +503,7 @@ impl PackageJSON {
         // early `return None` below `entry_contents` drops and frees normally, after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
-        let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
+        let contents_static: &'static [u8] = unsafe { bun_core::ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
@@ -752,7 +752,7 @@ impl PackageJSON {
                     for item in items {
                         if let Some(name) = item.as_str() {
                             // Skip CSS files as they're not relevant for tree-shaking
-                            if bun_paths::extension(name) == b".css" {
+                            if bun_core::paths::extension(name) == b".css" {
                                 continue;
                             }
 
@@ -786,7 +786,7 @@ impl PackageJSON {
                     for item in items {
                         if let Some(name) = item.as_str() {
                             // Skip CSS files as they're not relevant for tree-shaking
-                            if bun_paths::extension(name) == b".css" {
+                            if bun_core::paths::extension(name) == b".css" {
                                 continue;
                             }
 
@@ -926,7 +926,7 @@ impl PackageJSON {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
-                                    if !bun_alloc::is_slice_in_buffer(
+                                    if !bun_core::alloc_impl::is_slice_in_buffer(
                                         name_str,
                                         package_json.dependencies.source_buf,
                                     ) {
@@ -1014,7 +1014,7 @@ impl PackageJSON {
                             continue;
                         }
                         // SAFETY: `value` borrows `contents_static` or the tape; the returned PackageJSON owns both.
-                        let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
+                        let value: &'static [u8] = unsafe { bun_core::ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
                     }
                     // Return None when the FILTERED map is empty, not just when
@@ -1668,7 +1668,7 @@ impl<'a> ESModule<'a> {
         // live `&mut` to resolved_path_buf_percent on this thread.
         let resolved_path_buf_percent: &mut PathBuffer =
             unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
-        let len = match bun_url::PercentEncoding::decode_into(
+        let len = match bun_core::url::PercentEncoding::decode_into(
             &mut resolved_path_buf_percent.0,
             &result.path,
         ) {

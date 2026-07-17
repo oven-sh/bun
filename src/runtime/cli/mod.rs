@@ -423,7 +423,7 @@ pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8
 /// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
 /// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
 /// `bun` invocation; a plain cell is the correct shape.
-pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
+pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_core::alloc_impl::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
 /// Process-lifetime arena for one-shot CLI commands; allocations live until
@@ -436,7 +436,7 @@ pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc
 /// main thread, which is where the arena is constructed). Do not call from
 /// worker/watcher threads.
 #[inline]
-pub(crate) fn cli_arena() -> &'static bun_alloc::Arena {
+pub(crate) fn cli_arena() -> &'static bun_core::alloc_impl::Arena {
     // SAFETY: `CLI_ARENA` is written exactly once in `Cli::start` during
     // single-threaded startup, before `Command::start` runs and therefore
     // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
@@ -519,7 +519,7 @@ impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader 
 impl colon_list_type::ColonListValue for &'static [u8] {
     fn resolve_value(input: &[u8]) -> crate::Result<Self> {
         // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { bun_ptr::detach_lifetime(input) })
+        Ok(unsafe { bun_core::ptr::detach_lifetime(input) })
     }
 }
 
@@ -565,7 +565,7 @@ pub mod cli {
         // thread is spawned and before `Command::start` (the first
         // `cli_arena()` caller), so a plain `RacyCell` is sound.
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
-        unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
+        unsafe { (*super::CLI_ARENA.get()).write(bun_core::alloc_impl::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
@@ -1460,7 +1460,7 @@ pub mod command {
         }
 
         if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
-            let extension = bun_paths::extension(&ctx.args.entry_points[0]);
+            let extension = bun_core::paths::extension(&ctx.args.entry_points[0]);
             if extension == b".lockb" {
                 return bun_lockb(ctx);
             }
@@ -1888,7 +1888,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::PathBuffer::uninit();
+                let mut path_buf = bun_core::paths::PathBuffer::uninit();
                 let entry = &ctx.args.entry_points[0];
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;

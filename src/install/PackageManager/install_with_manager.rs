@@ -6,7 +6,7 @@ use bun_core::{Global, Output};
 use crate::bun_fs::FileSystem;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
-use bun_semver::String as SemverString;
+use bun_core::semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
@@ -428,7 +428,7 @@ pub fn install_with_manager(
                             let gop = lf.patched_dependencies.entry(pkg_name_and_version_hash);
                             // ArrayHashMap getOrPut semantics → entry API approximation
                             match gop {
-                                bun_collections::array_hash_map::MapEntry::Vacant(v) => {
+                                bun_core::collections::array_hash_map::MapEntry::Vacant(v) => {
                                     // `PatchedDep` has private padding/hash fields,
                                     // so the `..Default::default()` struct-update form is rejected
                                     // outside its module. Build via `default()` + field stores.
@@ -440,7 +440,7 @@ pub fn install_with_manager(
                                     v.insert(new);
                                     // gop.value_ptr.path = gop.value_ptr.path;
                                 }
-                                bun_collections::array_hash_map::MapEntry::Occupied(mut o) => {
+                                bun_core::collections::array_hash_map::MapEntry::Occupied(mut o) => {
                                     if !strings::eql(
                                         o.get().path.slice(builder.string_bytes.as_slice()),
                                         value.path.slice(&lockfile.buffers.string_bytes),
@@ -747,7 +747,7 @@ pub fn install_with_manager(
     // never replaced for the remainder of this function (only its fields
     // mutate). Wrap once as `ParentRef` so the two `save_lockfile` read sites
     // below deref through the safe abstraction instead of per-site raw deref.
-    let lockfile_before_install = bun_ptr::ParentRef::<Lockfile>::new(&*manager.lockfile);
+    let lockfile_before_install = bun_core::ptr::ParentRef::<Lockfile>::new(&*manager.lockfile);
 
     let save_format = load_result.save_format(&manager.options);
 
@@ -1122,7 +1122,7 @@ fn print_summary_tree(
     // so the three read-only field reborrows go through safe `Deref`
     // instead of three per-site raw projections. Safe `From<NonNull>`
     // construction — `mgr` was just derived from `&mut *this`.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+    let mgr_ref = bun_core::ptr::ParentRef::<PackageManager>::from(
         core::ptr::NonNull::new(mgr).expect("derived from &mut, non-null"),
     );
     let printer = Printer {
@@ -1256,7 +1256,7 @@ pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> crate::Result<(Vec<WorkspaceFilter>, bool)> {
-    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let mut path_buf = bun_core::paths::path_buffer_pool::get();
     // RAII: guard puts the buffer back on Drop.
 
     let mut workspace_filters: Vec<WorkspaceFilter> = Vec::new();
@@ -1282,12 +1282,12 @@ pub(crate) fn get_workspace_filters(
 
             #[cfg(windows)]
             {
-                let abs_path = bun_paths::path_to_posix_buf::<u8>(
+                let abs_path = bun_core::paths::path_to_posix_buf::<u8>(
                     FileSystem::instance().top_level_dir,
                     &mut path_buf.0,
                 );
                 break 'abs_root_path strings::without_trailing_slash(
-                    &abs_path[bun_paths::windows_volume_name_len(abs_path).0..],
+                    &abs_path[bun_core::paths::windows_volume_name_len(abs_path).0..],
                 );
             }
         };
@@ -1739,7 +1739,7 @@ fn save_lockfile_only(
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,
     had_any_diffs: bool,
-    lockfile_before_install: bun_ptr::ParentRef<Lockfile>,
+    lockfile_before_install: bun_core::ptr::ParentRef<Lockfile>,
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {

@@ -75,7 +75,7 @@ pub use weak_ptr::WeakPtr;
 
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`
 // (lowest tier, every crate can reach them); re-exported here so callers can
-// spell `bun_core::ptr::container_of` / `bun_core::ptr::from_field_ptr!`.
+// spell `bun_core::ptr::container_of` / `bun_core::from_field_ptr!`.
 pub use bun_core::{
     IntrusiveField, container_of, container_of_const, from_field_ptr, impl_field_parent,
     intrusive_field,

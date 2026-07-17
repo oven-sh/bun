@@ -7,7 +7,7 @@ use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
 use crate::values::url::Url;
 use crate::{PrintErr, VendorPrefix};
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::ImportKind;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.

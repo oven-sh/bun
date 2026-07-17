@@ -1,6 +1,6 @@
 //! Implements building a Bake application to production
 
-use bun_paths::strings;
+use bun_core::paths::strings;
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
@@ -13,13 +13,13 @@ use super::PatternBuffer;
 use crate::bake;
 use crate::bake::bake_body;
 use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
 use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
-use bun_collections::{AutoBitSet, StringArrayHashMap};
+use bun_core::collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
@@ -29,8 +29,8 @@ use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
-use bun_paths::resolve_path::{self, platform};
+use bun_core::paths::PathBuffer;
+use bun_core::paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
 use crate::cli::command::{Context, HotReload};
@@ -1347,7 +1347,7 @@ pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     {
         let input_utf8 = input.to_utf8();
         let input_slice = input_utf8.slice();
-        let mut output = bun_paths::w_path_buffer_pool::get();
+        let mut output = bun_core::paths::w_path_buffer_pool::get();
         let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
         BunString::clone_utf16(output_slice.as_slice())
     }
@@ -1386,7 +1386,7 @@ pub(super) extern "C" fn BakeProdResolve(
 
     // dirname semantics: returns None for the root / no-parent.
     let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
+    let dir = bun_core::paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
 
     BunString::create_format(format_args!(
         "bake:{}",
@@ -1414,17 +1414,17 @@ impl framework_router::InsertionHandler for EntryPointMap {
         abs_path: &[u8],
         _: framework_router::RouteIndex,
         _: framework_router::FileKind,
-    ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
+    ) -> Result<OpaqueFileId, bun_core::alloc_impl::AllocError> {
         self.get_or_put_entry_point(abs_path, bake::Side::Server)
             .map(|id| OpaqueFileId::init(id.get()))
-            .map_err(|_| bun_alloc::AllocError)
+            .map_err(|_| bun_core::alloc_impl::AllocError)
     }
 
     fn on_router_syntax_error(
         &mut self,
         _rel_path: &[u8],
         _fail: framework_router::TinyLog,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         // EntryPointMap does not handle this, so a malformed route pattern
         // during a production build must crash loudly rather than be swallowed.
         bun_core::todo_panic!("onRouterSyntaxError for EntryPointMap")
@@ -1435,7 +1435,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
         rel_path: &[u8],
         other_id: OpaqueFileId,
         ty: framework_router::FileKind,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
             match ty {
@@ -1477,7 +1477,7 @@ pub struct PerThread {
     // is process-lifetime and outlives every `PerThread`); `load_module`
     // re-derives a mutable VM via the per-thread singleton, so no write
     // provenance is needed here.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub vm: bun_core::ptr::BackRef<VirtualMachine>,
     /// Indexed by entry point index (OpaqueFileId)
     pub loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -1522,7 +1522,7 @@ impl PerThread {
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm: bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
+            vm: bun_core::ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -1543,7 +1543,7 @@ impl PerThread {
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
         // BackRef invariant: vm is the live per-thread VM; outlives PerThread.
-        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        let vm = bun_core::ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,

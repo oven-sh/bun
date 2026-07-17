@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_collections::{AutoBitSet, HashMap, VecExt};
+use bun_core::collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
     Chunk, Index, IndexInt, LinkerContext, PartRange,
@@ -18,7 +18,7 @@ pub fn find_all_imported_parts_in_js_order(
     let mut part_ranges_shared: Vec<PartRange> = Vec::new();
     let mut parts_prefix_shared: Vec<PartRange> = Vec::new();
     // PERF: these scratch lists could become
-    // `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded `&'bump Bump`
+    // `bun_core::alloc_impl::ArenaVec<'bump, PartRange>` with a threaded `&'bump Bump`
     // (introduces lifetimes on this fn + visitor). Profile if hot.
     for (index, chunk) in chunks.iter_mut().enumerate() {
         match &chunk.content {

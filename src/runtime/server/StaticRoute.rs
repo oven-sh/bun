@@ -8,9 +8,9 @@ use crate::Error;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
-use bun_http_types::ETag;
+use bun_core::http_types::ETag;
 
-use bun_http_types::MimeType::MimeType;
+use bun_core::http_types::MimeType::MimeType;
 use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -25,7 +25,7 @@ use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
 // preserve write provenance through the FFI userdata round-trip so the eventual
 // `heap::take` in `deref_` is sound.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
@@ -71,7 +71,7 @@ impl StaticRoute {
     #[inline]
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract — see `CellRefCounted::deref`.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+        unsafe { <Self as bun_core::ptr::CellRefCounted>::deref(this) }
     }
 
     /// Ownership of `blob` is transferred to this function.
@@ -225,7 +225,7 @@ impl StaticRoute {
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
             if was_string {
-                let text_mime = bun_http_types::MimeType::TEXT;
+                let text_mime = bun_core::http_types::MimeType::TEXT;
                 response.get_or_create_headers(global_this)?.put_default(
                     HTTPHeaderName::ContentType,
                     &bun_core::String::ascii(text_mime.value.as_ref()),
@@ -482,7 +482,7 @@ impl StaticRoute {
     }
 
     fn do_write_headers(&self, resp: AnyResponse) {
-        use bun_http_types::ETag::HeaderEntryColumns;
+        use bun_core::http_types::ETag::HeaderEntryColumns;
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();

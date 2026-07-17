@@ -8,7 +8,7 @@ use crate::shell::yield_::Yield;
 
 pub struct If {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::If>,
+    pub node: bun_core::ptr::BackRef<ast::If>,
     pub io: IO,
     pub state: IfState,
 }
@@ -27,7 +27,7 @@ pub struct Exec {
     /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
     /// Points into the AST arena, which the interpreter holds for its entire
     /// lifetime — it outlives every state node.
-    pub stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
+    pub stmts: bun_core::ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
     pub stmt_idx: u32,
     pub last_exit_code: ExitCode,
 }
@@ -66,7 +66,7 @@ impl If {
     ) -> NodeId {
         interp.alloc_node(Node::If(If {
             base: Base::new(StateKind::IfClause, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             state: IfState::Idle,
         }))
@@ -91,7 +91,7 @@ impl If {
                     IfState::Idle => {
                         me.state = IfState::Exec(Exec {
                             state: ExecBranch::Cond,
-                            stmts: bun_ptr::BackRef::new(&n.cond),
+                            stmts: bun_core::ptr::BackRef::new(&n.cond),
                             stmt_idx: 0,
                             last_exit_code: 0,
                         });
@@ -103,7 +103,7 @@ impl If {
                                 ExecBranch::Cond => {
                                     if exec.last_exit_code == 0 {
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = bun_ptr::BackRef::new(&n.then);
+                                        exec.stmts = bun_core::ptr::BackRef::new(&n.then);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -112,13 +112,13 @@ impl If {
                                         0 => Action::Done(0),
                                         1 => {
                                             exec.state = ExecBranch::Else;
-                                            exec.stmts = bun_ptr::BackRef::new(&n.else_parts[0]);
+                                            exec.stmts = bun_core::ptr::BackRef::new(&n.else_parts[0]);
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
                                         _ => {
                                             exec.state = ExecBranch::Elif { idx: 0 };
-                                            exec.stmts = bun_ptr::BackRef::new(&n.else_parts[0]);
+                                            exec.stmts = bun_core::ptr::BackRef::new(&n.else_parts[0]);
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
@@ -132,7 +132,7 @@ impl If {
                                         let then_idx = *idx + 1;
                                         exec.state = ExecBranch::Then;
                                         exec.stmts =
-                                            bun_ptr::BackRef::new(&n.else_parts[then_idx as usize]);
+                                            bun_core::ptr::BackRef::new(&n.else_parts[then_idx as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -142,14 +142,14 @@ impl If {
                                         Action::Done(0)
                                     } else if *idx == else_len - 1 {
                                         exec.state = ExecBranch::Else;
-                                        exec.stmts = bun_ptr::BackRef::new(
+                                        exec.stmts = bun_core::ptr::BackRef::new(
                                             &n.else_parts[(else_len - 1) as usize],
                                         );
                                         exec.stmt_idx = 0;
                                         continue;
                                     } else {
                                         exec.stmts =
-                                            bun_ptr::BackRef::new(&n.else_parts[*idx as usize]);
+                                            bun_core::ptr::BackRef::new(&n.else_parts[*idx as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }

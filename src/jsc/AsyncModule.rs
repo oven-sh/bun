@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 
-use bun_alloc::Arena as ArenaAllocator;
+use bun_core::alloc_impl::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
@@ -34,7 +34,7 @@ pub struct InitOpts<'a> {
     pub arena: Box<ArenaAllocator>,
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    pub ast_alloc_state: Option<Box<bun_core::alloc_impl::ast_alloc::AstAllocState>>,
 }
 
 pub struct AsyncModule {
@@ -59,7 +59,7 @@ pub struct AsyncModule {
     pub global_this: crate::GlobalRef,
     pub arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    pub ast_alloc_state: Option<Box<bun_core::alloc_impl::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
@@ -325,7 +325,7 @@ impl Queue {
         err: &'static str,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
+        let this: &mut Queue = unsafe { bun_core::ptr::callback_ctx::<Queue>(ctx) };
         bun_core::scoped_log!(
             AsyncModule,
             "onDependencyError: {}",
@@ -349,7 +349,7 @@ impl Queue {
                 // stable across `resolve_error` (no realloc on the error
                 // path); detach the borrow via raw ptr.
                 let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
+                    bun_core::ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
                 module
                     .resolve_error(
                         vm,
@@ -472,7 +472,7 @@ impl Queue {
         // lockfile (separate heap allocation, never reallocated on the
         // download-error path); detach via `RawSlice` so the closure can fetch
         // a fresh `&mut VirtualMachine` without borrowck tying it to this read.
-        let resolution_ids = bun_ptr::RawSlice::new(
+        let resolution_ids = bun_core::ptr::RawSlice::new(
             VirtualMachine::get()
                 .as_mut()
                 .package_manager()
@@ -619,7 +619,7 @@ impl AsyncModule {
     pub fn init(
         opts: InitOpts<'_>,
         global_object: &JSGlobalObject,
-    ) -> Result<AsyncModule, bun_alloc::AllocError> {
+    ) -> Result<AsyncModule, bun_core::alloc_impl::AllocError> {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
         // `JSInternalPromise` aliases `JSPromise` upstream
@@ -986,7 +986,7 @@ impl AsyncModule {
         // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
         // extend the `&mut vm` borrow across the `match e` body (the `else`
         // arm calls `vm.package_manager()` again).
-        let string_bytes = bun_ptr::RawSlice::new(
+        let string_bytes = bun_core::ptr::RawSlice::new(
             vm.package_manager()
                 .lockfile
                 .buffers
@@ -1206,10 +1206,10 @@ impl AsyncModule {
         // slices into it remain valid across the `&mut self` reborrows below
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
+        let specifier: &[u8] = unsafe { bun_core::ptr::detach_lifetime(self.specifier()) };
         // SAFETY: same `string_buf` stability invariant as `specifier` above —
         // the backing `Box<[u8]>` is never replaced in this fn.
-        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
+        let path_text: &[u8] = unsafe { bun_core::ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
@@ -1343,7 +1343,7 @@ impl AsyncModule {
             };
 
             if let Some(fd_) = input_fd {
-                if bun_paths::is_absolute(path.text)
+                if bun_core::paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
                     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set

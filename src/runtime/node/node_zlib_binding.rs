@@ -3,7 +3,7 @@ use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use bun_ptr::ParentRef;
+use bun_core::ptr::ParentRef;
 
 use bun_core::{String as BunString, ZigStringSlice};
 use bun_event_loop::Taskable;
@@ -17,7 +17,7 @@ use bun_jsc::{
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
 
-bun_output::declare_scope!(zlib, hidden);
+bun_core::declare_scope!(zlib, hidden);
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
@@ -520,7 +520,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         // Clear the strong handle before we call any callbacks.
         let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
-            bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
+            bun_core::scoped_log!(zlib, "this_value is null in runFromJSThread");
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
             // payload and is not accessed after this call.
@@ -1016,16 +1016,16 @@ macro_rules! __impl_compression_stream {
                 unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 
-            // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
+            // All three `Native*` structs `#[derive(bun_core::ptr::CellRefCounted)]`
             // with their own `#[ref_count(destroy = …)]` (or the default
             // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
             // a `Self::deinit(*mut Self)` signature that only one of them has.
-            #[inline] fn ref_(&self) { <Self as ::bun_ptr::CellRefCounted>::ref_(self) }
+            #[inline] fn ref_(&self) { <Self as ::bun_core::ptr::CellRefCounted>::ref_(self) }
             #[inline] unsafe fn deref(this: *mut Self) {
                 // SAFETY: forwarded trait contract — `this` is live; the
                 // derived `CellRefCounted::deref` routes zero to the per-type
                 // `destroy`.
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+                unsafe { <Self as ::bun_core::ptr::CellRefCounted>::deref(this) }
             }
 
             #[inline] fn write_result_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

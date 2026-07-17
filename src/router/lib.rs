@@ -12,13 +12,14 @@ use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_core::collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
-use bun_url::PathnameScanner;
+use bun_core::url::PathnameScanner;
 
-use bun_http_types::URLPath::URLPath;
+use bun_core::http_types::URLPath::URLPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-crate name aliases. These are pure re-exports of real lower-tier types
@@ -28,7 +29,7 @@ use bun_http_types::URLPath::URLPath;
 // Wyhash with seed 0. NOT Wyhash11 (different algo).
 #[inline]
 fn wyhash(input: &[u8]) -> u64 {
-    bun_wyhash::hash(input)
+    bun_core::wyhash::hash(input)
 }
 
 // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
@@ -48,7 +49,7 @@ mod api {
 type CoreError = crate::Error;
 
 use bun_core::HashedString;
-use bun_ptr::Interned;
+use bun_core::ptr::Interned;
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
@@ -187,19 +188,19 @@ impl RouteConfig {
     }
 }
 
-// `hash_const` is byte-identical to the runtime `bun_wyhash::hash` (seed 0);
+// `hash_const` is byte-identical to the runtime `bun_core::wyhash::hash` (seed 0);
 // `tests::hash_const_matches_runtime` in `bun_wyhash` guards drift.
 const INDEX_ROUTE_HASH: u32 =
-    bun_wyhash::hash_const(0, b"$$/index-route$$-!(@*@#&*%-901823098123") as u32;
+    bun_core::wyhash::hash_const(0, b"$$/index-route$$-!(@*@#&*%-901823098123") as u32;
 
 // Param/List are lifetime-parameterized: `name` borrows the route name
 // (DirnameStore-backed) and `value` borrows the *request URL buffer*, so the
 // correct representation is a borrowed `&'a [u8]`, not a forged `'static`.
 //
-// `bun_url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
+// `bun_core::url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
 // move-down landed); collapse the local copy to a re-export so the param list
 // type matches `PathnameScanner::init`.
-pub use bun_url::route_param;
+pub use bun_core::url::route_param;
 pub use route_param::Param;
 
 pub struct Router<'a> {
@@ -337,7 +338,7 @@ struct RouteIndex {
     hash: u32,
 }
 
-// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
+// TODO(b2-blocked): bun_core::collections::MultiArrayElement derive — proc-macro not
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
@@ -603,7 +604,7 @@ struct RouteLoader<'a> {
 
 impl<'a> RouteLoader<'a> {
     pub(crate) fn append_route(&mut self, route: Route) {
-        use bun_collections::hash_map::Entry;
+        use bun_core::collections::hash_map::Entry;
 
         // /index.js
         if route.full_hash == INDEX_ROUTE_HASH {
@@ -713,7 +714,7 @@ impl<'a> RouteLoader<'a> {
         let mut route_dirname_len: u16 = 0;
 
         // Call bun_paths directly to avoid the higher-tier bun_resolver dep.
-        let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
+        let relative_dir = bun_core::paths::resolve_path::relative(base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
             route_dirname_len =
                 (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
@@ -856,7 +857,7 @@ impl<'a> RouteLoader<'a> {
                 }
 
                 Fs::EntryKind::File => {
-                    let extname = bun_paths::extension(entry.base());
+                    let extname = bun_core::paths::extension(entry.base());
                     // exclude "." or ""
                     if extname.len() < 2 {
                         continue;
@@ -871,7 +872,7 @@ impl<'a> RouteLoader<'a> {
                             let entry_dir = entry.dir();
                             debug_assert!(entry_dir.len() + 1 >= base_dir.len());
                             if entry_dir.len() >= base_dir.len() {
-                                debug_assert!(bun_paths::resolve_path::is_sep_any(
+                                debug_assert!(bun_core::paths::resolve_path::is_sep_any(
                                     entry_dir[base_dir.len() - 1]
                                 ));
                             }
@@ -1074,7 +1075,7 @@ impl Route {
 
                 #[cfg(windows)]
                 {
-                    bun_paths::resolve_path::platform_to_posix_in_place(
+                    bun_core::paths::resolve_path::platform_to_posix_in_place(
                         &mut route_file_buf[0..written_len],
                     );
                 }
@@ -1245,7 +1246,7 @@ impl Route {
             let abs_path: AbsPath = {
                 // Intern into DirnameStore so the slice is genuinely `'static`
                 // and the `Interned` widen is sound on Windows.
-                let normalized = bun_paths::resolve_path::platform_to_posix_buf(
+                let normalized = bun_core::paths::resolve_path::platform_to_posix_buf(
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );
@@ -1486,7 +1487,7 @@ impl<'a> Match<'a> {
             name = &name[i + dir.len()..];
         }
 
-        &name[0..name.len() - bun_paths::extension(name).len()]
+        &name[0..name.len() - bun_core::paths::extension(name).len()]
     }
 
     pub fn pathname_without_leading_slash(&self) -> &[u8] {
@@ -2110,7 +2111,7 @@ mod tests {
             let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
             let pages_dir = bun_resolver::fs::FileSystem::instance()
                 .abs_alloc(&pages_parts)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
 
             // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
             // SAFETY: process-static singleton just initialized above.
@@ -2156,7 +2157,7 @@ mod tests {
             let root_dir = resolver
                 .0
                 .read_dir_info(pages_dir)?
-                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+                .ok_or_else(|| crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
 
             // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
@@ -2184,7 +2185,7 @@ mod tests {
             let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
             let pages_dir = bun_resolver::fs::FileSystem::instance()
                 .abs_alloc(&pages_parts)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
 
             // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
             // SAFETY: process-static singleton just initialized above.
@@ -2221,7 +2222,7 @@ mod tests {
             let root_dir = resolver
                 .0
                 .read_dir_info(pages_dir)?
-                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+                .ok_or_else(|| crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
 
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).

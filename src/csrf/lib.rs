@@ -170,12 +170,12 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
                 return false;
             }
 
-            let outlen = bun_base64::decode_len(slice);
+            let outlen = bun_core::base64::decode_len(slice);
             if outlen > buf.len() {
                 return false;
             }
 
-            bun_base64::decode(&mut buf[0..outlen], slice).count
+            bun_core::base64::decode(&mut buf[0..outlen], slice).count
         }
         TokenFormat::Hex => {
             if !token.len().is_multiple_of(2) {

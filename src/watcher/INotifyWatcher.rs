@@ -6,7 +6,7 @@ use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{ZStr, env_var, output as Output};
-use bun_paths::MAX_PATH_BYTES;
+use bun_core::paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 

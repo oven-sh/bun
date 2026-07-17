@@ -11,8 +11,8 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena as ThreadLocalArena;
-use bun_collections::{ArrayHashMap, MapEntry};
+use bun_core::alloc_impl::Arena as ThreadLocalArena;
+use bun_core::collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
@@ -48,7 +48,7 @@ pub struct ThreadPool {
     // and all `ThreadPoolLib` driver methods (`schedule`, `warm`,
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
-    pub io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
+    pub io_pool: Option<bun_core::ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
     // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
     // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
     // borrow on `ThreadPool`.
@@ -217,7 +217,7 @@ impl ThreadPool {
         // pool is stored as `*mut` in the struct anyway, so keep it raw
         // end-to-end.
         worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
-    ) -> Result<ThreadPool, bun_alloc::AllocError> {
+    ) -> Result<ThreadPool, bun_core::alloc_impl::AllocError> {
         // The pool is `heap::alloc`'d (global
         // heap), so `deinit()` must `heap::take` it back; record ownership.
         let owned = worker_pool.is_none();
@@ -457,11 +457,11 @@ impl ThreadPool {
         unsafe {
             worker.write(Worker {
                 // Placeholder — overwritten by `init()` immediately below.
-                ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
+                ctx: bun_core::ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
                 heap: None,
-                arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
+                arena: bun_core::ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
                 thread: NonNull::new(ThreadPoolLib::Thread::current())
-                    .map(bun_ptr::ParentRef::from),
+                    .map(bun_core::ptr::ParentRef::from),
                 data: None,
                 quit: false,
                 ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
@@ -508,13 +508,13 @@ pub struct Worker {
     // self-borrow and so call sites read it via safe `Deref` instead of
     // open-coding a raw deref. Dangling until `create()` runs; every read site is
     // post-`has_created`.
-    pub arena: bun_ptr::BackRef<ThreadLocalArena>,
+    pub arena: bun_core::ptr::BackRef<ThreadLocalArena>,
 
     /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
     /// `Worker` it creates (workers are torn down in `deinit_without_freeing_arena`
     /// before the bundle is dropped). `BackRef` so call sites read
     /// `worker.ctx.field` via safe `Deref` instead of open-coding a raw deref.
-    pub ctx: bun_ptr::BackRef<BundleV2<'static>>,
+    pub ctx: bun_core::ptr::BackRef<BundleV2<'static>>,
 
     /// `None` until [`Worker::create`] populates it; every read site is
     /// post-`has_created`.
@@ -527,18 +527,18 @@ pub struct Worker {
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
     /// outlives the per-thread `Worker` it created, and the only access is
     /// `push_idle_task(&self)` — so the safe `Deref` projection suffices.
-    pub thread: Option<bun_ptr::ParentRef<ThreadPoolLib::Thread>>,
+    pub thread: Option<bun_core::ptr::ParentRef<ThreadPoolLib::Thread>>,
 
     pub deinit_task: ThreadPoolLib::Task,
 
-    pub temporary_arena: Option<bun_alloc::Arena>,
+    pub temporary_arena: Option<bun_core::alloc_impl::Arena>,
     pub stmt_list: Option<StmtList>,
 }
 
 impl Worker {
     /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
     /// reference. `BackRef` field, so the deref is encapsulated in
-    /// [`bun_ptr::BackRef::get`]; see note on the field.
+    /// [`bun_core::ptr::BackRef::get`]; see note on the field.
     ///
     /// `arena` is set to `&self.heap` in [`Worker::create`] before any caller
     /// can observe the `Worker`, and is never dangling after that point. The
@@ -555,7 +555,7 @@ impl Worker {
         // `&'static mut Worker`; callers are task callbacks that complete
         // before `deinit_soon` tears the worker down, so the arena outlives
         // every reference handed out here.
-        unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
+        unsafe { bun_core::ptr::detach_lifetime_ref(self.arena.get()) }
     }
 }
 
@@ -632,7 +632,7 @@ impl Worker {
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
             // `Transpiler` has no `Drop` impl, so `worker.data = None` below
             // would strand it. Free both transpilers' boxes explicitly — the
-            // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC
+            // box only owns a `MacroMap` and a lazy `bun_core::alloc_impl::Arena`, no JSC
             // handles, so the worker thread tearing it down is safe.
             if let Some(data) = worker.data.as_mut() {
                 if let Some(ctx) = data.transpiler.macro_context.take() {
@@ -698,7 +698,7 @@ impl Worker {
     pub fn init(&mut self, v2: &BundleV2<'_>) {
         // Lifetime-erase `'_` → `'static` via `NonNull::cast` (BACKREF: the
         // bundle outlives every worker).
-        self.ctx = bun_ptr::BackRef::from(NonNull::from(v2).cast::<BundleV2<'static>>());
+        self.ctx = bun_core::ptr::BackRef::from(NonNull::from(v2).cast::<BundleV2<'static>>());
     }
 
     fn create(&mut self, ctx: &BundleV2<'_>) {
@@ -712,14 +712,14 @@ impl Worker {
         // Self-referential — `arena` borrows `self.heap`. `Option::insert`
         // returns the stable address of the in-place payload (Worker is
         // heap-pinned, so this never moves).
-        self.arena = bun_ptr::BackRef::new(self.heap.insert(ThreadLocalArena::new()));
+        self.arena = bun_core::ptr::BackRef::new(self.heap.insert(ThreadLocalArena::new()));
 
         // SAFETY: self-referential — `self.arena` was just set to `&self.heap`
         // (Worker is heap-pinned, address stable). `'static` is sound for the
         // erased `Transpiler<'static>` slot below; the arena outlives
         // `WorkerData`. Single detach for the three uses that follow.
         let arena_ref: &'static ThreadLocalArena =
-            unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
+            unsafe { bun_core::ptr::detach_lifetime_ref(self.arena.get()) };
 
         // The
         // ASTMemoryAllocator owns its bump arena internally and ignores the
@@ -728,9 +728,9 @@ impl Worker {
         self.ast_memory_store.reset();
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
-        self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
+        self.ctx = bun_core::ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // Use a fresh Bump (no nested-arena type yet).
-        self.temporary_arena = Some(bun_alloc::Arena::new());
+        self.temporary_arena = Some(bun_core::alloc_impl::Arena::new());
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
             log,
@@ -774,7 +774,7 @@ impl Worker {
                 // pinned for the worker's lifetime; detach to `'static` for the
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
-                    unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
+                    unsafe { bun_core::ptr::detach_lifetime_ref(self.arena.get()) };
                 let mut boxed = Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
                 // Wire self-refs after the value reached its final (heap) address.
                 boxed.wire_after_move();

@@ -472,7 +472,7 @@ pub(crate) struct S3BlobStatTask {
     promise: bun_jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
     // can outlive the constructing frame while reads stay safe.
-    global: bun_ptr::BackRef<JSGlobalObject>,
+    global: bun_core::ptr::BackRef<JSGlobalObject>,
     store: StoreRef,
 }
 
@@ -585,7 +585,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_core::ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -612,7 +612,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_core::ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -639,7 +639,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_core::ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };

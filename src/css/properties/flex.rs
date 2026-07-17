@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
 use crate as css;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use crate::properties::{Property, PropertyId};
 use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};

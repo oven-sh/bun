@@ -10,13 +10,13 @@ use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
     ThreadPool,
 };
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::{
     self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtData, StmtOrExpr,
 };
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_collections::MultiArrayList;
-use bun_collections::VecExt;
+use bun_core::collections::MultiArrayList;
+use bun_core::collections::VecExt;
 use bun_core::perf;
 use bun_core::{
     MutableString,
@@ -142,7 +142,7 @@ pub fn post_process_js_chunk(
                 kind: import_record.import_kind,
                 // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
                 // in-bounds (produced by the linker for this chunks slice).
-                path: bun_paths::fs::Path::init(
+                path: bun_core::paths::fs::Path::init(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
                 ),
                 range: bun_ast::Range::NONE,
@@ -1371,7 +1371,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =
-        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.as_slice()) };
+        unsafe { bun_core::ptr::detach_lifetime(ast_view.import_records.as_slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(

@@ -1,9 +1,9 @@
 use core::alloc::Allocator;
 use std::alloc::Global;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::Loc;
-use bun_collections::MultiArrayList;
+use bun_core::collections::MultiArrayList;
 use bun_core::strings;
 use smallvec::SmallVec;
 

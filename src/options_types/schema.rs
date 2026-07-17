@@ -245,7 +245,7 @@ pub mod api {
     /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {
-        pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
+        pub scopes: bun_core::collections::StringArrayHashMap<NpmRegistry>,
     }
 
     /// Value of `BunInstall.ca`; hoisted to a named type so callers can

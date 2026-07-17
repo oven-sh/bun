@@ -18,7 +18,7 @@ use super::encode;
 use super::stream::Stream;
 use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
 use crate::h3_client as H3;
-use bun_picohttp as picohttp;
+use bun_core::picohttp as picohttp;
 
 use crate::h3_client::h3_client;
 

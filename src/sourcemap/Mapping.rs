@@ -1,11 +1,11 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::mem::size_of;
 
 use bun_ast::Loc;
-use bun_collections::MultiArrayList;
+use bun_core::collections::MultiArrayList;
 use bun_core::{self, ZigStringSlice};
 use bun_core::{declare_scope, scoped_log};
-use bun_semver::String as SemverString;
+use bun_core::semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseResult, ParseResultFail, ParsedSourceMap};
@@ -122,7 +122,7 @@ impl ListValue {
     pub(crate) fn ensure_total_capacity(
         &mut self,
         count: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
 }
@@ -135,7 +135,7 @@ pub struct List {
 }
 
 impl List {
-    fn ensure_with_names(&mut self) -> Result<(), bun_alloc::AllocError> {
+    fn ensure_with_names(&mut self) -> Result<(), bun_core::alloc_impl::AllocError> {
         if matches!(self.r#impl, ListValue::WithNames(_)) {
             return Ok(());
         }
@@ -217,7 +217,7 @@ impl List {
         })
     }
 
-    pub fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
+    pub fn append(&mut self, mapping: &Mapping) -> Result<(), bun_core::alloc_impl::AllocError> {
         match &mut self.r#impl {
             ListValue::WithoutNames(list) => {
                 list.append(MappingWithoutName {
@@ -304,7 +304,7 @@ impl List {
             + (self.names.len() * size_of::<SemverString>())
     }
 
-    pub fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+    pub fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.r#impl.ensure_total_capacity(count)
     }
 }
@@ -314,7 +314,7 @@ struct SortContext {
     len: usize,
 }
 
-impl bun_collections::multi_array_list::SortContext for SortContext {
+impl bun_core::collections::multi_array_list::SortContext for SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool {
         debug_assert!(a_index < self.len && b_index < self.len);
         // SAFETY: indices are `< len`; `generated` is the column base pointer
@@ -365,12 +365,12 @@ impl Lookup {
             return Some(bun_core::String::clone_utf8(name));
         }
 
-        if bun_paths::is_absolute(base_filename) {
+        if bun_core::paths::is_absolute(base_filename) {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            let dir = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(base_filename);
             return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
+                bun_core::paths::resolve_path::join_abs::<bun_core::paths::platform::Auto>(dir, name),
             ));
         }
 
@@ -428,12 +428,12 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_core::paths::PathBuffer::uninit();
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
-                bun_paths::platform::Loose,
+            let dir = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(base_filename);
+            let normalized = bun_core::paths::resolve_path::join_abs_string_buf_z::<
+                bun_core::paths::platform::Loose,
             >(dir, &mut buf, &[name]);
             match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
                 Ok(r) => break 'bytes r,
@@ -508,7 +508,7 @@ pub fn parse(
         if mapping.ensure_total_capacity(count).is_err() {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Out of memory",
-                err: crate::Error::Alloc(bun_alloc::AllocError),
+                err: crate::Error::Alloc(bun_core::alloc_impl::AllocError),
                 loc: Loc::default(),
                 ..Default::default()
             });
@@ -558,7 +558,7 @@ pub fn parse(
             SimdResult::OutOfMemory => {
                 return ParseResult::Fail(ParseResultFail {
                     msg: b"Out of memory",
-                    err: crate::Error::Alloc(bun_alloc::AllocError),
+                    err: crate::Error::Alloc(bun_core::alloc_impl::AllocError),
                     loc: Loc::default(),
                     ..Default::default()
                 });
@@ -744,7 +744,7 @@ pub fn parse(
                             if mapping.ensure_with_names().is_err() {
                                 return ParseResult::Fail(ParseResultFail {
                                     msg: b"Out of memory",
-                                    err: crate::Error::Alloc(bun_alloc::AllocError),
+                                    err: crate::Error::Alloc(bun_core::alloc_impl::AllocError),
                                     loc: Loc {
                                         start: i32::try_from(bytes.len() - remain.len())
                                             .unwrap_or(i32::MAX),
@@ -801,7 +801,7 @@ pub fn parse(
 enum SimdResult {
     Done {
         resume_at: usize,
-        state: bun_highway::ParseMappingsState,
+        state: bun_core::highway::ParseMappingsState,
         has_names: bool,
     },
     OutOfMemory,
@@ -809,7 +809,7 @@ enum SimdResult {
 
 /// SIMD fast path for `parse`: count delimiters to bound the row count,
 /// reserve the `MultiArrayList` once, then decode the whole input in one
-/// `bun_highway::parse_mappings` call that writes directly into the
+/// `bun_core::highway::parse_mappings` call that writes directly into the
 /// column arrays (no intermediate buffer, no chunking, no
 /// geometric-growth reallocs). Returns the byte offset and accumulator
 /// state at which the scalar loop should take over (the tail, or the
@@ -820,7 +820,7 @@ fn parse_simd(
     sources_count: i32,
     options: ParseOptions,
 ) -> SimdResult {
-    use bun_highway::{ParseMappingsOut, ParseMappingsState};
+    use bun_core::highway::{ParseMappingsOut, ParseMappingsState};
 
     // `LineColumnOffset` is `#[repr(C)]` over two `#[repr(transparent)]`
     // i32s, so its column storage is byte-identical to `[[i32; 2]]`. That
@@ -836,7 +836,7 @@ fn parse_simd(
     // of paying ~log1.5(N) geometric-growth memcpys (the dominant cost of
     // the scalar path on large inputs). The final list is the same size
     // the scalar path ends up at; we just skip the intermediate copies.
-    let seg_bound = bun_highway::count_mapping_delims(bytes).saturating_add(1);
+    let seg_bound = bun_core::highway::count_mapping_delims(bytes).saturating_add(1);
 
     // When the caller wants names, switch to the with-names variant
     // before reserving so the reserve lands on the right list. This uses
@@ -870,7 +870,7 @@ fn parse_simd(
             // i32s so reinterpreting as `*mut [i32; 2]` is sound. The
             // three column ranges are disjoint (separate SoA columns).
             let r = unsafe {
-                bun_highway::parse_mappings(
+                bun_core::highway::parse_mappings(
                     bytes,
                     &ParseMappingsOut {
                         generated: list
@@ -904,7 +904,7 @@ fn parse_simd(
             }
             // SAFETY: as above, plus the name_index column.
             let r = unsafe {
-                bun_highway::parse_mappings(
+                bun_core::highway::parse_mappings(
                     bytes,
                     &ParseMappingsOut {
                         generated: list

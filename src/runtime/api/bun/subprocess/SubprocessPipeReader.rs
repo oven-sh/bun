@@ -11,8 +11,8 @@ use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 #[cfg(not(windows))]
-use bun_ptr::ScopedRef;
-use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
+use bun_core::ptr::ScopedRef;
+use bun_core::ptr::{IntrusiveRc, ParentRef, RefCount};
 use bun_sys;
 
 use super::readable::Readable;
@@ -29,7 +29,7 @@ pub enum State {
 }
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 #[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
 pub struct PipeReader {
     pub reader: IOReader,
@@ -42,11 +42,11 @@ pub struct PipeReader {
     // Long-lived borrow of the VM's event loop. The VM (and its embedded
     // `EventLoop`) outlives every PipeReader, so `BackRef` centralises the
     // single unsafe deref behind a safe `Deref`/`get()`.
-    pub event_loop: bun_ptr::BackRef<EventLoop>,
+    pub event_loop: bun_core::ptr::BackRef<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
-    /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
+    /// Intrusive refcount field for `bun_core::ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
     pub stdio_result: StdioResult,
@@ -350,7 +350,7 @@ impl PipeReader {
         let vm = self
             .event_loop
             .virtual_machine
-            .map(bun_ptr::BackRef::from)
+            .map(bun_core::ptr::BackRef::from)
             .expect("event_loop.virtual_machine");
         let uws = vm.uws_loop();
         #[cfg(windows)]

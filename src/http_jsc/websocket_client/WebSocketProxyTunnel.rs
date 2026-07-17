@@ -111,7 +111,7 @@ impl UpgradeClientUnion {
 
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
@@ -149,7 +149,7 @@ impl WebSocketProxyTunnel {
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
         reject_unauthorized: bool,
-    ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
+    ) -> Result<NonNull<WebSocketProxyTunnel>, bun_core::alloc_impl::AllocError> {
         // const-generic bool → variant selection. The pointer cast is
         // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
         // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
@@ -289,7 +289,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called before TLS handshake starts
     fn on_open(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven;
         // see the note there. This callback intentionally does not touch
@@ -301,7 +301,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called with decrypted data from the network
     fn on_data(this: *mut WebSocketProxyTunnel, decrypted_data: &[u8]) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
 
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
@@ -338,7 +338,7 @@ impl WebSocketProxyTunnel {
         ssl_error: us_bun_verify_error_t,
     ) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
@@ -394,7 +394,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called when connection is closing
     fn on_close(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
@@ -409,7 +409,7 @@ impl WebSocketProxyTunnel {
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
             unsafe {
-                let _ws_guard = bun_ptr::ScopedRef::new(connected_websocket);
+                let _ws_guard = bun_core::ptr::ScopedRef::new(connected_websocket);
                 (*connected_websocket).fail(ErrorCode::Ended)
             };
             return;
@@ -496,7 +496,7 @@ impl WebSocketProxyTunnel {
     /// operates on `*mut Self` end-to-end and never binds a whole-struct `&mut`.
     pub(crate) unsafe fn on_writable(this: *mut Self) {
         // SAFETY: caller contract — `this` is live.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
 
         // Flush the SSL state machine via raw field projection so no `&mut Self`
         // spans the synchronous `write_encrypted` re-entry.
@@ -553,7 +553,7 @@ impl WebSocketProxyTunnel {
     /// `&mut Self` across the call.
     pub(crate) unsafe fn receive(this: *mut Self, data: &[u8]) {
         // SAFETY: caller contract — `this` is live.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
 
         // SAFETY: raw field projection; the `&mut Option<SslWrapper>` covers only
         // `wrapper`, and the re-entrant callbacks access tunnel fields via the

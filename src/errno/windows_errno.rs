@@ -10,7 +10,7 @@ use core::ffi::c_int;
 // `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
 // module (their only external use is via `SystemErrno::init`, defined here).
 pub use self::windows::{NTSTATUS, Win32Error, Win32ErrorExt};
-use bun_libuv_sys as uv;
+use bun_core::libuv_sys as uv;
 
 // ──────────────────────────────────────────────────────────────────────────
 // UV_* errno X-macro

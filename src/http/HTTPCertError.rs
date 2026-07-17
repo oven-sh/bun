@@ -36,7 +36,7 @@ impl HTTPCertError {
         /// convenience.
         #[inline]
         fn zstr(p: *const core::ffi::c_char) -> &'static ZStr {
-            // SAFETY: (`bun_ptr::Interned`-style audit — Population A,
+            // SAFETY: (`bun_core::ptr::Interned`-style audit — Population A,
             // process-lifetime): `code` is uSockets'
             // `us_ssl_socket_verify_error_str` lookup into a static
             // string-literal table; `reason` is BoringSSL's

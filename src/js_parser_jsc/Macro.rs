@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -7,7 +7,7 @@ use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
-use bun_collections::{ArrayHashMap, HashMap};
+use bun_core::collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -52,7 +52,7 @@ pub struct MacroContext {
     pub resolver: *mut Resolver<'static>,
     pub env: *mut DotEnvLoader<'static>,
     pub macros: MacroMap,
-    pub remap: bun_ptr::BackRef<MacroRemap>,
+    pub remap: bun_core::ptr::BackRef<MacroRemap>,
     pub javascript_object: JSValue,
     /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
@@ -68,7 +68,7 @@ pub struct MacroContext {
     /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
     /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
     /// heap churn fragments mimalloc's segment cache).
-    pub bump: Option<bun_alloc::Arena>,
+    pub bump: Option<bun_core::alloc_impl::Arena>,
 }
 
 pub(crate) type MacroMap = ArrayHashMap<i32, Macro>;
@@ -91,7 +91,7 @@ impl MacroContext {
             macros: MacroMap::new(),
             resolver: &raw mut transpiler.resolver,
             env: transpiler.env,
-            remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
+            remap: bun_core::ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
             // Deferred until `call()` — see field doc.
             bump: None,
@@ -224,8 +224,8 @@ impl MacroContext {
         // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump: *const bun_core::alloc_impl::Arena =
+            &raw const *self.bump.get_or_insert_with(bun_core::alloc_impl::Arena::new);
         let ret = VirtualMachine::get().run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
             // for the duration of this closure; `bump` points into `*self`,
@@ -534,9 +534,9 @@ impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
         match e {
             MacroError::MacroFailed => crate::Error::MacroFailed,
-            MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            MacroError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             MacroError::ToJs(e) => e.into(),
-            MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
+            MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             MacroError::Js(JsError::Terminated) => crate::Error::JSTerminated,
             MacroError::Js(JsError::Thrown) => crate::Error::JSError,
         }
@@ -554,7 +554,7 @@ pub struct Run<'a> {
     // `MacroContext` (stored long-term in the `Transpiler`) so the slices
     // outlive `run_async` — the returned `Expr` is spliced into the AST and
     // printed long after this frame returns.
-    pub bump: &'a bun_alloc::Arena,
+    pub bump: &'a bun_core::alloc_impl::Arena,
     pub id: i32,
     pub log: &'a mut Log,
     pub source: &'a Source,
@@ -566,7 +566,7 @@ impl<'a> Run<'a> {
     pub fn run_async(
         macro_: &Macro,
         log: &mut Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         function_name: &[u8],
         caller: Expr,
         args: &[JSValue],
@@ -727,7 +727,7 @@ impl<'a> Run<'a> {
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::init(
                     E::Array {
-                        items: bun_alloc::AstAlloc::vec(),
+                        items: bun_core::alloc_impl::AstAlloc::vec(),
                         was_originally_macro: true,
                         ..Default::default()
                     },
@@ -764,7 +764,7 @@ impl<'a> Run<'a> {
                 // Reserve a placeholder to break cycles.
                 let expr = Expr::init(
                     E::Object {
-                        properties: bun_alloc::AstAlloc::vec(),
+                        properties: bun_core::alloc_impl::AstAlloc::vec(),
                         was_originally_macro: true,
                         ..Default::default()
                     },
@@ -912,7 +912,7 @@ impl Runner {
     pub(crate) fn run(
         macro_: &Macro,
         log: &mut Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         function_name: &[u8],
         caller: Expr,
         source: &Source,
@@ -1016,7 +1016,7 @@ impl Runner {
         struct CallData<'c> {
             macro_: &'c Macro,
             log: &'c mut Log,
-            bump: &'c bun_alloc::Arena,
+            bump: &'c bun_core::alloc_impl::Arena,
             function_name: &'c [u8],
             caller: Expr,
             js_args: &'c [JSValue],
@@ -1080,7 +1080,7 @@ unsafe extern "C" {
 /// leaf below both. Only call site is the macro `Response`/`Blob` arm above.
 fn expr_from_blob(
     bytes: &[u8],
-    bump: &bun_alloc::Arena,
+    bump: &bun_core::alloc_impl::Arena,
     mime_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
@@ -1138,7 +1138,7 @@ fn expr_from_blob(
     // Fallback: base64 data URL.
     let prefix = b"data:";
     let mid = b";base64,";
-    let encoded_len = bun_base64::encode_len(bytes);
+    let encoded_len = bun_core::base64::encode_len(bytes);
     let total = prefix.len() + mime_type.len() + mid.len() + encoded_len;
     let buf: &mut [u8] = bump.alloc_slice_fill_copy(total, 0u8);
     let mut i = 0usize;
@@ -1148,7 +1148,7 @@ fn expr_from_blob(
     i += mime_type.len();
     buf[i..i + mid.len()].copy_from_slice(mid);
     i += mid.len();
-    let n = bun_base64::encode(&mut buf[i..], bytes);
+    let n = bun_core::base64::encode(&mut buf[i..], bytes);
     let data = Str::new(&buf[..i + n]);
     Ok(Expr::init(
         E::String {

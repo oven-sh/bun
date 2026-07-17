@@ -5,8 +5,8 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::Arena as Bump;
-use bun_collections::StringHashMap;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
@@ -32,8 +32,8 @@ use bun_resolver::fs::FileSystem;
 use bun_ast::Loc;
 use bun_ast::{self, E, Expr, expr as js_expr};
 use bun_core::strings;
-use bun_paths::{self as path, PathBuffer};
-use bun_semver::{self as semver, SlicedString};
+use bun_core::paths::{self as path, PathBuffer};
+use bun_core::semver::{self as semver, SlicedString};
 
 use crate::Command;
 
@@ -283,7 +283,7 @@ impl UpdateInteractiveCommand {
         for (i, update) in updates.iter().enumerate() {
             let result = workspace_groups
                 .get_or_put(&update.workspace_path)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -376,7 +376,7 @@ impl UpdateInteractiveCommand {
                 );
                 dep_obj
                     .put(&bump, &update.name, new_expr)
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                    .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                 modified = true;
             }
 
@@ -401,7 +401,7 @@ impl UpdateInteractiveCommand {
         while let Some((catalog_key, update)) = catalog_it.next() {
             let result = workspace_catalog_updates
                 .get_or_put(&update.workspace_path)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
             if !result.found_existing {
                 *result.value_ptr = Vec::new();
             }
@@ -830,7 +830,7 @@ impl UpdateInteractiveCommand {
             if pkg.is_catalog {
                 let entry = catalog_map
                     .get_or_put(&pkg.name)
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                    .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();
                 }
@@ -2338,7 +2338,7 @@ fn update_default_catalog(
         let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
-            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
     }
 
     // Check if we need to update under workspaces.catalog or root-level catalog
@@ -2362,7 +2362,7 @@ fn update_default_catalog(
                 };
                 ws_obj
                     .put(bump, b"catalog", expr)
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                    .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                 return Ok(());
             }
         }
@@ -2378,7 +2378,7 @@ fn update_default_catalog(
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
             .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
-            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
     }
     Ok(())
 }
@@ -2432,7 +2432,7 @@ fn update_named_catalog(
         let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
-            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
 
         // Update the catalog in catalogs object
         if existing_catalog.is_none() {
@@ -2442,7 +2442,7 @@ fn update_named_catalog(
                     leak_dup(catalog_name),
                     Expr::init(fresh_catalog, Loc::EMPTY),
                 )
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
         }
     }
 
@@ -2464,7 +2464,7 @@ fn update_named_catalog(
                 };
                 ws_obj
                     .put(bump, b"catalogs", expr)
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                    .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                 return Ok(());
             }
         }
@@ -2478,7 +2478,7 @@ fn update_named_catalog(
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
             .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
-            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
     }
     Ok(())
 }

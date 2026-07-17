@@ -5,7 +5,7 @@ use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
 use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::strings;
 use bun_crash_handler::handle_oom::handle_oom;
 
@@ -399,7 +399,7 @@ impl<'a> ImportScanner<'a> {
                                         alias_loc: item.loc,
                                         namespace_ref,
                                         import_record_index: st.import_record_index,
-                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
@@ -415,7 +415,7 @@ impl<'a> ImportScanner<'a> {
                                 let original_name = symbol.original_name.slice();
 
                                 symbol.namespace_alias =
-                                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                    Some(bun_core::alloc_impl::ast_box(G::NamespaceAlias {
                                         namespace_ref,
                                         alias: js_ast::StoreStr::new(*alias),
                                         import_record_index: st.import_record_index,
@@ -453,7 +453,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: loc,
                                     namespace_ref: Ref::NONE,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                     is_exported: false,
                                 },
                             );
@@ -470,7 +470,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: default.loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -488,7 +488,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: name.loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -519,7 +519,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: name.loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -536,7 +536,7 @@ impl<'a> ImportScanner<'a> {
                                 // SAFETY: arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
                                 symbol.namespace_alias =
-                                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                    Some(bun_core::alloc_impl::ast_box(G::NamespaceAlias {
                                         namespace_ref,
                                         alias: item.alias,
                                         import_record_index: st.import_record_index,
@@ -555,7 +555,7 @@ impl<'a> ImportScanner<'a> {
                             .contains(import_record::Flags::WAS_ORIGINALLY_REQUIRE)
                         {
                             let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
-                            symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+                            symbol.namespace_alias = Some(bun_core::alloc_impl::ast_box(G::NamespaceAlias {
                                 namespace_ref,
                                 alias: js_ast::StoreStr::EMPTY,
                                 import_record_index: st.import_record_index,
@@ -733,7 +733,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Ref::NONE,
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                             },
                         )?;
                         let original: &'p [u8] = alias.original_name.slice();
@@ -768,7 +768,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: st.namespace_ref,
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.

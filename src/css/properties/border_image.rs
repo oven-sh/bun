@@ -1,5 +1,5 @@
 use crate as css;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use crate::Result;
 use css::PrintErr;
@@ -17,7 +17,7 @@ use css::css_values::percentage::NumberOrPercentage;
 use css::css_values::percentage::Percentage;
 use css::css_values::rect::Rect;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
 pub struct BorderImage {

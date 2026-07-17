@@ -224,11 +224,11 @@ pub(crate) fn with_text_format_source<R>(
     path: &'static [u8],
     accept_blob_or_buffer: bool,
     reject_nullish: bool,
-    f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
+    f: impl FnOnce(&bun_core::alloc_impl::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    let arena = bun_alloc::Arena::new();
+    let arena = bun_core::alloc_impl::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
 
@@ -309,7 +309,7 @@ fn expr_to_js_with_check(
     stack_check: bun_core::StackCheck,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
     use bun_ast::expr::Data as ExprData;
-    use bun_collections::VecExt as _;
+    use bun_core::collections::VecExt as _;
     use bun_jsc::JSValue;
 
     if !stack_check.is_safe_to_recurse() {

@@ -22,7 +22,7 @@ use bun_uws::{us_bun_verify_error_t, uws_callback};
 use super::ssl_wrapper::SSLWrapper;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
-bun_output::declare_scope!(UpgradedDuplex, visible);
+bun_core::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
     pub wrapper: Option<WrapperType>,
@@ -102,35 +102,35 @@ fn lazy_js_handler(
 
 impl UpgradedDuplex {
     fn on_open(this: *mut Self) {
-        bun_output::scoped_log!(UpgradedDuplex, "onOpen");
+        bun_core::scoped_log!(UpgradedDuplex, "onOpen");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_open)(this.handlers.ctx);
     }
 
     fn on_data(this: *mut Self, decoded_data: &[u8]) {
-        bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
+        bun_core::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
     }
 
     fn on_session(this: *mut Self, session: &[u8]) {
-        bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
+        bun_core::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_session)(this.handlers.ctx, session);
     }
 
     fn on_keylog(this: *mut Self, line: &[u8]) {
-        bun_output::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
+        bun_core::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_keylog)(this.handlers.ctx, line);
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
-        bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
+        bun_core::scoped_log!(UpgradedDuplex, "onHandshake");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
 
@@ -149,7 +149,7 @@ impl UpgradedDuplex {
     }
 
     fn on_close(this: *mut Self) {
-        bun_output::scoped_log!(UpgradedDuplex, "onClose");
+        bun_core::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
 
@@ -231,7 +231,7 @@ impl UpgradedDuplex {
     }
 
     pub(crate) fn on_timeout(&mut self) {
-        bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
+        bun_core::scoped_log!(UpgradedDuplex, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
             || self.vm.is_none_or(|vm| {
@@ -381,7 +381,7 @@ impl UpgradedDuplex {
 
     #[uws_callback(export = "UpgradedDuplex__encode_and_write")]
     pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
+        bun_core::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         if let Some(wrapper) = &mut self.wrapper {
             return i32::try_from(wrapper.write_data(data).unwrap_or(0)).expect("int cast");
         }
@@ -491,14 +491,14 @@ impl UpgradedDuplex {
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]
     pub(crate) fn set_timeout(&mut self, seconds: c_uint) {
-        bun_output::scoped_log!(UpgradedDuplex, "setTimeout({})", seconds);
+        bun_core::scoped_log!(UpgradedDuplex, "setTimeout({})", seconds);
         self.set_timeout_in_milliseconds(seconds * 1000);
     }
 
     /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
     /// Idempotent — resets to empty state. Not the public API; callers drop the struct.
     fn teardown(&mut self) {
-        bun_output::scoped_log!(UpgradedDuplex, "deinit");
+        bun_core::scoped_log!(UpgradedDuplex, "deinit");
         // clear the timer
         self.set_timeout(0);
 
@@ -547,14 +547,14 @@ impl Drop for UpgradedDuplex {
 
 #[bun_jsc::host_fn]
 fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
+    bun_core::scoped_log!(UpgradedDuplex, "onReceivedData");
 
     let function = frame.callee();
     let args = frame.arguments_old::<1>();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         if args.len >= 1 {
             let data_arg = args.ptr[0];
             if this.origin.has() {
@@ -584,12 +584,12 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
 #[bun_jsc::host_fn]
 fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(UpgradedDuplex, "onEnd");
+    bun_core::scoped_log!(UpgradedDuplex, "onEnd");
     let function = frame.callee();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
@@ -600,13 +600,13 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 #[bun_jsc::host_fn]
 fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(UpgradedDuplex, "onWritable");
+    bun_core::scoped_log!(UpgradedDuplex, "onWritable");
 
     let function = frame.callee();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.flush();
@@ -620,13 +620,13 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
 #[bun_jsc::host_fn]
 fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(UpgradedDuplex, "onCloseJS");
+    bun_core::scoped_log!(UpgradedDuplex, "onCloseJS");
 
     let function = frame.callee();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.shutdown(true);

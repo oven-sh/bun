@@ -2,7 +2,7 @@ use crate::mal_prelude::*;
 use core::sync::atomic::Ordering;
 
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
@@ -106,7 +106,7 @@ fn generate_compile_result_for_css_chunk_impl(
     // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
     // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
     let unique_keys: &[&[u8]] = unsafe {
-        bun_ptr::boxed_slices_as_borrowed(
+        bun_core::ptr::boxed_slices_as_borrowed(
             parse_graph
                 .input_files
                 .items_unique_key_for_additional_file(),

@@ -1,5 +1,5 @@
-use bun_paths::path_options::{Kind, PathSeparators};
-use bun_paths::{AutoRelPath, Path};
+use bun_core::paths::path_options::{Kind, PathSeparators};
+use bun_core::paths::{AutoRelPath, Path};
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only

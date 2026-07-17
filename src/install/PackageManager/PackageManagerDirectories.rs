@@ -1,7 +1,7 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 
 use crate::Error;
 use crate::bun_fs::FileSystem;
@@ -13,8 +13,8 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
-use bun_semver::{self as Semver, String as SemverString};
+use bun_core::paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_core::semver::{self as Semver, String as SemverString};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
 use crate::bun_progress::Node as ProgressNode;
@@ -227,7 +227,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 tried_dot_tmp = true;
                 match sys::make_path::make_open_path(
                     cache_directory,
-                    bun_paths::path_literal!(".tmp"),
+                    bun_core::path_literal!(".tmp"),
                     Default::default(),
                 ) {
                     Ok(d) => d,
@@ -267,7 +267,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 
                     tempdir = match sys::make_path::make_open_path(
                         cache_directory,
-                        bun_paths::path_literal!(".tmp"),
+                        bun_core::path_literal!(".tmp"),
                         Default::default(),
                     ) {
                         Ok(d) => d,
@@ -1156,9 +1156,9 @@ pub fn save_lockfile(
                 match sys::unlinkat(
                     Fd::cwd(),
                     if delete_format == LockfileFormat::Text {
-                        bun_paths::path_literal!("bun.lock")
+                        bun_core::path_literal!("bun.lock")
                     } else {
-                        bun_paths::path_literal!("bun.lockb")
+                        bun_core::path_literal!("bun.lockb")
                     },
                 ) {
                     Ok(()) => {}
@@ -1214,7 +1214,7 @@ pub fn save_lockfile(
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
-        let _ = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb"));
+        let _ = sys::unlinkat(Fd::cwd(), bun_core::path_literal!("bun.lockb"));
     }
 
     if cfg!(debug_assertions) {

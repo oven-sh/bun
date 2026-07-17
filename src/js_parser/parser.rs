@@ -4,10 +4,10 @@
 //! ** IMPORTANT **
 
 use bun_ast::ImportRecord;
-use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
-// `bun_wyhash::Wyhash` (wyhash final-4) — used by `hash_for_runtime_transpiler`
-// and `ReactRefresh.HookContext`. NOT interchangeable with `bun_wyhash::Wyhash11`.
-use bun_wyhash::Wyhash;
+use bun_core::collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
+// `bun_core::wyhash::Wyhash` (wyhash final-4) — used by `hash_for_runtime_transpiler`
+// and `ReactRefresh.HookContext`. NOT interchangeable with `bun_core::wyhash::Wyhash11`.
+use bun_core::wyhash::Wyhash;
 
 // Re-exports.
 // Round-C: stub the still-gated submodules so the helper *types* in this file
@@ -16,7 +16,7 @@ use bun_wyhash::Wyhash;
 pub mod ConvertESMExportsForHmr {
     pub type Ctx = ();
 }
-pub use bun_paths::fs;
+pub use bun_core::paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
 /// (`JSX`, `ServerComponents`, `ModuleType`, etc.); provide a local
@@ -178,7 +178,7 @@ pub mod options {
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
 pub use crate::scan::scan_side_effects::SideEffects;
-pub use bun_paths::is_package_path;
+pub use bun_core::paths::is_package_path;
 
 pub(crate) use bun_ast::base::Ref;
 
@@ -188,9 +188,9 @@ pub(crate) use bun_ast::base::Ref;
 // drop their bool-placeholder guards.
 #[allow(non_snake_case)]
 pub mod Runtime {
-    use bun_collections::StringSet;
+    use bun_core::collections::StringSet;
     use bun_core::strings;
-    use bun_wyhash::Wyhash;
+    use bun_core::wyhash::Wyhash;
 
     use bun_ast::RuntimeTranspilerCache;
 
@@ -577,7 +577,7 @@ pub mod Runtime {
             let mut encoder = schema::Writer::new(&mut bb);
             self.msg.encode(&mut encoder); // catch {}
             // Standard alphabet, no '=' padding.
-            let enc = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
+            let enc = &bun_core::base64::zig_base64::STANDARD_NO_PAD.encoder;
             let mut out = vec![0u8; enc.calc_size(bb.len())];
             let s = enc.encode(&mut out, &bb); // catch {}
             // SAFETY: STANDARD_ALPHABET_CHARS is pure ASCII; encoder output contains only those bytes.
@@ -804,7 +804,7 @@ pub(crate) const ARGUMENTS_STR: &[u8] = b"arguments";
 // While the names for Expr, Binding, and Stmt are directly copied from esbuild, those were likely inspired by Go's parser.
 // which is another example of a very fast parser.
 
-pub(crate) type ScopeOrderList<'bump> = bun_alloc::ArenaVec<'bump, Option<ScopeOrder<'bump>>>;
+pub(crate) type ScopeOrderList<'bump> = bun_core::alloc_impl::ArenaVec<'bump, Option<ScopeOrder<'bump>>>;
 
 // kept as a static reference
 pub(crate) const EXPORTS_STRING_NAME: &[u8] = b"exports";
@@ -1064,7 +1064,7 @@ impl<'a> JSXTag<'a> {
 /// This makes sure that there's the lowest possible chance of having a generated name
 /// collide with a user's name. This is the easiest way to do so
 //
-// The const-fn Wyhash one-shot lives in `bun_wyhash::hash_const` next to the
+// The const-fn Wyhash one-shot lives in `bun_core::wyhash::hash_const` next to the
 // runtime impl it must stay in lock-step with; the const-fn suffix encoder is
 // `bun_core::fmt::truncated_hash32_bytes` (re-exported here so the
 // `$crate::parser::__generated_symbol_hash::truncated_hash32` macro path keeps
@@ -1114,14 +1114,14 @@ pub struct ExprOrLetStmt {
     // the move, but borrowck can't see that — store as `RawSlice` to record the
     // outlives-holder invariant without a per-site unsafe cast. Read by the
     // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
-    pub decls: bun_collections::RawSlice<G::Decl>,
+    pub decls: bun_core::collections::RawSlice<G::Decl>,
 }
 
 impl Default for ExprOrLetStmt {
     fn default() -> Self {
         Self {
             stmt_or_expr: js_ast::StmtOrExpr::default(),
-            decls: bun_collections::RawSlice::EMPTY,
+            decls: bun_core::collections::RawSlice::EMPTY,
         }
     }
 }
@@ -1424,8 +1424,8 @@ impl InvalidLoc {
     }
 }
 
-pub(crate) type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
-pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
+pub(crate) type LocList<'bump> = bun_core::alloc_impl::ArenaVec<'bump, InvalidLoc>;
+pub type StmtList<'bump> = bun_core::alloc_impl::ArenaVec<'bump, Stmt>;
 
 /// This hash table is used every time we parse function args
 /// Rather than allocating a new hash table each time, we can just reuse the previous allocation
@@ -1456,12 +1456,12 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop`.
     #[inline]
-    pub(crate) fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
+    pub(crate) fn get() -> bun_core::collections::pool::PoolGuard<'static, StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
 
-impl bun_collections::pool::ObjectPoolType for StringVoidMap {
+impl bun_core::collections::pool::ObjectPoolType for StringVoidMap {
     const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
     #[inline]
     fn reset(&mut self) {
@@ -1469,7 +1469,7 @@ impl bun_collections::pool::ObjectPoolType for StringVoidMap {
     }
 }
 
-bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
+bun_core::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
 
 pub(crate) type StringBoolMap = StringHashMap<bool>;
 pub(crate) type RefMap = HashMap<Ref, ()>;
@@ -1736,7 +1736,7 @@ impl Default for PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: bun_core::alloc_impl::AstAlloc::vec(),
             has_argument_decorators: false,
             has_class_decorators: false,
         }
@@ -2036,7 +2036,7 @@ impl Default for DeferredArrowArgErrors {
 }
 
 pub fn new_lazy_export_ast<'bump>(
-    bump: &'bump bun_alloc::Arena,
+    bump: &'bump bun_core::alloc_impl::Arena,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
@@ -2057,7 +2057,7 @@ pub fn new_lazy_export_ast<'bump>(
 }
 
 pub fn new_lazy_export_ast_impl<'bump>(
-    bump: &'bump bun_alloc::Arena,
+    bump: &'bump bun_core::alloc_impl::Arena,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,

@@ -10,7 +10,7 @@ use crate::shell::yield_::Yield;
 
 pub struct Subshell {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Subshell>,
+    pub node: bun_core::ptr::BackRef<ast::Subshell>,
     pub io: IO,
     pub state: SubshellState,
     pub exit_code: ExitCode,
@@ -39,7 +39,7 @@ impl Subshell {
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
             base: Base::new(StateKind::Subshell, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,
             exit_code: 0,

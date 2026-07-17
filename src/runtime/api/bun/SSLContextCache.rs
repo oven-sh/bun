@@ -23,7 +23,7 @@ use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
-use bun_collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
+use bun_core::collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
 use bun_threading::Mutex;
 use bun_uws as uws;
 use bun_uws::create_bun_socket_error_t;
@@ -66,7 +66,7 @@ pub struct Entry {
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
     /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
     /// owner).
-    pub owner: bun_ptr::BackRef<SSLContextCache>,
+    pub owner: bun_core::ptr::BackRef<SSLContextCache>,
 }
 
 impl SSLContextCache {
@@ -125,7 +125,7 @@ impl SSLContextCache {
         // Capture the backref before the mutable borrow of `self.map` so the
         // borrow checker doesn't see an overlapping immutable borrow at the
         // `Entry { owner: ... }` site below.
-        let owner_ptr = bun_ptr::BackRef::new(&*self);
+        let owner_ptr = bun_core::ptr::BackRef::new(&*self);
 
         // Re-check: another caller may have inserted while we were building.
         // Prefer the already-cached one and drop ours so callers converge.
@@ -236,7 +236,7 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
     }
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
-    let entry: &mut Entry = unsafe { bun_ptr::callback_ctx::<Entry>(ptr) };
+    let entry: &mut Entry = unsafe { bun_core::ptr::callback_ctx::<Entry>(ptr) };
     let _guard = entry.owner.mutex.lock_guard();
     entry.ctx = ptr::null_mut();
 }

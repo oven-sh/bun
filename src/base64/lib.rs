@@ -1,3 +1,7 @@
+#[allow(unused_imports)]
+pub(crate) use crate as base64;
+
+#[allow(unused_imports)]
 use bun_core::simdutf::{self, SIMDUTFResult};
 
 pub use zig_base64::STANDARD_ALPHABET_CHARS;
@@ -117,7 +121,7 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     Ok(dest)
 }
 
-pub use bun_core::util::base64::encode;
+pub use bun_core::util::base64::{encode, standard_encode, standard_encoder_calc_size};
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
     let len = encode_len(source);

@@ -143,7 +143,7 @@ pub struct Framework {
     pub file_system_router_types: Vec<FileSystemRouterType>,
     pub server_components: Option<ServerComponents>,
     pub react_fast_refresh: Option<ReactFastRefresh>,
-    pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+    pub built_in_modules: bun_core::collections::StringArrayHashMap<BuiltInModule>,
 }
 impl Default for Framework {
     fn default() -> Self {
@@ -152,7 +152,7 @@ impl Default for Framework {
             file_system_router_types: Vec::new(),
             server_components: None,
             react_fast_refresh: None,
-            built_in_modules: bun_collections::StringArrayHashMap::new(),
+            built_in_modules: bun_core::collections::StringArrayHashMap::new(),
         }
     }
 }
@@ -165,7 +165,7 @@ impl Framework {
     /// `out.options.framework`.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+        let mut built_in_modules = bun_core::collections::StringArrayHashMap::new();
         for (k, v) in self.built_in_modules.iter() {
             let bv = match v {
                 BuiltInModule::Import(p) => BuiltInModule::Import(p.clone()),
@@ -215,7 +215,7 @@ impl Framework {
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub fn init_transpiler<'a>(
         &mut self,
-        arena: &'a bun_alloc::Arena,
+        arena: &'a bun_core::alloc_impl::Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
@@ -248,7 +248,7 @@ impl Framework {
             Mode::Development => bun_bundler::options::Format::InternalBakeDev,
             Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
         };
-        out.options.out_extensions = bun_collections::StringHashMap::new();
+        out.options.out_extensions = bun_core::collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
@@ -372,7 +372,7 @@ impl Framework {
         &mut self,
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
     ) -> crate::Result<()> {
         let mut had_errors = false;
 
@@ -397,7 +397,7 @@ impl Framework {
         for fsr in self.file_system_router_types.iter_mut() {
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
             fsr.root = Cow::Owned(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                bun_core::paths::resolve_path::join_abs::<bun_core::paths::platform::Auto>(
                     top_level_dir,
                     &fsr.root,
                 )
@@ -429,7 +429,7 @@ impl Framework {
     }
 
     fn resolve_helper(
-        built_in_modules: &bun_collections::StringArrayHashMap<BuiltInModule>,
+        built_in_modules: &bun_core::collections::StringArrayHashMap<BuiltInModule>,
         r: &mut bun_resolver::Resolver,
         path: &mut Cow<'static, [u8]>,
         had_errors: &mut bool,
@@ -544,7 +544,7 @@ impl From<bake_body::BuiltInModule> for BuiltInModule {
 }
 impl From<bake_body::Framework> for Framework {
     fn from(src: bake_body::Framework) -> Self {
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+        let mut built_in_modules = bun_core::collections::StringArrayHashMap::new();
         for (k, v) in src.built_in_modules.iter() {
             bun_core::handle_oom(built_in_modules.put(*k, BuiltInModule::from(*v)));
         }
@@ -599,8 +599,8 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
 #[derive(Default)]
 pub struct BuildConfigSubset {
     pub ignore_dce_annotations: Option<bool>,
-    pub conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
+    pub conditions: bun_core::collections::ArrayHashMap<&'static [u8], ()>,
+    pub drop: bun_core::collections::ArrayHashMap<&'static [u8], ()>,
     pub env: bun_options_types::schema::api::DotEnvBehavior,
     pub env_prefix: Option<&'static [u8]>,
     pub define: bun_options_types::schema::api::StringMap,

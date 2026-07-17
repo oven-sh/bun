@@ -3,11 +3,11 @@ use std::borrow::Cow;
 
 use crate::Error;
 use crate::bun_fs as fs;
-use bun_alloc::AstAlloc;
+use bun_core::alloc_impl::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_paths::fs::Path as FsPath;
-use bun_paths::{platform, resolve_path};
+use bun_core::paths::fs::Path as FsPath;
+use bun_core::paths::{platform, resolve_path};
 use bun_sys as sys;
 use lol_html::html_content::Element;
 

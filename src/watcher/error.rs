@@ -3,7 +3,7 @@ pub enum Error {
     #[error("KQueueError")]
     KQueueError,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[cfg(windows)]
     #[error(transparent)]
     Windows(#[from] crate::windows_watcher::Error),

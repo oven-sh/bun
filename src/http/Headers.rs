@@ -1,18 +1,18 @@
-use bun_picohttp as picohttp;
+use bun_core::picohttp as picohttp;
 
 // `bun.schema.api.StringPointer` — canonical type is `bun_core::StringPointer`;
 // `bun_http_types` re-exports it. Public: downstream crates (e.g.
 // bun_install::NetworkTask) build raw `Entry` records and need the field type.
 pub mod api {
-    pub use bun_http_types::ETag::StringPointer;
+    pub use bun_core::http_types::ETag::StringPointer;
 }
 
-// TYPE_ONLY moved-in: `bun_http_types::Method::HeaderName` is the `#[repr(u8)]`
+// TYPE_ONLY moved-in: `bun_core::http_types::Method::HeaderName` is the `#[repr(u8)]`
 // enum mirroring WebCore's `HTTPHeaderNames.in` (same discriminants as
 // `bun_jsc::HTTPHeaderName`). Re-export for the `FetchHeadersRef::fast_has`
 // signature so impls can forward the discriminant straight to
 // `WebCore__FetchHeaders__fastHas_`.
-pub use bun_http_types::Method::HeaderName;
+pub use bun_core::http_types::Method::HeaderName;
 
 // LAYERING: `Headers` (and its tier-safe inherent methods: `memory_cost`,
 // `get`, `append`, `get_content_*`, `as_str`, `Clone`) is owned by
@@ -21,7 +21,7 @@ pub use bun_http_types::Method::HeaderName;
 // (`picohttp`). The `FetchHeaders`-taking constructor lives in
 // `bun_http_jsc::headers_jsc::from_fetch_headers` (it needs to name
 // `bun_jsc::FetchHeaders`).
-pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
+pub use bun_core::http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 
 // to_fetch_headers lives as an extension-trait method in bun_http_jsc.
 
@@ -82,5 +82,5 @@ impl HeadersExt for Headers {
 /// the same type in both crates.
 #[inline]
 pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
-    bun_http_types::ETag::append_to_headers(bytes, headers);
+    bun_core::http_types::ETag::append_to_headers(bytes, headers);
 }

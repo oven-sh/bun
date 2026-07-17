@@ -123,7 +123,7 @@ pub fn compile_fn(
     func: &FunctionNode<'_>,
     fn_name: Option<&str>,
     host: &mut dyn Host,
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
@@ -273,13 +273,13 @@ pub fn compile_outlined_fn(
     codegen_fn: CodegenFunction,
     fn_name: Option<&str>,
     host: &mut dyn Host,
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
 ) -> Result<CodegenFunction, CompilerError> {
-    use bun_alloc::AstAlloc;
+    use bun_core::alloc_impl::AstAlloc;
     use bun_ast::{G, Loc, StoreSlice, flags};
 
     let mut env = Environment::with_config(env_config.clone());
@@ -287,12 +287,12 @@ pub fn compile_outlined_fn(
     env.output_mode = context.output_mode;
 
     // Build a FunctionDeclaration from the codegen output
-    let mut params: bun_alloc::AstVec<G::Arg> =
+    let mut params: bun_core::alloc_impl::AstVec<G::Arg> =
         AstAlloc::vec_with_capacity(codegen_fn.params.len());
     for p in codegen_fn.params {
         params.push(p);
     }
-    let mut body: bun_alloc::AstVec<bun_ast::Stmt> =
+    let mut body: bun_core::alloc_impl::AstVec<bun_ast::Stmt> =
         AstAlloc::vec_with_capacity(codegen_fn.body.len());
     for s in codegen_fn.body {
         body.push(s);

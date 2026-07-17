@@ -10,10 +10,10 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::{self, E, Expr, G};
 use bun_ast::{self as ast, Loc};
-use bun_collections::{StringHashMap, VecExt};
+use bun_core::collections::{StringHashMap, VecExt};
 use bun_core::{self, StackCheck};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
 
@@ -80,7 +80,7 @@ bun_core::oom_from_alloc!(YamlParseError);
 impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
         match e {
-            YamlParseError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            YamlParseError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             YamlParseError::SyntaxError => crate::Error::SyntaxError,
             YamlParseError::StackOverflow => crate::Error::StackOverflow,
         }
@@ -92,7 +92,7 @@ impl From<YamlParseError> for crate::Error {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn parse<'i, Enc: Encoding>(
-    bump: &'i bun_alloc::Arena,
+    bump: &'i bun_core::alloc_impl::Arena,
     input: &'i [Enc::Unit],
 ) -> ParseResult<'i, Enc> {
     let mut parser: Parser<Enc> = Parser::init(bump, input);
@@ -1779,7 +1779,7 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_core::alloc_impl::Arena) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
@@ -2335,7 +2335,7 @@ pub struct Parser<'i, Enc: Encoding> {
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
-    pub bump: &'i bun_alloc::Arena,
+    pub bump: &'i bun_core::alloc_impl::Arena,
 
     pub context: ContextStack,
     pub block_indents: IndentStack,
@@ -2363,7 +2363,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// (billion-laughs style) expansion.
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
-    pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+    pub fn init(bump: &'i bun_core::alloc_impl::Arena, input: &'i [Enc::Unit]) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
         Self {
@@ -2741,7 +2741,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let _sequence_indent = self.token.indent;
         let _sequence_line = self.line;
 
-        let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+        let mut seq: ast::ExprNodeList = bun_core::alloc_impl::AstAlloc::vec();
 
         self.context.set(Context::FlowIn)?;
 
@@ -2814,7 +2814,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         Ok(Expr::init(
             E::Array {
-                items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
+                items: core::mem::replace(&mut seq, bun_core::alloc_impl::AstAlloc::vec()),
                 ..Default::default()
             },
             sequence_start.loc(),
@@ -2961,7 +2961,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Capture the fallible body's result and pop `block_indents` on EVERY
         // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
-            let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+            let mut seq: ast::ExprNodeList = bun_core::alloc_impl::AstAlloc::vec();
 
             let mut prev_line = Line::from(0);
 
@@ -3000,7 +3000,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             Ok(Expr::init(
                 E::Array {
-                    items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
+                    items: core::mem::replace(&mut seq, bun_core::alloc_impl::AstAlloc::vec()),
                     ..Default::default()
                 },
                 sequence_start.loc(),
@@ -3261,7 +3261,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
 pub struct MappingProps {
     list: G::PropertyList,
-    merge_index: bun_collections::HashMap<u64, Vec<u32>>,
+    merge_index: bun_core::collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
 }
 
@@ -3270,8 +3270,8 @@ impl MappingProps {
 
     pub fn init() -> Self {
         Self {
-            list: bun_alloc::AstAlloc::vec(),
-            merge_index: bun_collections::HashMap::default(),
+            list: bun_core::alloc_impl::AstAlloc::vec(),
+            merge_index: bun_core::collections::HashMap::default(),
             merge_indexed: 0,
         }
     }
@@ -3374,7 +3374,7 @@ impl MappingProps {
     pub fn move_list(&mut self) -> G::PropertyList {
         self.merge_index.clear();
         self.merge_indexed = 0;
-        core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
+        core::mem::replace(&mut self.list, bun_core::alloc_impl::AstAlloc::vec())
     }
 }
 

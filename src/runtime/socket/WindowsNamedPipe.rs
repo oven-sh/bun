@@ -24,7 +24,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl_sys as boringssl;
 #[cfg(windows)]
-use bun_collections::ByteVecExt;
+use bun_core::collections::ByteVecExt;
 use bun_core::timespec;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
@@ -32,7 +32,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
+use bun_core::libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -46,7 +46,7 @@ use crate::socket::ssl_wrapper::{self, SSLWrapper};
 use crate::timer::EventLoopTimerTag;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
 
-bun_output::declare_scope!(WindowsNamedPipe, visible);
+bun_core::declare_scope!(WindowsNamedPipe, visible);
 
 pub type CertError = crate::socket::upgraded_duplex::CertError;
 
@@ -228,7 +228,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_writable(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
+        bun_core::scoped_log!(WindowsNamedPipe, "onWritable");
         // flush pending data
         self.flush();
         // call onWritable (will flush on demand)
@@ -249,7 +249,7 @@ impl WindowsNamedPipe {
     // `on_read_alloc`, and we no longer hold the original pointer here.
     #[cfg(windows)]
     fn on_read(&mut self, nread: usize) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
+        bun_core::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
         unsafe { self.incoming.uv_commit(nread) };
 
@@ -313,7 +313,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             WindowsNamedPipe,
             "onWrite {} {}",
             amount,
@@ -345,7 +345,7 @@ impl WindowsNamedPipe {
 
     #[cfg(windows)]
     fn on_read_error(&mut self, err: bun_sys::E) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
+        bun_core::scoped_log!(WindowsNamedPipe, "onReadError");
         // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
         // this type is Windows-only at runtime so the comparison is gated.
         #[cfg(windows)]
@@ -360,28 +360,28 @@ impl WindowsNamedPipe {
     }
 
     fn on_error(&mut self, err: bun_sys::Error) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onError");
+        bun_core::scoped_log!(WindowsNamedPipe, "onError");
         (self.handlers.on_error)(self.handlers.ctx, err);
         self.close();
     }
 
     fn on_open(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onOpen");
+        bun_core::scoped_log!(WindowsNamedPipe, "onOpen");
         (self.handlers.on_open)(self.handlers.ctx);
     }
 
     fn on_data(&mut self, decoded_data: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
         (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
     fn on_session(&mut self, session: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
         (self.handlers.on_session)(self.handlers.ctx, session);
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onKeylog ({})", line.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "onKeylog ({})", line.len());
         (self.handlers.on_keylog)(self.handlers.ctx, line);
     }
 
@@ -421,7 +421,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
+        bun_core::scoped_log!(WindowsNamedPipe, "onHandshake");
 
         self.ssl_error = CertError {
             error_no: ssl_error.error_no,
@@ -438,7 +438,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_close(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        bun_core::scoped_log!(WindowsNamedPipe, "onClose");
         #[cfg(windows)]
         {
             // `self.pipe` is a non-owning `NonNull` alias of the
@@ -593,7 +593,7 @@ impl WindowsNamedPipe {
     }
 
     pub fn on_timeout(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
+        bun_core::scoped_log!(WindowsNamedPipe, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
             || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
@@ -1106,7 +1106,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(w) = self.wrapper_ptr() {
             // Re-entrancy guard: `SSLWrapper::write_data` calls
             // `trigger_close_callback` on SSL_ERROR_SSL/SYSCALL and
@@ -1327,7 +1327,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
     pub fn set_timeout(&mut self, seconds: c_uint) {
-        bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
+        bun_core::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
         self.set_timeout_in_milliseconds(seconds * 1000);
     }
 
@@ -1336,7 +1336,7 @@ impl WindowsNamedPipe {
     // Owned fields (writer, wrapper, ssl_error) free themselves via their own Drop impls; only
     // the side effects (timer cancel, read_stop, take()) remain explicit here.
     fn release_resources(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "deinit");
+        bun_core::scoped_log!(WindowsNamedPipe, "deinit");
         // clear the timer
         self.set_timeout(0);
         #[cfg(windows)]

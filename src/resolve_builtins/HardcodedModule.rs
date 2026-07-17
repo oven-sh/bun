@@ -844,8 +844,8 @@ pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
         && !stream_iter_enabled()
 }
 
-fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
-    let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
+fn build_alias_map(tables: &[&[AliasKv]]) -> bun_core::collections::HashMap<&'static [u8], Alias> {
+    let mut map = bun_core::collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
         for (k, v) in *table {
             // First table wins, matching the previous in-order scan
@@ -856,16 +856,16 @@ fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [
     map
 }
 
-static NODE_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+static NODE_ALIAS_MAP: std::sync::LazyLock<bun_core::collections::HashMap<&'static [u8], Alias>> =
     std::sync::LazyLock::new(|| build_alias_map(NODE_ALIASES));
-static BUN_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+static BUN_ALIAS_MAP: std::sync::LazyLock<bun_core::collections::HashMap<&'static [u8], Alias>> =
     std::sync::LazyLock::new(|| build_alias_map(BUN_ALIASES));
-static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<bun_core::collections::HashMap<&'static [u8], Alias>> =
     std::sync::LazyLock::new(|| build_alias_map(BUN_TEST_ALIASES));
 
 #[inline]
 fn lookup(
-    map: &std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>>,
+    map: &std::sync::LazyLock<bun_core::collections::HashMap<&'static [u8], Alias>>,
     name: &[u8],
 ) -> Option<Alias> {
     map.get(name).copied()

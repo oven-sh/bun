@@ -31,8 +31,9 @@ use bun_core::{ZBox, env_var};
 use bun_jsc::JSGlobalObject;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, path_buffer_pool, platform, resolve_path};
+use bun_core::{declare_scope, scoped_log};
+#[allow(unused_imports)]
+use bun_core::paths::{self, path_buffer_pool, platform, resolve_path};
 use bun_spawn::{self, Process};
 #[cfg(not(windows))]
 use bun_spawn::{
@@ -450,7 +451,7 @@ fn spawn(
             ZBox::from_vec(v)
         } else {
             let mut name_buf = [0u8; 64];
-            let name = bun_paths::fs::FileSystem::tmpname(
+            let name = bun_core::paths::fs::FileSystem::tmpname(
                 b"bun-chrome",
                 &mut name_buf,
                 bun_core::fast_random(),

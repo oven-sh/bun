@@ -51,9 +51,10 @@ use crate::webcore::jsc::{
 use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
-use bun_http_types::Method::Method;
+use bun_core::http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
-use bun_paths::{self, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
@@ -72,12 +73,12 @@ use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
 #[cfg(windows)]
-use bun_paths::resolve_path::PosixToWinNormalizer;
-use bun_picohttp as picohttp;
+use bun_core::paths::resolve_path::PosixToWinNormalizer;
+use bun_core::picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
-use bun_url::PercentEncoding;
-use bun_url::URL as ZigURL;
+use bun_core::url::PercentEncoding;
+use bun_core::url::URL as ZigURL;
 
 pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
@@ -129,7 +130,7 @@ impl Drop for SignalRef {
             // `sig` was obtained from `AbortSignal::ref_()` which bumped the
             // C++ intrusive refcount; the pointee outlives this `BackRef`
             // until `unref()` releases that +1.
-            bun_ptr::BackRef::from(sig).unref();
+            bun_core::ptr::BackRef::from(sig).unref();
         }
     }
 }
@@ -470,7 +471,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let s: &[u8] = $slice;
             // SAFETY: `s` points into a Vec that is immediately adopted as
             // `url_proxy_buffer` (or already is it); see note above.
-            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
+            ZigURL::parse(unsafe { bun_core::ptr::detach_lifetime(s) })
         }};
     }
     let mut url_type = URLType::Remote;
@@ -1099,7 +1100,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                         {
                                             // `cast` returns a live JS-owned FetchHeaders*;
                                             // BackRef invariant holds for this read.
-                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
+                                            let fetch_hdrs = bun_core::ptr::BackRef::from(fetch_hdrs);
                                             proxy_headers =
                                                 Some(from_fetch_headers(Some(&*fetch_hdrs), None));
                                         } else if let Some(fetch_hdrs) =
@@ -1108,7 +1109,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             // `create_from_js` returns a +1-ref NonNull<FetchHeaders>;
                                             // RAII guard releases it on scope exit.
                                             let _guard = FetchHeadersRef(Some(fetch_hdrs));
-                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
+                                            let fetch_hdrs = bun_core::ptr::BackRef::from(fetch_hdrs);
                                             proxy_headers =
                                                 Some(from_fetch_headers(Some(&*fetch_hdrs), None));
                                         }
@@ -1449,7 +1450,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Ok(n) => n,
             Err(err) => {
                 return Err(
-                    global_this.throw_error(bun_url::Error::from(err), "Failed to decode file url")
+                    global_this.throw_error(bun_core::url::Error::from(err), "Failed to decode file url")
                 );
             }
         };
@@ -1492,7 +1493,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             let temp_file_path: &[u8] = 'brk: {
-                if bun_paths::is_absolute(url_path_decoded) {
+                if bun_core::paths::is_absolute(url_path_decoded) {
                     #[cfg(windows)]
                     {
                         // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
@@ -1535,8 +1536,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = global_this.bun_vm().as_mut().main();
-                let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::platform::Auto,
+                let fullpath = bun_core::paths::resolve_path::join_abs_string_buf::<
+                    bun_core::paths::platform::Auto,
                 >(
                     cwd, &mut path_buf, &[main, b"../", url_path_decoded]
                 );
@@ -1624,7 +1625,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // after body/header extraction so Request-constructor errors (GET+body,
     // already-used body) win and `request.bodyUsed` is set, matching Node.
     if let Some(sig) = signal.0 {
-        let sig = bun_ptr::BackRef::from(sig);
+        let sig = bun_core::ptr::BackRef::from(sig);
         if sig.aborted() {
             // `abort_reason()` is the stored `m_reason` (same object as
             // `signal.reason`), not a reconstructed DOMException.
@@ -1924,13 +1925,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
             // re-parsed URL; the slices stay valid for the buffer's lifetime.
             let url_static =
-                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
+                ZigURL::parse(unsafe { bun_core::ptr::detach_lifetime(&owned_buffer[..url_len]) });
             let s3_path = url_static.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
                 // SAFETY: see `url_static` SAFETY note above.
-                Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+                Some(unsafe { bun_core::ptr::detach_lifetime(&owned_buffer[url_len..]) })
             } else {
                 None
             };

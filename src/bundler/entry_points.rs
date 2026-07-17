@@ -4,18 +4,20 @@ use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
-use bun_wyhash::{self, Wyhash11};
+#[allow(unused_imports)]
+use bun_core::paths::{self, MAX_PATH_BYTES, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::wyhash::{self, Wyhash11};
 
 use crate::Transpiler;
 use bun_js_parser as js_ast;
 
-// `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
+// `Path`/`PathName` come from the lower-tier `bun_core::paths::fs` shim
 // (lifetime-erased `'static` slices) so `bun_ast::Source` field types line up;
 // `FileSystem` is the real `bun_resolver::fs` singleton now that
 // `bun_resolver` is in this crate's dep set.
 pub mod Fs {
-    pub use bun_paths::fs::{Path, PathName};
+    pub use bun_core::paths::fs::{Path, PathName};
     pub use bun_resolver::fs::FileSystem;
 }
 
@@ -130,13 +132,13 @@ impl ClientEntryPoint {
         strings::starts_with(b"entry.", extname)
     }
 
-    // takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
-    // `'static`-field `bun_paths::fs::PathName<'static>`) so callers with a borrowed path
+    // takes the lifetime-generic `bun_core::paths::fs::PathName<'_>` (not the
+    // `'static`-field `bun_core::paths::fs::PathName<'static>`) so callers with a borrowed path
     // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
     // `'static`. The body only copies `dir`/`base`/`ext` into `outbuffer`.
     pub fn generate_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
-        original_path: &bun_paths::fs::PathName<'_>,
+        original_path: &bun_core::paths::fs::PathName<'_>,
     ) -> &'a [u8] {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
         // SAFETY: FileSystem singleton is initialized before bundling.
@@ -216,7 +218,7 @@ impl ClientEntryPoint {
                 BStr::new(dir_to_use),
                 BStr::new(original_path.filename),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             let n = cursor.position() as usize;
             &entry.code_buffer[..n]
         } else {
@@ -231,14 +233,14 @@ impl ClientEntryPoint {
                 BStr::new(dir_to_use),
                 BStr::new(original_path.filename),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             let n = cursor.position() as usize;
             &entry.code_buffer[..n]
         };
 
-        // `bun_paths::fs::PathName<'static>` → `bun_paths::fs::PathName<'static>`: field-identical
+        // `bun_core::paths::fs::PathName<'static>` → `bun_core::paths::fs::PathName<'static>`: field-identical
         // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.
-        let original_path_borrowed = bun_paths::fs::PathName {
+        let original_path_borrowed = bun_core::paths::fs::PathName {
             dir: original_path.dir,
             base: original_path.base,
             ext: original_path.ext,
@@ -407,7 +409,7 @@ impl MacroEntryPoint {
 
     pub fn generate_id_from_specifier(specifier: &[u8]) -> i32 {
         // Same-size bitcast u32 → i32.
-        (bun_wyhash::hash(specifier) as u32) as i32
+        (bun_core::wyhash::hash(specifier) as u32) as i32
     }
 
     pub fn generate(
@@ -452,7 +454,7 @@ impl MacroEntryPoint {
                     BStr::new(function_name),
                     macro_id,
                 )
-                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+                .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
                 break 'brk cursor.position() as usize;
             }
 
@@ -505,7 +507,7 @@ impl MacroEntryPoint {
                 macro_id,
                 BStr::new(function_name),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             cursor.position() as usize
         };
 

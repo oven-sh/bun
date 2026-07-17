@@ -1,6 +1,6 @@
 use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
-use bun_paths::{PathBuffer, fs::FileSystem};
+use bun_core::paths::{PathBuffer, fs::FileSystem};
 
 use crate::{
     InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
@@ -309,7 +309,7 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     /// must not be dropped here. The runtime/transpiler `printAst`/`printCommonJS`
     /// paths now defer table construction (see `lazy_line_offset_tables`), so
     /// this is left `EMPTY` there.
-    pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
+    pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_core::alloc_impl::AstAlloc>>,
 
     /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
     /// print path. When no precomputed `line_offset_tables` is supplied and
@@ -384,7 +384,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
             line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::new_in(
-                bun_alloc::AstAlloc,
+                bun_core::alloc_impl::AstAlloc,
             )),
             lazy_line_offset_tables: None,
             deferred_source: None,
@@ -743,7 +743,7 @@ impl NewBuilder<VLQSourceMap> {
                     Some(t) => &t.0.items::<"columns_for_non_ascii", Box<[i32]>>()[idx],
                     None => &self
                         .line_offset_tables
-                        .items::<"columns_for_non_ascii", Box<[i32], bun_alloc::AstAlloc>>()[idx],
+                        .items::<"columns_for_non_ascii", Box<[i32], bun_core::alloc_impl::AstAlloc>>()[idx],
                 };
                 if !cols.is_empty() {
                     original_column = cols[(original_column as u32 - first_non_ascii) as usize];

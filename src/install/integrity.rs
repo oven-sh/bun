@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bun_base64::zig_base64::STANDARD_NO_PAD as base64;
+use bun_core::base64::zig_base64::STANDARD_NO_PAD as base64;
 use bun_core::strings;
 use bun_sha_hmac::sha as Crypto;
 

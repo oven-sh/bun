@@ -74,7 +74,7 @@ pub use stream::Stream;
 pub(crate) mod bridge {
     use crate::http_context::HTTPSocket;
     use crate::{HTTPClient, NewHTTPContext};
-    use bun_picohttp as picohttp;
+    use bun_core::picohttp as picohttp;
 
     impl HTTPClient<'_> {
         #[inline]

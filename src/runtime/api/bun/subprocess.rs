@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{RefCount, RefPtr};
+use bun_core::ptr::{RefCount, RefPtr};
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
@@ -32,7 +32,7 @@ use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, FileSink};
 #[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
+use bun_core::libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
 pub mod resource_usage;
@@ -56,8 +56,8 @@ pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 pub use bun_io::MaxBuf;
 pub use js_bun_spawn_bindings::{spawn, spawn_sync};
 
-bun_output::declare_scope!(Subprocess, visible);
-bun_output::declare_scope!(IPC, visible);
+bun_core::declare_scope!(Subprocess, visible);
+bun_core::declare_scope!(IPC, visible);
 
 // `toJS`/`fromJS`/`fromJSDirect` are wired manually below (the `#[bun_jsc::JsClass]`
 // proc-macro doesn't support generic structs); cached-property accessors
@@ -117,7 +117,7 @@ pub use bun_spawn::process::StdioKind;
 // structurally impossible.
 // Intrusive ref-count: `RefPtr<Subprocess>` provides ref/deref and frees the
 // Box when ref_count → 0; `deinit` runs when the last ref drops.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
     /// Intrusively-refcounted `Process`. Allocated via
@@ -127,7 +127,7 @@ pub struct Subprocess<'a> {
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
     /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub process: bun_ptr::BackRef<Process>,
+    pub process: bun_core::ptr::BackRef<Process>,
     pub stdin: JsCell<Writable<'a>>,
     pub stdout: JsCell<Readable>,
     pub stderr: JsCell<Readable>,
@@ -138,7 +138,7 @@ pub struct Subprocess<'a> {
     pub terminal: Cell<Option<NonNull<Terminal>>>,
 
     // The JSC global outlives every Subprocess.
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+    pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
     pub observable_getters: Cell<EnumSet<ObservableGetter>>,
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
@@ -359,8 +359,8 @@ impl Subprocess<'_> {
     /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
     /// owner-outlives-holder `BackRef` invariant holds.
     #[inline]
-    pub fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
-        self.abort_signal.get().map(bun_ptr::BackRef::from)
+    pub fn abort_signal_ref(&self) -> Option<bun_core::ptr::BackRef<AbortSignal>> {
+        self.abort_signal.get().map(bun_core::ptr::BackRef::from)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -436,7 +436,7 @@ impl Subprocess<'_> {
 
         let has_pending = self.compute_has_pending_activity();
         if cfg!(debug_assertions) {
-            bun_output::scoped_log!(Subprocess, "updateHasPendingActivity() -> {}", has_pending);
+            bun_core::scoped_log!(Subprocess, "updateHasPendingActivity() -> {}", has_pending);
         }
 
         // Upgrade or downgrade the reference based on pending activity
@@ -788,7 +788,7 @@ impl Subprocess<'_> {
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(IPC, "Subprocess#doSend");
+        bun_core::scoped_log!(IPC, "Subprocess#doSend");
 
         let context = if this.has_exited() {
             crate::ipc_host::FromEnum::SubprocessExited
@@ -902,7 +902,7 @@ impl Subprocess<'_> {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
-        bun_output::scoped_log!(Subprocess, "onProcessExit()");
+        bun_core::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
@@ -937,7 +937,7 @@ impl Subprocess<'_> {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
                 // outlives this scope; single JS thread.
-                let term = bun_ptr::BackRef::from(terminal);
+                let term = bun_core::ptr::BackRef::from(terminal);
                 #[cfg(unix)]
                 term.drain_and_close_slave_fd();
                 #[cfg(windows)]
@@ -1012,7 +1012,7 @@ impl Subprocess<'_> {
             // outlives this scope on the single mutator thread — `BackRef`
             // invariant. Shared deref via `BackRef::Deref`; the one mutable
             // call below stays unsafe.
-            let pipe = bun_ptr::BackRef::from(pipe_ptr);
+            let pipe = bun_core::ptr::BackRef::from(pipe_ptr);
 
             // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
             // fires `pipe.signal` synchronously on POSIX. When the signal still
@@ -1192,7 +1192,7 @@ impl Subprocess<'_> {
 
     // This must only be run once per Subprocess
     pub fn finalize_streams(&self) {
-        bun_output::scoped_log!(Subprocess, "finalizeStreams");
+        bun_core::scoped_log!(Subprocess, "finalizeStreams");
         self.close_process();
 
         self.close_io(StdioKind::Stdin);
@@ -1222,7 +1222,7 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None).map(bun_ptr::BackRef::from) {
+        if let Some(signal) = self.abort_signal.replace(None).map(bun_core::ptr::BackRef::from) {
             // `signal` was stored with a +1 C++ intrusive ref (taken in
             // `spawn_maybe_sync`); it stays live until `unref()` below, so the
             // `BackRef` invariant (pointee outlives holder) holds for this scope.
@@ -1233,7 +1233,7 @@ impl Subprocess<'_> {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(Subprocess, "finalize");
+        bun_core::scoped_log!(Subprocess, "finalize");
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
         // allocation may outlive this call if other refs remain, so hand
         // ownership back to the raw refcount.
@@ -1366,15 +1366,15 @@ impl Subprocess<'_> {
     }
 
     pub fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
-        bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
+        bun_core::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
             // or disable future optimizations if the subprocess is old.
             IPC::DecodedIPCMessage::Version(v) => {
-                bun_output::scoped_log!(IPC, "Child IPC version is {}", v);
+                bun_core::scoped_log!(IPC, "Child IPC version is {}", v);
             }
             IPC::DecodedIPCMessage::Data(data) => {
-                bun_output::scoped_log!(IPC, "Received IPC message from child");
+                bun_core::scoped_log!(IPC, "Received IPC message from child");
                 let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
@@ -1395,7 +1395,7 @@ impl Subprocess<'_> {
                 }
             }
             IPC::DecodedIPCMessage::Internal(data) => {
-                bun_output::scoped_log!(IPC, "Received IPC internal message from child");
+                bun_core::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
                 let _ = node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
@@ -1407,7 +1407,7 @@ impl Subprocess<'_> {
     }
 
     pub fn handle_ipc_close(&self) {
-        bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
+        bun_core::scoped_log!(IPC, "Subprocess#handleIPCClose");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;

@@ -1,15 +1,16 @@
 use std::collections::VecDeque;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
 #[cfg(not(windows))]
 use bun_core::ZStr;
 use bun_core::{StringOrTinyString, strings};
-use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
-use bun_paths::{self, PathBuffer};
-use bun_ptr::Interned;
+use bun_core::{declare_scope, scoped_log};
+use bun_core::paths::resolve_path::{join_abs_string_buf, platform};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer};
+use bun_core::ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
 use bun_sys::{self, Fd};
 
@@ -147,7 +148,7 @@ impl<'a> Scanner<'a> {
 
         if let EntriesOption::Err(root_err) = root {
             let e = root_err.original_err;
-            if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
+            if e == bun_resolver::Error::Sys(bun_core::errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
                         .fs()
@@ -157,7 +158,7 @@ impl<'a> Scanner<'a> {
                     let rel_path = Interned::from_static(stored);
                     self.test_files.push(rel_path);
                 }
-            } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            } else if e == bun_resolver::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                 return Err(ScanError::DoesNotExist);
             } else {
                 scoped_log!(
@@ -272,7 +273,7 @@ impl<'a> Scanner<'a> {
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
-        let extname = bun_paths::extension(name);
+        let extname = bun_core::paths::extension(name);
         if extname.is_empty() || !self.options.loader(extname).is_javascript_like() {
             return false;
         }
@@ -323,7 +324,7 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
+        let rel_path = bun_core::paths::resolve_path::relative(self.top_level_dir(), abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
@@ -377,7 +378,7 @@ impl<'a> Scanner<'a> {
 
                 if cfg!(debug_assertions) {
                     debug_assert!(
-                        strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none()
+                        strings::index_of(name, bun_core::paths::NODE_MODULES_NEEDLE).is_none()
                     );
                 }
 
@@ -436,7 +437,7 @@ impl<'a> Scanner<'a> {
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
+                    let rel_path = bun_core::paths::resolve_path::relative(self.top_level_dir(), path);
                     if !self.does_path_match_filter(rel_path) {
                         return;
                     }

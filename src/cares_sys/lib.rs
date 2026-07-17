@@ -12,7 +12,7 @@ pub mod winsock {
     // Same nominal type as `bun_sys::posix::sockaddr*`; sin_addr is `in_addr{s_addr}`
     // (vs the previous `[u8;4]`) but the only caller (c_ares.rs `get_sockaddr`)
     // takes `&raw mut → cast<c_void>`, so the field's nominal type is transparent.
-    pub(crate) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6};
+    pub(crate) use bun_core::libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6};
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct timeval {

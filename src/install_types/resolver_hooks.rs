@@ -18,8 +18,8 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_core::strings;
-use bun_semver::version::VersionInt;
-use bun_semver::{
+use bun_core::semver::version::VersionInt;
+use bun_core::semver::{
     self as semver, ExternalString, String as SemverString, Version as SemverVersion,
 };
 
@@ -1034,7 +1034,7 @@ impl Repository {
         self.committish.order(rhs.committish, lhs_buf, rhs_buf)
     }
 
-    pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+    pub fn count<B: bun_core::semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
         builder.count(self.owner.slice(buf));
         builder.count(self.repo.slice(buf));
         builder.count(self.committish.slice(buf));
@@ -1045,7 +1045,7 @@ impl Repository {
     /// Re-interns each field
     /// into `builder`. Named `clone` so existing `repo.clone(buf, builder)`
     /// call sites resolve; bitwise copy goes through `Copy`/`*repo`.
-    pub fn clone<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Repository {
+    pub fn clone<B: bun_core::semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Repository {
         Repository {
             owner: builder.append::<SemverString>(self.owner.slice(buf)),
             repo: builder.append::<SemverString>(self.repo.slice(buf)),
@@ -1077,9 +1077,9 @@ pub type VersionedURL = VersionedURLType<u64>;
 pub type OldV2VersionedURL = VersionedURLType<u32>;
 
 #[repr(C)]
-pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
+pub struct VersionedURLType<SemverInt: bun_core::semver::version::VersionInt> {
     pub url: SemverString,
-    pub version: bun_semver::VersionType<SemverInt>,
+    pub version: bun_core::semver::VersionType<SemverInt>,
 }
 
 // Manual `Copy`/`Clone` so the inherent buffer-relative `clone(&self, buf,
@@ -1087,24 +1087,24 @@ pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
 // method-resolution time, and to avoid the spurious `SemverInt: Copy` bound
 // `#[derive]` would add (it is `Copy` via `VersionInt`, but the derive macro
 // can't see through the trait bound).
-impl<SemverInt: bun_semver::version::VersionInt> Copy for VersionedURLType<SemverInt> {}
-impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<SemverInt> {
+impl<SemverInt: bun_core::semver::version::VersionInt> Copy for VersionedURLType<SemverInt> {}
+impl<SemverInt: bun_core::semver::version::VersionInt> Clone for VersionedURLType<SemverInt> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<SemverInt: bun_semver::version::VersionInt> Default for VersionedURLType<SemverInt> {
+impl<SemverInt: bun_core::semver::version::VersionInt> Default for VersionedURLType<SemverInt> {
     #[inline]
     fn default() -> Self {
         Self {
             url: SemverString::default(),
-            version: bun_semver::VersionType::default(),
+            version: bun_core::semver::VersionType::default(),
         }
     }
 }
 
-impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
+impl<SemverInt: bun_core::semver::version::VersionInt> VersionedURLType<SemverInt> {
     #[inline]
     pub fn eql(&self, other: &Self) -> bool {
         self.version.eql(other.version)
@@ -1115,12 +1115,12 @@ impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
         self.version.order(other.version, lhs_buf, rhs_buf)
     }
 
-    pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+    pub fn count<B: bun_core::semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
         self.version.count(buf, builder);
         builder.count(self.url.slice(buf));
     }
 
-    pub fn clone<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
+    pub fn clone<B: bun_core::semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
         Self {
             version: self.version.append(buf, builder),
             url: builder.append::<SemverString>(self.url.slice(buf)),
@@ -1566,7 +1566,7 @@ pub trait AutoInstaller {
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],
-        sliced: &bun_semver::SlicedString,
+        sliced: &bun_core::semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
@@ -1575,7 +1575,7 @@ pub trait AutoInstaller {
         name_hash: u64,
         version: &[u8],
         tag: DependencyVersionTag,
-        sliced: &bun_semver::SlicedString,
+        sliced: &bun_core::semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     /// Pure string

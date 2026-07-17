@@ -5,8 +5,8 @@ use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-pub use bun_collections::VecExt as _VecExtReexport;
-use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
+pub use bun_core::collections::VecExt as _VecExtReexport;
+use bun_core::collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
 use crate::char_freq::CHAR_FREQ_COUNT;
@@ -446,15 +446,15 @@ impl<T> StoreSlice<T> {
     /// Convenience for the common
     /// `StoreSlice::new_mut(v.into_bump_slice_mut())` pattern.
     #[inline]
-    pub fn from_bump<'b>(v: bun_alloc::ArenaVec<'b, T>) -> Self {
-        use bun_alloc::ArenaVecExt as _;
+    pub fn from_bump<'b>(v: bun_core::alloc_impl::ArenaVec<'b, T>) -> Self {
+        use bun_core::alloc_impl::ArenaVecExt as _;
         StoreSlice::new_mut(v.into_bump_slice_mut())
     }
 }
 
-impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<T> {
+impl<'a, T> From<bun_core::alloc_impl::ArenaVec<'a, T>> for StoreSlice<T> {
     #[inline]
-    fn from(v: bun_alloc::ArenaVec<'a, T>) -> Self {
+    fn from(v: bun_core::alloc_impl::ArenaVec<'a, T>) -> Self {
         StoreSlice::from_bump(v)
     }
 }
@@ -538,7 +538,7 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 // But we must have pointers somewhere in here because can't have types that contain themselves
 
 /// Slice that stores capacity and length in the same space as a regular slice.
-pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
+pub type ExprNodeList = Vec<Expr, bun_core::alloc_impl::AstAlloc>;
 
 // Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
@@ -663,7 +663,7 @@ impl NameMinifier {
         &self,
         name: &mut Vec<u8>,
         i_: isize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
+    ) -> core::result::Result<(), bun_core::alloc_impl::AllocError> {
         name.clear();
         let mut i = i_;
         let mut j = usize::try_from(i.rem_euclid(54)).expect("int cast");
@@ -681,7 +681,7 @@ impl NameMinifier {
 
     pub fn default_number_to_minified_name(
         i_: isize,
-    ) -> core::result::Result<Vec<u8>, bun_alloc::AllocError> {
+    ) -> core::result::Result<Vec<u8>, bun_core::alloc_impl::AllocError> {
         let mut i = i_;
         let mut j = usize::try_from(i.rem_euclid(54)).expect("int cast");
         let mut name: Vec<u8> = Vec::new();
@@ -719,7 +719,7 @@ pub struct EnumValue {
 }
 
 impl EnumValue {
-    pub fn name_as_e_string(&self, bump: &bun_alloc::Arena) -> E::String {
+    pub fn name_as_e_string(&self, bump: &bun_core::alloc_impl::Arena) -> E::String {
         E::String::init_re_encode_utf8(self.name.slice(), bump)
     }
 }
@@ -908,13 +908,13 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
+    pub entries: MultiArrayList<DeclaredSymbol, bun_core::alloc_impl::AstAlloc>,
 }
 
 impl Default for DeclaredSymbolList {
     fn default() -> Self {
         Self {
-            entries: MultiArrayList::new_in(bun_alloc::AstAlloc),
+            entries: MultiArrayList::new_in(bun_core::alloc_impl::AstAlloc),
         }
     }
 }
@@ -928,7 +928,7 @@ impl DeclaredSymbolList {
         core::mem::take(self)
     }
 
-    pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
+    pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_core::alloc_impl::AllocError> {
         Ok(DeclaredSymbolList {
             entries: self.entries.clone()?,
         })
@@ -942,7 +942,7 @@ impl DeclaredSymbolList {
     pub fn append(
         &mut self,
         entry: DeclaredSymbol,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
+    ) -> core::result::Result<(), bun_core::alloc_impl::AllocError> {
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(entry);
         Ok(())
@@ -951,7 +951,7 @@ impl DeclaredSymbolList {
     pub fn append_list(
         &mut self,
         other: &DeclaredSymbolList,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
+    ) -> core::result::Result<(), bun_core::alloc_impl::AllocError> {
         self.ensure_unused_capacity(other.len())?;
         self.append_list_assume_capacity(other);
         Ok(())
@@ -968,14 +968,14 @@ impl DeclaredSymbolList {
     pub fn ensure_total_capacity(
         &mut self,
         count: usize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
+    ) -> core::result::Result<(), bun_core::alloc_impl::AllocError> {
         self.entries.ensure_total_capacity(count)
     }
 
     pub fn ensure_unused_capacity(
         &mut self,
         count: usize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
+    ) -> core::result::Result<(), bun_core::alloc_impl::AllocError> {
         self.entries.ensure_unused_capacity(count)
     }
 
@@ -987,15 +987,15 @@ impl DeclaredSymbolList {
 
     pub fn init_capacity(
         capacity: usize,
-    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut entries = MultiArrayList::new_in(bun_alloc::AstAlloc);
+    ) -> core::result::Result<DeclaredSymbolList, bun_core::alloc_impl::AllocError> {
+        let mut entries = MultiArrayList::new_in(bun_core::alloc_impl::AstAlloc);
         entries.ensure_unused_capacity(capacity)?;
         Ok(DeclaredSymbolList { entries })
     }
 
     pub fn from_slice(
         entries: &[DeclaredSymbol],
-    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
+    ) -> core::result::Result<DeclaredSymbolList, bun_core::alloc_impl::AllocError> {
         let mut this = Self::init_capacity(entries.len())?;
         // errdefer this.deinit() → Drop handles it
         for entry in entries {
@@ -1048,7 +1048,7 @@ impl Default for Dependency {
     }
 }
 
-pub type DependencyList = bun_alloc::AstVec<Dependency>;
+pub type DependencyList = bun_core::alloc_impl::AstVec<Dependency>;
 
 pub type ExprList = Vec<Expr>;
 pub type StmtList = Vec<Stmt>;
@@ -1082,7 +1082,7 @@ pub struct Part {
     /// value or not. This is only known during linking. So we defer adding
     /// a dependency on these imported symbols until we know whether the
     /// property access is an inlined enum value or not.
-    pub import_symbol_property_uses: Option<bun_alloc::AstBox<PartSymbolPropertyUseMap>>,
+    pub import_symbol_property_uses: Option<bun_core::alloc_impl::AstBox<PartSymbolPropertyUseMap>>,
 
     /// The indices of the other parts in this file that are needed if this part
     /// is needed.
@@ -1104,8 +1104,8 @@ pub struct Part {
     pub tag: PartTag,
 }
 
-pub type PartImportRecordIndices = Vec<u32, bun_alloc::AstAlloc>;
-pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
+pub type PartImportRecordIndices = Vec<u32, bun_core::alloc_impl::AstAlloc>;
+pub type PartList<'a> = bun_core::alloc_impl::ArenaVec<'a, Part>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
@@ -1122,12 +1122,12 @@ pub enum PartTag {
     ImportToConvertFromRequire,
 }
 
-pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
+pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_core::alloc_impl::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<symbol::Use, bun_core::alloc_impl::AstAlloc>,
     AutoContext,
-    bun_alloc::AstAlloc,
+    bun_core::alloc_impl::AstAlloc,
 >;
 
 impl Default for Part {
@@ -1135,11 +1135,11 @@ impl Default for Part {
         Self {
             stmts: StoreSlice::EMPTY,
             scopes: StoreSlice::EMPTY,
-            import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
+            import_record_indices: PartImportRecordIndices::new_in(bun_core::alloc_impl::AstAlloc),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: None,
-            dependencies: Vec::new_in(bun_alloc::AstAlloc),
+            dependencies: Vec::new_in(bun_core::alloc_impl::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
             tag: PartTag::None,
@@ -1185,7 +1185,7 @@ impl StmtOrExpr {
 
 pub struct NamedImport {
     /// Parts within this file that use this import
-    pub local_parts_with_uses: bun_alloc::AstVec<u32>,
+    pub local_parts_with_uses: bun_core::alloc_impl::AstVec<u32>,
 
     /// The original export name from the source module being imported.
     /// Examples:
@@ -1213,7 +1213,7 @@ pub struct NamedImport {
 impl Default for NamedImport {
     fn default() -> Self {
         Self {
-            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+            local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
             alias: None,
             alias_loc: crate::Loc::EMPTY,
             namespace_ref: Ref::NONE,
@@ -1273,9 +1273,9 @@ pub struct Batcher<T> {
 
 impl<T> Batcher<T> {
     pub fn init(
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         count: usize,
-    ) -> core::result::Result<Self, bun_alloc::AllocError>
+    ) -> core::result::Result<Self, bun_core::alloc_impl::AllocError>
     where
         T: Default,
     {

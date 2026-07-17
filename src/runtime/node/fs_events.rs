@@ -3,7 +3,7 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::zstr;
 use bun_threading::{Mutex, Semaphore, UnboundedQueue};
 
@@ -333,7 +333,7 @@ impl Task {
     pub fn new<T>(ctx: &'static T, callback: fn(&T)) -> Task {
         Task {
             // SAFETY: `fn(&T)` and `fn(*mut ())` have identical single-pointer ABI, and `ctx` is a valid `&T` at call time.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&T), fn(*mut ())>(callback) },
+            callback: unsafe { bun_core::ptr::cast_fn_ptr::<fn(&T), fn(*mut ())>(callback) },
             ctx: core::ptr::from_ref::<T>(ctx).cast_mut().cast::<()>(),
         }
     }
@@ -555,7 +555,7 @@ impl FSEventsLoop {
             // `handle` is alive while held under the mutex (see comment above);
             // `BackRef` invariant (pointee outlives holder) holds for this
             // scope. `emit`/`flush` take `&self`, so a shared borrow suffices.
-            let handle = bun_ptr::BackRef::from(handle);
+            let handle = bun_core::ptr::BackRef::from(handle);
             let handle_path = handle.path.slice();
 
             for (i, path_ptr) in paths.iter().enumerate() {
@@ -855,7 +855,7 @@ impl FSEventsLoop {
                     // `w` is a registered, not-yet-freed watcher; `BackRef`
                     // invariant holds. `loop_` is a `Cell`, so the write goes
                     // through a shared `&FSEventsWatcher` safely.
-                    bun_ptr::BackRef::from(w).loop_.set(None);
+                    bun_core::ptr::BackRef::from(w).loop_.set(None);
                 }
             }
         }
@@ -869,7 +869,7 @@ pub struct FSEventsWatcher {
     /// `_events_cb` / `_schedule` — `RawSlice` invariant. The backing buffer is
     /// a `ZBox`, so `path.slice().as_ptr()` is NUL-terminated (required by
     /// `CFStringCreateWithFileSystemRepresentation`).
-    pub path: bun_ptr::RawSlice<u8>,
+    pub path: bun_core::ptr::RawSlice<u8>,
     pub callback: Callback,
     pub flush_callback: UpdateEndCallback,
     pub loop_: core::cell::Cell<Option<&'static FSEventsLoop>>,
@@ -891,7 +891,7 @@ impl FSEventsWatcher {
         ctx: *mut c_void,
     ) -> Box<FSEventsWatcher> {
         let mut this = Box::new(FSEventsWatcher {
-            path: bun_ptr::RawSlice::new(path),
+            path: bun_core::ptr::RawSlice::new(path),
             callback,
             flush_callback: update_end,
             loop_: core::cell::Cell::new(Some(loop_)),

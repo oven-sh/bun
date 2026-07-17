@@ -5,7 +5,8 @@ use bun_core::{Global, Output};
 use bun_options_types::schema::api;
 
 use crate::shell::Interpreter;
-use bun_paths::{self, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer};
 use bun_sys;
 
 use crate::command::Context;
@@ -16,15 +17,15 @@ pub(crate) struct ExecCommand;
 /// `&'static Arena` per PORTING.md §AST crates. Same `Once`-guarded
 /// `RacyCell<MaybeUninit>` shape as `run_command::runner_arena` (Bump is
 /// `!Sync`, so `OnceLock` cannot hold it directly).
-fn exec_arena() -> &'static bun_alloc::Arena {
+fn exec_arena() -> &'static bun_core::alloc_impl::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
     // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
     // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
+    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_core::alloc_impl::Arena>> =
         bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
     ONCE.call_once(|| {
         // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
+        unsafe { (*ARENA.get()).write(bun_core::alloc_impl::Arena::new()) };
     });
     // SAFETY: initialized exactly once above; `bun exec` is a single-shot CLI
     // command on the dispatch thread, so the `!Sync` Bump is never observed
@@ -69,7 +70,7 @@ impl ExecCommand {
         let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
-        let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
+        let script_path = bun_core::paths::resolve_path::join::<bun_core::paths::platform::Auto>(&parts);
 
         // SAFETY: `init_global` returns the thread-local singleton raw pointer;
         // reborrow `&'static mut` for the duration of the interpreter run (no

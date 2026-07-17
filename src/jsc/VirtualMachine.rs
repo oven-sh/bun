@@ -58,7 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
+pub(crate) type MacroMap = bun_core::collections::ArrayHashMap<i32, JSValue>;
 /// `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
 /// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
@@ -156,14 +156,14 @@ pub struct VirtualMachine {
     /// every case the storage outlives this VM but is not Rust-`'static`.
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
-    main: bun_ptr::RawSlice<u8>,
+    main: bun_core::ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
     pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
-    pub origin: bun_url::URL<'static>,
+    pub origin: bun_core::url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
     // `bun_runtime` is a forward dep of this crate; stored type-erased and
     // cast back by the `bun_runtime` consumers.
@@ -232,7 +232,7 @@ pub struct VirtualMachine {
 
     // BACKREF — `&'a mut Arena` in spirit; caller-owned (web_worker) and
     // outlives the VM.
-    pub arena: Option<NonNull<bun_alloc::Arena>>,
+    pub arena: Option<NonNull<bun_core::alloc_impl::Arena>>,
     pub has_loaded: bool,
 
     pub transpiled_count: usize,
@@ -242,7 +242,7 @@ pub struct VirtualMachine {
     pub macros: MacroMap,
     // LAYERING: values are `MacroEntryPoint` from `bun_bundler::entry_points`
     // (forward dep); stored type-erased and cast back by the consumers.
-    pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
+    pub macro_entry_points: bun_core::collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
     /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
@@ -338,7 +338,7 @@ pub struct VirtualMachine {
 
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:
-        bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
+        bun_core::collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
     pub has_mutated_built_in_extensions: u32,
 
     pub initial_script_execution_context_identifier: i32,
@@ -558,10 +558,10 @@ impl Drop for AutoGcOnDrop<'_> {
 /// routes through [`VirtualMachine::as_mut`] (thread-local provenance) so the
 /// guard never forms its own `&mut VM`.
 ///
-/// [`BackRef`]: bun_ptr::BackRef
+/// [`BackRef`]: bun_core::ptr::BackRef
 #[must_use = "macro mode is disabled on drop; bind to a named local"]
 pub struct MacroModeGuard {
-    vm: bun_ptr::BackRef<VirtualMachine>,
+    vm: bun_core::ptr::BackRef<VirtualMachine>,
 }
 impl MacroModeGuard {
     /// `vm` must be the live per-thread `VirtualMachine` (the [`BackRef`]
@@ -571,10 +571,10 @@ impl MacroModeGuard {
     /// safe; the lifetime contract is the BackRef type invariant rather than
     /// a per-call precondition.
     ///
-    /// [`BackRef`]: bun_ptr::BackRef
+    /// [`BackRef`]: bun_core::ptr::BackRef
     #[inline]
     pub fn new(vm: *mut VirtualMachine) -> Self {
-        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        let vm = bun_core::ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
         let vm_mut = vm.get().as_mut();
         // Reentrant: only the outermost guard flips the VM into macro mode and
         // back; inner guards (e.g. a macro that calls
@@ -1162,7 +1162,7 @@ impl VirtualMachine {
             .use_alternate_source_cache = true;
         self.macro_mode = true;
         self.event_loop = &raw mut self.macro_event_loop;
-        bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        bun_core::analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled = false;
     }
 
@@ -1230,7 +1230,7 @@ impl VirtualMachine {
         extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
             // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
-            let t = unsafe { bun_ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
+            let t = unsafe { bun_core::ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
             // SAFETY: single-shot — `f` is taken exactly once.
             let f = unsafe { ManuallyDrop::take(&mut t.f) };
             t.result.write(f());
@@ -1313,7 +1313,7 @@ impl VirtualMachine {
         hash: i32,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
-        use bun_collections::hash_map::Entry;
+        use bun_core::collections::hash_map::Entry;
         let entry_point: *mut MacroEntryPoint = match self.macro_entry_points.entry(hash) {
             Entry::Occupied(e) => (*e.get()).cast(),
             Entry::Vacant(v) => {
@@ -2065,7 +2065,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).main).write(bun_core::ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -2252,7 +2252,7 @@ impl VirtualMachine {
     /// this VM (BACKREF — see `main` field doc).
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
-        self.main = bun_ptr::RawSlice::new(path);
+        self.main = bun_core::ptr::RawSlice::new(path);
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -2747,7 +2747,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `printer_ptr()` for why this is not a `&mut`-returning accessor.
         let printer = unsafe { &mut *self.printer };
 
-        let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
+        let encode_len = bun_core::base64::encode_len(temp_json_buffer.list.as_slice());
         printer
             .ctx
             .buffer
@@ -2764,7 +2764,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
             // `wrote<=encode_len` bytes.
             let wrote = unsafe {
-                bun_base64::encode(
+                bun_core::base64::encode(
                     &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
                     temp_json_buffer.list.as_slice(),
                 )
@@ -2984,14 +2984,14 @@ fn normalize_specifier_for_resolution<'a>(
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
 #[thread_local]
-static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
+static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_core::paths::PathBuffer> =
     core::cell::Cell::new(core::ptr::null_mut());
 
 #[inline]
-fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
+fn specifier_cache_resolver_buf() -> *mut bun_core::paths::PathBuffer {
     let mut p = SPECIFIER_CACHE_RESOLVER_BUF.get();
     if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
+        p = bun_core::heap::into_raw(Box::new(bun_core::paths::PathBuffer::ZEROED));
         SPECIFIER_CACHE_RESOLVER_BUF.set(p);
     }
     p
@@ -3472,7 +3472,7 @@ impl VirtualMachine {
         if main.is_empty() {
             return;
         }
-        let ext = bun_paths::extension(main);
+        let ext = bun_core::paths::extension(main);
         let loader = self.transpiler.options.loader(ext);
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
@@ -3843,7 +3843,7 @@ impl VirtualMachine {
         hash_: Option<u32>,
     ) -> *mut crate::ref_string::RefString {
         use crate::ref_string::RefString;
-        use bun_collections::zig_hash_map::MapEntry as Entry;
+        use bun_core::collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
@@ -4061,11 +4061,11 @@ impl VirtualMachine {
         // outlive `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note). Erase to `'static` to seat the result paths without threading
         // a lifetime parameter through the VM.
-        let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
+        let specifier: &'static [u8] = unsafe { bun_core::ptr::detach_lifetime(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
-        if bun_paths::basename(specifier) == b"bun:wrap" {
+        if bun_core::paths::basename(specifier) == b"bun:wrap" {
             ret.path = b"bun:wrap";
             return Ok(());
         }
@@ -4094,8 +4094,8 @@ impl VirtualMachine {
             return Ok(());
         }
         if self.module_loader.eval_source.is_some()
-            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
-                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
+            && (specifier.ends_with(bun_core::path_literal!("/[eval]").as_bytes())
+                || specifier.ends_with(bun_core::path_literal!("/[stdin]").as_bytes()))
         {
             ret.result = None;
             ret.path = self.dupe_resolved_path(specifier);
@@ -4126,13 +4126,13 @@ impl VirtualMachine {
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
-                    bun_ptr::detach_lifetime(
+                    bun_core::ptr::detach_lifetime(
                         bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
                     )
                 }
             } else {
                 // SAFETY: see `specifier` lifetime erasure note above.
-                unsafe { bun_ptr::detach_lifetime(source) }
+                unsafe { bun_core::ptr::detach_lifetime(source) }
             }
         } else {
             top_level_dir
@@ -4141,7 +4141,7 @@ impl VirtualMachine {
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let mut retry_on_not_found = bun_core::paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -4166,16 +4166,16 @@ impl VirtualMachine {
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
                     let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
+                    let buster_name: &[u8] = if bun_core::paths::is_absolute(normalized_specifier) {
+                        if let Some(dir) = bun_core::paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
                                 return Err(crate::CrateError::ModuleNotFound);
                             }
                             // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
+                            bun_core::paths::string_paths::normalize_slashes_only(
                                 buf,
                                 dir,
-                                bun_paths::SEP,
+                                bun_core::paths::SEP,
                             )
                         } else {
                             // Absolute but root — fall through to join.
@@ -4195,17 +4195,17 @@ impl VirtualMachine {
                         let parts: [&[u8]; 3] = [
                             source_to_use,
                             normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
+                            bun_core::path_literal!("..").as_bytes(),
                         ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
+                        bun_core::paths::resolve_path::join_abs_string_buf_z::<
+                            bun_core::paths::resolve_path::platform::Auto,
                         >(top_level_dir, buf, &parts)
                         .as_bytes()
                     };
 
                     // Only re-query if we previously had something cached.
                     if self.transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
+                        bun_core::paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) {
                         continue;
                     }
@@ -4220,14 +4220,14 @@ impl VirtualMachine {
         }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
-        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
+        ret.query_string = unsafe { bun_core::ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.path = unsafe { bun_core::ptr::detach_lifetime(result_path.text) };
         ret.result = Some(result);
         self.resolved_count += 1;
 
@@ -4264,7 +4264,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_user_require_resolve: bool,
     ) -> JsResult<()> {
-        const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
+        const MAX_LEN: usize = (bun_core::paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
@@ -4278,7 +4278,7 @@ impl VirtualMachine {
             let printed = crate::ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
-                crate::CrateError::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                crate::CrateError::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG),
                 import_kind,
             );
             let msg = bun_ast::Msg {
@@ -4356,7 +4356,7 @@ impl VirtualMachine {
         // below isn't kept alive across the closure. `BackRef` + `as_mut`
         // route the restore through thread-local provenance.
         struct RestoreLog {
-            vm: bun_ptr::BackRef<VirtualMachine>,
+            vm: bun_core::ptr::BackRef<VirtualMachine>,
             old_log: NonNull<bun_ast::Log>,
         }
         impl Drop for RestoreLog {
@@ -4380,7 +4380,7 @@ impl VirtualMachine {
             }
         }
         let _restore = RestoreLog {
-            vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
+            vm: bun_core::ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
             old_log,
         };
         // Note: reshaped for borrowck — re-derive from raw so the unique
@@ -4862,7 +4862,7 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
+                let ctx = unsafe { bun_core::ptr::callback_ctx::<AggCtx<'_>>(ctx) };
                 // SAFETY: per-thread VM.
                 let vm = VirtualMachine::get().as_mut();
                 let exception_list = if ctx.exception_list.is_null() {
@@ -5579,7 +5579,7 @@ impl VirtualMachine {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
             // `remap_zig_exception` → `transpile_source_code` chain on the
             // 16K-deep Error test (`bun-inspect.test.ts`).
-            bun_paths::MAX_PATH_BYTES * 3
+            bun_core::paths::MAX_PATH_BYTES * 3
         } else {
             0
         };
@@ -5666,7 +5666,7 @@ impl VirtualMachine {
         // VM without a live borrow; the write at drop routes through
         // `VirtualMachine::as_mut` (thread-local provenance).
         struct RestoreHadErrors {
-            vm: bun_ptr::BackRef<VirtualMachine>,
+            vm: bun_core::ptr::BackRef<VirtualMachine>,
             prev: bool,
         }
         impl Drop for RestoreHadErrors {
@@ -5676,7 +5676,7 @@ impl VirtualMachine {
             }
         }
         let _restore_had_errors = RestoreHadErrors {
-            vm: bun_ptr::BackRef::new_mut(self),
+            vm: bun_core::ptr::BackRef::new_mut(self),
             prev: prev_had_errors,
         };
 
@@ -5692,7 +5692,7 @@ impl VirtualMachine {
             /// BACKREF — borrows the caller's stack-local `ZigException`, live
             /// across this drop guard (declared after the `&mut` rebind so it
             /// drops first).
-            exception: bun_ptr::BackRef<ZigException>,
+            exception: bun_core::ptr::BackRef<ZigException>,
         }
         impl Drop for DeferGhAnnotation {
             fn drop(&mut self) {
@@ -5703,7 +5703,7 @@ impl VirtualMachine {
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: bun_ptr::BackRef::new_mut(exception),
+            exception: bun_core::ptr::BackRef::new_mut(exception),
         };
 
         // `pretty_fmt!` takes a `const` color parameter, so route the runtime
@@ -5976,7 +5976,7 @@ impl VirtualMachine {
         // `BackRef` (constructed from `&raw mut` via `NonNull` so the tag is
         // not popped by later `errors_to_append.push` reborrows) lets the drop
         // body read the Vec safely.
-        struct UnprotectAll(bun_ptr::BackRef<Vec<JSValue>>);
+        struct UnprotectAll(bun_core::ptr::BackRef<Vec<JSValue>>);
         impl Drop for UnprotectAll {
             fn drop(&mut self) {
                 // BackRef invariant: borrows the caller's stack `Vec`, live for this scope.
@@ -5985,7 +5985,7 @@ impl VirtualMachine {
                 }
             }
         }
-        let _unprotect_guard = UnprotectAll(bun_ptr::BackRef::from(
+        let _unprotect_guard = UnprotectAll(bun_core::ptr::BackRef::from(
             NonNull::new(&raw mut errors_to_append).expect("stack addr"),
         ));
 
@@ -6295,7 +6295,7 @@ impl VirtualMachine {
         if let Some(frame) = top_frame {
             if !frame.position.is_invalid() {
                 let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
+                let file = bun_core::paths::resolve_path::relative(dir, source_url.slice());
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
@@ -6349,7 +6349,7 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = bun_paths::resolve_path::relative(dir, source_url.slice());
+                let file = bun_core::paths::resolve_path::relative(dir, source_url.slice());
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

@@ -1,9 +1,9 @@
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
 
-use bun_paths::strings;
-use bun_semver as Semver;
-use bun_semver::{SlicedString, String};
+use bun_core::paths::strings;
+use bun_core::semver as Semver;
+use bun_core::semver::{SlicedString, String};
 
 use crate::hosted_git_info;
 use crate::repository::Repository;
@@ -298,12 +298,12 @@ impl DependencyExt for Dependency {
     }
 }
 
-// Uses the `bun_semver::StringBuilder` trait
+// Uses the `bun_core::semver::StringBuilder` trait
 // (count / append<T> / append_string). The only extra method needed here is
 // access to the FULL backing buffer, which is intentionally NOT on the base trait since
 // `semver_string::Builder`'s isolated Box<[u8]> would be wrong for callers
 // that need the lockfile's full string_bytes.
-pub trait StringBuilderLike: bun_semver::StringBuilder {
+pub trait StringBuilderLike: bun_core::semver::StringBuilder {
     /// Full backing string buffer.
     fn string_bytes(&self) -> &[u8];
 }

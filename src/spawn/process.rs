@@ -5,7 +5,7 @@ use core::ffi::{c_char, c_int};
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 // (std::sync::Arc removed — Process is intrusively ref-counted via
-// bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
+// bun_core::ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
@@ -121,13 +121,13 @@ pub(crate) fn call_exit_handler(
 // keep the embedded count; the derive emits `ThreadSafeRefCounted` +
 // `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
 // handles `poller.deinit()`.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
     pub pidfd: PidFdType,
     pub status: Status,
     pub poller: Poller,
-    pub ref_count: bun_ptr::ThreadSafeRefCount<Process>,
+    pub ref_count: bun_core::ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub sync: bool,
     pub event_loop: EventLoopHandle,
@@ -175,7 +175,7 @@ impl Process {
     #[inline]
     pub fn ref_(&mut self) {
         // SAFETY: `self` is a live Process.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
     }
 
     /// Drop one ref. Takes `*mut Self`, **not** `&mut self`: on the last ref
@@ -189,7 +189,7 @@ impl Process {
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `Process` with refcount ≥ 1.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
     /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
@@ -251,7 +251,7 @@ impl Process {
         };
         // bun.new → heap::alloc (pointer crosses FFI / intrusive refcount)
         bun_core::heap::into_raw(Box::new(Process {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
@@ -307,7 +307,7 @@ impl Process {
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _g = unsafe { bun_core::ptr::ScopedRef::<Process>::adopt(this) };
         // SAFETY: `_g` keeps `this` live for this block.
         let self_ = unsafe { &mut *this };
         if let Poller::WaiterThread(waiter) = &mut self_.poller {
@@ -323,7 +323,7 @@ impl Process {
     #[cfg(unix)]
     pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _g = unsafe { bun_core::ptr::ScopedRef::<Process>::adopt(this) };
         // SAFETY: `_g` keeps `this` live.
         unsafe { (*this).wait(false) };
     }
@@ -508,7 +508,7 @@ impl Process {
         // SAFETY: `data` was set to the owning `*mut Process` before
         // `uv_spawn`; libuv never overwrites it. `process` is not
         // dereferenced again after this point.
-        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*process).data) };
+        let this: &mut Process = unsafe { bun_core::ptr::callback_ctx::<Process>((*process).data) };
         let exit_code: u8 = if exit_status >= 0 {
             (exit_status as u64) as u8
         } else {
@@ -566,7 +566,7 @@ impl Process {
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _g = unsafe { bun_core::ptr::ScopedRef::<Process>::adopt(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
         // SAFETY: `_g` keeps `this` live for this block.
         unsafe {
@@ -1450,7 +1450,7 @@ impl WaiterThread {
 #[cfg(windows)]
 pub struct WindowsSpawnResult {
     // Raw intrusive pointer. `Process` is intrusively
-    // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
+    // ref-counted via `bun_core::ptr::ThreadSafeRefCount` and recovered via
     // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
     // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
     pub process_: Option<*mut Process>,
@@ -1551,7 +1551,7 @@ impl WindowsSpawnResult {
             unsafe {
                 (*proc).close();
                 (*proc).detach();
-                bun_ptr::ThreadSafeRefCount::<Process>::deref(proc);
+                bun_core::ptr::ThreadSafeRefCount::<Process>::deref(proc);
             }
         }
     }
@@ -1804,7 +1804,7 @@ mod spawn_process_body {
         argv: *const *const c_char,
         envp: *const *const c_char,
     ) -> Result<bun_sys::Result<WindowsSpawnResult>, crate::Error> {
-        bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: all-zero is a valid uv_process_options_t
         let mut uv_process_options: uv::uv_process_options_t =
@@ -2094,7 +2094,7 @@ mod spawn_process_body {
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
         let process = bun_core::heap::into_raw(Box::new(Process {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             event_loop: options.windows.loop_,
             pid: 0,
             pidfd: (),

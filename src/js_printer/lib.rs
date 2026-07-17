@@ -12,7 +12,7 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use core::ptr::NonNull;
 
@@ -55,9 +55,9 @@ use bun_sourcemap as SourceMap;
 pub use bun_options_types::schema::api::CssInJsBehavior;
 
 /// The resolver crate is a sibling
-/// tier-4 crate; the canonical struct was MOVED DOWN to `bun_paths::fs::Path`
+/// tier-4 crate; the canonical struct was MOVED DOWN to `bun_core::paths::fs::Path`
 /// so both the resolver and the printer can name it without a dep cycle.
-pub use bun_paths::fs::Path as FsPath;
+pub use bun_core::paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
@@ -73,12 +73,12 @@ use renamer as rename;
 /// Map of mangled property `Ref` → final mangled name bytes.
 // PERF: `Box<[u8]>` values own their bytes —
 // revisit if profiling shows allocation pressure during link.
-pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+pub type MangledProps = bun_core::collections::ArrayHashMap<Ref, Box<[u8]>>;
 
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
-    use bun_collections::HashMap;
+    use bun_core::collections::HashMap;
     use bun_core::slice_as_bytes;
 
     #[repr(u8)]
@@ -497,7 +497,7 @@ pub mod analyze_transpiled_module {
     pub struct ModuleInfo {
         /// all strings in wtf-8. index in hashmap = StringID
         // Keyed by content
-        // directly (wyhash via bun_collections::HashMap) and keeps the parallel
+        // directly (wyhash via bun_core::collections::HashMap) and keeps the parallel
         // buf/lens vectors for the on-wire format.
         strings_map: HashMap<Vec<u8>, u32>,
         strings_buf: Vec<u8>,
@@ -1314,7 +1314,7 @@ pub struct Options<'a> {
     /// source can print into multiple part-ranges/chunks, so the table must
     /// not be consumed. `get_source_map_builder` shallow-copies it into the
     /// builder (`ManuallyDrop`, never freed on the bundler path).
-    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
+    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_core::alloc_impl::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
@@ -1572,7 +1572,7 @@ impl TopLevel {
 pub mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
-    use bun_ptr::BackRef;
+    use bun_core::ptr::BackRef;
     use js_ast::Symbol;
     use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
@@ -1652,7 +1652,7 @@ pub mod __gated_printer {
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
-        pub bump: &'a bun_alloc::Arena,
+        pub bump: &'a bun_core::alloc_impl::Arena,
     }
 
     /// The handling of binary expressions is convoluted because we're using
@@ -4068,7 +4068,7 @@ pub mod __gated_printer {
                         // thread-local `e` above keeps the parts slice alive
                         // through the print loop at the end of this arm.
                         let mut replaced =
-                            bun_alloc::ArenaVec::<E::TemplatePart>::new_in(self.bump);
+                            bun_core::alloc_impl::ArenaVec::<E::TemplatePart>::new_in(self.bump);
                         for (i, _part) in e.parts().iter().enumerate() {
                             let mut part = part_clone(_part);
                             let inlined_value: Option<Expr> = match &part.value.data {
@@ -4750,7 +4750,7 @@ pub mod __gated_printer {
                 value: item_in.value,
                 initializer: item_in.initializer,
                 // Vec is not Copy — re-slice instead of move.
-                ts_decorators: bun_alloc::AstAlloc::vec(),
+                ts_decorators: bun_core::alloc_impl::AstAlloc::vec(),
                 ts_metadata: Default::default(),
             };
             if !IS_JSON {
@@ -7008,7 +7008,7 @@ pub mod __gated_printer {
 
         pub fn init(
             writer: W,
-            bump: &'a bun_alloc::Arena,
+            bump: &'a bun_core::alloc_impl::Arena,
             import_records: &'a [ImportRecord],
             opts: Options<'a>,
             renamer: rename::Renamer<'a, 'a>,
@@ -7871,7 +7871,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             // copy aliases that storage; it is wrapped in `ManuallyDrop` and
             // never dropped, so ownership stays with the caller.
             Some(borrowed) => unsafe { core::ptr::read(borrowed) },
-            None => SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
+            None => SourceMap::line_offset_table::List::new_in(bun_core::alloc_impl::AstAlloc),
         }),
         ..Default::default()
     };
@@ -7906,7 +7906,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a bun_core::alloc_impl::Arena,
     tree: &'a Ast,
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
@@ -8097,7 +8097,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             .as_mut()
             .unwrap()
             .finalize()
-            .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
+            .map_err(|()| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8160,7 +8160,7 @@ pub fn print_json<W: WriterTrait>(
     let writer = _writer;
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
-    let bump = bun_alloc::Arena::new();
+    let bump = bun_core::alloc_impl::Arena::new();
     let mut no_op =
         rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
@@ -8189,7 +8189,7 @@ pub fn print_json<W: WriterTrait>(
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
-    bump: &'a bun_alloc::Arena,
+    bump: &'a bun_core::alloc_impl::Arena,
     target: bun_ast::Target,
     ast: &Ast,
     source: &bun_ast::Source,
@@ -8220,7 +8220,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
 
 pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a bun_core::alloc_impl::Arena,
     target: bun_ast::Target,
     ast: &Ast,
     source: &bun_ast::Source,
@@ -8262,7 +8262,7 @@ pub fn print_with_writer_and_platform<
     const GENERATE_SOURCE_MAPS: bool,
 >(
     mut writer: W,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a bun_core::alloc_impl::Arena,
     ast: &Ast,
     source: &bun_ast::Source,
     opts: Options<'a>,
@@ -8368,7 +8368,7 @@ pub fn print_common_js<
     const GENERATE_SOURCE_MAP: bool,
 >(
     _writer: W,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a bun_core::alloc_impl::Arena,
     tree: &'a Ast,
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,

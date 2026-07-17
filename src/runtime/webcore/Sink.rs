@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
-use bun_collections::{TaggedPtrUnion, VecExt};
+use bun_core::collections::{TaggedPtrUnion, VecExt};
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
@@ -197,7 +197,7 @@ impl UTF8Fallback {
 
             strings::replace_latin1_with_utf8(&mut buf[..str_.len()]);
             // Borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = bun_ptr::RawSlice::new(&buf[..str_.len()]);
+            let borrowed = bun_core::ptr::RawSlice::new(&buf[..str_.len()]);
             if input.is_done() {
                 let result = write_fn(ctx, &streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -249,7 +249,7 @@ impl UTF8Fallback {
             debug_assert!(copied.written as usize <= Self::STACK_SIZE);
             debug_assert!(copied.read as usize <= Self::STACK_SIZE);
             // Borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = bun_ptr::RawSlice::new(&buf[..copied.written as usize]);
+            let borrowed = bun_core::ptr::RawSlice::new(&buf[..copied.written as usize]);
             if input.is_done() {
                 let result = write_fn(ctx, &streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -890,7 +890,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                 return Ok(JSValue::js_number(0.0));
             }
             // Borrowed view over GC-kept buffer for the duration of the call.
-            let data = bun_ptr::RawSlice::new(slice);
+            let data = bun_core::ptr::RawSlice::new(slice);
             return Ok(this
                 .sink
                 .write_bytes(&streams::Result::Temporary(data))
@@ -916,7 +916,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let utf16 = view.utf16_slice_aligned();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
             // Borrowed view over GC-kept JSString.
-            let data = bun_ptr::RawSlice::new(bytes);
+            let data = bun_core::ptr::RawSlice::new(bytes);
             return Ok(this
                 .sink
                 .write_utf16(&streams::Result::Temporary(data))
@@ -924,7 +924,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         // Borrowed view over GC-kept JSString (Latin-1 path).
-        let data = bun_ptr::RawSlice::new(view.slice());
+        let data = bun_core::ptr::RawSlice::new(view.slice());
         Ok(this
             .sink
             .write_latin1(&streams::Result::Temporary(data))
@@ -1149,7 +1149,7 @@ bun_opaque::opaque_ffi! {
     pub struct Detached;
 }
 
-// `bun_ptr::impl_tagged_ptr_union!` would impl the foreign
+// `bun_core::impl_tagged_ptr_union!` would impl the foreign
 // `TypeList` trait for a tuple type, hitting orphan rules from this crate.
 // Hand-roll a local marker struct + impls instead (matches the
 // `AnyServerTypes` pattern in server_body.rs). The second variant
@@ -1157,10 +1157,10 @@ bun_opaque::opaque_ffi! {
 // `UnionMember`; only `Detached` is a typed member, and the Subprocess arm
 // in `Bun__onSinkDestroyed` casts the raw pointer manually.
 pub struct DestructorTypes;
-impl bun_ptr::tagged_pointer::TypeList for DestructorTypes {
+impl bun_core::ptr::tagged_pointer::TypeList for DestructorTypes {
     const LEN: usize = 2;
-    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 1;
-    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
+    const MIN_TAG: bun_core::ptr::tagged_pointer::TagType = 1024 - 1;
+    fn type_name_from_tag(tag: bun_core::ptr::tagged_pointer::TagType) -> Option<&'static str> {
         match tag {
             1024 => Some("Detached"),
             1023 => Some("Subprocess"),
@@ -1168,8 +1168,8 @@ impl bun_ptr::tagged_pointer::TypeList for DestructorTypes {
         }
     }
 }
-impl bun_ptr::tagged_pointer::UnionMember<DestructorTypes> for Detached {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
+impl bun_core::ptr::tagged_pointer::UnionMember<DestructorTypes> for Detached {
+    const TAG: bun_core::ptr::tagged_pointer::TagType = 1024;
     const NAME: &'static str = "Detached";
 }
 pub type DestructorPtr = TaggedPtrUnion<DestructorTypes>;

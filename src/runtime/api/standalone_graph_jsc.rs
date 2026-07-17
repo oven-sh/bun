@@ -38,7 +38,7 @@ impl FileJsc for File {
                     contents.as_ptr().cast_mut(),
                     contents.len() as SizeType,
                     contents.len() as SizeType,
-                    bun_alloc::basic::C_ALLOCATOR,
+                    bun_core::alloc_impl::basic::C_ALLOCATOR,
                 )
             };
             // Cannot use `..Default::default()` — `Store: Drop`
@@ -46,7 +46,7 @@ impl FileJsc for File {
             let store = StoreRef::from(Store::new(Store {
                 data: Data::Bytes(bytes),
                 mime_type: MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }));
             // make it never free
@@ -60,7 +60,7 @@ impl FileJsc for File {
             let b = Blob::init_with_store(store, global);
 
             if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
-                bun_paths::extension(self.name),
+                bun_core::paths::extension(self.name),
                 b'.',
             )) {
                 // SAFETY: `store_ptr` is the sole live mutable view; held ref

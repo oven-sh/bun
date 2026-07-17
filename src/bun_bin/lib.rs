@@ -48,7 +48,7 @@ use bun_core::output;
 /// mimalloc as the process allocator.
 #[cfg(not(bun_asan))]
 #[global_allocator]
-static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
+static ALLOC: bun_core::alloc_impl::Mimalloc = bun_core::alloc_impl::Mimalloc;
 
 /// Under ASAN, use the system allocator so the interceptor sees every allocation.
 #[cfg(bun_asan)]
@@ -58,7 +58,7 @@ static ALLOC: std::alloc::System = std::alloc::System;
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
 /// member that only provides it would never be extracted, so the override in
-/// `bun_safety::asan` silently didn't apply (manifesting as a
+/// `bun_core::safety::asan` silently didn't apply (manifesting as a
 /// `Thread::currentSingleton().stack().contains(this)` assert in
 /// `JSGlobalObject::GlobalPropertyInfo` because `detect_stack_use_after_return`
 /// puts C++ stack locals on a heap-backed fake stack JSC's conservative GC
@@ -179,10 +179,10 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         // exactly once before any uv handle is created.
         unsafe {
             let _ = bun_sys::windows::libuv::uv_replace_allocator(
-                Some(bun_alloc::mimalloc::mi_malloc),
-                Some(bun_alloc::mimalloc::mi_realloc),
-                Some(bun_alloc::mimalloc::mi_calloc),
-                Some(bun_alloc::mimalloc::mi_free),
+                Some(bun_core::alloc_impl::mimalloc::mi_malloc),
+                Some(bun_core::alloc_impl::mimalloc::mi_realloc),
+                Some(bun_core::alloc_impl::mimalloc::mi_calloc),
+                Some(bun_core::alloc_impl::mimalloc::mi_free),
             );
         }
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
@@ -221,7 +221,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     bun_io::ParentDeathWatchdog::install();
 
     // 6. Push high-tier allocator vtable addresses into the
-    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
+    //    `bun_core::safety::alloc::has_ptr` registry so debug-only allocator-mismatch
     //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances.
     //    Runs once; reads are lock-free Relaxed.
     bun_runtime::allocators::register_safety_vtables();

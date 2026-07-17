@@ -10,7 +10,7 @@ use core::ffi::c_void;
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
 
@@ -1004,7 +1004,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
+                    let ctx = unsafe { bun_core::ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     // Once a cell failed, a JS exception may be pending (or
                     // the VM terminating); don't re-enter user code for the
                     // remaining elements.
@@ -1493,7 +1493,7 @@ pub fn format2(
     let mut this_value: JSValue = vals[0];
     // see E0509 note above.
     let mut fmt = Formatter::new(global);
-    fmt.remaining_values = bun_ptr::RawSlice::new(&vals[1..]);
+    fmt.remaining_values = bun_core::ptr::RawSlice::new(&vals[1..]);
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
@@ -1679,7 +1679,7 @@ pub mod formatter {
         /// the backing storage goes away. A `&'a`
         /// slice cannot express that without forcing `'a` to outlive locals;
         /// `RawSlice` carries the outlives-holder invariant instead.
-        pub remaining_values: bun_ptr::RawSlice<JSValue>,
+        pub remaining_values: bun_core::ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
@@ -1713,7 +1713,7 @@ pub mod formatter {
         pub fn new(global_this: &'a JSGlobalObject) -> Self {
             Self {
                 global_this,
-                remaining_values: bun_ptr::RawSlice::EMPTY,
+                remaining_values: bun_core::ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
                 map_node: None,
                 hide_native: false,
@@ -1788,7 +1788,7 @@ pub mod formatter {
         #[inline]
         pub fn advance_remaining(&mut self) {
             let s = self.remaining_values;
-            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
+            self.remaining_values = bun_core::ptr::RawSlice::new(&s.slice()[1..]);
         }
     }
 
@@ -1867,7 +1867,7 @@ pub mod formatter {
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
             let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+            formatter.remaining_values = bun_core::ptr::RawSlice::new(&one);
 
             let result = (|| {
                 let tag =
@@ -1879,7 +1879,7 @@ pub mod formatter {
                     .map_err(|_| core::fmt::Error)
             })();
 
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
+            formatter.remaining_values = bun_core::ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }
@@ -1891,14 +1891,14 @@ pub mod formatter {
 
         /// Newtype over `HashMap<JSValue, ()>` so we can implement
         /// `ObjectPoolType` (orphan rules forbid impl on the foreign
-        /// `bun_collections::HashMap`). `Deref`/`DerefMut` keep all
+        /// `bun_core::collections::HashMap`). `Deref`/`DerefMut` keep all
         /// `self.map.*` call sites unchanged.
         #[derive(Default)]
         #[repr(transparent)]
-        pub struct Map(bun_collections::HashMap<JSValue, ()>);
+        pub struct Map(bun_core::collections::HashMap<JSValue, ()>);
 
         impl core::ops::Deref for Map {
-            type Target = bun_collections::HashMap<JSValue, ()>;
+            type Target = bun_core::collections::HashMap<JSValue, ()>;
             #[inline]
             fn deref(&self) -> &Self::Target {
                 &self.0
@@ -1911,15 +1911,15 @@ pub mod formatter {
             }
         }
 
-        impl bun_collections::pool::ObjectPoolType for Map {
+        impl bun_core::collections::pool::ObjectPoolType for Map {
             // Fresh nodes start with an empty map so clearing retained
             // capacity on first use is well-defined.
             const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
         }
 
         // Thread-local free list, capped at 16 nodes.
-        bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-        pub type PoolNode = bun_collections::pool::Node<Map>;
+        bun_core::object_pool!(pub Pool: Map, threadsafe, 16);
+        pub type PoolNode = bun_core::collections::pool::Node<Map>;
 
         /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
         /// so every node returned by [`Pool::get_node`] carries an initialized
@@ -2526,7 +2526,7 @@ pub mod formatter {
                         len = slice.len() as u32;
                         let next_value = {
                             let s = self.remaining_values;
-                            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
+                            self.remaining_values = bun_core::ptr::RawSlice::new(&s.slice()[1..]);
                             s.slice()[0]
                         };
 
@@ -5868,7 +5868,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
     let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
-    let hash = bun_wyhash::hash(slice);
+    let hash = bun_core::wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let counter = this.counts.get_or_put(hash).expect("unreachable");
     let current: u32 = if counter.found_existing {
@@ -5909,14 +5909,14 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
-    let hash = bun_wyhash::hash(slice);
+    let hash = bun_core::wyhash::hash(slice);
     // we don't delete it because deleting is implemented via tombstoning
     if let Some(v) = this.counts.get_mut(&hash) {
         *v = 0;
     }
 }
 
-type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
+type PendingTimers = bun_core::collections::HashMap<u64, Option<bun_core::time::Timer>>;
 thread_local! {
     static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::default());
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
@@ -5931,7 +5931,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     len: usize,
 ) {
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+    let id = bun_core::wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -5959,7 +5959,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
 
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(chars, len) };
-    let id = bun_wyhash::hash(slice);
+    let id = bun_core::wyhash::hash(slice);
     // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
     else {
@@ -5994,7 +5994,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
 
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(chars, len) };
-    let id = bun_wyhash::hash(slice);
+    let id = bun_core::wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };

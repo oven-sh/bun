@@ -1,11 +1,12 @@
 use bun_core::strings;
-use bun_paths;
+#[allow(unused_imports)]
+use bun_core::paths as bun_paths;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub struct Symlinker {
-    pub dest: bun_paths::Path,
-    pub target: bun_paths::RelPath,
-    pub fallback_junction_target: bun_paths::AbsPath,
+    pub dest: bun_core::paths::Path,
+    pub target: bun_core::paths::RelPath,
+    pub fallback_junction_target: bun_core::paths::AbsPath,
 }
 
 impl Symlinker {
@@ -70,7 +71,7 @@ impl Symlinker {
                 };
             }
             Strategy::ExpectExisting => {
-                let mut current_link_buf = bun_paths::path_buffer_pool::get();
+                let mut current_link_buf = bun_core::paths::path_buffer_pool::get();
                 let current_link_len =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
                         Ok(len) => len,

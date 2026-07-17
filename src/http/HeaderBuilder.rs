@@ -1,4 +1,4 @@
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_core::StringBuilder;
 
 use crate::headers::{Entry, EntryList, api};

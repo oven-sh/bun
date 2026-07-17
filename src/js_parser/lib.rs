@@ -14,7 +14,7 @@
 #![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
 
-pub use bun_collections::VecExt as _VecExtReexport;
+pub use bun_core::collections::VecExt as _VecExtReexport;
 
 pub mod error;
 pub use error::Error;
@@ -221,7 +221,7 @@ pub mod Macro {
 
     /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
     /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
-    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
+    pub type MacroRemapEntry = bun_core::collections::StringArrayHashMap<Box<[u8]>>;
 }
 use bun_ast::{Ast, Ref};
 
@@ -255,7 +255,7 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
     for crate::p::P<'a, IS_TS, SCAN>
 {
     #[inline]
-    fn arena(&self) -> &bun_alloc::Arena {
+    fn arena(&self) -> &bun_core::alloc_impl::Arena {
         self.arena
     }
     #[inline]
@@ -274,7 +274,7 @@ pub mod defines_table;
 // pure-global fallback table also lives at this tier (`defines_table`) so
 // `for_identifier` reads its own const — no cross-crate hook.
 pub mod defines {
-    use bun_collections::{StringArrayHashMap, StringHashMap};
+    use bun_core::collections::{StringArrayHashMap, StringHashMap};
     use bun_core::strings;
 
     use bun_ast::E;
@@ -514,7 +514,7 @@ pub mod defines {
             crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
-        pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
+        pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_core::alloc_impl::AllocError>
         where
             I: Iterator<Item = (&'a [u8], &'a DefineData)>,
         {
@@ -528,7 +528,7 @@ pub mod defines {
             &mut self,
             key: &[u8],
             value: DefineData,
-        ) -> Result<(), bun_alloc::AllocError> {
+        ) -> Result<(), bun_core::alloc_impl::AllocError> {
             // If it has a dot, then it's a DotDefine. e.g. process.env.NODE_ENV
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];
@@ -589,10 +589,10 @@ pub mod renamer {
     use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
-    use bun_collections::VecExt;
+    use bun_core::collections::VecExt;
 
     pub(crate) fn assign_nested_scope_slots(
-        _arena: &bun_alloc::Arena,
+        _arena: &bun_core::alloc_impl::Arena,
         module_scope: &Scope,
         symbols: &mut [Symbol],
     ) -> SlotCounts {

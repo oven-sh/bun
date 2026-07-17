@@ -299,7 +299,7 @@ impl ShellMkdirTask {
     }
 
     pub(crate) fn run_from_thread_pool(this: &mut ShellMkdirTask) {
-        use bun_paths::{Platform, platform, resolve_path};
+        use bun_core::paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
@@ -314,7 +314,7 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            path: PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_unchecked(
                 filepath.as_bytes(),
                 false,
             )),
@@ -377,7 +377,7 @@ struct MkdirVerboseVTable {
 }
 
 impl MkdirCtx for MkdirVerboseVTable {
-    fn on_create_dir(&self, dirpath: &bun_paths::OSPathSliceZ) {
+    fn on_create_dir(&self, dirpath: &bun_core::paths::OSPathSliceZ) {
         if !self.active {
             return;
         }
@@ -387,8 +387,8 @@ impl MkdirCtx for MkdirVerboseVTable {
         let out = unsafe { &mut *self.inner };
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
+            let mut buf = bun_core::paths::PathBuffer::uninit();
+            let str = bun_core::paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
             out.extend_from_slice(str.as_bytes());
             out.push(b'\n');
         }

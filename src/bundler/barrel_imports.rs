@@ -9,9 +9,9 @@
 
 use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::{ImportKind, import_record};
-use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
+use bun_core::collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
 use crate::Index;
@@ -323,7 +323,7 @@ fn resolve_barrel_records(
     let heap = this.graph.heap;
     let mut barrel_ir = core::mem::replace(
         &mut this.graph.ast.items_import_records_mut()[idx],
-        bun_alloc::ArenaVec::new_in(heap),
+        bun_core::alloc_impl::ArenaVec::new_in(heap),
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
@@ -380,10 +380,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Phase 1/2 (queue seeding), strictly before the BFS takes any `&mut` to
     // the same column. `BackRef` detaches the borrowck lifetime so later
     // `&mut this.*` borrows don't conflict.
-    let file_import_records: bun_ptr::BackRef<import_record::List> =
-        bun_ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
-    let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
-        bun_ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
+    let file_import_records: bun_core::ptr::BackRef<import_record::List> =
+        bun_core::ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
+    let file_named_imports: bun_core::ptr::BackRef<JSAst::NamedImports> =
+        bun_core::ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
 
     // `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
@@ -405,9 +405,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // `&mut this.graph.ast` below. The map is not mutated for the duration of
     // this fn.
     let path_to_source_index_map: Option<
-        bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
+        bun_core::ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
     > = if dev_handle.is_some() {
-        Some(bun_ptr::BackRef::new(
+        Some(bun_core::ptr::BackRef::new(
             this.path_to_source_index_map(result_ast_target),
         ))
     } else {

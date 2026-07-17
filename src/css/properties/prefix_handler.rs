@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
@@ -78,7 +78,7 @@ impl FallbackHandler {
             Color,
             deep_clone = |c: &css::css_values::color::CssColor, a| c.deep_clone(a),
             fallbacks = |v: &mut css::css_values::color::CssColor,
-                         a: &bun_alloc::Arena,
+                         a: &bun_core::alloc_impl::Arena,
                          t,
                          d: &mut css::DeclarationList| {
                 let fbs = v.get_fallbacks(a, t);
@@ -95,7 +95,7 @@ impl FallbackHandler {
             deep_clone =
                 |l: &css::SmallList<css::css_properties::text::TextShadow, 1>, a| l.deep_clone(a),
             fallbacks = |v: &mut css::SmallList<css::css_properties::text::TextShadow, 1>,
-                         a: &bun_alloc::Arena,
+                         a: &bun_core::alloc_impl::Arena,
                          t,
                          d: &mut css::DeclarationList| {
                 for fb in css::small_list::get_fallbacks_text_shadow(v, a, t)

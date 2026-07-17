@@ -75,7 +75,7 @@ const DBG: bool = cfg!(debug_assertions);
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
-bun_output::declare_scope!(bun_shim_impl, hidden);
+bun_core::declare_scope!(bun_shim_impl, hidden);
 
 /// A copy of all ntdll declarations this program uses
 mod nt {
@@ -183,7 +183,7 @@ macro_rules! debug {
         #[cfg(debug_assertions)]
         {
             #[cfg(not(feature = "shim_standalone"))]
-            { bun_output::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
+            { bun_core::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
             #[cfg(feature = "shim_standalone")]
             {
                 // The standalone build has no logger; deliberately a no-op to

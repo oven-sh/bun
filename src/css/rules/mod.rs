@@ -6,7 +6,7 @@ use css::error::MinifyErr;
 
 // PERF: heap-backed shim.
 // TODO(refactor): thread `'bump` and replace this with `crate::generics::ArrayList<'bump, T>`
-// (= `bun_alloc::ArenaVec`) crate-wide in one pass.
+// (= `bun_core::alloc_impl::ArenaVec`) crate-wide in one pass.
 pub(super) type ArrayList<T> = Vec<T>;
 
 pub mod container;
@@ -81,7 +81,7 @@ macro_rules! css_rule_variants {
             /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
             /// as **inherent** methods rather than `DeepClone` trait impls;
             /// method-syntax dispatch here picks up either.
-            pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+            pub fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
             where
                 R: css::generics::DeepClone<'bump>,
             {
@@ -142,7 +142,7 @@ css_rule_variants! {
 }
 
 // SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and
-// `bun_alloc::ArenaVec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
+// `bun_core::alloc_impl::ArenaVec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
 // leaf rule payloads, both of which suppress the auto-traits. Those containers
 // uniquely own their storage exactly like `Vec<T>`, and post-parse the tree is
 // shared read-only across the bundler thread pool. Thread-safety therefore
@@ -153,7 +153,7 @@ unsafe impl<R: Sync> Sync for CssRule<R> {}
 
 /// Ordered list of CSS rules, generic over the custom at-rule type `R`.
 pub struct CssRuleList<R> {
-    // PERF: re-thread to `bun_alloc::ArenaVec<'bump, CssRule<'bump, R>>`.
+    // PERF: re-thread to `bun_core::alloc_impl::ArenaVec<'bump, CssRule<'bump, R>>`.
     pub v: Vec<CssRule<R>>,
 }
 
@@ -177,7 +177,7 @@ impl<R> Default for CssRuleList<R> {
 // Once an upstream type grows its own `deep_clone(&self, &Arena)`, swap the
 // `dc::foo(&x, bump)` call for `x.deep_clone(bump)` and delete the helper.
 pub(super) mod dc {
-    use bun_alloc::Arena;
+    use bun_core::alloc_impl::Arena;
 
     /// `DeclarationBlock::deep_clone` — field-walk over both
     /// `DeclarationList`s, routing each `Property` through `dc::property`.
@@ -194,13 +194,13 @@ pub(super) mod dc {
         bump: &'bump Arena,
     ) -> crate::DeclarationBlock<'bump> {
         crate::DeclarationBlock {
-            important_declarations: bun_alloc::vec_from_iter_in(
+            important_declarations: bun_core::alloc_impl::vec_from_iter_in(
                 this.important_declarations
                     .iter()
                     .map(|p| property(p, bump)),
                 bump,
             ),
-            declarations: bun_alloc::vec_from_iter_in(
+            declarations: bun_core::alloc_impl::vec_from_iter_in(
                 this.declarations.iter().map(|p| property(p, bump)),
                 bump,
             ),
@@ -645,7 +645,7 @@ impl<R> CssRuleList<R> {
         Ok(())
     }
 
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
@@ -945,7 +945,7 @@ impl StyleRuleKey {
 /// raw pointer across `&mut rules` writes (see the note on `StyleRuleKey`).
 #[derive(Default)]
 pub(crate) struct StyleRuleKeyMap {
-    buckets: bun_collections::HashMap<u64, Vec<usize>>,
+    buckets: bun_core::collections::HashMap<u64, Vec<usize>>,
 }
 
 impl StyleRuleKeyMap {
@@ -1237,7 +1237,7 @@ pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 // making `Stylesheet::minify`'s stack-local handlers unusable.
 pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
-    pub arena: &'bump bun_alloc::Arena,
+    pub arena: &'bump bun_core::alloc_impl::Arena,
     pub targets: &'a css::targets::Targets,
     pub handler: &'a mut css::DeclarationHandler<'bump>,
     pub important_handler: &'a mut css::DeclarationHandler<'bump>,
@@ -1246,10 +1246,10 @@ pub struct MinifyContext<'a, 'bump> {
     // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the
     // owning `MinifyOptions` stores `Box<[u8]>` keys — reconcile to a
     // single key type with `Borrow<[u8]>` lookup.
-    pub unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
+    pub unused_symbols: &'a bun_core::collections::ArrayHashMap<Box<[u8]>, ()>,
     /// Pre-scanned `@custom-media` definitions, if the feature is enabled.
     pub custom_media:
-        Option<bun_collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule>>,
+        Option<bun_core::collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule>>,
     pub extra: &'a css::StylesheetExtra,
     pub css_modules: bool,
     /// First minification error encountered (surfaced out-of-band).

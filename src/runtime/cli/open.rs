@@ -3,7 +3,8 @@ use std::io::Write as _;
 use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_which::which;
 
@@ -71,7 +72,7 @@ impl Editor {
         const VARS: [&[u8]; 2] = [b"EDITOR", b"VISUAL"];
         for name in VARS {
             if let Some(value) = env.get(name) {
-                let basename = bun_paths::basename(value);
+                let basename = bun_core::paths::basename(value);
                 if let Some(editor) = Self::by_name(basename) {
                     return Some(editor);
                 }
@@ -506,7 +507,7 @@ impl EditorContext {
         column: &[u8],
     ) -> crate::Result<()> {
         let mut basename_buf = [0u8; 512];
-        let mut basename = bun_paths::basename(id);
+        let mut basename = bun_core::paths::basename(id);
         if strings::ends_with(basename, b".bun") && basename.len() < 499 {
             basename_buf[..basename.len()].copy_from_slice(basename);
             basename_buf[basename.len()..basename.len() + 3].copy_from_slice(b".js");
@@ -515,7 +516,7 @@ impl EditorContext {
 
         // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
         let mut basename_zbuf = PathBuffer::uninit();
-        let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
+        let basename_z = bun_core::paths::resolve_path::z(basename, &mut basename_zbuf);
         // `?` converts bun_sys::Error → crate::Error directly; explicit
         // .map_err(Into::into) became ambiguous once node_os::OsError added
         // its own From<bun_sys::Error>.
@@ -547,15 +548,15 @@ impl EditorContext {
         // first: choose from user preference
         if !self.name.is_empty() {
             // /usr/bin/vim
-            if bun_paths::is_absolute(self.name) {
+            if bun_core::paths::is_absolute(self.name) {
                 self.editor =
-                    Some(Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other));
+                    Some(Editor::by_name(bun_core::paths::basename(self.name)).unwrap_or(Editor::Other));
                 self.path = self.name;
                 return;
             }
 
             // "vscode"
-            if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
+            if let Some(editor_) = Editor::by_name(bun_core::paths::basename(self.name)) {
                 if Editor::by_path_for_editor(
                     env,
                     editor_,

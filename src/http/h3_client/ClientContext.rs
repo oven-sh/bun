@@ -203,7 +203,7 @@ impl ClientContext {
         // referent) gives `&ClientContext` for the Vec iter. Each session is a
         // disjoint heap allocation, and `ClientSession::abort_by_http_id` never
         // calls back into `unregister`, so `sessions` is stable across the loop.
-        let ctx = bun_ptr::BackRef::from(this);
+        let ctx = bun_core::ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
             if session_mut(s).abort_by_http_id(async_http_id) {
@@ -218,7 +218,7 @@ impl ClientContext {
             return;
         };
         // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
-        let ctx = bun_ptr::BackRef::from(this);
+        let ctx = bun_core::ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
             session_mut(s).stream_body_by_http_id(async_http_id, ended);
@@ -229,7 +229,7 @@ impl ClientContext {
         let Some(this) = Self::get() else {
             return;
         };
-        let ctx = bun_ptr::BackRef::from(this);
+        let ctx = bun_core::ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             if session_mut(s).resume_receive_by_http_id(async_http_id) {
                 return;

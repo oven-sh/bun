@@ -34,7 +34,7 @@ impl<T> Rect<T> {
             && self.left == other.left
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self
     where
         T: Clone,
     {

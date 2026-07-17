@@ -1,14 +1,14 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 // Entry point for Valkey client
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-use bun_collections::OffsetByteList;
+use bun_core::collections::OffsetByteList;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
-use bun_valkey::valkey_protocol as protocol;
-use bun_valkey::valkey_protocol::{RESPValue, RedisError};
+use bun_core::valkey::valkey_protocol as protocol;
+use bun_core::valkey::valkey_protocol::{RESPValue, RedisError};
 
 use super::js_valkey_body::JSValkeyClient;
 use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
@@ -27,7 +27,7 @@ pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 
 type JsTerminated<T> = bun_jsc::JsResult<T>;
 
-bun_output::define_scoped_log!(debug, Redis, visible);
+bun_core::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
@@ -1578,7 +1578,7 @@ impl bun_io::Write for ValkeyClient {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.write_buffer
             .write(buf)
-            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
+            .map_err(|_| bun_core::Error::Alloc(bun_core::alloc_impl::AllocError))
     }
 }
 
@@ -1593,7 +1593,7 @@ impl bun_io::Write for WriteBufWriter<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.0
             .write(buf)
-            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
+            .map_err(|_| bun_core::Error::Alloc(bun_core::alloc_impl::AllocError))
     }
 }
 

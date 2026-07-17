@@ -2,12 +2,12 @@ use crate::mal_prelude::*;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_alloc::MaxHeapAllocator;
+use bun_core::alloc_impl::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{String as BunString, strings};
-use bun_paths::{self as paths, PathBuffer};
-use bun_wyhash::hash;
+use bun_core::paths::{self as paths, PathBuffer};
+use bun_core::wyhash::hash;
 
 use crate::LinkerContext;
 use crate::chunk::{Content, Flags as ChunkFlags};
@@ -41,7 +41,7 @@ pub fn write_output_files_to_disk(
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {
-            if bun_errno::SystemErrno::from(e.clone()) == bun_errno::SystemErrno::ENOTDIR {
+            if bun_core::errno::SystemErrno::from(e.clone()) == bun_core::errno::SystemErrno::ENOTDIR {
                 c.log_mut()
                     .add_error_fmt(
                         None,
@@ -370,7 +370,7 @@ pub fn write_output_files_to_disk(
                     .unwrap_or_else(|_| {
                         panic!("Failed to allocate memory for external source map")
                     });
-                let encode_len = bun_base64::encode_len(&output_source_map);
+                let encode_len = bun_core::base64::encode_len(&output_source_map);
 
                 let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
                 let total_len = code_result.buffer.len() + source_map_start.len() + encode_len + 1;
@@ -381,7 +381,7 @@ pub fn write_output_files_to_disk(
 
                 let old_len = buf.len();
                 buf.resize(old_len + encode_len, 0);
-                let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
+                let _ = bun_core::base64::encode(&mut buf[old_len..], &output_source_map);
 
                 buf.push(b'\n');
                 code_result.buffer = buf.into_boxed_slice();

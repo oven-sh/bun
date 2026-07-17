@@ -6,7 +6,7 @@
 //! a browser tab if it has a callback to a previously loaded chunk; so DevServer
 //! should be aware of it.
 
-use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
+use bun_core::collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
 use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
@@ -110,18 +110,18 @@ impl Entry {
         let mut source_map_strings: Vec<u8> = Vec::new();
 
         #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_core::paths::path_buffer_pool::get();
 
         for native_file_path in paths.iter() {
             let native_file_path: &[u8] = native_file_path;
             source_map_strings.extend_from_slice(b",");
             #[cfg(windows)]
             let path: &[u8] =
-                bun_paths::resolve_path::path_to_posix_buf::<u8>(native_file_path, &mut **buf);
+                bun_core::paths::resolve_path::path_to_posix_buf::<u8>(native_file_path, &mut **buf);
             #[cfg(not(windows))]
             let path: &[u8] = native_file_path;
 
-            if bun_paths::is_absolute(path) {
+            if bun_core::paths::is_absolute(path) {
                 let is_windows_drive_path = cfg!(windows) && path[0] != b'/';
 
                 // On the client we prefix the sourcemap path with "file://" and
@@ -149,7 +149,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                            return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                         }
                     }
                 } else {
@@ -163,7 +163,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                            return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                         }
                     }
                 }
@@ -176,7 +176,7 @@ impl Entry {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
                     Err(bun_core::PercentEncodeError::OutOfMemory) => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                        return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                     }
                 }
                 source_map_strings.extend_from_slice(b"\"");
@@ -488,7 +488,7 @@ impl SourceMapStore {
         &mut self,
         script_id: Key,
         ref_count: u32,
-    ) -> Result<PutOrIncrementRefCount<'_>, bun_alloc::AllocError> {
+    ) -> Result<PutOrIncrementRefCount<'_>, bun_core::alloc_impl::AllocError> {
         let gop = self.entries.get_or_put(script_id)?;
         if !gop.found_existing {
             debug_assert!(ref_count > 0); // invalid state

@@ -213,7 +213,7 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
 /// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
 /// Matches libuv's `uv__filetime_to_timespec`.
 #[inline]
-pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
+pub fn filetime_to_timespec(filetime: i64) -> bun_core::libuv_sys::uv_timespec_t {
     let t = filetime - EPOCH_DIFFERENCE_100NS;
     let mut sec = t / 10_000_000;
     let mut nsec = (t - sec * 10_000_000) * 100;
@@ -221,7 +221,7 @@ pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
         sec -= 1;
         nsec += 1_000_000_000;
     }
-    bun_libuv_sys::uv_timespec_t {
+    bun_core::libuv_sys::uv_timespec_t {
         sec: sec as _,
         nsec: nsec as _,
     }
@@ -258,9 +258,9 @@ pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
 #[cfg(windows)]
-pub use bun_paths::PathBuffer;
+pub use bun_core::paths::PathBuffer;
 #[cfg(windows)]
-pub use bun_paths::WPathBuffer;
+pub use bun_core::paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
 pub use bun_windows_sys::HMODULE;
@@ -379,7 +379,7 @@ pub fn CreateIoCompletionPort(
     existing_completion_port: HANDLE,
     completion_key: ULONG_PTR,
     concurrent_threads: DWORD,
-) -> core::result::Result<HANDLE, bun_errno::SystemErrno> {
+) -> core::result::Result<HANDLE, bun_core::errno::SystemErrno> {
     let h = kernel32::CreateIoCompletionPort(
         file_handle,
         existing_completion_port,
@@ -387,7 +387,7 @@ pub fn CreateIoCompletionPort(
         concurrent_threads,
     );
     if h.is_null() {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
     Ok(h)
 }
@@ -440,7 +440,7 @@ pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
 
 /// Codes from <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d>.
 /// Canonical newtype lives in `bun_windows_sys` (tier-0); re-exported here so
-/// `bun_sys::windows::Win32Error` and `bun_errno::Win32Error` are one nominal
+/// `bun_sys::windows::Win32Error` and `bun_core::errno::Win32Error` are one nominal
 /// type. The full MS-ERREF const table below is parked behind `#[cfg(any())]`
 /// — only the subset on `bun_windows_sys::Win32Error` is referenced.
 pub use bun_windows_sys::Win32Error;
@@ -448,7 +448,7 @@ pub use bun_windows_sys::Win32Error;
 /// `to_system_errno()` / `to_e()` — extension trait from `bun_errno` (the
 /// `SystemErrno` mapping table is a higher-tier concern than the tier-0
 /// newtype).
-pub use bun_errno::Win32ErrorExt;
+pub use bun_core::errno::Win32ErrorExt;
 
 /// `Win32Error::unwrap()` — extension trait because
 /// `Win32Error` is a foreign type (orphan rule).
@@ -3274,9 +3274,9 @@ mod _win32error_full_table {
     }
 } // mod _win32error_full_table
 
-pub use bun_libuv_sys as libuv;
+pub use bun_core::libuv_sys as libuv;
 
-pub use bun_errno::translate_uv_error_to_e;
+pub use bun_core::errno::translate_uv_error_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
 
@@ -3370,13 +3370,13 @@ pub fn get_last_error_tag() -> impl core::fmt::Display {
 pub type Error = Win32Error;
 
 /// `bun.windows.translateNTStatusToErrno` — thin wrapper over the canonical
-/// table in `bun_errno::windows::translate_ntstatus_to_errno`. This crate only
+/// table in `bun_core::errno::windows::translate_ntstatus_to_errno`. This crate only
 /// adds the debug-build `Output::debug_warn` diagnostics (which `bun_errno`
 /// cannot emit without an upward dep).
 pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     // Both `NTSTATUS` newtypes are `#[repr(transparent)] (pub u32)`; round-trip
     // via the raw value so the lower-tier crate owns the only mapping table.
-    let e = bun_errno::windows::translate_ntstatus_to_errno(bun_errno::windows::NTSTATUS(err.0));
+    let e = bun_core::errno::windows::translate_ntstatus_to_errno(bun_core::errno::windows::NTSTATUS(err.0));
     #[cfg(debug_assertions)]
     {
         use bun_windows_sys::ntstatus::{OBJECT_NAME_INVALID, SHARING_VIOLATION};
@@ -3512,7 +3512,7 @@ pub fn user_unique_id() -> u32 {
         "username: {}",
         bun_core::fmt::utf16(name)
     );
-    bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
+    bun_core::wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
 }
 
 pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(), SystemErrno> {
@@ -3807,7 +3807,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
 
     let mut attr = OBJECT_ATTRIBUTES {
         Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(sub_path_w) {
+        RootDirectory: if bun_core::paths::is_absolute_windows_wtf16(sub_path_w) {
             ptr::null_mut()
         } else {
             options.dir.unwrap_or(ptr::null_mut())
@@ -4022,7 +4022,7 @@ pub enum Subsystem {
 pub fn edit_win32_binary_subsystem(
     fd: &bun_sys::File,
     subsystem: Subsystem,
-) -> Result<(), bun_errno::SystemErrno> {
+) -> Result<(), bun_core::errno::SystemErrno> {
     const _: () = assert!(cfg!(windows));
     if kernel32_2::SetFilePointerEx(
         fd.handle.native(),
@@ -4031,16 +4031,16 @@ pub fn edit_win32_binary_subsystem(
         win32::FILE_BEGIN,
     ) == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
     // Use `read_all` (which retries on short reads) rather than a single
     // `read()` syscall, so a short read isn't mis-reported as EndOfStream.
     let mut off_bytes = [0u8; 4];
     let n = fd
         .read_all(&mut off_bytes)
-        .map_err(bun_errno::SystemErrno::from)?;
+        .map_err(bun_core::errno::SystemErrno::from)?;
     if n != 4 {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
     let offset: u32 = u32::from_le_bytes(off_bytes);
     if kernel32_2::SetFilePointerEx(
@@ -4050,13 +4050,13 @@ pub fn edit_win32_binary_subsystem(
         win32::FILE_BEGIN,
     ) == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
     // Use `write_all` rather than a single `write()` + length check so a
     // short write is retried instead of failing.
     let sub_bytes = (subsystem as u16).to_le_bytes();
     fd.write_all(&sub_bytes)
-        .map_err(bun_errno::SystemErrno::from)?;
+        .map_err(bun_core::errno::SystemErrno::from)?;
     Ok(())
 }
 
@@ -4158,9 +4158,9 @@ pub mod rescle {
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
         // Icon is a path, so use toWPathNormalized with proper buffer handling
-        let mut icon_buf = bun_paths::WPathBuffer::uninit();
+        let mut icon_buf = bun_core::paths::WPathBuffer::uninit();
         let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
-            let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
+            let path_w = bun_core::paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
             // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
             let len = path_w.len();
             let buf_u16 = icon_buf.as_mut_slice();
@@ -4380,7 +4380,7 @@ pub fn become_watcher_manager() -> ! {
     loop {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
-            if err == bun_errno::SystemErrno::EIO {
+            if err == bun_core::errno::SystemErrno::EIO {
                 // This read is best-effort — Drop guards inside
                 // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
                 // via HeapFree) may have clobbered the thread's last-error
@@ -4428,7 +4428,7 @@ pub fn become_watcher_manager() -> ! {
 pub fn spawn_watcher_child(
     procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
-) -> Result<(), bun_errno::SystemErrno> {
+) -> Result<(), bun_core::errno::SystemErrno> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
@@ -4440,7 +4440,7 @@ pub fn spawn_watcher_child(
     if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
         == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
     let mut job_local = job;
     // SAFETY: p initialized above; job_local valid for sizeof(HANDLE)
@@ -4456,7 +4456,7 @@ pub fn spawn_watcher_child(
         )
     } == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
 
     // The win32 layer exposes these as DWORD constants — assemble the raw mask.
@@ -4464,7 +4464,7 @@ pub fn spawn_watcher_child(
     let flags: DWORD = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
     let image_path = exe_path_w();
-    let mut wbuf = bun_paths::WPathBuffer::uninit();
+    let mut wbuf = bun_core::paths::WPathBuffer::uninit();
     wbuf.as_mut_slice()[0..image_path.len()].copy_from_slice(image_path.as_slice());
     wbuf.as_mut_slice()[image_path.len()] = 0;
 
@@ -4552,7 +4552,7 @@ pub fn spawn_watcher_child(
         )
     };
     if rc == 0 {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(bun_core::errno::SystemErrno::EIO);
     }
     let mut is_in_job: BOOL = 0;
     let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
@@ -4574,7 +4574,7 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_v
     }
 
     use bun_core::strings::EncodingNonAscii;
-    let mut buf = bun_paths::WPathBuffer::uninit();
+    let mut buf = bun_core::paths::WPathBuffer::uninit();
     let data: &[u16] = match str_.encoding() {
         EncodingNonAscii::Utf8 => {
             bun_core::convert_utf8_to_utf16_in_buffer(buf.as_mut_slice(), str_.utf8())
@@ -4669,7 +4669,7 @@ pub fn move_opened_file_at(
     // function called from already-deep install/bundler call chains. Any
     // `new_file_name.len() <= PATH_MAX_WIDE` still fits.
     const STRUCT_BUF_LEN: usize =
-        size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::PATH_MAX_WIDE * 2 - 1);
+        size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_core::paths::PATH_MAX_WIDE * 2 - 1);
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
     struct AlignedBuf {
         _buf: [u8; STRUCT_BUF_LEN],
@@ -4701,7 +4701,7 @@ pub fn move_opened_file_at(
             rename_info,
             win32::FILE_RENAME_INFORMATION_EX {
                 Flags: flags,
-                RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) {
+                RootDirectory: if bun_core::paths::is_absolute_windows_wtf16(new_file_name) {
                     ptr::null_mut()
                 } else {
                     new_dir_fd.native()
@@ -4906,12 +4906,12 @@ mod kernel32_2 {
     }
 }
 
-pub type GetEnvironmentStringsError = bun_alloc::AllocError;
+pub type GetEnvironmentStringsError = bun_core::alloc_impl::AllocError;
 
 pub fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> {
     let p = kernel32_2::GetEnvironmentStringsW();
     if p.is_null() {
-        return Err(bun_alloc::AllocError);
+        return Err(bun_core::alloc_impl::AllocError);
     }
     Ok(p)
 }
@@ -5000,7 +5000,7 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
     }
 }
 
-// `bun.windows.libuv` — re-exported as `pub use bun_libuv_sys as libuv` above.
+// `bun.windows.libuv` — re-exported as `pub use bun_core::libuv_sys as libuv` above.
 // The duplicate inline `pub mod libuv { ... }` that lived here caused E0260 and
 // has been removed; its items belong in `bun_libuv_sys`.
 

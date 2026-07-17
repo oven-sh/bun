@@ -54,11 +54,11 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_core::StringBuilder;
 use bun_core::{OwnedString, strings};
-use bun_url::PercentEncoding;
-use bun_url::whatwg::URL as JscUrl;
+use bun_core::url::PercentEncoding;
+use bun_core::url::whatwg::URL as JscUrl;
 use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,9 +1,9 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::cmp::Ordering;
 
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::strings;
-use bun_semver::String as SemverString;
+use bun_core::semver::String as SemverString;
 
 use crate::lockfile_real::package::Alphabetizer;
 use bun_install::Dependency;
@@ -12,7 +12,7 @@ use bun_install::Resolution;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::lockfile::package;
 // `lockfile.packages.slice()` returns
-// `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
+// `bun_core::collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (hand-expanded per Package.rs).
 use crate::integrity;
 use crate::lockfile_real::Printer;

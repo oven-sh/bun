@@ -10,7 +10,7 @@ use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use bun_core::strings;
-use bun_picohttp as picohttp;
+use bun_core::picohttp as picohttp;
 
 pub fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
@@ -318,7 +318,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             let pending = stream.pending_body;
             let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
             // pending_body[sent..] is a suffix of the original slice.
-            stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
+            stream.pending_body = bun_core::ptr::RawSlice::new(&pending.slice()[sent..]);
             if stream.pending_body.is_empty() {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;

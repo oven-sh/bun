@@ -3,7 +3,7 @@
 use core::cell::UnsafeCell;
 
 use crate::Mutex;
-use bun_safety::ThreadLock;
+use bun_core::safety::ThreadLock;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// This type uses `bun_threading::Mutex` internally.
@@ -17,7 +17,7 @@ pub type Guarded<Value> = GuardedBy<Value, Mutex>;
 /// [`crate::mutex::MutexGuard`] returned by `Mutex::lock_guard()`.
 pub type MutexGuard<'a, Value> = GuardedLock<'a, Value, Mutex>;
 
-/// Uses `bun_safety::ThreadLock`.
+/// Uses `bun_core::safety::ThreadLock`.
 pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 
 /// A wrapper around a mutex, and a value protected by the mutex.

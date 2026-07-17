@@ -4,9 +4,9 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::strings;
-use bun_http_types::Method::Method;
-use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
+use bun_core::http_types::Method::Method;
+use bun_core::picohttp::Header as PicoHeader;
+use bun_core::ptr::{IntrusiveRc, RawSlice, RefCount};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -89,7 +89,7 @@ impl Default for MultiPartUploadOptions {
 // layering honest — `bun_s3_signing` reads its own data, no upward hook.
 // ──────────────────────────────────────────────────────────────────────────
 
-use bun_collections::StringArrayHashMap;
+use bun_core::collections::StringArrayHashMap;
 use bun_core::Mutex;
 
 /// Memoised SigV4 derived signing key, keyed by `(numeric_day,
@@ -166,9 +166,9 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
 // zero the boxed allocation is dropped, which drops the Box<[u8]> fields, so no
 // explicit Drop body is needed here.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 pub struct S3Credentials {
-    // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
+    // Intrusive refcount; managed by bun_core::ptr::IntrusiveRc<S3Credentials>.
     ref_count: RefCount<S3Credentials>,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
@@ -260,7 +260,7 @@ impl S3Credentials {
     }
 
     // `hash_const` DELETED — dead code (no callers). If
-    // resurrected: `bun_wyhash::hash_ascii_lowercase(0, acl)`.
+    // resurrected: `bun_core::wyhash::hash_ascii_lowercase(0, acl)`.
 
     pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
         IntrusiveRc::new(S3Credentials {
@@ -288,9 +288,9 @@ impl S3Credentials {
         let mut content_md5: Option<Box<[u8]>> = None;
 
         if let Some(content_md5_val) = sign_options.content_md5 {
-            let len = bun_base64::encode_len(content_md5_val);
+            let len = bun_core::base64::encode_len(content_md5_val);
             let mut content_md5_as_base64 = vec![0u8; len];
-            let n = bun_base64::encode(&mut content_md5_as_base64, content_md5_val);
+            let n = bun_core::base64::encode(&mut content_md5_as_base64, content_md5_val);
             content_md5_as_base64.truncate(n);
             content_md5 = Some(content_md5_as_base64.into_boxed_slice());
         }
@@ -859,7 +859,7 @@ impl S3Credentials {
         result.url = url;
         result._headers_len = 4;
         // Self-referential: _headers borrows from owned Box<[u8]> fields on SignResult.
-        // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
+        // bun_core::picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
         // valid across SignResult moves. SAFETY relies on the Box<[u8]> fields not being mutated
         // after the corresponding header is written.
         result._headers[0] = pico_header_new(b"x-amz-content-sha256", aws_content_hash);
@@ -920,7 +920,7 @@ impl S3Credentials {
     }
 }
 
-use bun_ptr::owned::alloc_dupe_slice as dupe_slice;
+use bun_core::ptr::owned::alloc_dupe_slice as dupe_slice;
 
 // ──────────────────────────────────────────────────────────────────────────
 // DateResult / getAMZDate

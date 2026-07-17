@@ -1068,7 +1068,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 /// `PREFIX` zero bytes at the front for the caller to fill (BITMAPFILEHEADER).
 fn dup_global<const PREFIX: usize>(
     h: *mut c_void,
-) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
+) -> Result<Option<Vec<u8>>, bun_core::alloc_impl::AllocError> {
     // SAFETY: h is a non-null HGLOBAL from GetClipboardData.
     let size = unsafe { GlobalSize(h) };
     if size == 0 {

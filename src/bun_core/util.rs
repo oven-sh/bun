@@ -759,7 +759,7 @@ pub use bun_core::SEP;
 
 /// `[u8; MAX_PATH_BYTES]` stack buffer for path syscalls.
 ///
-/// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
+/// Canonical definition; `bun_core::paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
 ///
@@ -902,7 +902,7 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
         if is_sep(path[i]) {
             // Return up to (excluding) the separator found — do NOT collapse a
             // preceding run of separators, so `/foo//bar` → `/foo/`. Preserve
-            // that contract for re-export parity with `bun_paths::dirname`.
+            // that contract for re-export parity with `bun_core::paths::dirname`.
             return Some(&path[..i]);
         }
     }
@@ -1653,7 +1653,7 @@ pub type Mode = u32; // POSIX `mode_t`
 /// like `S::IRUSR | S::IWUSR` and `(st_mode as u32) & S::IFMT` compile
 /// uniformly; the libc-boundary cast to native `mode_t` happens in `bun_sys`.
 ///
-/// Canonical home for the per-OS `bun_errno::posix::S` re-exports (errno
+/// Canonical home for the per-OS `bun_core::errno::posix::S` re-exports (errno
 /// depends on bun_core, not vice-versa).
 #[allow(non_snake_case)]
 pub mod S {
@@ -3666,7 +3666,7 @@ impl_integer!(
 /// Primitive integers transcodable as native-endian raw bytes.
 ///
 /// Explicit trait
-/// bound shared by the peechy wire codec (`bun_analytics::SchemaInt`) and the
+/// bound shared by the peechy wire codec (`bun_core::analytics::SchemaInt`) and the
 /// MySQL protocol reader (`bun_sql::ReadableInt`), which re-export this under
 /// their local names.
 pub trait NativeEndianInt: Copy + 'static {

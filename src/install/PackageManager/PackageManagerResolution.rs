@@ -3,9 +3,9 @@ use core::mem::ManuallyDrop;
 
 use bun_core::Output;
 use bun_core::strings;
-use bun_paths::PathBuffer;
-use bun_semver as semver;
-use bun_semver::{SlicedString, String as SemverString};
+use bun_core::paths::PathBuffer;
+use bun_core::semver as semver;
+use bun_core::semver::{SlicedString, String as SemverString};
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
@@ -151,9 +151,9 @@ impl PackageManager {
         {
             Ok(d) => d,
             Err(
-                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
+                | crate::Error::Sys(bun_core::errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_core::errno::SystemErrno::EACCES)
                 | crate::Error::DeviceBusy,
             ) => {
                 return Ok(list);

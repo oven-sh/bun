@@ -1,6 +1,6 @@
-use bun_collections::{BoundedArray, VecExt};
+use bun_core::collections::{BoundedArray, VecExt};
 use bun_core::ZStr;
-use bun_ptr::RawSlice;
+use bun_core::ptr::RawSlice;
 
 pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 
@@ -27,7 +27,7 @@ impl Data {
         Data::Empty
     }
 
-    pub fn create(possibly_inline_bytes: &[u8]) -> Result<Data, bun_alloc::AllocError> {
+    pub fn create(possibly_inline_bytes: &[u8]) -> Result<Data, bun_core::alloc_impl::AllocError> {
         if possibly_inline_bytes.is_empty() {
             return Ok(Data::Empty);
         }
@@ -41,7 +41,7 @@ impl Data {
         Ok(Data::Owned(possibly_inline_bytes.to_vec()))
     }
 
-    pub fn to_owned(self) -> Result<Vec<u8>, bun_alloc::AllocError> {
+    pub fn to_owned(self) -> Result<Vec<u8>, bun_core::alloc_impl::AllocError> {
         match self {
             Data::Owned(owned) => Ok(owned),
             Data::Temporary(temporary) => Ok(temporary.slice().to_vec()),
@@ -58,7 +58,7 @@ impl Data {
                 // Zero bytes before freeing.
                 let s = owned.slice_mut();
                 // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
-                unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
+                unsafe { bun_core::alloc_impl::secure_zero(s.as_mut_ptr(), s.len()) };
                 owned.clear_and_free();
             }
             Data::Temporary(_) => {}

@@ -1,4 +1,4 @@
-use bun_collections::{ByteVecExt, VecExt};
+use bun_core::collections::{ByteVecExt, VecExt};
 use bun_core::strings;
 
 /// Buffer for newline-delimited data that tracks scan positions to avoid O(n²) scanning.

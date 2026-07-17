@@ -1,7 +1,7 @@
 use crate::CrateError as Error;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::{OwnedString, String as BunString};
-use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
+use bun_core::paths::{AutoAbsPath, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
@@ -47,7 +47,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
-    let mut path_buf_os = bun_paths::OSPathBuffer::uninit();
+    let mut path_buf_os = bun_core::paths::OSPathBuffer::uninit();
     #[cfg(windows)]
     let output_path_os: &bun_core::WStr = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(
         &mut path_buf_os,
@@ -66,7 +66,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
         let errno = err.get_errno();
         if errno == E::ENOENT || errno == E::EPERM || errno == E::EACCES {
             // Derive directory from the absolute output path
-            let dir_path = resolve_path::dirname::<bun_paths::platform::Auto>(path_buf.slice());
+            let dir_path = resolve_path::dirname::<bun_core::paths::platform::Auto>(path_buf.slice());
             if !dir_path.is_empty() {
                 let _ = Fd::cwd().make_path(dir_path);
                 // Retry write
@@ -146,7 +146,7 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
         "Heap.{}.{}.{}",
         epoch_microseconds, pid, extension
     )
-    .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
+    .map_err(|_| crate::CrateError::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
     let remaining = cursor.len();
     let written = total - remaining;
     Ok(&buf.as_slice()[..written])

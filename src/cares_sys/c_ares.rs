@@ -977,9 +977,9 @@ fn library_init() {
         let rc = unsafe {
             ares_library_init_mem(
                 ARES_LIB_INIT_ALL,
-                Some(bun_alloc::mimalloc::mi_malloc),
-                Some(bun_alloc::mimalloc::mi_free),
-                Some(bun_alloc::mimalloc::mi_realloc),
+                Some(bun_core::alloc_impl::mimalloc::mi_malloc),
+                Some(bun_core::alloc_impl::mimalloc::mi_free),
+                Some(bun_core::alloc_impl::mimalloc::mi_realloc),
             )
         };
         if rc != ARES_SUCCESS {
@@ -1870,7 +1870,7 @@ impl Error {
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
-            use bun_libuv_sys as libuv;
+            use bun_core::libuv_sys as libuv;
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
             if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
                 return Some(Error::ENOTFOUND);

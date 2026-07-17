@@ -3,15 +3,15 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 
-use bun_alloc::AllocError;
-use bun_collections::VecExt;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::VecExt;
 use bun_core::ZigString;
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 // AST string fields are arena-owned (bulk-freed via Store/arena reset; never
 // individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
@@ -50,7 +50,7 @@ pub struct Array {
 impl Default for Array {
     fn default() -> Self {
         Self {
-            items: bun_alloc::AstAlloc::vec(),
+            items: bun_core::alloc_impl::AstAlloc::vec(),
             comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
@@ -62,7 +62,7 @@ impl Default for Array {
 // Live subset of `Array` accessors needed by downstream crates.
 impl Array {
     pub const EMPTY: Array = Array {
-        items: bun_alloc::AstAlloc::vec(),
+        items: bun_core::alloc_impl::AstAlloc::vec(),
         comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
@@ -236,7 +236,7 @@ impl Default for New {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: bun_alloc::AstAlloc::vec(),
+            args: bun_core::alloc_impl::AstAlloc::vec(),
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             close_parens_loc: crate::Loc::EMPTY,
         }
@@ -288,7 +288,7 @@ impl Default for Call {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: bun_alloc::AstAlloc::vec(),
+            args: bun_core::alloc_impl::AstAlloc::vec(),
             optional_chain: None,
             is_direct_eval: false,
             close_paren_loc: crate::Loc::EMPTY,
@@ -659,8 +659,8 @@ impl Default for JSXElement {
     fn default() -> Self {
         Self {
             tag: None,
-            properties: bun_alloc::AstAlloc::vec(),
-            children: bun_alloc::AstAlloc::vec(),
+            properties: bun_core::alloc_impl::AstAlloc::vec(),
+            children: bun_core::alloc_impl::AstAlloc::vec(),
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
@@ -1239,7 +1239,7 @@ pub struct Object {
 impl Default for Object {
     fn default() -> Self {
         Self {
-            properties: bun_alloc::AstAlloc::vec(),
+            properties: bun_core::alloc_impl::AstAlloc::vec(),
             comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
@@ -1302,7 +1302,7 @@ bun_core::oom_from_alloc!(SetError);
 impl From<SetError> for crate::Error {
     fn from(e: SetError) -> Self {
         match e {
-            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            SetError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             SetError::Clobber => crate::Error::Clobber,
         }
     }
@@ -1318,7 +1318,7 @@ pub struct RopeQuery<'a> {
 // Sort helpers stay in the gated impl below.
 impl Object {
     pub const EMPTY: Object = Object {
-        properties: bun_alloc::AstAlloc::vec(),
+        properties: bun_core::alloc_impl::AstAlloc::vec(),
         comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
@@ -1823,7 +1823,7 @@ impl EString {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
-        let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
+        let mut bytes = bun_core::alloc_impl::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
         while let Some(part) = str_ {
@@ -1861,9 +1861,9 @@ impl EString {
             return 0;
         }
         if self.is_utf8() {
-            bun_wyhash::hash(&self.data)
+            bun_core::wyhash::hash(&self.data)
         } else {
-            bun_wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
+            bun_core::wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
         }
     }
 }
@@ -2048,7 +2048,7 @@ impl EString {
             let v = strings::to_utf8_alloc(self.slice16());
             bump.alloc_slice_copy(&v)
         };
-        let mut buf = bun_alloc::ArenaVec::<u8>::with_capacity_in(bytes.len() + 1, bump);
+        let mut buf = bun_core::alloc_impl::ArenaVec::<u8>::with_capacity_in(bytes.len() + 1, bump);
         buf.extend_from_slice(bytes);
         buf.push(0);
         let s = buf.into_bump_slice();
@@ -2180,7 +2180,7 @@ impl Template {
         }
 
         let mut parts =
-            bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
+            bun_core::alloc_impl::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
         let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
             // Field-wise copy (TemplatePart is not `Copy` only

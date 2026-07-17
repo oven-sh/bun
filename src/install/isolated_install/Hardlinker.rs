@@ -1,4 +1,4 @@
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
@@ -8,14 +8,14 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
 #[cfg(windows)]
-use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
+use bun_core::paths::path_options::AssumeOk as _;
+use bun_core::paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
-type OsAbsPath = AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
+type OsAbsPath = AbsPath<OSPathChar, { bun_core::paths::path_options::PathSeparators::AUTO }>;
 type OsPath = Path<
     OSPathChar,
-    { bun_paths::path_options::Kind::ANY },
-    { bun_paths::path_options::PathSeparators::AUTO },
+    { bun_core::paths::path_options::Kind::ANY },
+    { bun_core::paths::path_options::PathSeparators::AUTO },
 >;
 
 pub struct Hardlinker {
@@ -61,7 +61,7 @@ impl Hardlinker {
 
         #[cfg(windows)]
         {
-            let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
+            let mut cwd_buf = bun_core::paths::w_path_buffer_pool::get();
             // `get_fd_path_w` writes the raw `\\?\C:\...` result into
             // `cwd_buf` and returns a SUB-SLICE (offset 4, or 6 for UNC) after
             // stripping the long-path prefix. We can't keep that slice borrowed
@@ -120,8 +120,8 @@ impl Hardlinker {
                             );
                         }
                         EntryKind::File => {
-                            let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
-                            let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool::get();
+                            let mut destfile_path_buf = bun_core::paths::w_path_buffer_pool::get();
+                            let mut destfile_path_buf2 = bun_core::paths::w_path_buffer_pool::get();
                             // `dest` may already be absolute (global virtual store
                             // entries live under the cache, not cwd); only prefix the
                             // working-directory path when it's project-relative.
@@ -129,7 +129,7 @@ impl Hardlinker {
                             // doesn't span the buffer-mut below.
                             let dest_slice: &[u16] = self.dest.slice();
                             let dest_parts: &[&[u16]] = if !dest_slice.is_empty()
-                                && bun_paths::Platform::Windows.is_absolute_t::<u16>(dest_slice)
+                                && bun_core::paths::Platform::Windows.is_absolute_t::<u16>(dest_slice)
                             {
                                 &[dest_slice]
                             } else {
@@ -138,12 +138,12 @@ impl Hardlinker {
                                     dest_slice,
                                 ]
                             };
-                            let joined = bun_paths::resolve_path::join_string_buf_w_same::<
-                                bun_paths::platform::Windows,
+                            let joined = bun_core::paths::resolve_path::join_string_buf_w_same::<
+                                bun_core::paths::platform::Windows,
                             >(
                                 &mut destfile_path_buf[..], dest_parts
                             );
-                            let destfile_path = bun_paths::strings::add_nt_path_prefix_if_needed(
+                            let destfile_path = bun_core::paths::strings::add_nt_path_prefix_if_needed(
                                 &mut destfile_path_buf2[..],
                                 joined,
                             );
@@ -168,7 +168,7 @@ impl Hardlinker {
 
                                         {
                                             let mut delete_tree_buf =
-                                                bun_paths::path_buffer_pool::get();
+                                                bun_core::paths::path_buffer_pool::get();
 
                                             let delete_tree_path =
                                                 bun_core::convert_utf16_to_utf8_in_buffer(

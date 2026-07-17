@@ -528,7 +528,7 @@ impl Encoded {
             bytes: slice,
             // `bytes` came from a `Vec<u8>` (the global allocator); free with
             // `default_alloc::free` so it agrees with the `#[global_allocator]`.
-            free: encoded_wrap_free!(bun_alloc::default_alloc::free),
+            free: encoded_wrap_free!(bun_core::alloc_impl::default_alloc::free),
         }
     }
 }

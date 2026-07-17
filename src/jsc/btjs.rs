@@ -358,9 +358,9 @@ fn print_line_info(
                 out_stream.extend_from_slice(b"\n");
             }
             Err(Error::EndOfFile)
-            | Err(Error::Sys(bun_errno::SystemErrno::ENOENT))
-            | Err(Error::Sys(bun_errno::SystemErrno::EINVAL))
-            | Err(Error::Sys(bun_errno::SystemErrno::EACCES)) => {}
+            | Err(Error::Sys(bun_core::errno::SystemErrno::ENOENT))
+            | Err(Error::Sys(bun_core::errno::SystemErrno::EINVAL))
+            | Err(Error::Sys(bun_core::errno::SystemErrno::EACCES)) => {}
             Err(e) => return Err(e),
         }
     }

@@ -1,11 +1,11 @@
 use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
 use bun_ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
 use bun_ast::{B, E, G, S};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::FeatureFlags;
 
 use crate::EntryPoint;

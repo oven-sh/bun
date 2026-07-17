@@ -5,10 +5,10 @@ use bstr::BStr;
 
 use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_core::strings;
-use bun_semver as semver;
-use bun_semver::String;
-use bun_semver::string::Buf as StringBuf;
-use bun_semver::version::VersionInt;
+use bun_core::semver as semver;
+use bun_core::semver::String;
+use bun_core::semver::string::Buf as StringBuf;
+use bun_core::semver::version::VersionInt;
 
 use crate::dependency::{self, TagExt as _};
 use crate::repository::{Repository, RepositoryExt as _};
@@ -526,9 +526,9 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 }
 
-// Local alias for the `bun_semver::StringBuilder` trait (`count` + `append<T>`),
+// Local alias for the `bun_core::semver::StringBuilder` trait (`count` + `append<T>`),
 // kept so dependents that named `resolution::StringBuilderLike` still resolve.
-pub use bun_semver::StringBuilder as StringBuilderLike;
+pub use bun_core::semver::StringBuilder as StringBuilderLike;
 
 pub struct StorePathFormatter<'a, SemverInt: VersionInt> {
     res: &'a ResolutionType<SemverInt>,

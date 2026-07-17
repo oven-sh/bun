@@ -27,7 +27,7 @@ use bun_sys::Fd;
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
 // `BufferedReaderParent::loop_` expects.
 
-bun_output::declare_scope!(Script, visible);
+bun_core::declare_scope!(Script, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared by `bun run` and lifecycle scripts. `bun_install` is the lower crate
@@ -256,7 +256,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub current_script_index: u8,
 
     pub remaining_fds: i8,
-    /// `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
+    /// `Process` is intrusively ref-counted (`bun_core::ptr::ThreadSafeRefCount`),
     /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
     /// in `reset_polls`. Null = none.
     pub process: *mut Process,
@@ -267,7 +267,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
     /// asserting unique-borrow over the whole `PackageManager`.
-    pub manager: bun_ptr::BackRef<PackageManager>,
+    pub manager: bun_core::ptr::BackRef<PackageManager>,
     /// Owned by this
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
@@ -578,7 +578,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
             }
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Script,
                 "{} - {} $ {}",
                 bstr::BStr::new(&(*this).package_name),
@@ -850,7 +850,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn handle_exit(&mut self, status: Status) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Script,
             "{} - {} finished {}",
             bstr::BStr::new(&self.package_name),
@@ -1117,7 +1117,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
                 break 'try_delete_dir;
             };
-            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
+            let basename = bun_core::paths::basename(self.scripts.cwd.as_bytes());
             // Close this fd: this path returns to the install loop without
             // exiting, so the HANDLE/fd would otherwise persist for the rest of
             // the install on every failed optional-dependency lifecycle script.
@@ -1143,7 +1143,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
-            manager: bun_ptr::BackRef::new_mut(manager),
+            manager: bun_core::ptr::BackRef::new_mut(manager),
             envp,
             shell_bin,
             package_name,
@@ -1170,7 +1170,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // blocks. The shared borrow ends (NLL) before `spawn_next_script` takes
         // the raw `*mut` for exclusive access. Safe `From<NonNull>`
         // construction — `Self::new` returns `Box::into_raw`, never null.
-        let lss = bun_ptr::ParentRef::<Self>::from(
+        let lss = bun_core::ptr::ParentRef::<Self>::from(
             core::ptr::NonNull::new(lifecycle_subprocess).expect("Box::into_raw is non-null"),
         );
 

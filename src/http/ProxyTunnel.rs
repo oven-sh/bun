@@ -18,7 +18,7 @@ bun_core::declare_scope!(http_proxy_tunnel, visible);
 // Intrusive single-thread refcount (bun.ptr.RefCount). `ref_count` field at
 // matching offset; deref() hitting 0 calls ProxyTunnel::deinit (mapped to Drop
 // + dealloc via IntrusiveRc).
-pub type RefPtr = bun_ptr::IntrusiveRc<ProxyTunnel>;
+pub type RefPtr = bun_core::ptr::IntrusiveRc<ProxyTunnel>;
 
 /// Upgrade a `*mut ProxyTunnel` (obtained from [`RefPtr::as_ptr`]) to
 /// `&'a mut ProxyTunnel`.
@@ -42,7 +42,7 @@ type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 // canonical 3-arm enum lives in `bun_uws` next to its payload type.
 pub use bun_uws::MaybeAnySocket as Socket;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct ProxyTunnel {
     pub wrapper: Option<ProxyTunnelWrapper>,
     pub shutdown_err: Cell<Error>,
@@ -191,9 +191,9 @@ impl ProxyTunnel {
     /// `&mut SSLWrapper` (see ALIASING NOTE). HTTP-thread-only. Centralises the
     /// `unsafe { ScopedRef::new(nn.as_ptr()) }` open-coded at five call sites.
     #[inline]
-    fn ref_scope(this: NonNull<Self>) -> bun_ptr::ScopedRef<Self> {
+    fn ref_scope(this: NonNull<Self>) -> bun_core::ptr::ScopedRef<Self> {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::ScopedRef::new(this.as_ptr()) }
+        unsafe { bun_core::ptr::ScopedRef::new(this.as_ptr()) }
     }
 }
 
@@ -227,7 +227,7 @@ fn on_open(ctx: *mut HTTPClient) {
     // here does not overlap the caller's `&mut SSLWrapper`.
     let this = client_from_ctx(ctx);
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onOpen");
-    bun_analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
+    bun_core::analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
     this.state.response_stage = HTTPStage::ProxyHandshake;
     this.state.request_stage = HTTPStage::ProxyHandshake;
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {

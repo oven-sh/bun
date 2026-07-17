@@ -79,7 +79,7 @@ pub struct BundledAst<'arena> {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    pub export_star_import_records: bun_alloc::AstVec<u32>,
+    pub export_star_import_records: bun_core::alloc_impl::AstVec<u32>,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -98,7 +98,7 @@ pub struct BundledAst<'arena> {
     pub flags: Flags,
 }
 
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub trait BundledAstColumns ['arena] for BundledAst<'arena> {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
@@ -119,7 +119,7 @@ bun_collections::multi_array_columns! {
         tla_check: TlaCheck,
         named_imports: NamedImports,
         named_exports: NamedExports,
-        export_star_import_records: bun_alloc::AstVec<u32>,
+        export_star_import_records: bun_core::alloc_impl::AstVec<u32>,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         commonjs_named_exports: CommonJSNamedExports,
         redirect_import_record_index: u32,
@@ -153,7 +153,7 @@ impl<'arena> BundledAst<'arena> {
     // The three `ArenaVec` fields prevent `const fn` here, but spell out the
     // defaults directly instead of round-tripping through `Ast::empty_in` +
     // `init` — this runs once per discovered module on the main thread.
-    pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
+    pub fn empty_in(arena: &'arena bun_core::alloc_impl::Arena) -> Self {
         Self {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
@@ -174,7 +174,7 @@ impl<'arena> BundledAst<'arena> {
             tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
-            export_star_import_records: bun_alloc::AstAlloc::vec(),
+            export_star_import_records: bun_core::alloc_impl::AstAlloc::vec(),
             top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
             commonjs_named_exports: CommonJSNamedExports::default(),
             redirect_import_record_index: u32::MAX,
@@ -187,7 +187,7 @@ impl<'arena> BundledAst<'arena> {
     // The collection types aren't Copy, so consume `self` to move them (to_ast
     // is a one-shot conversion back to the fat Ast).
     pub fn to_ast(self) -> Ast<'arena> {
-        let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
+        let arena: &'arena bun_core::alloc_impl::Arena = *self.parts.allocator();
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
@@ -331,7 +331,7 @@ impl<'arena> BundledAst<'arena> {
     /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
     pub fn add_url_for_css(
         &mut self,
-        bump: &'arena bun_alloc::Arena,
+        bump: &'arena bun_core::alloc_impl::Arena,
         source: &bun_ast::Source,
         mime_type_: Option<&[u8]>,
         unique_key: Option<&[u8]>,
@@ -344,8 +344,8 @@ impl<'arena> BundledAst<'arena> {
             let mime_type: &[u8] = if let Some(m) = mime_type_ {
                 m
             } else {
-                mime_type_owned = bun_http_types::MimeType::by_extension(
-                    strings::trim_leading_char(bun_paths::extension(source.path.text), b'.'),
+                mime_type_owned = bun_core::http_types::MimeType::by_extension(
+                    strings::trim_leading_char(bun_core::paths::extension(source.path.text), b'.'),
                 );
                 &mime_type_owned.value
             };
@@ -359,7 +359,7 @@ impl<'arena> BundledAst<'arena> {
             }
             self.url_for_css = 'url_for_css: {
                 // Encode as base64
-                let encode_len = bun_base64::encode_len(contents);
+                let encode_len = bun_core::base64::encode_len(contents);
                 let data_url_prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
                 let total_buffer_len = data_url_prefix_len + encode_len;
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
@@ -368,7 +368,7 @@ impl<'arena> BundledAst<'arena> {
                 encoded[..5].copy_from_slice(b"data:");
                 encoded[5..5 + mime_type.len()].copy_from_slice(mime_type);
                 encoded[5 + mime_type.len()..data_url_prefix_len].copy_from_slice(b";base64,");
-                let len = bun_base64::encode(&mut encoded[data_url_prefix_len..], contents);
+                let len = bun_core::base64::encode(&mut encoded[data_url_prefix_len..], contents);
                 break 'url_for_css &encoded[0..data_url_prefix_len + len];
             };
         }

@@ -11,7 +11,7 @@ pub use externs::*;
 
 // `bun.windows.libuv` is NOT re-exported here — this is the bottom-tier Win32
 // externs crate and must stay leaf. The `bun.windows.libuv` alias lives in the
-// higher-tier `bun_sys::windows` module (`pub use bun_libuv_sys as libuv`).
+// higher-tier `bun_sys::windows` module (`pub use bun_core::libuv_sys as libuv`).
 
 /// `NTSTATUS` value namespace (`ntstatus.h`). The `NTSTATUS` newtype carries
 /// these as associated consts, but `bun_sys::windows` glob-imports them as

@@ -6,7 +6,7 @@ use bun_uws as uws;
 pub struct WebSocketServerContext {
     // Set provisionally in `on_create`; the server overwrites it on
     // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+    pub global_object: bun_core::ptr::BackRef<JSGlobalObject>,
     pub handler: Handler,
 
     pub max_payload_length: u32, // default 16MB
@@ -37,8 +37,8 @@ pub struct Handler {
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+    pub vm: bun_core::ptr::BackRef<VirtualMachine>,
+    pub global_object: bun_core::ptr::BackRef<JSGlobalObject>,
     /// Mutated through `&Handler` (the field is owned by
     /// `ServerConfig.websocket` and only ever touched on the JS thread), so
     /// it's a `Cell`.
@@ -135,8 +135,8 @@ impl Handler {
             on_pong: JSValue::ZERO,
             app: None,
             server: None,
-            vm: bun_ptr::BackRef::new(VirtualMachine::get()),
-            global_object: bun_ptr::BackRef::new(global_object),
+            vm: bun_core::ptr::BackRef::new(VirtualMachine::get()),
+            global_object: bun_core::ptr::BackRef::new(global_object),
             active_connections: core::cell::Cell::new(0),
             flags: HandlerFlags::empty(),
         };
@@ -281,7 +281,7 @@ pub(crate) fn on_create(
     // server overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
-        global_object: bun_ptr::BackRef::new(global_object),
+        global_object: bun_core::ptr::BackRef::new(global_object),
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
         max_lifetime: 0,

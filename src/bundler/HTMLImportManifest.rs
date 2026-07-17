@@ -37,12 +37,12 @@ use crate::mal_prelude::*;
 use core::fmt;
 
 use bun_ast::Source;
-use bun_collections::AutoBitSet;
-use bun_collections::VecExt;
+use bun_core::collections::AutoBitSet;
+use bun_core::collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::relative_normalized;
+use bun_core::paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -107,9 +107,9 @@ fn write_entry_item<W: Write + ?Sized>(
 
     if hash > 0 {
         const BASE64_BUF_LEN: usize =
-            bun_base64::encode_len_from_size(core::mem::size_of::<u64>()) + 2;
+            bun_core::base64::encode_len_from_size(core::mem::size_of::<u64>()) + 2;
         let mut base64_buf = [0u8; BASE64_BUF_LEN];
-        let n = bun_base64::encode_url_safe(&mut base64_buf, &hash.to_ne_bytes());
+        let n = bun_core::base64::encode_url_safe(&mut base64_buf, &hash.to_ne_bytes());
         let base64 = &base64_buf[..n];
         writer.write_all(b"\"etag\":\"")?;
         writer.write_all(base64)?;
@@ -253,7 +253,7 @@ pub fn write<W: Write + ?Sized>(
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = relative_normalized::<bun_core::paths::platform::Posix, false>(
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
                 );
@@ -308,7 +308,7 @@ pub fn write<W: Write + ?Sized>(
                 }
                 first = false;
 
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = relative_normalized::<bun_core::paths::platform::Posix, false>(
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );

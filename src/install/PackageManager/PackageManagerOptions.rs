@@ -1,7 +1,7 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
-use bun_paths::PathBuffer;
+use bun_core::paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -99,7 +99,7 @@ impl Default for Options {
             global: false,
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
-            bin_path: bun_paths::path_literal!("node_modules/.bin"),
+            bin_path: bun_core::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
@@ -285,7 +285,7 @@ pub struct Update {
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+    use bun_core::paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
@@ -329,7 +329,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
 }
 
 pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+    use bun_core::paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
@@ -395,7 +395,7 @@ impl Options {
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let mut base = Api::NpmRegistry::default();
         let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
@@ -595,7 +595,7 @@ impl Options {
                         {
                             let prev_scope = self.scope.clone();
                             let prev_url = prev_scope.url.url();
-                            let new_url = bun_url::URL::parse(registry_);
+                            let new_url = bun_core::url::URL::parse(registry_);
                             let token = if bun_core::without_trailing_slash(new_url.host)
                                 == bun_core::without_trailing_slash(prev_url.host)
                                 && (new_url.is_https() || !prev_url.is_https())
@@ -681,7 +681,7 @@ impl Options {
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
 
             if !cli.registry.is_empty() {
-                self.scope.url = bun_url::OwnedURL::from_href(cli.registry.into());
+                self.scope.url = bun_core::url::OwnedURL::from_href(cli.registry.into());
             }
 
             if let Some(cache_dir) = cli.cache_dir {

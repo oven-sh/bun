@@ -67,7 +67,7 @@ macro_rules! new_store {
             // Allocation goes through the global mimalloc allocator
             // (#[global_allocator]); Box/alloc use it.
             // The log scope is declared once at crate level:
-            // `bun_output::declare_scope!(Store, hidden);`
+            // `bun_core::declare_scope!(Store, hidden);`
 
             pub struct Store {
                 /// Lazily-allocated head of the block chain — `None` until the
@@ -396,7 +396,7 @@ macro_rules! thread_local_ast_store {
             /// always restores the previous value before its frame returns.
             #[thread_local]
             pub(crate) static MEMORY_ALLOCATOR: Cell<
-                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
+                Option<::bun_core::ptr::BackRef<$crate::ASTMemoryAllocator>>,
             > = Cell::new(None);
             #[thread_local]
             pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
@@ -421,11 +421,11 @@ macro_rules! thread_local_ast_store {
             pub fn memory_allocator() -> *mut $crate::ASTMemoryAllocator {
                 MEMORY_ALLOCATOR
                     .get()
-                    .map_or(::core::ptr::null_mut(), ::bun_ptr::BackRef::as_ptr)
+                    .map_or(::core::ptr::null_mut(), ::bun_core::ptr::BackRef::as_ptr)
             }
             #[inline]
             pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
-                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_ptr::BackRef::from));
+                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_core::ptr::BackRef::from));
             }
 
             pub fn create() {

@@ -7,7 +7,7 @@ pub enum ColumnIdentifier {
 }
 
 impl ColumnIdentifier {
-    pub fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
+    pub fn init(name: Data) -> Result<Self, bun_core::alloc_impl::AllocError> {
         const U32_MAX_DIGITS: usize = "4294967295".len();
         let might_be_int = match name.slice().len() {
             1..=U32_MAX_DIGITS => true,

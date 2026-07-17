@@ -1,5 +1,5 @@
-use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::{StringHashMap, VecExt};
+use bun_core::alloc_impl::{AstAlloc, AstVec};
+use bun_core::collections::{StringHashMap, VecExt};
 
 use crate::StrictModeKind;
 use crate::base::Ref;
@@ -88,12 +88,12 @@ impl Default for Scope {
 }
 
 impl Scope {
-    // Must agree with `StringHashMap`'s `BuildHasher` (`bun_wyhash::BuildHasher`,
+    // Must agree with `StringHashMap`'s `BuildHasher` (`bun_core::wyhash::BuildHasher`,
     // i.e. `BuildHasherDefault<OneShotHasher>`) so the precomputed hash can be
     // fed to `get_hashed` without a rehash per scope level. If the map's hasher
     // ever changes, this must change with it (the debug_assert below catches it).
     pub fn get_member_hash(name: &[u8]) -> u64 {
-        bun_wyhash::auto_hash::<[u8]>(name)
+        bun_core::wyhash::auto_hash::<[u8]>(name)
     }
     pub fn get_member_with_hash(&self, name: &[u8], hash_value: u64) -> Option<Member> {
         debug_assert_eq!(
@@ -107,7 +107,7 @@ impl Scope {
         &mut self,
         name: &[u8],
         hash_value: u64,
-    ) -> bun_collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
+    ) -> bun_core::collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
         // PERF: `get_or_put_borrowed` doesn't accept a precomputed hash;
         // this path is once-per-declared-symbol (not per-scope-per-identifier),
         // so the redundant rehash is left as-is.

@@ -1,7 +1,7 @@
 //! JSON / JSONC parser: a SIMD structural indexer ([`crate::json_index`]) plus a
 //! recursive-descent stage 2 ([`crate::json_stage2`]) over the resulting index.
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast::G;
 
 use bun_ast as js_ast;
@@ -972,7 +972,7 @@ impl Materializer<'_> {
         }
         let rows = o.properties();
         let mut properties: G::PropertyList =
-            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+            Vec::with_capacity_in(rows.len(), bun_core::alloc_impl::AstAlloc);
         let value_locs = o.value_locs();
         for (i, row) in rows.iter().enumerate() {
             let key = Expr::init(
@@ -1011,7 +1011,7 @@ impl Materializer<'_> {
         }
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
-            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+            Vec::with_capacity_in(rows.len(), bun_core::alloc_impl::AstAlloc);
         let item_locs = a.item_locs();
         let mut cursor = match item_locs {
             Some(_) => None,

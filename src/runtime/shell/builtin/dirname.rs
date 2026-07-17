@@ -29,7 +29,7 @@ impl Dirname {
         let mut buf = Vec::new();
         for i in 0..argc {
             let path = bltn.arg_bytes(i);
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+            let dir = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Posix>(path);
             let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
             buf.extend_from_slice(dir);
             buf.push(b'\n');

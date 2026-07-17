@@ -15,7 +15,7 @@ use crate::api::bun::subprocess::Subprocess;
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
 pub use bun_jsc::ipc::InternalMsgHolder;
 
-bun_output::declare_scope!(IPC, visible);
+bun_core::declare_scope!(IPC, visible);
 
 // `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — `&JSGlobalObject`
 // is ABI-identical to a non-null pointer with no `readonly`/`noalias`. Both
@@ -51,7 +51,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
 
 #[bun_jsc::host_fn]
 pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "sendHelperChild");
+    bun_core::scoped_log!(IPC, "sendHelperChild");
 
     let arguments = frame.arguments_old::<3>().ptr;
     let message = arguments[0];
@@ -90,7 +90,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     #[cfg(debug_assertions)]
     {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             IPC,
             "child: {}",
             bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
@@ -143,7 +143,7 @@ pub(crate) fn on_internal_message_child(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "onInternalMessageChild");
+    bun_core::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
@@ -158,14 +158,14 @@ pub(crate) fn handle_internal_message_child(
     message: JSValue,
     handle: JSValue,
 ) -> JsResult<()> {
-    bun_output::scoped_log!(IPC, "handleInternalMessageChild");
+    bun_core::scoped_log!(IPC, "handleInternalMessageChild");
 
     child_singleton().dispatch(message, handle, global)
 }
 
 #[bun_jsc::host_fn]
 pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "sendHelperPrimary");
+    bun_core::scoped_log!(IPC, "sendHelperPrimary");
 
     let arguments = frame.arguments_old::<4>().ptr;
     // `as_class_ref` is the safe shared-borrow downcast (centralised deref
@@ -251,7 +251,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     #[cfg(debug_assertions)]
     {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             IPC,
             "primary: {}",
             bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)

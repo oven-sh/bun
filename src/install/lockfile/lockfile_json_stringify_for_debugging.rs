@@ -1,8 +1,8 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
-use bun_paths::PathBuffer;
-use bun_semver::ExternalString;
-use bun_semver::string::JsonFormatterOptions;
+use bun_core::paths::PathBuffer;
+use bun_core::semver::ExternalString;
+use bun_core::semver::string::JsonFormatterOptions;
 
 use crate::bin::Tag as BinTag;
 use crate::dependency::Tag as DependencyVersionTag;

@@ -85,7 +85,7 @@ struct HTMLLoader<'a> {
     /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
     /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
     /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
-    chunk: bun_ptr::BackRef<Chunk>,
+    chunk: bun_core::ptr::BackRef<Chunk>,
     chunks: *mut [Chunk],
     compile_to_standalone_html: bool,
     output: Vec<u8>,
@@ -397,7 +397,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         import_records: records,
         current_import_record_index: 0,
         compile_to_standalone_html,
-        chunk: bun_ptr::BackRef::new(chunk),
+        chunk: bun_core::ptr::BackRef::new(chunk),
         chunks,
         output: Vec::new(),
         end_tag_indices: EndTagIndices {

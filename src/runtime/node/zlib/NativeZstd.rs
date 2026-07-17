@@ -34,13 +34,13 @@ mod _impl {
     // `host_fn_this` shim still passes `&mut NativeZstd` — `&mut T` auto-reborrows
     // to `&T` so the impls below compile against either.
     #[bun_jsc::JsClass]
-    #[derive(bun_ptr::CellRefCounted)]
+    #[derive(bun_core::ptr::CellRefCounted)]
     pub struct NativeZstd {
         // Intrusive single-thread refcount.
         pub ref_count: Cell<u32>,
         // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
-        pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
@@ -105,7 +105,7 @@ mod _impl {
                 ref_count: Cell::new(1), // RefCount.init()
                 // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
                 // wrapper is owned by that global's heap).
-                global_this: bun_ptr::BackRef::new(global),
+                global_this: bun_core::ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

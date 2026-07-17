@@ -10,7 +10,7 @@ use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
 use crate::{PrintErr, Printer, VendorPrefix};
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 
 // `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
 // `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once

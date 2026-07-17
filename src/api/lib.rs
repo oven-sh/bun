@@ -36,7 +36,7 @@ pub use bun_options_types::schema::api::{
 /// `Parser` lives in a sibling module of `NpmRegistry`; the canonical path
 /// is `bun_api::npm_registry::Parser`.
 pub mod npm_registry {
-    use bun_url::URL;
+    use bun_core::url::URL;
 
     pub use super::NpmRegistry;
 
@@ -54,7 +54,7 @@ pub mod npm_registry {
         pub fn parse_registry_url_string_impl(
             &mut self,
             str: &[u8],
-        ) -> Result<NpmRegistry, bun_alloc::AllocError> {
+        ) -> Result<NpmRegistry, bun_core::alloc_impl::AllocError> {
             let url = URL::parse(str);
             let mut registry = NpmRegistry::default();
 

@@ -1,8 +1,8 @@
 use core::fmt::Arguments;
 
-use bun_alloc::Arena as Bump;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::ArrayHashMap;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::collections::ArrayHashMap;
 
 use crate as css;
 pub use crate::Error;
@@ -35,10 +35,10 @@ impl<'a> CssModule<'a> {
                 let source: &[u8] = 'source: {
                     // Make paths relative to project root so hashes are stable
                     if let Some(root) = project_root {
-                        if bun_paths::is_absolute(root) {
+                        if bun_core::paths::is_absolute(root) {
                             alloced = true;
                             break 'source bump.alloc_slice_copy(
-                                bun_paths::resolve_path::relative(root, path.as_ref()),
+                                bun_core::paths::resolve_path::relative(root, path.as_ref()),
                             );
                         }
                     }
@@ -71,10 +71,10 @@ impl<'a> CssModule<'a> {
     }
 
     pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
+        // bun_core::collections::ArrayHashMap::get_or_put requires `V: Default`
         // (CssModuleExport can't be Default — BumpVec field), so use the
         // entry()-API instead.
-        use bun_collections::array_hash_map::MapEntry;
+        use bun_core::collections::array_hash_map::MapEntry;
         match self.exports_by_source_index[source_index as usize].entry(name) {
             MapEntry::Occupied(mut o) => {
                 o.get_mut().is_referenced = true;
@@ -128,7 +128,7 @@ impl<'a> CssModule<'a> {
                 // Local export. Mark as used.
                 // `CssModuleExport` cannot be `Default` (BumpVec field),
                 // so use the `entry()` API like `get_reference` above.
-                use bun_collections::array_hash_map::MapEntry;
+                use bun_core::collections::array_hash_map::MapEntry;
                 match self.exports_by_source_index[source_index as usize].entry(name) {
                     MapEntry::Occupied(mut o) => {
                         o.get_mut().is_referenced = true;
@@ -200,7 +200,7 @@ impl<'a> CssModule<'a> {
     }
 
     pub fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
-        use bun_collections::array_hash_map::MapEntry;
+        use bun_core::collections::array_hash_map::MapEntry;
         if let MapEntry::Vacant(v) =
             self.exports_by_source_index[source_index as usize].entry(local)
         {
@@ -226,7 +226,7 @@ impl<'a> CssModule<'a> {
         local: &'a [u8],
         source_index: u32,
     ) {
-        use bun_collections::array_hash_map::MapEntry;
+        use bun_core::collections::array_hash_map::MapEntry;
         if let MapEntry::Vacant(v) =
             self.exports_by_source_index[source_index as usize].entry(exported)
         {
@@ -313,7 +313,7 @@ impl Pattern {
                     writefn(s, false);
                 }
                 Segment::Name => {
-                    let stem = bun_paths::stem(path);
+                    let stem = bun_core::paths::stem(path);
                     if bun_core::index_of(stem, b".").is_some() {
                         writefn(stem, true);
                     } else {
@@ -465,12 +465,12 @@ impl<'a> CssModuleReference<'a> {
     }
 }
 
-/// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
+/// LAYERING: canonical implementation lives in `bun_core::base64::wyhash_url_safe`
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
 /// the *same* hasher without depending on `bun_css`. Re-export here so
 /// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
 /// `css_modules::hash` path.
 #[inline]
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
-    bun_base64::wyhash_url_safe(bump, args, at_start)
+    bun_core::base64::wyhash_url_safe(bump, args, at_start)
 }

@@ -168,7 +168,7 @@ impl MySQLQuery {
             // `self.statement` for the duration of this call; no other `&mut` to it
             // exists (caller passes the raw pointer before reborrowing `self`). This
             // block only reads — `ParentRef` yields `&T`.
-            let stmt = bun_ptr::ParentRef::from(
+            let stmt = bun_core::ptr::ParentRef::from(
                 core::ptr::NonNull::new(statement).expect("bind_and_execute: statement non-null"),
             );
             debug_assert!(
@@ -343,7 +343,7 @@ impl MySQLQuery {
                 // branch is a shared read (`status`, `error_response.to_js`,
                 // `ref_()` are `&self`), so a single `ParentRef` deref covers all
                 // three former per-site raw `(*stmt).…` derefs.
-                let stmt_ref = bun_ptr::ParentRef::from(
+                let stmt_ref = bun_core::ptr::ParentRef::from(
                     core::ptr::NonNull::new(stmt).expect("found_existing ⇒ non-null map entry"),
                 );
                 if stmt_ref.status == my_sql_statement::Status::Failed {
@@ -376,7 +376,7 @@ impl MySQLQuery {
         // / `(*stmt).error_response` derefs below into one safe `Deref`; the
         // `.Pending` arm's status write goes through `get_statement()` (the
         // single audited intrusive-pointer accessor).
-        let stmt_ref = bun_ptr::ParentRef::from(
+        let stmt_ref = bun_core::ptr::ParentRef::from(
             core::ptr::NonNull::new(stmt).expect("self.statement set above"),
         );
         match stmt_ref.status {

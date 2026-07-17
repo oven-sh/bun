@@ -2,10 +2,10 @@ use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
+use bun_core::collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::SEP;
+use bun_core::paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
@@ -181,7 +181,7 @@ pub(crate) fn install_hoisted_packages(
         // Attempt to open the existing node_modules folder
         match sys::openat_os_path(
             cwd,
-            bun_paths::os_path_literal!("node_modules"),
+            bun_core::os_path_literal!("node_modules"),
             sys::O::DIRECTORY | sys::O::RDONLY,
             0o755,
         ) {
@@ -239,28 +239,28 @@ pub(crate) fn install_hoisted_packages(
         // wrap them as `BackRef` once under a single SAFETY obligation.
         let (lockfile_ptr, buf_trees, buf_hoisted, buf_deps, buf_strings): (
             *mut crate::lockfile::Lockfile,
-            bun_ptr::BackRef<Vec<tree::Tree>>,
-            bun_ptr::BackRef<Vec<DependencyID>>,
-            bun_ptr::BackRef<Vec<crate::Dependency>>,
-            bun_ptr::BackRef<Vec<u8>>,
+            bun_core::ptr::BackRef<Vec<tree::Tree>>,
+            bun_core::ptr::BackRef<Vec<DependencyID>>,
+            bun_core::ptr::BackRef<Vec<crate::Dependency>>,
+            bun_core::ptr::BackRef<Vec<u8>>,
         ) = unsafe {
             let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *(*mgr_ptr).lockfile;
             let buffers = core::ptr::addr_of_mut!((*lockfile_ptr).buffers);
             (
                 lockfile_ptr,
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).trees)),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(
+                bun_core::ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).trees)),
+                bun_core::ptr::BackRef::from_raw(core::ptr::addr_of_mut!(
                     (*buffers).hoisted_dependencies
                 )),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).dependencies)),
-                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
+                bun_core::ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).dependencies)),
+                bun_core::ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
             )
         };
         // Safe `BackRef` view of the same heap `Lockfile` as `lockfile_ptr`
         // (BACKREF — outlives this install pass). `From<NonNull>` is the
         // safe constructor; the read-only column projections below go
         // through `Deref` instead of a per-site raw deref.
-        let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
+        let lockfile_ref = bun_core::ptr::BackRef::<crate::lockfile::Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
         );
 
@@ -340,7 +340,7 @@ pub(crate) fn install_hoisted_packages(
             // to make mistakes harder
             //
             // BACKREF — the `PackageInstaller` slice fields are
-            // `bun_ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
+            // `bun_core::ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
             // wrapping each column with `RawSlice::new` stores the (ptr, len)
             // without keeping a borrow live — no `&'a → &'a` detach
             // round-trip needed. Derive through `lockfile_ptr` so the
@@ -351,12 +351,12 @@ pub(crate) fn install_hoisted_packages(
             // `fix_cached_lockfile_package_slices` re-snapshots). Read-only
             // projection via the safe `BackRef::Deref`.
             let parts = lockfile_ref.packages.slice();
-            let metas = bun_ptr::RawSlice::new(parts.items_meta());
-            let bins = bun_ptr::RawSlice::new(parts.items_bin());
-            let names = bun_ptr::RawSlice::new(parts.items_name());
-            let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
-            let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
-            let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
+            let metas = bun_core::ptr::RawSlice::new(parts.items_meta());
+            let bins = bun_core::ptr::RawSlice::new(parts.items_bin());
+            let names = bun_core::ptr::RawSlice::new(parts.items_name());
+            let pkg_name_hashes = bun_core::ptr::RawSlice::new(parts.items_name_hash());
+            let resolutions = bun_core::ptr::RawSlice::new(parts.items_resolution());
+            let pkg_dependencies = bun_core::ptr::RawSlice::new(parts.items_dependencies());
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
@@ -413,8 +413,8 @@ pub(crate) fn install_hoisted_packages(
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
-                destination_dir_subpath_buf: bun_paths::PathBuffer::uninit(),
-                folder_path_buf: bun_paths::PathBuffer::uninit(),
+                destination_dir_subpath_buf: bun_core::paths::PathBuffer::uninit(),
+                folder_path_buf: bun_core::paths::PathBuffer::uninit(),
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
             };

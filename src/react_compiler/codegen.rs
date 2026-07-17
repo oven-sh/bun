@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::collections::IdMap;
-use bun_alloc::{Arena, ArenaVec, AstAlloc, AstVec};
+use bun_core::alloc_impl::{Arena, ArenaVec, AstAlloc, AstVec};
 use bun_ast::{
     self as ast, ArrayBinding, Binding, Case, Catch, E, Expr, ExprData, ExprNodeList, Finally, G,
     Loc, LocRef, OpCode, OptionalChain, Ref, S, Stmt, StmtData, StmtNodeList, StoreSlice, StoreStr,

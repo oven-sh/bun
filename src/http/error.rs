@@ -100,13 +100,13 @@ pub enum Error {
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Hpack(#[from] crate::lshpack::HpackError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
     Zlib(bun_zlib::ZlibError),
     #[error(transparent)]
@@ -114,7 +114,7 @@ pub enum Error {
     #[error(transparent)]
     Zstd(bun_zstd::ZstdError),
     #[error(transparent)]
-    Picohttp(bun_picohttp::ParseResponseError),
+    Picohttp(bun_core::picohttp::ParseResponseError),
 }
 
 #[allow(non_camel_case_types)]
@@ -360,10 +360,10 @@ impl From<bun_uws::ConnectError> for Error {
     }
 }
 
-impl From<bun_picohttp::ParseResponseError> for Error {
-    fn from(e: bun_picohttp::ParseResponseError) -> Self {
+impl From<bun_core::picohttp::ParseResponseError> for Error {
+    fn from(e: bun_core::picohttp::ParseResponseError) -> Self {
         match e {
-            bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
+            bun_core::picohttp::ParseResponseError::ShortRead => Error::ShortRead,
             _ => Error::Picohttp(e),
         }
     }

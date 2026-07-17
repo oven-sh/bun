@@ -4,7 +4,7 @@ use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{DeclarationList, PropertyHandlerContext};
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 // The `RectShorthand`/`SizeShorthand` marker traits stay (some
 // callers name `<T as RectShorthand>::Value`). The rect-shorthand structs

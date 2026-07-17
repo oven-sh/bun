@@ -13,7 +13,7 @@ pub enum Error {
     #[error("JSONStringsMustUseDoubleQuotes")]
     JSONStringsMustUseDoubleQuotes,
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
 }
 
 impl Error {

@@ -1398,13 +1398,13 @@ impl fmt::Display for FlagsFormatter {
 // Store
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
+// `bun_core::alloc_impl::heap_breakdown` is a no-op outside macOS Instruments
 // heap-breakdown builds, so the 128-slot hive is unconditional here (same
 // choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
 #[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
 #[cfg(not(windows))]
-type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
+type FilePollHive = bun_core::collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
 /// We defer freeing FilePoll until the end of the next event loop iteration
 /// This ensures that we don't free a FilePoll before the next callback is called
@@ -1502,7 +1502,7 @@ impl Store {
     // `Store`. Body wraps its raw-ptr op explicitly.
     extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }
@@ -1513,7 +1513,7 @@ impl Store {
 
 // `Pollable` is a single-variant tagged-pointer union over `FilePoll`.
 //
-// Note: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
+// Note: `bun_core::collections::TaggedPtrUnion<(FilePoll,)>` cannot be
 // instantiated here — `impl_tagged_ptr_union!` would generate
 // `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
 // on a tuple). Since the union has exactly one variant, wrap the raw
@@ -1521,7 +1521,7 @@ impl Store {
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) struct Pollable {
-    repr: bun_collections::TaggedPointer,
+    repr: bun_core::collections::TaggedPointer,
 }
 
 impl Pollable {
@@ -1533,7 +1533,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
+            repr: bun_core::collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
         }
     }
 
@@ -1541,7 +1541,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::from(val),
+            repr: bun_core::collections::TaggedPointer::from(val),
         }
     }
 

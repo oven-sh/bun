@@ -1,13 +1,14 @@
-use bun_base64;
+#[allow(unused_imports)]
+use bun_core::base64 as bun_base64;
 
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
 
 const NONCE_BYTE_LEN: usize = 18;
-const NONCE_BASE64_LEN: usize = bun_base64::encode_len_from_size(NONCE_BYTE_LEN);
+const NONCE_BASE64_LEN: usize = bun_core::base64::encode_len_from_size(NONCE_BYTE_LEN);
 
 const SERVER_SIGNATURE_BYTE_LEN: usize = 32;
 const SERVER_SIGNATURE_BASE64_LEN: usize =
-    bun_base64::encode_len_from_size(SERVER_SIGNATURE_BYTE_LEN);
+    bun_core::base64::encode_len_from_size(SERVER_SIGNATURE_BYTE_LEN);
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
@@ -118,7 +119,7 @@ impl SASL {
             hmac(self.salted_password(), b"Server Key").ok_or(crate::Error::InvalidServerKey)?;
         let server_signature_bytes =
             hmac(&server_key, auth_string).ok_or(crate::Error::InvalidServerSignature)?;
-        self.server_signature_len = u8::try_from(bun_base64::encode(
+        self.server_signature_len = u8::try_from(bun_core::base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,
         ))
@@ -147,7 +148,7 @@ impl SASL {
         if self.nonce_len == 0 {
             let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
             bun_boringssl_sys::rand_bytes(&mut bytes);
-            self.nonce_len = u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes))
+            self.nonce_len = u8::try_from(bun_core::base64::encode(&mut self.nonce_base64_bytes, &bytes))
                 .expect("int cast");
         }
         &self.nonce_base64_bytes[0..self.nonce_len as usize]

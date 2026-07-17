@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use crate::schema_api as api;
 use bun_core::String as BunString;
 use bun_core::ZigStringSlice;
-use bun_url::URL as ZigURL;
+use bun_core::url::URL as ZigURL;
 
 use crate::SourceProvider;
 use crate::ZigStackFrame;
@@ -49,7 +49,7 @@ impl ZigStackTrace {
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
-    ) -> Result<api::StackTrace, bun_alloc::AllocError> {
+    ) -> Result<api::StackTrace, bun_core::alloc_impl::AllocError> {
         let mut stack_trace = api::StackTrace::default();
         {
             let mut source_lines_iter = self.source_line_iterator();

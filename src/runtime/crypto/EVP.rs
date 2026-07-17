@@ -1,6 +1,6 @@
 use core::ffi::{CStr, c_uint};
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, ZigString};
 

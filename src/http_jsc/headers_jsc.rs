@@ -54,7 +54,7 @@ pub fn from_fetch_headers(
         .ensure_total_capacity(header_count as usize)
         .is_err()
     {
-        bun_alloc::out_of_memory();
+        bun_core::alloc_impl::out_of_memory();
     }
     // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
     // overwritten by `copy_to` / the explicit writes below before any read.
@@ -122,7 +122,7 @@ pub fn to_fetch_headers(
     this: &Headers,
     global: &JSGlobalObject,
 ) -> JsResult<NonNull<FetchHeaders>> {
-    use bun_http_types::ETag::HeaderEntryColumns;
+    use bun_core::http_types::ETag::HeaderEntryColumns;
     use bun_jsc::JsError;
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());

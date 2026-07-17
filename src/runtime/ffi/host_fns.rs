@@ -10,7 +10,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::StringArrayHashMap;
+use bun_core::collections::StringArrayHashMap;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
 use super::{ABIType, Function};

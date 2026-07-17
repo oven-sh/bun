@@ -22,15 +22,15 @@ use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
 
-bun_output::declare_scope!(FileResponseStream, hidden);
+bun_core::declare_scope!(FileResponseStream, hidden);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: AnyResponse,
     // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
     // `'static` for the uWS callback userdata slot while giving safe `Deref`.
-    vm: bun_ptr::BackRef<VirtualMachine>,
+    vm: bun_core::ptr::BackRef<VirtualMachine>,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -102,7 +102,7 @@ pub(crate) struct StartOptions {
     pub fd: Fd,
     pub auto_close: bool,
     pub resp: AnyResponse,
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub vm: bun_core::ptr::BackRef<VirtualMachine>,
     pub file_type: FileType,
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
@@ -161,7 +161,7 @@ impl FileResponseStream {
             std::ptr::from_mut::<FileResponseStream>(this),
         );
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileResponseStream,
             "start mode={} len={:?}",
             <&'static str>::from(this.mode),
@@ -197,7 +197,7 @@ impl FileResponseStream {
         this.reader.set_parent(this_parent);
 
         // SAFETY: `this` reborrows the live heap::alloc allocation above.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::<Self>::new(this) };
 
         let start_result = if opts.offset > 0 {
             this.reader
@@ -234,7 +234,7 @@ impl FileResponseStream {
     pub(crate) fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         let this: *mut Self = self;
         // SAFETY: `this` is the live intrusive allocation owning `self`.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this) };
 
         if self.state.contains(State::RESPONSE_DONE) {
             return false;
@@ -324,20 +324,20 @@ impl FileResponseStream {
         self.ref_();
     }
 
-    fn take_read_ref(&mut self) -> Option<bun_ptr::ScopedRef<Self>> {
+    fn take_read_ref(&mut self) -> Option<bun_core::ptr::ScopedRef<Self>> {
         if !self.state.contains(State::READ_REF_HELD) {
             return None;
         }
         self.state.remove(State::READ_REF_HELD);
         // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
         // witnesses exactly one outstanding ref taken in `hold_read_ref`.
-        Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) })
+        Some(unsafe { bun_core::ptr::ScopedRef::<Self>::adopt(self) })
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
-        bun_output::scoped_log!(FileResponseStream, "onWritable");
+        bun_core::scoped_log!(FileResponseStream, "onWritable");
         // SAFETY: `self` is the live intrusive allocation (uWS userdata ptr).
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(self) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::<Self>::new(self) };
 
         if self.mode == Mode::Sendfile {
             return self.on_sendfile();
@@ -356,7 +356,7 @@ impl FileResponseStream {
     // ───────────────────────── sendfile backend ─────────────────────────
 
     fn on_sendfile(&mut self) -> bool {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileResponseStream,
             "onSendfile remain={} offset={}",
             self.sendfile.remain,
@@ -415,7 +415,7 @@ impl FileResponseStream {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn arm_sendfile_writable(&mut self) -> bool {
-        bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
+        bun_core::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.has_set_on_writable {
             self.sendfile.has_set_on_writable = true;
             self.resp.on_writable(
@@ -432,7 +432,7 @@ impl FileResponseStream {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn end_sendfile(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "endSendfile");
+        bun_core::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.contains(State::RESPONSE_DONE) {
             return;
         }
@@ -447,7 +447,7 @@ impl FileResponseStream {
     // ───────────────────────── lifecycle ─────────────────────────
 
     fn on_aborted(&mut self, _: AnyResponse) {
-        bun_output::scoped_log!(FileResponseStream, "onAborted");
+        bun_core::scoped_log!(FileResponseStream, "onAborted");
         if !self.state.contains(State::RESPONSE_DONE) {
             self.state.insert(State::RESPONSE_DONE);
             self.detach_resp();
@@ -483,7 +483,7 @@ impl FileResponseStream {
     }
 
     fn finish(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             FileResponseStream,
             "finish (already={})",
             self.state.contains(State::FINISHED)
@@ -525,7 +525,7 @@ impl FileResponseStream {
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread RC.
     // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; the former
-    // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
+    // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_core::ptr::ScopedRef<Self>`.
 }
 
 // BufferedReader vtable parent.
@@ -543,7 +543,7 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "deinit");
+        bun_core::scoped_log!(FileResponseStream, "deinit");
         // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
         // field — closes the poll handle. `bun.destroy(this)` is owned by
         // `heap::take` in `deref`, not here.

@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_core::{self, Global, Output, ZStr, feature_flags};
 use bun_core::{MutableString, strings};
 use bun_js_parser as js_parser;
@@ -335,7 +335,7 @@ impl Fs {
         dirname_fd: Fd,
         use_shared_buffer: bool,
         _file_handle: Option<Fd>,
-        arena: Option<&bun_alloc::Arena>,
+        arena: Option<&bun_core::alloc_impl::Arena>,
     ) -> Result<Entry, crate::Error> {
         let rfs = &_fs.fs;
 
@@ -354,7 +354,7 @@ impl Fs {
             let opened = if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
                 match bun_sys::File::openat(
                     dirname_fd,
-                    bun_paths::basename(path),
+                    bun_core::paths::basename(path),
                     bun_sys::O::RDONLY,
                     0,
                 ) {

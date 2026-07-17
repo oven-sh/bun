@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::ByteVecExt;
+use bun_core::collections::ByteVecExt;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -14,7 +14,7 @@ use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::strings;
 use bun_core::{self, Output};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
@@ -25,7 +25,7 @@ use bun_io::Loop as AsyncLoop;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
-use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
+use bun_core::ptr::{RefCount, RefPtr, ThreadSafeRefCount};
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
@@ -1139,7 +1139,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
-            return Err(bun_errno::from_errno(e as i32).into());
+            return Err(bun_core::errno::from_errno(e as i32).into());
         }
         // Track ownership with optionals: None means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
@@ -1620,7 +1620,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     // The scanner might have been installed but the lockfile wasn't updated
                     if is_retry {
                         // Check if the scanner is an npm package name (not a file path)
-                        let is_package_name = bun_paths::is_package_path(security_scanner);
+                        let is_package_name = bun_core::paths::is_package_path(security_scanner);
 
                         if is_package_name {
                             // For npm packages, after install they should be resolvable
@@ -1645,7 +1645,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                         return Ok(ScanAttemptResult::NeedsInstall(pkg_id));
                     } else {
                         // No package ID means it's not in dependencies
-                        let is_package_name = bun_paths::is_package_path(security_scanner);
+                        let is_package_name = bun_core::paths::is_package_path(security_scanner);
 
                         if is_package_name {
                             Output::err_generic(

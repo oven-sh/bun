@@ -4,8 +4,8 @@ use std::io::Write as _;
 use crate::VM;
 use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
-use bun_paths::OSPathBuffer;
-use bun_paths::PathBuffer;
+use bun_core::paths::OSPathBuffer;
+use bun_core::paths::PathBuffer;
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -103,7 +103,7 @@ fn write_profile_to_file(
     // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
     // Determine the output path using AutoAbsPath
-    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+    let mut path_buf = bun_core::paths::AutoAbsPath::init_top_level_dir();
     // (defer path_buf.deinit() — handled by Drop)
 
     build_output_path(&mut path_buf, config, is_md_format)?;
@@ -147,7 +147,7 @@ fn write_profile_to_file(
 }
 
 fn build_output_path(
-    path: &mut bun_paths::AutoAbsPath,
+    path: &mut bun_core::paths::AutoAbsPath,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {

@@ -4,13 +4,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::Error;
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_core::collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
-use bun_paths::{self as path, PathBuffer};
+use bun_core::paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
@@ -925,8 +925,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 Box::<[u8]>::from(&pkgjson.name[..])
             } else {
                 // Fallback: use relative path from workspace root
-                Box::from(bun_paths::resolve_path::relative_platform::<
-                    bun_paths::resolve_path::platform::Posix,
+                Box::from(bun_core::paths::resolve_path::relative_platform::<
+                    bun_core::paths::resolve_path::platform::Posix,
                     false,
                 >(resolve_root, pkg_path))
             };

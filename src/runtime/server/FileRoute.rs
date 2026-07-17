@@ -5,8 +5,8 @@ use core::mem::size_of;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_http::{Headers, Method};
-use bun_http_types::ETag;
-use bun_http_types::ETag::StringPointer;
+use bun_core::http_types::ETag;
+use bun_core::http_types::ETag::StringPointer;
 use bun_io::Closer;
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
@@ -22,7 +22,7 @@ use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = FileRoute::deinit)]
 pub struct FileRoute {
     // Owned via intrusive refcount; the
@@ -214,7 +214,7 @@ impl FileRoute {
     }
 
     fn write_headers(&self, resp: AnyResponse) {
-        use bun_http_types::ETag::HeaderEntryColumns;
+        use bun_core::http_types::ETag::HeaderEntryColumns;
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
@@ -347,7 +347,7 @@ impl FileRoute {
         let fd_result: bun_sys::Result<Fd> = {
             #[cfg(windows)]
             {
-                let mut path_buffer = bun_paths::PathBuffer::uninit();
+                let mut path_buffer = bun_core::paths::PathBuffer::uninit();
                 path_buffer[..path.len()].copy_from_slice(path);
                 path_buffer[path.len()] = 0;
                 bun_sys::open(
@@ -562,7 +562,7 @@ impl FileRoute {
             fd,
             auto_close: true,
             resp,
-            vm: bun_ptr::BackRef::new(this.server.get().unwrap().vm()),
+            vm: bun_core::ptr::BackRef::new(this.server.get().unwrap().vm()),
             file_type,
             pollable,
             offset: body_offset,

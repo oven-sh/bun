@@ -3,7 +3,7 @@ use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
-use bun_alloc::ArenaPtr;
+use bun_core::alloc_impl::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
@@ -43,7 +43,7 @@ pub struct Declaration {
 }
 
 impl Declaration {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         // `PropertyId` is `Copy`; `value` is an arena-owned slice → identity copy.
         Self {
             property_id: self.property_id,
@@ -64,13 +64,13 @@ impl Declaration {
 impl SupportsCondition {
     pub fn clone_with_import_records(
         &self,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         _: &mut Vec<bun_ast::ImportRecord>,
     ) -> Self {
         self.deep_clone(bump)
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> SupportsCondition {
         // Hand-rolled variant-walk —
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
@@ -88,7 +88,7 @@ impl SupportsCondition {
 
     fn clone_vec_in(
         v: &[SupportsCondition],
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         alloc: ArenaPtr,
     ) -> Vec<SupportsCondition, ArenaPtr> {
         let mut out = Vec::with_capacity_in(v.len(), alloc);
@@ -98,7 +98,7 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         // Hand-expanded because `#[derive(CssHash)]` would require
         // `PropertyId: CssHash` (it only provides `core::hash::Hash`).
         // Hash the discriminant, then field-wise structural hash.
@@ -256,7 +256,7 @@ impl css::generic::ToCss for SupportsCondition {
 // ─── parse bodies ─────────────────────────────────────────────────────────
 impl SupportsCondition {
     pub fn parse(input: &mut css::Parser) -> css::Result<SupportsCondition> {
-        use bun_collections::ArrayHashMap;
+        use bun_core::collections::ArrayHashMap;
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
@@ -414,7 +414,7 @@ impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // wyhash of the value bytes +% the property-id tag.
         // `hash_string` returns u32 directly — no narrowing cast.
-        let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
+        let h: u32 = bun_core::collections::array_hash_map::hash_string(self.1);
         state.write_u32(h.wrapping_add(self.0.tag() as u32));
     }
 }
@@ -473,7 +473,7 @@ impl<R> SupportsRule<R> {
 }
 
 impl<R> SupportsRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

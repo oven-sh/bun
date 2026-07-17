@@ -5,13 +5,13 @@
 use core::fmt;
 
 use crate::Loc;
-use bun_alloc::{AllocError, Arena as Bump};
-use bun_collections::VecExt;
+use bun_core::alloc_impl::{AllocError, Arena as Bump};
+use bun_core::collections::VecExt;
 use bun_core::ZStr;
 use bun_core::{self};
 
 use crate::{DebugOnlyDisabler, E, G, Op, Ref, S, Stmt};
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 // Re-export so downstream crates can name `ast::expr::StoreRef` (some callers
 // route through `expr::`).
 pub use crate::StoreRef;
@@ -123,7 +123,7 @@ impl Expr {
     }
 
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
+        let _g = bun_core::alloc_impl::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
     }
     #[inline]
@@ -2334,7 +2334,7 @@ fn json_value_deep_clone(
     value: &E::JsonValue,
     loc: Loc,
     bump: &Bump,
-) -> Result<Expr, bun_alloc::AllocError> {
+) -> Result<Expr, bun_core::alloc_impl::AllocError> {
     Ok(match value {
         E::JsonValue::String(s) => {
             let bytes: &[u8] = bump.alloc_slice_copy(s.slice());
@@ -2440,7 +2440,7 @@ impl Data {
     /// and at [`Expr::deep_clone`]; the recursive body goes through
     /// `*_no_detach` so we don't pay 3 TLS ops per node.
     pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
+        let _g = bun_core::alloc_impl::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
     }
 
@@ -2466,7 +2466,7 @@ impl Data {
                 let rows = el.properties();
                 let value_locs = el.value_locs();
                 let mut properties: G::PropertyList =
-                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                    Vec::with_capacity_in(rows.len(), bun_core::alloc_impl::AstAlloc);
                 for (i, row) in rows.iter().enumerate() {
                     let key_bytes: &[u8] = bump.alloc_slice_copy(row.key.slice());
                     let value_loc = value_locs.map_or(row.key_loc, |l| l[i]);
@@ -2495,7 +2495,7 @@ impl Data {
                 let rows = el.items();
                 let item_locs = el.item_locs();
                 let mut items: crate::ExprNodeList =
-                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                    Vec::with_capacity_in(rows.len(), bun_core::alloc_impl::AstAlloc);
                 for (i, value) in rows.iter().enumerate() {
                     let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
                     items.push(json_value_deep_clone(value, loc, bump)?);
@@ -2527,7 +2527,7 @@ impl Data {
             Data::EClass(el) => {
                 // `properties` is an arena-owned `StoreSlice<Property>`.
                 let src_props: &[G::Property] = el.properties.slice();
-                let mut properties = bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
+                let mut properties = bun_core::alloc_impl::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {
                     properties.push(prop.deep_clone(bump)?);
                 }
@@ -2602,7 +2602,7 @@ impl Data {
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
             Data::EArrow(el) => {
-                let mut args = bun_alloc::ArenaVec::with_capacity_in(el.args.len(), bump);
+                let mut args = bun_core::alloc_impl::ArenaVec::with_capacity_in(el.args.len(), bump);
                 for i in 0..el.args.len() {
                     args.push(el.args[i].deep_clone(bump)?);
                 }
@@ -3272,7 +3272,7 @@ impl Equality {
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
-// ZST trait, same pattern as `bun_paths::resolve_path::PlatformT`; callers use
+// ZST trait, same pattern as `bun_core::paths::resolve_path::PlatformT`; callers use
 // `Data::eql::<P, LooseEql>(...)` / `<P, StrictEql>`.
 pub trait EqlKindT: Copy {
     const STRICT: bool;

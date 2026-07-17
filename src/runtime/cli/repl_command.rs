@@ -13,7 +13,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_core::ZigString;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -59,7 +59,7 @@ impl ReplCommand {
         jsc::initialize(true); // true for eval mode
 
         bun_ast::initialize_store();
-        // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
+        // The arena is threaded into VirtualMachine (vm.arena). `bun_core::alloc_impl::Arena`
         // is `MimallocArena` (a per-heap mimalloc wrapper).
         let arena = Arena::new();
 
@@ -172,7 +172,7 @@ impl ReplCommand {
         // rather than depend on that upstream trait, write the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
-            let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
+            let runner = unsafe { bun_core::ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
             ReplRunner::start(runner);
         }
         // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.

@@ -6,9 +6,9 @@ use crate::options::Loader;
 use crate::Error;
 use crate::options::{OutputKind, Side};
 use bun_core::String as BunString;
-use bun_paths::PathBuffer;
-use bun_paths::fs;
-use bun_paths::resolve_path::{self, platform};
+use bun_core::paths::PathBuffer;
+use bun_core::paths::fs;
+use bun_core::paths::resolve_path::{self, platform};
 use bun_sys::Fd;
 
 use crate::bun_fs::RealFS;
@@ -311,7 +311,7 @@ pub struct SavedFile {
 
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
-        // Note: `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
+        // Note: `bun_core::paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
         // distinct nominal types with identical layout; re-init from `text` (the
         // resolver path borrows arena/static memory, so the `'static` bound holds).
         let src_path = fs::Path::init(pending.path_const().expect("path").text);

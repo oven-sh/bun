@@ -5,14 +5,14 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::{AllocError, allocators};
-use bun_collections::VecExt as _;
+use bun_core::alloc_impl::{AllocError, allocators};
+use bun_core::collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::{FeatureFlags, Generation, ZStr, env_var};
-use bun_paths::resolve_path::platform;
-use bun_paths::strings;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
-use bun_ptr::Interned;
+use bun_core::paths::resolve_path::platform;
+use bun_core::paths::strings;
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
+use bun_core::ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
@@ -41,9 +41,9 @@ pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::co
 
 // Per-monomorphization singleton storage, emitted at the declare site via
 // `bss_*!` macros (returns `*mut`).
-bun_alloc::bss_string_list! { pub dirname_store_backing : preallocate::counts::DIR_ENTRY * 2, 128 + 1 }
-bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
-bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
+bun_core::bss_string_list! { pub dirname_store_backing : preallocate::counts::DIR_ENTRY * 2, 128 + 1 }
+bun_core::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
+bun_core::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 
 /// ZST handle resolving to the
 /// `dirname_store_backing()` singleton on every call.
@@ -97,7 +97,7 @@ macro_rules! string_store_impl {
                 let s = unsafe { <$bty>::print(Self::backing(), args)? };
                 // SAFETY: storage owned by the process-lifetime `BSSStringList`
                 // singleton (never freed); `Interned` is the canonical proof type.
-                Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
+                Ok(unsafe { bun_core::ptr::Interned::assume(s) }.as_bytes())
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
@@ -164,14 +164,14 @@ impl strings::Appender for FilenameStoreAppender {
         let r = unsafe { FilenameStoreBacking::append(self.backing, &s)? };
         // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
         // (never freed); `Interned` is the canonical proof type for this widen.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
+        Ok(unsafe { bun_core::ptr::Interned::assume(r) }.as_bytes())
     }
     #[inline]
     fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
         // SAFETY: see `append`.
         let r = unsafe { FilenameStoreBacking::append_lower_case(self.backing, s)? };
         // SAFETY: see `append`.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
+        Ok(unsafe { bun_core::ptr::Interned::assume(r) }.as_bytes())
     }
 }
 
@@ -496,7 +496,7 @@ pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
     /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
-    pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+    pub(crate) type EntryMap = bun_core::collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
     /// ZST handle resolving to the `entry_store_backing()` singleton.
@@ -521,7 +521,7 @@ pub mod dir_entry {
         /// writes lower straight into the destination.
         #[inline(always)]
         pub(crate) fn append_uninit()
-        -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError> {
+        -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_core::alloc_impl::AllocError> {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
             // `BSSList::append_uninit` takes `*mut Self` and serializes on its
             // own inner mutex.
@@ -634,12 +634,12 @@ impl DirEntry {
         // `MAX_PATH_BYTES` — which `getdents`/`FindNextFile` can't produce —
         // would touch the heap.
         let mut name_lc_buf = PathBuffer::uninit();
-        let name_lc_heap: Option<bun_collections::StringHashMapContext::PrehashedCaseInsensitive> =
+        let name_lc_heap: Option<bun_core::collections::StringHashMapContext::PrehashedCaseInsensitive> =
             if name_slice.len() <= MAX_PATH_BYTES {
                 None
             } else {
                 Some(
-                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
+                    bun_core::collections::StringHashMapContext::PrehashedCaseInsensitive::init(
                         name_slice,
                     ),
                 )
@@ -896,7 +896,7 @@ pub(crate) type EntriesOptionMap =
     allocators::BSSMapInner<EntriesOption, { preallocate::counts::DIR_ENTRY }, true>;
 
 // Per-monomorphization singleton storage for `EntriesOption.Map`.
-bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate::counts::DIR_ENTRY, true }
+bun_core::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate::counts::DIR_ENTRY, true }
 
 /// ZST handle over the `entries_option_map()` singleton; keeps `RealFS.entries`
 /// field-shaped without inlining the (large) backing array.
@@ -1331,12 +1331,12 @@ impl ModKey {
         // the basename verbatim via raw `io::Write`.
         cursor
             .write_all(basename)
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
         cursor
             .write_all(b"-")
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
         write!(&mut cursor, "{:x}", hex_int)
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
         let written = len - cursor.len();
         Ok(&out[..written])
     }
@@ -1352,7 +1352,7 @@ impl ModKey {
         hash_bytes[8..24].copy_from_slice(&self.mtime.to_le_bytes());
         debug_assert!(hash_bytes[24..].len() == 8);
         hash_bytes[24..32].copy_from_slice(&0u64.to_ne_bytes());
-        bun_wyhash::hash(&hash_bytes)
+        bun_core::wyhash::hash(&hash_bytes)
     }
 
     pub fn generate(_: &mut RealFS, _: &[u8], file: &bun_sys::File) -> crate::CrateResult<ModKey> {
@@ -1535,7 +1535,7 @@ impl RealFS {
             // always `Some` here.
             let entries = entries.expect("caller holds entries_mutex when ENABLE_ENTRY_CACHE");
             let mut get_or_put_result = entries.get_or_put(dir)?;
-            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            if err == crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                 entries.mark_not_found(get_or_put_result);
                 return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                     slot.write(EntriesOption::Err(dir_entry::Err {
@@ -1639,8 +1639,8 @@ impl RealFS {
                 } else if cr.status == allocators::ItemStatus::NotFound && generation == 0 {
                     return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                         slot.write(EntriesOption::Err(dir_entry::Err {
-                            original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                            canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            original_err: crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT),
+                            canonical_error: crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT),
                         }));
                         // threadlocal storage outlives caller; return raw `*mut`.
                         slot.as_mut_ptr()
@@ -1827,7 +1827,7 @@ pub fn read_file_contents<'buf>(
 pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
     path: &[u8],
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
 ) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
     let _ = path;
     FileSystem::set_max_fd(file.handle().native());
@@ -1893,7 +1893,7 @@ pub fn read_file_contents_in_arena(
 /// up as the single largest `memset` callchain in the transpiler profile.
 #[inline]
 #[allow(clippy::mut_from_ref)]
-fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
+fn arena_alloc_uninit_bytes(arena: &bun_core::alloc_impl::Arena, len: usize) -> &mut [u8] {
     let slot = arena.alloc_uninit_slice::<u8>(len);
     // SAFETY: `u8` has no invalid bit patterns and `slot` is storage owned
     // exclusively by this fresh arena allocation, so forming a `&mut [u8]` view
@@ -1906,7 +1906,7 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
 /// trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
 fn finish_arena_contents(
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
     buf: &mut [u8],
     mut total: usize,
 ) -> (core::ptr::NonNull<u8>, usize) {
@@ -2181,7 +2181,7 @@ impl RealFS {
         #[cfg(windows)]
         {
             let file = bun_sys::get_file_attributes(absolute_path_c)
-                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+                .ok_or(crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
             // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
             // the link is a directory link (junctions always do; symlinks
             // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
@@ -2212,7 +2212,7 @@ impl RealFS {
             // was permanently misclassified as `.file` — surfacing as
             // EISDIR at module load time.
             use bun_sys::windows as w;
-            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let mut wbuf = bun_core::paths::w_path_buffer_pool::get();
             let wpath = strings::paths::to_kernel32_path(&mut *wbuf, absolute_path_c.as_bytes());
             // SAFETY: `wpath` is NUL-terminated WTF-16 backed by the pooled
             // `WPathBuffer`; null SECURITY_ATTRIBUTES / template handle are
@@ -2258,7 +2258,7 @@ impl RealFS {
                 };
             }
 
-            let mut buf2 = bun_paths::path_buffer_pool::get();
+            let mut buf2 = bun_core::paths::path_buffer_pool::get();
             // `Fd` packs the kernel handle into its `u64` backing on Windows;
             // round-trip via `usize` (HANDLE is pointer-sized).
             match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
@@ -2360,7 +2360,7 @@ pub struct PathContentsPair<'a, 'buf> {
     pub contents: Cow<'buf, [u8]>,
 }
 
-// `Path` / `PathName` — re-exported from the canonical `bun_paths::fs` via
+// `Path` / `PathName` — re-exported from the canonical `bun_core::paths::fs` via
 // `crate::fs` (D090). This module (`fs_full`) is private + link-dead until
 // re-exported wholesale; the local impl bodies (`dupe_alloc` full
 // short-circuiting, `non_unique_name_string`, `json_stringify`, etc.) were

@@ -26,18 +26,18 @@ use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
 use bstr::BStr;
-use bun_alloc::AllocError;
-use bun_collections::linear_fifo::DynamicBuffer;
-use bun_collections::{
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::linear_fifo::DynamicBuffer;
+use bun_core::collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
 use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
-use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
-use bun_semver as semver;
+use bun_core::paths::path_options::AssumeOk as _;
+use bun_core::paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
+use bun_core::semver as semver;
 use bun_sys::{self as sys, Fd};
-use bun_wyhash::{Wyhash, Wyhash11};
+use bun_core::wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
@@ -53,7 +53,7 @@ use crate::{
 };
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
-bun_output::define_scoped_log!(log, IsolatedInstall, visible);
+bun_core::define_scoped_log!(log, IsolatedInstall, visible);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Inner helper types (hoisted from fn body — Rust does not allow local
@@ -1670,10 +1670,10 @@ pub(crate) fn install_isolated_packages(
         // `sys::mkdirat` is `&ZStr`-only (it widens to NT path internally on
         // Windows), so use `path_literal!` here to keep the call-site
         // cross-platform without a `&WStr` overload.
-        let node_modules_path = paths::path_literal!("node_modules");
+        let node_modules_path = bun_core::path_literal!("node_modules");
         // `concat!` can't take a `&[u8]` const, so spell the literal —
         // matches `Installer::NODE_MODULES_BUN`.
-        let bun_modules_path = paths::path_literal!("node_modules/.bun");
+        let bun_modules_path = bun_core::path_literal!("node_modules/.bun");
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {
@@ -1960,7 +1960,7 @@ pub(crate) fn install_isolated_packages(
         // the full scope and the column buffers sliced here are read-only
         // across the install loop (never mutated through `installer.lockfile`).
         let lockfile_ptr: *mut Lockfile = lockfile;
-        let lockfile_ref = bun_ptr::BackRef::<Lockfile>::from(
+        let lockfile_ref = bun_core::ptr::BackRef::<Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
         );
         let lockfile_ro: &Lockfile = lockfile_ref.get();
@@ -1992,7 +1992,7 @@ pub(crate) fn install_isolated_packages(
                     entry_id: store::entry::Id::from(u32::try_from(i).expect("int cast")),
                     // patched below once `installer` has an address — dangling
                     // placeholder is never dereferenced
-                    installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
+                    installer: bun_core::ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
@@ -2066,7 +2066,7 @@ pub(crate) fn install_isolated_packages(
         let installer_ptr: *mut store::Installer<'static> =
             (&raw mut installer).cast::<()>().cast();
         let installer_backref =
-            bun_ptr::BackRef::from(core::ptr::NonNull::new(installer_ptr).unwrap());
+            bun_core::ptr::BackRef::from(core::ptr::NonNull::new(installer_ptr).unwrap());
         for task in installer.tasks.iter_mut() {
             task.installer = installer_backref;
         }
@@ -2416,7 +2416,7 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
+                                Err(e) if e == crate::Error::Alloc(bun_core::alloc_impl::AllocError) => {
                                     return Err(AllocError);
                                 }
                                 Err(crate::network_task::ForTarballError::AlreadyFailed) => {
@@ -2475,7 +2475,7 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
+                                Err(e) if e == crate::Error::Alloc(bun_core::alloc_impl::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
                                 Err(crate::network_task::ForTarballError::AlreadyFailed) => {
@@ -2528,7 +2528,7 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
+                                Err(e) if e == crate::Error::Alloc(bun_core::alloc_impl::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
                                 Err(crate::network_task::ForTarballError::AlreadyFailed) => {

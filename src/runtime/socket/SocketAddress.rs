@@ -217,7 +217,7 @@ impl SocketAddress {
         // `_url_guard` keeps the C++ allocation live for this scope, so the
         // `BackRef` liveness invariant holds; `Deref` encapsulates the single
         // `NonNull::as_ref` site.
-        let url = bun_ptr::BackRef::from(url_ptr);
+        let url = bun_core::ptr::BackRef::from(url_ptr);
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();

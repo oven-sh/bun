@@ -27,7 +27,7 @@ impl Basename {
             }
             let mut buf = Vec::new();
             for i in 0..argc {
-                buf.extend_from_slice(bun_paths::resolve_path::basename(bltn.arg_bytes(i)));
+                buf.extend_from_slice(bun_core::paths::resolve_path::basename(bltn.arg_bytes(i)));
                 buf.push(b'\n');
             }
             buf

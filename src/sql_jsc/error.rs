@@ -31,7 +31,7 @@ pub enum Error {
     #[error("Thrown")]
     Thrown,
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Postgres(#[from] bun_sql::postgres::AnyPostgresError),
     #[error(transparent)]

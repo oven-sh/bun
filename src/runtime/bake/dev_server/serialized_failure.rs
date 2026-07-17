@@ -149,7 +149,7 @@ impl SerializedFailure {
         // for .client and .server, these are meant to be relative file paths
         owner_display_name: &[u8],
         messages: &[bun_ast::Msg],
-    ) -> Result<SerializedFailure, bun_alloc::AllocError> {
+    ) -> Result<SerializedFailure, bun_core::alloc_impl::AllocError> {
         debug_assert!(!messages.is_empty());
 
         // Avoid small re-allocations without requesting so much from the heap
@@ -176,7 +176,7 @@ impl SerializedFailure {
 pub struct ArrayHashContextViaOwner;
 impl ArrayHashContextViaOwner {
     pub fn hash(&self, k: &SerializedFailure) -> u32 {
-        bun_wyhash::hash_int(k.get_owner().encode().bits())
+        bun_core::wyhash::hash_int(k.get_owner().encode().bits())
     }
     pub fn eql(&self, a: &SerializedFailure, b: &SerializedFailure, _: usize) -> bool {
         a.get_owner().encode().bits() == b.get_owner().encode().bits()
@@ -186,7 +186,7 @@ impl ArrayHashContextViaOwner {
 pub struct ArrayHashAdapter;
 impl ArrayHashAdapter {
     pub fn hash(&self, own: Owner) -> u32 {
-        bun_wyhash::hash_int(own.encode().bits())
+        bun_core::wyhash::hash_int(own.encode().bits())
     }
     pub fn eql(&self, a: Owner, b: &SerializedFailure, _: usize) -> bool {
         a.encode().bits() == b.get_owner().encode().bits()

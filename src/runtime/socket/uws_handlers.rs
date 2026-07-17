@@ -8,7 +8,7 @@
 //! old `NewSocketHandler.configure`/`unsafeConfigure` machinery, which built
 //! the same trampolines at runtime per `us_socket_context_t`.
 
-use bun_ptr::ThisPtr;
+use bun_core::ptr::ThisPtr;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -222,7 +222,7 @@ where
 // These handlers may free or re-enter `Self` mid-call (a JS callback closing
 // the socket, the refcount reaching zero), so they cannot take `&mut self` —
 // a `&mut` argument protector outliving the allocation is UB. They take
-// [`ThisPtr<Self>`](bun_ptr::ThisPtr) instead: `Copy + Deref`, so each field
+// [`ThisPtr<Self>`](bun_core::ptr::ThisPtr) instead: `Copy + Deref`, so each field
 // access is its own short-lived shared borrow and none spans a callback.
 //
 // The ext slot stores that `ThisPtr` directly, so recovering it is safe and

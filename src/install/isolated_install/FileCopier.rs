@@ -1,10 +1,11 @@
 #[cfg(windows)]
 use core::ptr;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 #[cfg(not(windows))]
 use bun_core::{Global, fmt as bun_fmt};
-use bun_paths::{self, OSPathChar, OSPathSlice};
+#[allow(unused_imports)]
+use bun_core::paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
 // The path-builder types here use the OS path unit: u8 on POSIX,
@@ -12,11 +13,11 @@ use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skipp
 // the platform-native width. The auto separator mode normalizes `/` → `\` on Windows
 // during `from`/`append`, which is load-bearing for the Win32 calls below.
 type AbsPathAutoOs =
-    bun_paths::AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
-type PathAutoOs = bun_paths::Path<
+    bun_core::paths::AbsPath<OSPathChar, { bun_core::paths::path_options::PathSeparators::AUTO }>;
+type PathAutoOs = bun_core::paths::Path<
     OSPathChar,
-    { bun_paths::path_options::Kind::ANY },
-    { bun_paths::path_options::PathSeparators::AUTO },
+    { bun_core::paths::path_options::Kind::ANY },
+    { bun_core::paths::path_options::PathSeparators::AUTO },
 >;
 
 pub struct FileCopier {
@@ -59,10 +60,10 @@ impl FileCopier {
         // always WTF-8 round-trippable. On POSIX `OSPathChar == u8` and
         // `slice_z()` already yields `&ZStr`, so deref-coerce to `&[u8]`.
         #[cfg(windows)]
-        let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
+        let mut dest_u8_buf = bun_core::paths::path_buffer_pool::get();
         #[cfg(windows)]
         let dest_subpath_u8: &[u8] =
-            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest_subpath.slice())
+            bun_core::paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest_subpath.slice())
                 .as_bytes();
         #[cfg(not(windows))]
         let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
@@ -153,7 +154,7 @@ impl FileCopier {
                                 // continuing here would let a staged
                                 // global-store entry be renamed into place
                                 // with files missing.
-                                match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
+                                match bun_core::paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
                                     None => sys::Result::Err(first_err),
                                     Some(entry_dirname) => {
                                         let _ = bun_sys::make_path::make_path::<u16>(
@@ -196,7 +197,7 @@ impl FileCopier {
                     Ok(f) => f,
                     Err(_) => 'dest: {
                         if let Some(entry_dirname) =
-                            bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
+                            bun_core::paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
                             let _ = bun_sys::make_path::make_path::<OSPathChar>(
                                 &dest_dir,

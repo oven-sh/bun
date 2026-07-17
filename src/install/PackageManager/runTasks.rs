@@ -355,7 +355,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // SAFETY: `name` lives in `task.callback` which outlives this
                 // match arm (the task is only `put` back to the pool by a later
                 // resolve-task pass, never inside this loop iteration).
-                let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
+                let name = unsafe { bun_core::ptr::detach_lifetime(name.slice()) };
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
@@ -546,7 +546,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
                         // reshaped for borrowck —
-                        // `bun_collections::HashMap` lacks `get_or_put` for
+                        // `bun_core::collections::HashMap` lacks `get_or_put` for
                         // non-`Default` values, so insert by-value (overwriting
                         // any prior entry) and reborrow.
                         let name_hash = manifest.pkg.name.hash;
@@ -1067,7 +1067,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // SAFETY: `tarball` borrows `task.request` which is reborrowed
                 // `&mut` below; the backing `StringOrTinyString` lives in the
                 // pooled `Task` for the whole iteration and is not mutated.
-                let alias = unsafe { bun_ptr::detach_lifetime(tarball.name.slice()) };
+                let alias = unsafe { bun_core::ptr::detach_lifetime(tarball.name.slice()) };
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1359,7 +1359,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: `string_bytes` lives as long as `manager.lockfile`
                     // and is not reallocated while resolve tasks are draining.
                     let string_buf = unsafe {
-                        bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
+                        bun_core::ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
                     };
                     let dep_name = dep_name_handle.slice(string_buf);
                     let committish = git.committish.slice(string_buf);
@@ -1839,7 +1839,7 @@ pub fn generate_network_task_for_tarball<'a>(
         // BACKREF — `this_backref` is non-null (just derived from `&mut *this`)
         // and the PackageManager outlives every ExtractTarball it enqueues.
         // Safe `From<NonNull>` construction.
-        package_manager: bun_ptr::BackRef::from(
+        package_manager: bun_core::ptr::BackRef::from(
             core::ptr::NonNull::new(this_backref).expect("derived from &mut, non-null"),
         ),
         name: strings::StringOrTinyString::init_append_if_needed(

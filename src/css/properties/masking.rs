@@ -103,7 +103,7 @@ pub struct Polygon {
     pub fill_rule: FillRule,
     /// The points of each vertex of the polygon.
     // If Polygon ever becomes arena-fed this must become (§Allocators: AST crates are arena-fed)
-    // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
+    // `bun_core::alloc_impl::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
     // Keeping plain Vec<Point> until the arena story is verified.
     pub points: Vec<Point>,
 }

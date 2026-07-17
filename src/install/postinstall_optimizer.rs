@@ -1,12 +1,12 @@
 use std::sync::LazyLock;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
+use bun_core::collections::{ArrayHashMap, ArrayIdentityContextU64};
 // `Expr` here is the T2 `bun_ast::Expr` (re-exported via
 // `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
 // (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
 // so binding to the lower-tier type avoids a cross-tier mismatch.
 use bun_ast as js_ast;
-use bun_semver as semver;
+use bun_core::semver as semver;
 
 use crate::lockfile::package::Meta;
 use crate::lockfile::tree::Id as TreeId;
@@ -47,7 +47,7 @@ impl PostinstallOptimizer {
         list: &mut List,
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
-    ) -> Result<bool, bun_alloc::AllocError> {
+    ) -> Result<bool, bun_core::alloc_impl::AllocError> {
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
@@ -72,7 +72,7 @@ impl PostinstallOptimizer {
     pub fn from_package_json(
         list: &mut List,
         expr: &js_ast::Expr,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(
                 list,

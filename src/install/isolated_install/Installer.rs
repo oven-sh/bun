@@ -2,14 +2,14 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
+use bun_core::paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{Mutex, UnboundedQueue, thread_pool};
 
-use bun_semver::String as SemverString;
+use bun_core::semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
@@ -58,9 +58,9 @@ type DefaultAbsPath = AbsPath<u8>;
 /// usable in `const_format::concatcp!`, so spell the literal.
 const NODE_MODULES_BUN: &str = "node_modules/.bun";
 
-bun_output::declare_scope!(IsolatedInstaller, hidden);
+bun_core::declare_scope!(IsolatedInstaller, hidden);
 macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(IsolatedInstaller, $($args)*) };
+    ($($args:tt)*) => { bun_core::scoped_log!(IsolatedInstaller, $($args)*) };
 }
 
 pub struct Installer<'a> {
@@ -630,7 +630,7 @@ pub struct Task {
     /// per-site raw-pointer derefs. Constructed with a `NonNull::dangling()`
     /// placeholder (never dereferenced) and patched to the real address before
     /// any `start_task` call — see `isolated_install.rs`.
-    pub installer: bun_ptr::BackRef<Installer<'static>>,
+    pub installer: bun_core::ptr::BackRef<Installer<'static>>,
 
     pub task: thread_pool::Task,
     pub next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
@@ -814,7 +814,7 @@ impl Task {
     }
 
     /// Called from task thread
-    fn run(&mut self) -> core::result::Result<Yield, bun_alloc::AllocError> {
+    fn run(&mut self) -> core::result::Result<Yield, bun_core::alloc_impl::AllocError> {
         // SAFETY: installer outlives all tasks (BACKREF). `run()` executes on the
         // thread pool concurrently across many `Task`s that all share the same
         // `*mut Installer`, and `next_step()` re-derefs `self.installer` mid-loop —
@@ -844,7 +844,7 @@ impl Task {
         // field projections still go through the raw `manager_ptr` directly
         // (same provenance tag as `manager_ref.ptr`). Safe `From<NonNull>`
         // construction — non-null is guaranteed by the BACKREF field invariant.
-        let manager_ref = bun_ptr::ParentRef::<PackageManager>::from(
+        let manager_ref = bun_core::ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("Installer.manager BACKREF is non-null"),
         );
         // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
@@ -925,7 +925,7 @@ impl Task {
                                             folder_dir,
                                             src,
                                             dest,
-                                            &[bun_paths::os_path_literal!("node_modules")],
+                                            &[bun_core::os_path_literal!("node_modules")],
                                         )?;
 
                                         match hardlinker.link()? {
@@ -1022,7 +1022,7 @@ impl Task {
                                             folder_dir,
                                             src_path.into_sep::<{ PathSeparators::AUTO }>(),
                                             dest.into_sep::<{ PathSeparators::AUTO }>(),
-                                            &[bun_paths::os_path_literal!("node_modules")],
+                                            &[bun_core::os_path_literal!("node_modules")],
                                         )?;
 
                                         match file_copier.copy() {
@@ -2081,7 +2081,7 @@ impl<'a> Installer<'a> {
         pkg_name: SemverString,
         pkg_name_hash: PackageNameHash,
         pkg_res: &Resolution,
-    ) -> core::result::Result<PatchInfo, bun_alloc::AllocError> {
+    ) -> core::result::Result<PatchInfo, bun_core::alloc_impl::AllocError> {
         if self.lockfile().patched_dependencies.len() == 0
             && self.manager().patched_dependencies_to_remove.len() == 0
         {
@@ -2097,7 +2097,7 @@ impl<'a> Installer<'a> {
             "{}@",
             bstr::BStr::new(pkg_name.slice(string_buf))
         )
-        .map_err(|_| bun_alloc::AllocError)?;
+        .map_err(|_| bun_core::alloc_impl::AllocError)?;
 
         match pkg_res.tag {
             ResolutionTag::Workspace => {
@@ -2105,7 +2105,7 @@ impl<'a> Installer<'a> {
                     self.lockfile().workspace_versions.get(&pkg_name_hash)
                 {
                     write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))
-                        .map_err(|_| bun_alloc::AllocError)?;
+                        .map_err(|_| bun_core::alloc_impl::AllocError)?;
                 }
             }
             _ => {
@@ -2114,11 +2114,11 @@ impl<'a> Installer<'a> {
                     "{}",
                     pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
                 )
-                .map_err(|_| bun_alloc::AllocError)?;
+                .map_err(|_| bun_core::alloc_impl::AllocError)?;
             }
         }
 
-        let name_and_version_hash = bun_semver::semver_string::Builder::string_hash(&version_buf);
+        let name_and_version_hash = bun_core::semver::semver_string::Builder::string_hash(&version_buf);
 
         if let Some(patch) = self
             .lockfile()

@@ -57,9 +57,9 @@ pub enum Error {
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
@@ -67,7 +67,7 @@ pub enum Error {
     #[error(transparent)]
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
-    Path(#[from] bun_paths::path_options::Error),
+    Path(#[from] bun_core::paths::path_options::Error),
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
@@ -81,9 +81,9 @@ pub enum Error {
     #[error(transparent)]
     ToJS(#[from] bun_ast::ToJSError),
     #[error(transparent)]
-    Url(#[from] bun_url::Error),
+    Url(#[from] bun_core::url::Error),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
+    Paths(#[from] bun_core::paths::Error),
     #[error("{0}")]
     ErrorCode(crate::error_code::ErrorCode),
 }

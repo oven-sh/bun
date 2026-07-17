@@ -116,7 +116,7 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
 // `uv_loop_t` whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub EventLoopCtx[Js, Mini] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
@@ -318,7 +318,7 @@ pub use pipes::{FileType, ReadState};
 // `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
 // `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
 // trait impl — see `buffered_reader_parent_link!` below.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub BufferedReaderParentLink[
         SubprocessPipeReader,
         ShellPipeReader,
@@ -2008,7 +2008,7 @@ pub mod waker {
         pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
                 Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
-                Err(err) => Err(bun_errno::SystemErrno::init(i64::from(err.errno))
+                Err(err) => Err(bun_core::errno::SystemErrno::init(i64::from(err.errno))
                     .map(crate::Error::Sys)
                     .unwrap_or(crate::Error::Unexpected)),
             }
@@ -2118,7 +2118,7 @@ pub mod waker {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
                 return Err(
-                    bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
+                    bun_core::errno::SystemErrno::init(bun_core::errno::posix::errno() as i64)
                         .map(crate::Error::Sys)
                         .unwrap_or(crate::Error::Unexpected),
                 );
@@ -2158,7 +2158,7 @@ pub mod waker {
         ///
         /// [`placeholder`]: Self::placeholder
         /// [`init`]: Self::init
-        pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
+        pub loop_: Option<bun_core::ptr::BackRef<bun_uws_sys::WindowsLoop>>,
     }
 
     #[cfg(windows)]
@@ -2175,7 +2175,7 @@ pub mod waker {
 
         pub fn init() -> crate::Result<Self> {
             Ok(Self {
-                loop_: Some(bun_ptr::BackRef::from(
+                loop_: Some(bun_core::ptr::BackRef::from(
                     core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
                         .expect("WindowsLoop::get() singleton"),
                 )),
@@ -2186,7 +2186,7 @@ pub mod waker {
         /// is the same precondition the previous raw-pointer deref carried
         /// (just loud instead of UB).
         #[inline]
-        fn loop_ref(&self) -> bun_ptr::BackRef<bun_uws_sys::WindowsLoop> {
+        fn loop_ref(&self) -> bun_core::ptr::BackRef<bun_uws_sys::WindowsLoop> {
             self.loop_.expect("WindowsWaker used before init()")
         }
 

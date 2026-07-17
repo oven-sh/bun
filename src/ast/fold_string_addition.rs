@@ -1,6 +1,6 @@
 use crate::expr::{Data, PrimitiveType, data};
 use crate::{E, Expr, StoreRef, e};
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 
 // ── local rope helpers ─────────────────────────────────────────────────────
 // `EString` has no `push` / `clone_rope_nodes` inherent methods yet;
@@ -119,7 +119,7 @@ fn concat_parts(
     a: &[e::TemplatePart],
     b: &[e::TemplatePart],
 ) -> crate::StoreSlice<e::TemplatePart> {
-    let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
+    let mut v = bun_core::alloc_impl::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
     for p in a.iter().chain(b.iter()) {
         // Field-wise copy (all fields structurally `Copy`).
         v.push(e::TemplatePart {

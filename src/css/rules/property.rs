@@ -60,7 +60,7 @@ impl PropertyRule {
 }
 
 impl PropertyRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // `SyntaxString` and `ParsedComponent` provide inherent
         // `deep_clone(&self, &Arena)` impls.
         Self {
@@ -111,8 +111,8 @@ impl PropertyRule {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // the sub-`ParserInput` constructed below. `'static` is the crate-wide
         // erasure (PORTING.md §AST crates).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+        let bump: &'static bun_core::alloc_impl::Arena =
+            unsafe { &*std::ptr::from_ref::<bun_core::alloc_impl::Arena>(input.arena()) };
 
         // `initial-value` is required unless the syntax is a universal definition.
         let initial_value = match syntax {

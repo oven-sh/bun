@@ -16,7 +16,7 @@ use crate::shell::{ExitCode, ShellErr};
 
 pub struct Expansion {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Atom>,
+    pub node: bun_core::ptr::BackRef<ast::Atom>,
     pub io: IO,
     pub state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
@@ -104,7 +104,7 @@ impl Expansion {
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
+            node: unsafe { bun_core::ptr::BackRef::from_raw(node as *mut ast::Atom) },
             io,
             state: ExpansionState::Idle,
             word_idx: 0,
@@ -320,7 +320,7 @@ impl Expansion {
         let count = count as usize;
         let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_core::alloc_impl::Arena::new();
         if let Err(e) = braces::expand(
             &arena,
             &mut lexer_output.tokens[..],

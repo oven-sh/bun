@@ -267,7 +267,7 @@ impl FilePoll {
     }
 }
 
-type FilePollHiveArray = bun_collections::hive_array::Fallback<FilePoll, 128>;
+type FilePollHiveArray = bun_core::collections::hive_array::Fallback<FilePoll, 128>;
 
 pub struct Store {
     hive: FilePollHiveArray,
@@ -361,7 +361,7 @@ impl Store {
         // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
         // from the event loop's after-tick hook with no other `&mut Store` borrow live,
         // so this is the unique accessor (safe-single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }
@@ -372,7 +372,7 @@ pub struct Waker {
     // Safe `Deref` only — `wait`/`wake` route the raw `as_ptr()` straight to
     // the C entry points so no `&mut WindowsLoop` is ever materialised (a
     // concurrent `wake()` from a worker thread cannot alias).
-    loop_: bun_ptr::BackRef<WindowsLoop>,
+    loop_: bun_core::ptr::BackRef<WindowsLoop>,
 }
 // SAFETY: `Waker::wake()` only forwards to `WindowsLoop::wakeup()`, which is
 // the documented cross-thread wake path (uv_async_send under the hood).
@@ -384,7 +384,7 @@ impl Waker {
     // the POSIX wakers, whose `init` can fail (eventfd / kqueue).
     pub fn init() -> Result<Waker, crate::Error> {
         Ok(Waker {
-            loop_: bun_ptr::BackRef::from(
+            loop_: bun_core::ptr::BackRef::from(
                 ptr::NonNull::new(WindowsLoop::get()).expect("WindowsLoop::get() singleton"),
             ),
         })

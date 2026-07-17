@@ -79,7 +79,7 @@ pub enum FontPaletteValuesProperty {
 }
 
 impl FontPaletteValuesRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
@@ -114,7 +114,7 @@ impl FontPaletteValuesProperty {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
             Self::BasePalette(b) => Self::BasePalette(b.deep_clone(bump)),
@@ -160,7 +160,7 @@ impl OverrideColors {
         self.color.to_css(dest)
     }
 
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             index: self.index,
             color: self.color.deep_clone(bump),
@@ -216,7 +216,7 @@ impl BasePalette {
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             Self::Light => Self::Light,
             Self::Dark => Self::Dark,

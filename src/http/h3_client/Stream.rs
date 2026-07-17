@@ -7,7 +7,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_picohttp as picohttp;
+use bun_core::picohttp as picohttp;
 use bun_uws::quic;
 
 use super::ClientSession;
@@ -16,7 +16,7 @@ use crate::h3_client as h3;
 
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
-    pub session: bun_ptr::BackRef<ClientSession>,
+    pub session: bun_core::ptr::BackRef<ClientSession>,
     // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
     pub client: Option<NonNull<HttpClient<'static>>>,
     // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
@@ -32,7 +32,7 @@ pub struct Stream {
 
     // BACKREF: borrows the request body owned by `client`; not freed here.
     // `RawSlice` carries the outlives-holder invariant.
-    pub pending_body: bun_ptr::RawSlice<u8>,
+    pub pending_body: bun_core::ptr::RawSlice<u8>,
     pub request_body_done: bool,
     pub is_streaming_body: bool,
     pub headers_delivered: bool,
@@ -45,13 +45,13 @@ impl Stream {
     /// `heap::take`.
     pub fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
         bun_core::heap::into_raw(Box::new(Stream {
-            session: bun_ptr::BackRef::new_mut(session),
+            session: bun_core::ptr::BackRef::new_mut(session),
             client: Some(client.as_erased_ptr()),
             qstream: None,
             decoded_headers: Vec::new(),
             body_buffer: Vec::new(),
             status_code: 0,
-            pending_body: bun_ptr::RawSlice::EMPTY,
+            pending_body: bun_core::ptr::RawSlice::EMPTY,
             request_body_done: false,
             is_streaming_body: false,
             headers_delivered: false,

@@ -21,14 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use bun_alloc::AllocError;
-use bun_collections::AutoBitSet;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::AutoBitSet;
 use bun_core::Error;
 use bun_core::ZStr;
 use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
 
@@ -44,7 +44,7 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 
 #[cfg(windows)]
 pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
-    use bun_paths::resolve_path::{self, platform};
+    use bun_core::paths::resolve_path::{self, platform};
     // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
     // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
@@ -53,10 +53,10 @@ pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
     // worker-thread stacks. Draw both from the per-thread heap pool instead
     // (uninit, RAII-returned) — zero stack footprint, no zero-fill.
-    let mut dir_buf = bun_paths::path_buffer_pool::get();
+    let mut dir_buf = bun_core::paths::path_buffer_pool::get();
     let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
-    let mut join_buf = bun_paths::path_buffer_pool::get();
+    let mut join_buf = bun_core::paths::path_buffer_pool::get();
     let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
     Syscall::stat(statpath)
 }
@@ -309,7 +309,7 @@ pub type Result_ = Maybe<()>;
 // while its stored keys come from `dupe_z` (NUL included), so in SENTINEL
 // mode symlink-match probes never hit and symlink dedupe silently misses —
 // a known quirk deliberately left as-is.
-pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
+pub type MatchedMap = bun_core::collections::StringArrayHashMap<()>;
 
 /// The glob walker references the .directory.path so its not safe to
 /// copy/move this
@@ -410,11 +410,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_work_item: WorkItem<A> = 'brk: {
             let mut use_posix = cfg!(unix);
             let is_absolute = if cfg!(unix) {
-                bun_paths::is_absolute(&self.walker.pattern)
+                bun_core::paths::is_absolute(&self.walker.pattern)
             } else {
-                bun_paths::is_absolute(&self.walker.pattern) || {
+                bun_core::paths::is_absolute(&self.walker.pattern) || {
                     use_posix = true;
-                    bun_paths::is_absolute_posix(&self.walker.pattern)
+                    bun_core::paths::is_absolute_posix(&self.walker.pattern)
                 }
             };
             let _ = use_posix;
@@ -1433,11 +1433,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
-        // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
+        // `bun_core::paths::fs::FileSystem` (singleton holds only the cwd string; the
         // DirEntry cache stays in `bun_resolver`).
         Self::init_with_cwd(
             pattern,
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_core::paths::fs::FileSystem::instance().top_level_dir(),
             dot,
             absolute,
             follow_symlinks,
@@ -2006,7 +2006,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if !self.absolute {
             // If relative paths enabled, stdlib join is preferred over
             // ResolvePath.joinBuf because it doesn't try to normalize the path
-            return Ok(bun_paths::join_sep_maybe_z::<SENTINEL>(subdir_parts));
+            return Ok(bun_core::paths::join_sep_maybe_z::<SENTINEL>(subdir_parts));
         }
 
         // For SENTINEL, bun_join already included trailing NUL in the slice it returned.
@@ -2322,10 +2322,10 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 
 #[inline]
 pub fn is_separator(c: Codepoint) -> bool {
-    // Thin u32 shim over `bun_paths::is_sep_native` (PathChar covers u8/u16
+    // Thin u32 shim over `bun_core::paths::is_sep_native` (PathChar covers u8/u16
     // only). Separators are ASCII, so the truncating cast is exact when in
     // range; out-of-range codepoints are never separators.
-    c <= 0xFF && bun_paths::is_sep_native(c as u8)
+    c <= 0xFF && bun_core::paths::is_sep_native(c as u8)
 }
 
 pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
@@ -2397,7 +2397,7 @@ fn work_item_logical_path(path: &[u8]) -> &[u8] {
 
 // const bunJoin = if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
 fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
-    use bun_paths::platform;
+    use bun_core::paths::platform;
     // Deeply nested trees join to more than the fixed thread-local buffer
     // holds; the `_spill` variants grow onto the heap instead of writing
     // past it. Oversized work items still fail with ENAMETOOLONG later.

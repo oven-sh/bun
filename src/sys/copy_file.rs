@@ -443,7 +443,7 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
 }
 
 /// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// `bun_analytics::generate_header::Platform` (T6) is the canonical
+/// `bun_core::analytics::generate_header::Platform` (T6) is the canonical
 /// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
 /// move-down) so this crate stays leaf. Compare is
 /// lexicographic on major→minor→patch,

@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
 use crate::p::P;
@@ -534,7 +534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // Inline import.meta.url as file:// URL
                             let bunstr = bun_core::String::from_bytes(p.source.path.text);
                             let url = p.arena.alloc_slice_copy(
-                                format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
+                                format!("{}", bun_core::url::file_url_from_string(&bunstr)).as_bytes(),
                             );
                             bunstr.deref();
                             return Some(p.new_expr(e_string_init(url), name_loc));

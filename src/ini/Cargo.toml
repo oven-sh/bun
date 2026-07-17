@@ -30,4 +30,3 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_ast.workspace = true
 bun_sys.workspace = true
-bun_url.workspace = true

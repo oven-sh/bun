@@ -17,11 +17,11 @@
 
 use core::cell::Cell;
 use core::ptr::NonNull;
-// (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
+// (atomic refcounting now via `bun_core::ptr::ThreadSafeRefCount`)
 use std::rc::Rc;
 
 use bun_core::strings::AsciiStatus;
-use bun_http_types::MimeType::MimeType;
+use bun_core::http_types::MimeType::MimeType;
 
 use crate::JsCell;
 
@@ -135,7 +135,7 @@ pub struct Blob {
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
     /// literals.
-    pub ref_count: bun_ptr::RawRefCount,
+    pub ref_count: bun_core::ptr::RawRefCount,
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
@@ -162,7 +162,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
-            ref_count: bun_ptr::RawRefCount::init(0),
+            ref_count: bun_core::ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
             name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
@@ -216,7 +216,7 @@ impl Blob {
     /// heap-allocated so `deinit` knows to free the heap box.
     #[inline]
     pub fn new(mut blob: Blob) -> *mut Blob {
-        blob.ref_count = bun_ptr::RawRefCount::init(1);
+        blob.ref_count = bun_core::ptr::RawRefCount::init(1);
         bun_core::heap::into_raw(Box::new(blob))
     }
 
@@ -246,7 +246,7 @@ impl Blob {
 
     #[inline]
     pub fn set_not_heap_allocated(&mut self) {
-        self.ref_count = bun_ptr::RawRefCount::init(0);
+        self.ref_count = bun_core::ptr::RawRefCount::init(0);
     }
 
     #[inline]
@@ -379,7 +379,7 @@ impl Blob {
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
-            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+            ref_count: bun_core::ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
             name: self.name.clone(),
@@ -473,7 +473,7 @@ impl Blob {
 
 // SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
 // keep the heap-allocated `Blob` alive while the count is > 0.
-unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
+unsafe impl bun_core::ptr::ExternalSharedDescriptor for Blob {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
         unsafe { Blob__ref(&mut *this) }
@@ -499,7 +499,7 @@ pub extern "C" fn Blob__deref(self_: &mut Blob) {
         self_.is_heap_allocated(),
         "cannot deref: this Blob is not heap-allocated"
     );
-    if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
+    if self_.ref_count.decrement() == bun_core::ptr::raw_ref_count::DecrementResult::ShouldDestroy {
         // `deinit` has its own `is_heap_allocated()` guard around the
         // `drop(heap::take)`, so re-arm so it returns true.
         self_.ref_count.increment();
@@ -516,11 +516,11 @@ pub mod store {
 
     /// Intrusively-refcounted; always
     /// heap-allocated.
-    #[derive(bun_ptr::ThreadSafeRefCounted)]
+    #[derive(bun_core::ptr::ThreadSafeRefCounted)]
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
-        pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
+        pub ref_count: bun_core::ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
     }
 
@@ -528,8 +528,8 @@ pub mod store {
         fn default() -> Self {
             Self {
                 data: Data::Bytes(Bytes::default()),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                mime_type: bun_core::http_types::MimeType::NONE,
+                ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }
         }
@@ -589,7 +589,7 @@ pub mod store {
         pub ptr: Option<NonNull<u8>>,
         pub len: SizeType,
         pub cap: SizeType,
-        pub allocator: bun_alloc::StdAllocator,
+        pub allocator: bun_core::alloc_impl::StdAllocator,
         /// Used by standalone module graph and the `File` constructor.
         /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
         pub stored_name: Box<[u8]>,
@@ -609,7 +609,7 @@ pub mod store {
                 ptr: None,
                 len: 0,
                 cap: 0,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
+                allocator: bun_core::alloc_impl::basic::C_ALLOCATOR,
                 stored_name: Box::default(),
             }
         }
@@ -628,7 +628,7 @@ pub mod store {
                 // `Vec::from_raw_parts`.
                 len: len as SizeType,
                 cap: cap as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
+                allocator: bun_core::alloc_impl::basic::C_ALLOCATOR,
                 stored_name: Box::default(),
             }
         }
@@ -643,7 +643,7 @@ pub mod store {
                 ptr: NonNull::new(ptr),
                 len: len as SizeType,
                 cap: len as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
+                allocator: bun_core::alloc_impl::basic::C_ALLOCATOR,
                 stored_name: Box::default(),
             }
         }
@@ -661,7 +661,7 @@ pub mod store {
                 return Box::new([]);
             };
             debug_assert!(
-                core::ptr::eq(this.allocator.vtable, bun_alloc::basic::C_ALLOCATOR.vtable),
+                core::ptr::eq(this.allocator.vtable, bun_core::alloc_impl::basic::C_ALLOCATOR.vtable),
                 "Bytes::into_boxed_slice on non-global allocator",
             );
             // SAFETY: `ptr[..cap]` is the live global-allocator allocation
@@ -681,7 +681,7 @@ pub mod store {
             ptr: *mut u8,
             len: SizeType,
             cap: SizeType,
-            allocator: bun_alloc::StdAllocator,
+            allocator: bun_core::alloc_impl::StdAllocator,
         ) -> Bytes {
             Bytes {
                 ptr: NonNull::new(ptr),
@@ -701,7 +701,7 @@ pub mod store {
         }
 
         #[inline]
-        pub fn allocator(&self) -> bun_alloc::StdAllocator {
+        pub fn allocator(&self) -> bun_core::alloc_impl::StdAllocator {
             self.allocator
         }
 
@@ -778,7 +778,7 @@ pub mod store {
         fn default() -> Self {
             Self {
                 pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
-                mime_type: bun_http_types::MimeType::OTHER,
+                mime_type: bun_core::http_types::MimeType::OTHER,
                 is_atty: None,
                 mode: 0,
                 seekable: None,
@@ -793,7 +793,7 @@ pub mod store {
         pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
             File {
                 pathlike,
-                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
+                mime_type: mime_type.unwrap_or(bun_core::http_types::MimeType::OTHER),
                 ..Default::default()
             }
         }
@@ -848,7 +848,7 @@ pub mod store {
         }
 
         pub fn path(&self) -> &[u8] {
-            let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
+            let mut path_name = bun_core::url::URL::parse(self.pathlike.slice()).s3_path();
             // normalize start and ending
             if bun_core::strings::ends_with(path_name, b"/") {
                 path_name = &path_name[0..path_name.len()];
@@ -871,7 +871,7 @@ pub mod store {
             S3 {
                 credentials: Some(credentials),
                 pathlike,
-                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
+                mime_type: mime_type.unwrap_or(bun_core::http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
                 acl: None,
                 storage_class: None,
@@ -888,7 +888,7 @@ pub mod store {
                 // Heap-allocate a fresh refcounted copy.
                 credentials: Some(Rc::new(credentials)),
                 pathlike,
-                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
+                mime_type: mime_type.unwrap_or(bun_core::http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
                 acl: None,
                 storage_class: None,
@@ -916,8 +916,8 @@ pub mod store {
         pub fn init(bytes: Vec<u8>) -> StoreRef {
             StoreRef::from(Store::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                mime_type: bun_core::http_types::MimeType::NONE,
+                ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }))
         }
@@ -974,7 +974,7 @@ pub mod store {
             // SAFETY: `self` is live; `ref_` only touches the interior-mutable
             // atomic counter, never mutates through the pointer.
             unsafe {
-                bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
+                bun_core::ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
             };
         }
 
@@ -993,7 +993,7 @@ pub mod store {
         #[inline]
         pub unsafe fn deref(this: NonNull<Store>) {
             // SAFETY: caller contract.
-            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
+            unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
         }
 
         /// `JSCArrayBuffer` deallocator hook. Only ever passed as a

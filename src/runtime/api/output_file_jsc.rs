@@ -12,7 +12,7 @@ use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
 use bun_core::ZigStringSlice;
-use bun_http_types::MimeType::MimeType;
+use bun_core::http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
@@ -52,7 +52,7 @@ impl SavedFile {
         // `PathLike::drop`, so the backing buffer must be owned by the store,
         // not borrowed from `path`.
         let store = BlobStore::init_file(
-            PathOrFileDescriptor::Path(PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
+            PathOrFileDescriptor::Path(PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_owned(
                 path.to_vec().into_boxed_slice(),
             ))),
             mime_type,
@@ -140,7 +140,7 @@ impl OutputFileJsc for OutputFile {
                 // store. `owned_pathname` is a borrow here (the caller drops its
                 // `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
-                    Some(p) => PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
+                    Some(p) => PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_owned(
                         p.to_vec().into_boxed_slice(),
                     )),
                     None => dupe_path_like(self.src_path.text),

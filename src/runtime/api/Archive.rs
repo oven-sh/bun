@@ -141,7 +141,7 @@ fn configure_archive_reader(archive: &libarchive::lib::Archive) {
 /// charset-converted name (every pax `path=`) only in the wide-string slot;
 /// `archive_entry_pathname` lossily narrows that through the "C" locale.
 #[cfg(windows)]
-fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
+fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_core::alloc_impl::AllocError> {
     bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
 }
 
@@ -693,7 +693,7 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 }
 
 impl<C: TaskContext> AsyncTask<C> {
-    fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
+    fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_core::alloc_impl::AllocError> {
         // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
         // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
         // `*const _ as *mut _` — that derives a writeable pointer from a shared
@@ -1153,7 +1153,7 @@ impl FilesContext {
         CString::new(err_str).ok()
     }
 
-    fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
+    fn do_run(&mut self) -> Result<FilesResult, bun_core::alloc_impl::AllocError> {
         use libarchive::lib;
         let archive = lib::ReadArchive::new();
         configure_archive_reader(&archive);
@@ -1219,7 +1219,7 @@ impl FilesContext {
                     }
                     let bytes_read = usize::try_from(read).expect("int cast");
                     data.try_reserve(bytes_read)
-                        .map_err(|_| bun_alloc::AllocError)?;
+                        .map_err(|_| bun_core::alloc_impl::AllocError)?;
                     data.extend_from_slice(&buf[..bytes_read]);
                     total_read += bytes_read;
                 }
@@ -1446,7 +1446,7 @@ fn extract_to_disk_filtered(
     let cwd = Fd::cwd();
     let _ = cwd.make_path(root);
     let dir_fd: Fd = 'brk: {
-        if bun_paths::is_absolute(root) {
+        if bun_core::paths::is_absolute(root) {
             break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return Err(crate::Error::OpenError),
@@ -1476,7 +1476,7 @@ fn extract_to_disk_filtered(
         #[cfg(windows)]
         let pathname_zbox = ZBox::from_vec_with_nul(
             entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?,
         );
         #[cfg(windows)]
         let pathname_z = pathname_zbox.as_zstr();

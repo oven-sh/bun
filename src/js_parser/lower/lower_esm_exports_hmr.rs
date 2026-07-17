@@ -1,8 +1,8 @@
 #![warn(unused_must_use)]
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::import_record;
-use bun_collections::StringArrayHashMap;
-use bun_collections::VecExt;
+use bun_core::collections::StringArrayHashMap;
+use bun_core::collections::VecExt;
 
 use crate::p::P;
 use crate::parser::{ReactRefresh, Ref};
@@ -207,7 +207,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                         // SAFETY: as above — POD-shaped read out of arena.
                         let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
-                        let mut decls = bun_alloc::AstAlloc::vec();
+                        let mut decls = bun_core::alloc_impl::AstAlloc::vec();
                         VecExt::append(
                             &mut decls,
                             G::Decl {
@@ -314,7 +314,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // and its items are merged into the first. The symbols may
                     // already have a namespace_alias from ImportScanner pointing at
                     // the now-unused record, so we must update it.
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_core::alloc_impl::ast_box(G::NamespaceAlias {
                         namespace_ref: deduped.namespace_ref,
                         alias: item.original_name,
                         import_record_index: deduped.import_record_index,
@@ -646,7 +646,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             if self.export_props.is_empty() {
                 core::mem::swap(&mut self.export_props, &mut self.export_star_props);
             } else {
-                bun_collections::prepend_from(&mut self.export_props, &mut self.export_star_props);
+                bun_core::collections::prepend_from(&mut self.export_props, &mut self.export_star_props);
             }
         }
 
@@ -710,7 +710,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),
-                            args: bun_alloc::AstAlloc::vec(),
+                            args: bun_core::alloc_impl::AstAlloc::vec(),
                             ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,

@@ -5,10 +5,10 @@ use bun_core::fmt::s;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
 #[cfg(windows)]
-use bun_paths::WPathBuffer;
-use bun_paths::strings;
-use bun_paths::{self as path, PathBuffer};
-use bun_semver::Version;
+use bun_core::paths::WPathBuffer;
+use bun_core::paths::strings;
+use bun_core::paths::{self as path, PathBuffer};
+use bun_core::semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};
@@ -40,7 +40,7 @@ pub struct ExtractTarball {
     pub integrity: Integrity, // = Integrity::default()
     pub url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub package_manager: bun_ptr::BackRef<PackageManager>,
+    pub package_manager: bun_core::ptr::BackRef<PackageManager>,
 }
 
 impl ExtractTarball {
@@ -89,7 +89,7 @@ pub(crate) fn build_url(
     full_name_: &StringOrTinyString,
     version: Version,
     string_buf: &[u8],
-) -> Result<&'static [u8], bun_alloc::AllocError> {
+) -> Result<&'static [u8], bun_core::alloc_impl::AllocError> {
     build_url_with_printer(
         registry_,
         full_name_,
@@ -203,7 +203,7 @@ impl ExtractTarball {
         let basename: &[u8] = 'brk: {
             let mut tmp = name;
             if strings::has_prefix(tmp, b"https://") || strings::has_prefix(tmp, b"http://") {
-                tmp = bun_paths::basename(tmp);
+                tmp = bun_core::paths::basename(tmp);
                 if strings::ends_with(tmp, b".tgz") {
                     tmp = &tmp[0..tmp.len() - 4];
                 } else if strings::ends_with(tmp, b".tar.gz") {
@@ -560,7 +560,7 @@ impl ExtractTarball {
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
-                    if let Some(folder) = bun_paths::Dirname::dirname_u16(path2) {
+                    if let Some(folder) = bun_core::paths::Dirname::dirname_u16(path2) {
                         let _ = bun_sys::make_path::make_path_u16(cache_dir, folder);
                     }
                 }
@@ -689,7 +689,7 @@ impl ExtractTarball {
                 //
 
                 if create_subdir {
-                    if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {
+                    if let Some(folder) = bun_core::paths::Dirname::dirname(folder_name) {
                         let _ = bun_sys::make_path::make_path(cache_dir, folder);
                     }
                 }

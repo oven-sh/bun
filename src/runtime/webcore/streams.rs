@@ -1,13 +1,13 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, RawSlice};
+use bun_core::ptr::{BackRef, RawSlice};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
     JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
 };
-use bun_collections::{ByteVecExt, VecExt};
+use bun_core::collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
@@ -24,7 +24,7 @@ bun_core::declare_scope!(NetworkSinkLog, visible);
 
 /// `bun.ObjectPool(bun.Vec<u8>, ...)::Node` — pooled buffer node type used by
 /// `HTTPServerWritable.pooled_buffer`.
-pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
+pub type ByteListPoolNode = bun_core::collections::pool::Node<Vec<u8>>;
 
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
@@ -472,7 +472,7 @@ impl WritableHandler {
         self.handler = {
             fn on_handle<C: WritablePendingCallback>(ctx_: *mut c_void, result: Writable) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
+                let ctx = unsafe { bun_core::ptr::callback_ctx::<C>(ctx_) };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -721,7 +721,7 @@ impl PendingHandler {
         self.handler = {
             fn on_handle<C: PendingCallback>(ctx_: *mut c_void, result: StreamResult) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
+                let ctx = unsafe { bun_core::ptr::callback_ctx::<C>(ctx_) };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -1010,7 +1010,7 @@ impl SignalVTable {
     pub fn wrap<W: SignalHandler>() -> SignalVTable {
         fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_close(err);
+            unsafe { bun_core::ptr::callback_ctx::<W>(this) }.on_close(err);
         }
         fn on_ready<W: SignalHandler>(
             this: *mut c_void,
@@ -1018,11 +1018,11 @@ impl SignalVTable {
             offset: Option<BlobSizeType>,
         ) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
+            unsafe { bun_core::ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
         }
         fn on_start<W: SignalHandler>(this: *mut c_void) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_start();
+            unsafe { bun_core::ptr::callback_ctx::<W>(this) }.on_start();
         }
 
         // Rust cannot const-promote a generic-dependent struct literal to

@@ -4,7 +4,7 @@ use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
 
 use bun_ast::Ref;
 use bun_core::strings;
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 // ──────────────────────── arena-slice newtype boilerplate ────────────────
 // `DashedIdent` / `Ident` / `CustomIdent` are DISTINCT CSS value types per
@@ -46,7 +46,7 @@ macro_rules! arena_slice_newtype {
                 unsafe { crate::arena_str(self.v) }
             }
 
-            pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+            pub fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
                 // The `*const [u8]` slice is arena-owned (never mutated, freed
                 // on arena reset), so identity copy is correct.
                 *self
@@ -104,7 +104,7 @@ impl DashedIdentReference {
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         // Both fields are `Copy` (arena-slice pointer + tagged enum of Copy payloads).
         *self
     }
@@ -188,10 +188,10 @@ arena_slice_newtype! {
 #[derive(Default, Clone, Copy)]
 pub struct DashedIdentContext;
 
-impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedIdentContext {
+impl bun_core::collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedIdentContext {
     #[inline]
     fn hash(&self, key: &DashedIdent) -> u32 {
-        bun_collections::array_hash_map::hash_string(key.v())
+        bun_core::collections::array_hash_map::hash_string(key.v())
     }
 
     #[inline]
@@ -202,7 +202,7 @@ impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedId
 
 /// Inherent assoc type aliases
 /// are unstable in Rust, so this is a free type alias instead.
-pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
+pub type DashedIdentHashMap<V> = bun_core::collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
 
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
@@ -265,7 +265,7 @@ const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
 
 #[cfg(debug_assertions)]
-pub(crate) type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
+pub(crate) type DebugIdent<'a> = (&'a [u8], &'a bun_core::alloc_impl::Arena);
 #[cfg(not(debug_assertions))]
 pub(crate) type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 
@@ -273,7 +273,7 @@ pub(crate) type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 /// `#[cfg(debug_assertions)]` arg attribute (which removes the parameter
 /// entirely in release and breaks arity).
 #[inline(always)]
-pub(crate) fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
+pub(crate) fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_core::alloc_impl::Arena) -> DebugIdent<'a> {
     #[cfg(debug_assertions)]
     {
         (_raw, _arena)
@@ -447,7 +447,7 @@ impl IdentOrRef {
         false
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         *self
     }
 }

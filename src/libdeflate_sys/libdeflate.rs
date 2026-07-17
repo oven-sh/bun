@@ -80,8 +80,8 @@ fn load_once() {
     // SAFETY: mi_malloc/mi_free are valid C-ABI allocator callbacks for libdeflate.
     unsafe {
         libdeflate_set_memory_allocator(
-            Some(bun_alloc::mimalloc::mi_malloc),
-            Some(bun_alloc::mimalloc::mi_free),
+            Some(bun_core::alloc_impl::mimalloc::mi_malloc),
+            Some(bun_core::alloc_impl::mimalloc::mi_free),
         );
     }
 }

@@ -7,7 +7,7 @@ use bun_core::AllocError;
 
 use crate::string::immutable::CodePoint; // i32
 /// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
-/// helper that moved to `bun_paths::string_paths` with the rest of the
+/// helper that moved to `bun_core::paths::string_paths` with the rest of the
 /// Windows path-shape transcoders.
 #[inline(always)]
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {

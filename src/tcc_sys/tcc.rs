@@ -109,7 +109,7 @@ pub enum Error {
     #[error("OutputError")]
     OutputError,
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
 }
 
 #[repr(i32)] // c_int == i32 on all Bun targets
@@ -170,9 +170,9 @@ where
 
 impl State {
     /// Create a new TCC compilation context
-    pub fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
+    pub fn new() -> Result<NonNull<State>, bun_core::alloc_impl::AllocError> {
         // SAFETY: tcc_new has no preconditions.
-        NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
+        NonNull::new(unsafe { tcc_new() }).ok_or(bun_core::alloc_impl::AllocError)
     }
 
     /// Create and initialize a new TCC compilation context
@@ -247,7 +247,7 @@ impl State {
         // (both `extern "C" fn(*mut _, *const c_char)`, differing only in the opaque
         // pointee type).
         let erased: TCCErrorFunc = Some(unsafe {
-            bun_ptr::cast_fn_ptr::<
+            bun_core::ptr::cast_fn_ptr::<
                 ErrorFunc<Context>,
                 unsafe extern "C" fn(*mut c_void, *const c_char),
             >(error_func)
@@ -475,7 +475,7 @@ impl State {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param).
         let erased = symbol_cb.map(|f| unsafe {
-            bun_ptr::cast_fn_ptr::<
+            bun_core::ptr::cast_fn_ptr::<
                 SymbolCallback,
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void),
             >(f)

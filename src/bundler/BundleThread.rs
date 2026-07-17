@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
+use bun_core::alloc_impl::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
@@ -242,7 +242,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             if has_bundled {
-                bun_alloc::mimalloc::mi_collect(false);
+                bun_core::alloc_impl::mimalloc::mi_collect(false);
                 has_bundled = false;
             }
 

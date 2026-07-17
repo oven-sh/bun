@@ -10,15 +10,15 @@ use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use bun_io::max_buf::MaxBuf;
-use bun_ptr::IntrusiveRc;
-use bun_ptr::cow_slice::CowSlice;
+use bun_core::ptr::IntrusiveRc;
+use bun_core::ptr::cow_slice::CowSlice;
 
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
-// re-exported at `bun_ptr::CowString`.
+// re-exported at `bun_core::ptr::CowString`.
 pub type CowString = CowSlice<u8>;
 
 pub enum Readable {

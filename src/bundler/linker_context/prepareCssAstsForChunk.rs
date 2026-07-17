@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 
-use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
+use bun_core::alloc_impl::{Arena as Bump, ArenaVec, ArenaVecExt};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
@@ -14,7 +14,7 @@ use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOpt
 use crate::bun_fs::Path;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Range};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
@@ -238,7 +238,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     // SAFETY: read-only `&[Box<[u8]>]`→`&[&[u8]]` view; relies on
                                     // fat-pointer field-order equivalence (see fn doc).
                                     ast_unique_key_for_additional_file: unsafe {
-                                        bun_ptr::boxed_slices_as_borrowed(
+                                        bun_core::ptr::boxed_slices_as_borrowed(
                                             parse_graph
                                                 .input_files
                                                 .items_unique_key_for_additional_file(),

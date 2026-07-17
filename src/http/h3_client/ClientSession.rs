@@ -20,13 +20,13 @@ use crate::{HTTPClient, HeaderResult, Protocol};
 
 use crate::h3_client::h3_client;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Ref holders: the `ClientContext.sessions` registry while listed (1), the
     /// `quic.Socket` ext slot while connected (1, transferred from the registry
     /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
     /// an extra ref while DNS is in flight.
-    // Intrusive refcount — see `bun_ptr::IntrusiveRc<ClientSession>`.
+    // Intrusive refcount — see `bun_core::ptr::IntrusiveRc<ClientSession>`.
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
@@ -219,7 +219,7 @@ impl ClientSession {
         // `Stream.client` is a live backref while attached; `ParentRef::from`
         // (NonNull → shared deref) reads the Copy `flags` field without
         // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        if bun_core::ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
@@ -263,7 +263,7 @@ impl ClientSession {
             };
             // `Stream.client` is a live backref while attached; `ParentRef`
             // reads the Copy `async_http_id` field via shared deref.
-            if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {
+            if bun_core::ptr::ParentRef::from(cl).async_http_id == async_http_id {
                 found = stream_ptr;
                 break;
             }
@@ -440,12 +440,12 @@ pub(super) fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
 /// [`stream_mut`]; used where the caller holds an iterator over `pending` and
 /// only needs a read.
 ///
-/// Returns a [`bun_ptr::ParentRef`] (the session owns the stream ⇒ it
+/// Returns a [`bun_core::ptr::ParentRef`] (the session owns the stream ⇒ it
 /// outlives the handle) so the shared deref goes through the safe `Deref`
 /// impl instead of an open-coded raw-ptr reborrow.
 #[inline]
-pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
-    bun_ptr::ParentRef::from(NonNull::new(p).expect("pending entry is non-null"))
+pub(super) fn stream_ref(p: *mut Stream) -> bun_core::ptr::ParentRef<Stream> {
+    bun_core::ptr::ParentRef::from(NonNull::new(p).expect("pending entry is non-null"))
 }
 
 /// Upgrade a `*mut ClientSession` (a `ClientContext.sessions` registry entry,

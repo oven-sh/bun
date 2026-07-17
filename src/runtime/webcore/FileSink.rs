@@ -32,7 +32,7 @@ bun_core::declare_scope!(FileSink, visible);
 // self` at all: they take the canonical `*mut FileSink` (the heap-alloc
 // pointer threaded through `set_parent`) directly — see the `borrow = ptr`
 // note on the `impl_streaming_writer_parent!` invocation below.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct FileSink {
     ref_count: Cell<u32>,
@@ -1088,7 +1088,7 @@ impl FileSink {
         &mut self,
         global_this: &JSGlobalObject,
         // `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
-        // which does not satisfy `bun_ptr::TypeList` yet (sibling Sink.rs); accept
+        // which does not satisfy `bun_core::ptr::TypeList` yet (sibling Sink.rs); accept
         // the encoded usize directly until that lands.
         destructor: Option<usize>,
     ) -> JSValue {

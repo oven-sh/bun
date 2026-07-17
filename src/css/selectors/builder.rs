@@ -19,7 +19,7 @@
 
 use crate::SmallList;
 pub use crate::{PrintErr, Printer};
-use bun_alloc::ArenaPtr;
+use bun_core::alloc_impl::ArenaPtr;
 
 use crate::selector::parser::{
     BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, SelectorFlags,

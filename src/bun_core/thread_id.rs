@@ -4,7 +4,7 @@
 //!
 //! This is the single per-OS ladder; every other crate re-exports or widens
 //! from here:
-//!   * `bun_safety::thread_id`       → `pub use bun_core::thread_id::*;`
+//!   * `bun_core::safety::thread_id`       → `pub use bun_core::thread_id::*;`
 //!   * `bun_threading::current_thread_id` → `current() as u64`
 //!   * `bun_core::util::debug_thread_id`  → `current() as u64` (debug-only)
 //!

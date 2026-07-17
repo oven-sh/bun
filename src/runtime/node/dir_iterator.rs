@@ -447,7 +447,7 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use super::*;
-    use bun_paths::strings;
+    use bun_core::paths::strings;
     use bun_sys::SystemErrno;
     use bun_sys::windows as w;
     use bun_sys::windows::ntdll;

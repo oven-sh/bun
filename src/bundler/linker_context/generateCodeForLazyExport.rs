@@ -1,30 +1,30 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt as _VecExt;
+use bun_core::collections::VecExt as _VecExt;
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
-use bun_alloc::Arena;
+use bun_core::alloc_impl::AllocError;
+use bun_core::alloc_impl::Arena;
 use bun_ast::Ref;
 use bun_ast::{B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
 use bun_ast::{Loc, Log, Source};
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
 use bun_js_parser::js_lexer;
 
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
 use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::{Index, IndexInt, LinkerContext};
-use bun_collections::DynamicBitSetUnmanaged as BitSet;
+use bun_core::collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
 /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
 struct SliceBoxAdapter;
-impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
+impl bun_core::collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
     fn hash(&self, key: &[u8]) -> u32 {
         // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
-        use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
+        use bun_core::collections::array_hash_map::{ArrayHashContext, AutoContext};
         AutoContext.hash(key)
     }
     fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
@@ -319,7 +319,7 @@ pub fn generate_code_for_lazy_export(
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
             // borrow across the `this.log` reborrow inside the Visitor below.
-            let arena: &Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
+            let arena: &Arena = unsafe { bun_core::ptr::detach_lifetime_ref::<Arena>(this.arena()) };
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -456,8 +456,8 @@ pub fn generate_code_for_lazy_export(
                     // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
                     // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
-                    let alloc: &bun_alloc::Arena =
-                        unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
+                    let alloc: &bun_core::alloc_impl::Arena =
+                        unsafe { bun_core::ptr::detach_lifetime_ref::<bun_core::alloc_impl::Arena>(this.arena()) };
                     let name = key_str.slice(alloc);
 
                     // TODO: support non-identifier names
@@ -513,8 +513,8 @@ pub fn generate_code_for_lazy_export(
                 // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
                 // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                 // across the `&mut self` call to `generate_named_export_in_file` below.
-                let alloc: &bun_alloc::Arena =
-                    unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
+                let alloc: &bun_core::alloc_impl::Arena =
+                    unsafe { bun_core::ptr::detach_lifetime_ref::<bun_core::alloc_impl::Arena>(this.arena()) };
                 let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated =

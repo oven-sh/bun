@@ -23,7 +23,7 @@ impl<R> StartingStyleRule<R> {
 }
 
 impl<R> StartingStyleRule<R> {
-    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

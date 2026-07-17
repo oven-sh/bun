@@ -49,7 +49,7 @@ pub(crate) static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
 #[inline]
 fn debug_thread_stamp() -> u64 {
     // Intentionally NOT `bun_threading::current_thread_id()` /
-    // `bun_safety::thread_id::current()`: `bun_alloc` is tier-0 and sits below
+    // `bun_core::safety::thread_id::current()`: `bun_alloc` is tier-0 and sits below
     // both in the crate graph (they depend on us), so routing there would
     // create a cycle. The contract here is only "any nonzero per-thread-unique
     // u64 for an ownership debug-assert", which a counter satisfies.
@@ -765,7 +765,7 @@ pub(crate) static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::Alloca
 };
 
 /// Both vtable addresses this module hands out, for
-/// `bun_safety::register_alloc_vtable` (so `has_ptr` recognises either form;
+/// `bun_core::safety::register_alloc_vtable` (so `has_ptr` recognises either form;
 /// see `is_instance` above which checks both).
 #[inline]
 pub fn std_vtables() -> [&'static crate::AllocatorVTable; 2] {

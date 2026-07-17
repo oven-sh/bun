@@ -59,12 +59,12 @@ fn z(s: &ZStr) -> &str {
 /// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
 /// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.
 #[bun_jsc::JsClass]
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 pub struct BlockList {
     // Intrusive thread-safe refcount.
     // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
     // the `Box` via the trait's default destructor.
-    ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
+    ref_count: bun_core::ptr::ThreadSafeRefCount<BlockList>,
     // R-2: interior mutability so every host_fn takes `&self`. All access is
     // serialized by `mutex` (held across every read and every `with_mut`), so
     // the `JsCell` single-thread invariant is upheld even though `BlockList`
@@ -88,21 +88,21 @@ impl BlockList {
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the atomic `ref_count` field.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
     /// # Safety
     /// `this` must point to a live `Self` and the caller must own one ref.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
     pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
@@ -122,7 +122,7 @@ impl BlockList {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 
     // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported

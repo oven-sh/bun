@@ -1,5 +1,5 @@
 // ─── SmallList ─────────────────────────────────────────────────────────────
-// The container itself now lives in `bun_collections::SmallList` (a thin
+// The container itself now lives in `bun_core::collections::SmallList` (a thin
 // `#[repr(transparent)]` newtype over `smallvec::SmallVec<[T; N]>`). This file
 // keeps only the CSS-domain pieces that depend on `bun_css` types — the
 // `ImageFallback` protocol and the two `get_fallbacks` flavors —
@@ -18,7 +18,7 @@
 // `unsafe`) were a direct port of servo/rust-smallvec; that loop is now closed
 // back onto the upstream crate.
 
-pub use bun_collections::SmallList;
+pub use bun_core::collections::SmallList;
 
 // ─── CSS-domain extension trait ────────────────────────────────────────────
 // (the `SmallListCssExt` trait that lived here was a verbatim duplicate of the
@@ -34,10 +34,10 @@ pub use bun_collections::SmallList;
 /// `properties::background::Background`.
 pub trait ImageFallback: Sized {
     fn get_image(&self) -> &crate::values::image::Image;
-    fn with_image(&self, arena: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
+    fn with_image(&self, arena: &bun_core::alloc_impl::Arena, image: crate::values::image::Image) -> Self;
     fn get_fallback(
         &self,
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         kind: crate::values::color::ColorFallbackKind,
     ) -> Self;
     fn get_necessary_fallbacks(
@@ -58,7 +58,7 @@ pub trait ImageFallback: Sized {
 #[inline]
 pub(crate) fn get_fallbacks<T: ImageFallback>(
     this: &mut SmallList<T, 1>,
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
     targets: &crate::targets::Targets,
 ) -> Vec<SmallList<T, 1>> {
     fallbacks_gated::get_fallbacks_image(this, arena, targets)
@@ -73,7 +73,7 @@ pub mod fallbacks_gated {
 
     pub fn get_fallbacks_image<T>(
         this: &mut SmallList<T, 1>,
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         targets: &css::targets::Targets,
     ) -> Vec<SmallList<T, 1>>
     where
@@ -130,7 +130,7 @@ pub mod fallbacks_gated {
             pfs: css::VendorPrefix,
             pfi: &SmallList<T, 1>,
             r: &mut Vec<SmallList<T, 1>>,
-            alloc: &bun_alloc::Arena,
+            alloc: &bun_core::alloc_impl::Arena,
         ) {
             if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
                 let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
@@ -184,7 +184,7 @@ pub mod fallbacks_gated {
 
     pub fn get_fallbacks_text_shadow(
         this: &mut SmallList<TextShadow, 1>,
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         targets: &css::targets::Targets,
     ) -> SmallList<SmallList<TextShadow, 1>, 2> {
         let mut fallbacks = css::ColorFallbackKind::default();

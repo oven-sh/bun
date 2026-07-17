@@ -13,7 +13,7 @@ use bun_core::Output;
 use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
 };
-use bun_http_types::Method::Method;
+use bun_core::http_types::Method::Method;
 
 use super::blob::Internal as InternalBlob;
 use super::body::{Body, BodyMixin, Value as BodyValue};
@@ -23,7 +23,7 @@ use super::{FetchHeaders, ReadableStream, Request};
 // `crate::webcore::response` because the `.classes.ts` source path is
 // `bun.jsc.WebCore.response.Blob`. Keep this `pub use` so that resolves.
 pub use super::blob::Blob;
-use bun_ptr::weak_ptr::WeakPtrData;
+use bun_core::ptr::weak_ptr::WeakPtrData;
 
 // C++ helper functions for AsyncLocalStorage integration
 unsafe extern "C" {
@@ -213,13 +213,13 @@ impl Default for Response {
     }
 }
 
-impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
+impl bun_core::ptr::weak_ptr::HasWeakPtrData for Response {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
         unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
-pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
+pub(crate) type WeakRef = bun_core::ptr::WeakPtr<Response>;
 
 // Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`
 // so the [`BodyMixin`] twin defaults can run generically.
@@ -1028,7 +1028,7 @@ impl Response {
         }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
-        let json_mime = bun_http_types::MimeType::JSON;
+        let json_mime = bun_core::http_types::MimeType::JSON;
         headers_ref.put_default(
             HTTPHeaderName::ContentType,
             &BunString::ascii(json_mime.value.as_ref()),
@@ -1130,7 +1130,7 @@ impl Response {
         // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
         // gets the serialization of the parsed url, not the raw input. Non-absolute
         // input keeps the raw string: relative redirects are documented Bun behavior.
-        let href = OwnedString::new(bun_url::href_from_string(&url_string));
+        let href = OwnedString::new(bun_core::url::href_from_string(&url_string));
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;

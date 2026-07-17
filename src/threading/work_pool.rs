@@ -179,7 +179,7 @@ impl WorkPool {
         Self::schedule_owned(Box::new(task));
     }
 
-    pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
+    pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_core::alloc_impl::AllocError> {
         // PERF: `function` is stored as a runtime field rather than
         // monomorphized into the callback — profile if it shows up on a hot path.
         #[repr(C)]

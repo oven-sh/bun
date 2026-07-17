@@ -33,7 +33,7 @@ pub enum SyntaxString {
 }
 
 impl SyntaxString {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         // `Clone` covers this — every payload owns its data.
         self.clone()
     }
@@ -434,7 +434,7 @@ pub struct Repeated {
 }
 
 impl Repeated {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // Hand-expanded `css.implementDeepClone` (field-wise reflection):
         // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
         Repeated {
@@ -475,7 +475,7 @@ impl ParsedComponent {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
         // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
         // macro can't cover this enum until the signatures are unified.

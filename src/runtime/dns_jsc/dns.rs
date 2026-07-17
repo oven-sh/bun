@@ -6,7 +6,7 @@ use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_collections::{ArrayHashMap, HiveArray};
+use bun_core::collections::{ArrayHashMap, HiveArray};
 #[cfg(not(windows))]
 use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt, mach_port};
@@ -23,14 +23,14 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
 use bun_threading::thread_pool;
 use bun_uws::{ConnectingSocket, Loop};
-use bun_wyhash::hash as wyhash;
+use bun_core::wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
@@ -55,7 +55,7 @@ pub(crate) mod netc {
     /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
     /// leave `ai_flags = 0`.
     pub(crate) use bun_dns::AI_ADDRCONFIG;
-    pub(crate) use bun_libuv_sys::{
+    pub(crate) use bun_core::libuv_sys::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
     pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
@@ -98,17 +98,17 @@ pub(crate) fn js_event_loop_ctx() -> Async::EventLoopCtx {
     Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
 
-bun_output::declare_scope!(LibUVBackend, visible);
-bun_output::declare_scope!(ResolveInfoRequest, hidden);
-bun_output::declare_scope!(GetHostByAddrInfoRequest, visible);
-bun_output::declare_scope!(CAresNameInfo, hidden);
-bun_output::declare_scope!(GetNameInfoRequest, visible);
-bun_output::declare_scope!(GetAddrInfoRequest, visible);
-bun_output::declare_scope!(CAresReverse, visible);
-bun_output::declare_scope!(CAresLookup, hidden);
-bun_output::declare_scope!(DNSLookup, visible);
-bun_output::declare_scope!(dns, hidden);
-bun_output::declare_scope!(DNSResolver, visible);
+bun_core::declare_scope!(LibUVBackend, visible);
+bun_core::declare_scope!(ResolveInfoRequest, hidden);
+bun_core::declare_scope!(GetHostByAddrInfoRequest, visible);
+bun_core::declare_scope!(CAresNameInfo, hidden);
+bun_core::declare_scope!(GetNameInfoRequest, visible);
+bun_core::declare_scope!(GetAddrInfoRequest, visible);
+bun_core::declare_scope!(CAresReverse, visible);
+bun_core::declare_scope!(CAresLookup, hidden);
+bun_core::declare_scope!(DNSLookup, visible);
+bun_core::declare_scope!(dns, hidden);
+bun_core::declare_scope!(DNSResolver, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // C type aliases
@@ -649,8 +649,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             cache: CacheConfig::default(),
             head: CAresLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-                global_this: bun_ptr::BackRef::new(global_this),
+                resolver: resolver.map(|r| unsafe { bun_core::ptr::IntrusiveRc::init_ref(r) }),
+                global_this: bun_core::ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -790,8 +790,8 @@ impl GetHostByAddrInfoRequest {
             cache: CacheConfig::default(),
             head: CAresReverse {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-                global_this: bun_ptr::BackRef::new(global_this),
+                resolver: resolver.map(|r| unsafe { bun_core::ptr::IntrusiveRc::init_ref(r) }),
+                global_this: bun_core::ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -868,7 +868,7 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct CAresNameInfo {
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub global_this: bun_core::ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -890,7 +890,7 @@ impl CAresNameInfo {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
-            global_this: bun_ptr::BackRef::new(global_this),
+            global_this: bun_core::ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1040,7 +1040,7 @@ impl GetNameInfoRequest {
             hash,
             cache: CacheConfig::default(),
             head: CAresNameInfo {
-                global_this: bun_ptr::BackRef::new(global_this),
+                global_this: bun_core::ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1201,7 +1201,7 @@ pub mod get_addr_info_request {
                     (*this).backend.as_libinfo().machport,
                     lib_info::getaddrinfo_async_handle_reply().unwrap(),
                 ) {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         GetAddrInfoRequest,
                         "onMachportChange: getaddrinfo_send_reply failed"
                     );
@@ -1371,7 +1371,7 @@ impl GetAddrInfoRequest {
         global_this: &JSGlobalObject,
         cache_field: PendingCacheField,
     ) -> *mut Self {
-        bun_output::scoped_log!(GetAddrInfoRequest, "init");
+        bun_core::scoped_log!(GetAddrInfoRequest, "init");
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
@@ -1381,8 +1381,8 @@ impl GetAddrInfoRequest {
             cache: CacheConfig::default(),
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-                global_this: bun_ptr::BackRef::new(global_this),
+                resolver: resolver.map(|r| unsafe { bun_core::ptr::IntrusiveRc::init_ref(r) }),
+                global_this: bun_core::ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1431,7 +1431,7 @@ impl GetAddrInfoRequest {
     ) {
         // SAFETY: arg was a *mut GetAddrInfoRequest passed to getaddrinfo_async_start
         let this: *mut Self = arg.cast();
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             GetAddrInfoRequest,
             "getAddrInfoAsyncCallback: status={}",
             status
@@ -1485,7 +1485,7 @@ impl GetAddrInfoRequest {
     // provenance, so the param must stay `*mut`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn then(this: *mut Self, _global: &JSGlobalObject) {
-        bun_output::scoped_log!(GetAddrInfoRequest, "then");
+        bun_core::scoped_log!(GetAddrInfoRequest, "then");
         #[cfg(not(windows))]
         // SAFETY: WorkTask invokes `then` on the JS thread with the heap request it
         // was created from; `resolver_for_caching` (if set) is the live ctx ref.
@@ -1548,7 +1548,7 @@ impl GetAddrInfoRequest {
         timeout: i32,
         result: Option<*mut c_ares::AddrInfo>,
     ) {
-        bun_output::scoped_log!(GetAddrInfoRequest, "onCaresComplete");
+        bun_core::scoped_log!(GetAddrInfoRequest, "onCaresComplete");
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
@@ -1576,7 +1576,7 @@ impl GetAddrInfoRequest {
     pub fn on_libuv_complete(uv_info: *mut libuv::uv_getaddrinfo_t) {
         unsafe {
             let retcode = (*uv_info).retcode.int();
-            bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
+            bun_core::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
             let this: *mut Self = (*uv_info).data.cast();
             #[cfg(windows)]
             debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
@@ -1655,8 +1655,8 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct CAresReverse {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub resolver: Option<bun_core::ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub global_this: bun_core::ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -1685,8 +1685,8 @@ impl CAresReverse {
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-            global_this: bun_ptr::BackRef::new(global_this),
+            resolver: resolver.map(|r| unsafe { bun_core::ptr::IntrusiveRc::init_ref(r) }),
+            global_this: bun_core::ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1783,8 +1783,8 @@ impl Drop for CAresReverse {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct CAresLookup<T: CAresRecordType> {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub resolver: Option<bun_core::ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub global_this: bun_core::ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -1808,8 +1808,8 @@ impl<T: CAresRecordType> CAresLookup<T> {
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-            global_this: bun_ptr::BackRef::new(global_this),
+            resolver: resolver.map(|r| unsafe { bun_core::ptr::IntrusiveRc::init_ref(r) }),
+            global_this: bun_core::ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1933,8 +1933,8 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DNSLookup {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub resolver: Option<bun_core::ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub global_this: bun_core::ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
@@ -1956,15 +1956,15 @@ impl DNSLookup {
     }
 
     pub(crate) fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
-        bun_output::scoped_log!(DNSLookup, "init");
+        bun_core::scoped_log!(DNSLookup, "init");
 
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
 
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: Some(unsafe { bun_ptr::IntrusiveRc::init_ref(resolver) }),
-            global_this: bun_ptr::BackRef::new(global_this),
+            resolver: Some(unsafe { bun_core::ptr::IntrusiveRc::init_ref(resolver) }),
+            global_this: bun_core::ptr::BackRef::new(global_this),
             poll_ref,
             promise: JSPromiseStrong::init(global_this),
             allocated: true,
@@ -1976,7 +1976,7 @@ impl DNSLookup {
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
     pub(crate) unsafe fn on_complete_native(this: *mut Self, result: &GetAddrInfoResultAny) {
-        bun_output::scoped_log!(DNSLookup, "onCompleteNative");
+        bun_core::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let array = super::options_jsc::result_any_to_js(result, (*this).global_this())
@@ -1993,7 +1993,7 @@ impl DNSLookup {
         status: i32,
         result: *mut AddrInfo,
     ) {
-        bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
+        bun_core::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
@@ -2013,7 +2013,7 @@ impl DNSLookup {
         _timeout: i32,
         result: Option<*mut c_ares::AddrInfo>,
     ) {
-        bun_output::scoped_log!(DNSLookup, "processGetAddrInfo");
+        bun_core::scoped_log!(DNSLookup, "processGetAddrInfo");
         // This path is reached when the pending-host cache is full (`.disabled`),
         // so we own the c-ares result here. The cached path frees it in
         // `drainPendingHostCares`; callers from there always pass `null`.
@@ -2052,7 +2052,7 @@ impl DNSLookup {
 
     /// SAFETY: see `on_complete_native`.
     pub(crate) unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
-        bun_output::scoped_log!(DNSLookup, "onComplete");
+        bun_core::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
         unsafe {
@@ -2065,7 +2065,7 @@ impl DNSLookup {
 
     /// SAFETY: see `on_complete_native`.
     pub(crate) unsafe fn on_complete_with_array(this: *mut Self, result: JSValue) {
-        bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
+        bun_core::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
@@ -2095,7 +2095,7 @@ impl DNSLookup {
 
 impl Drop for DNSLookup {
     fn drop(&mut self) {
-        bun_output::scoped_log!(DNSLookup, "deinit");
+        bun_core::scoped_log!(DNSLookup, "deinit");
         let _ = self.global_this();
         // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
         // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
@@ -2389,7 +2389,7 @@ pub mod internal {
                 unsafe {
                     if (*entry).key.matches(key) && (*entry).valid {
                         if (*entry).is_expired(timestamp_to_store) {
-                            bun_output::scoped_log!(dns, "get: expired entry");
+                            bun_core::scoped_log!(dns, "get: expired entry");
                             if (*entry).refcount == 0 {
                                 let _ = self.delete_entry_at(len, i);
                                 Request::deinit(entry);
@@ -2898,7 +2898,7 @@ pub mod internal {
                     );
 
                     if errno != 0 || machport == 0 {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             dns,
                             "libinfoCallback: getaddrinfo_async_start retry failed (errno={})",
                             errno
@@ -2929,7 +2929,7 @@ pub mod internal {
                         poll.fd = sys::Fd::from_native(machport as i32);
                         match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
-                                bun_output::scoped_log!(
+                                bun_core::scoped_log!(
                                     dns,
                                     "libinfoCallback: failed to register poll"
                                 );
@@ -3026,14 +3026,14 @@ pub mod internal {
                 // SAFETY: `entry` is a live cache slot; `result` is only mutated under the held lock.
                 if unsafe { (*entry).result.is_some() } {
                     *is_cache_hit.unwrap() = true;
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit",
                         bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_COMPLETED.fetch_add(1, Ordering::Relaxed);
                 } else {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit (inflight)",
                         bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
@@ -3077,7 +3077,7 @@ pub mod internal {
                     jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
                 };
                 let res = lookup_libinfo(req, handle);
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     dns,
                     "getaddrinfo({}) = cache miss (libinfo)",
                     bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
@@ -3091,7 +3091,7 @@ pub mod internal {
         #[cfg(not(target_os = "macos"))]
         let _ = loop_;
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             dns,
             "getaddrinfo({}) = cache miss (libc)",
             bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
@@ -3256,7 +3256,7 @@ pub mod internal {
             debug_assert!((*req).refcount > 0);
             (*req).refcount -= 1;
             if (*req).refcount == 0 && (guard.is_nearly_full() || !(*req).valid) {
-                bun_output::scoped_log!(dns, "cache --");
+                bun_core::scoped_log!(dns, "cache --");
                 guard.remove(req);
                 Request::deinit(req);
             }
@@ -3657,9 +3657,9 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
 #[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
 pub struct Resolver {
-    pub ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
+    pub ref_count: bun_core::ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
     pub channel: Cell<Option<*mut c_ares::Channel>>, // FFI
-    pub vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
+    pub vm: bun_core::ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub polls: JsCell<PollsMap>,
     pub options: Cell<c_ares::ChannelOptions>,
 
@@ -3699,10 +3699,10 @@ impl Drop for ResolverRefGuard {
     }
 }
 
-// `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
-impl bun_ptr::RefCounted for Resolver {
+// `pub const ref/deref` from RefCount mixin → provided by `bun_core::ptr::IntrusiveRc<Self>`.
+impl bun_core::ptr::RefCounted for Resolver {
     type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_core::ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` points to a live Self.
         unsafe { &raw mut (*this).ref_count }
     }
@@ -3976,7 +3976,7 @@ impl Resolver {
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
     pub fn ref_(&self) {
         // SAFETY: `self` is live; ref_count uses interior mutability.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
+        unsafe { bun_core::ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     /// Decrement the intrusive refcount; on last ref, runs `deinit` (frees the
     /// allocation via `heap::take`).
@@ -3984,7 +3984,7 @@ impl Resolver {
     /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
     /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow
     /// and writing through it is UB under Stacked/Tree Borrows. Matches the
-    /// codebase pattern in `bun_ptr::RefCount::deref(self_: *mut T)`.
+    /// codebase pattern in `bun_core::ptr::RefCount::deref(self_: *mut T)`.
     ///
     /// # Safety
     /// `this` must point to a live heap-allocated `Resolver` originating from
@@ -3993,7 +3993,7 @@ impl Resolver {
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; `RefCount::deref` invokes
         // `RefCounted::destructor` (→ `Self::deinit`) on the 1→0 transition.
-        unsafe { bun_ptr::RefCount::<Self>::deref(this) };
+        unsafe { bun_core::ptr::RefCount::<Self>::deref(this) };
     }
 
     /// RAII bracket: bump the intrusive refcount now, drop it on guard Drop,
@@ -4015,9 +4015,9 @@ impl Resolver {
 
     pub fn setup(vm: &VirtualMachine) -> Self {
         Self {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             channel: Cell::new(None),
-            vm: bun_ptr::BackRef::new(vm),
+            vm: bun_core::ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
@@ -4043,7 +4043,7 @@ impl Resolver {
     }
 
     pub fn init(vm: &VirtualMachine) -> *mut Self {
-        bun_output::scoped_log!(DNSResolver, "init");
+        bun_core::scoped_log!(DNSResolver, "init");
         bun_core::heap::into_raw(Box::new(Self::setup(vm)))
     }
 
@@ -4462,7 +4462,7 @@ impl Resolver {
         err: i32,
         result: &GetAddrInfoResultAny,
     ) {
-        bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
+        bun_core::scoped_log!(DNSResolver, "drainPendingHostNative");
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
 
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
@@ -6040,7 +6040,7 @@ impl Resolver {
 // ───────── JS host-fn FFI exports ─────────
 // The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
 // re-export each under its `Bun__DNS__*` link name. Mirrors the proc-macro's
-// shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
+// shim body (see `bun_macros::host_fn`, `HostFnKind::Free`).
 macro_rules! export_host_fn {
     ($scope:ident :: $f:ident, $name:literal) => {
         const _: () = {

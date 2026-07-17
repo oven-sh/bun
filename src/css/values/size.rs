@@ -1,6 +1,6 @@
 use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
 use crate::values::protocol::{Parse, ToCss};
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 
 /// A generic value that represents a value with two components, e.g. a border radius.
 ///

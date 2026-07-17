@@ -10,7 +10,7 @@ use crate::shell::yield_::Yield;
 
 pub struct CondExpr {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::CondExpr>,
+    pub node: bun_core::ptr::BackRef<ast::CondExpr>,
     pub io: IO,
     pub state: CondExprState,
     pub args: Vec<Vec<u8>>,
@@ -38,7 +38,7 @@ impl CondExpr {
     ) -> NodeId {
         interp.alloc_node(Node::CondExpr(CondExpr {
             base: Base::new(StateKind::Condexpr, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             state: CondExprState::Idle,
             args: Vec::new(),

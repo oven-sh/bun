@@ -9,17 +9,17 @@ use std::sync::Arc;
 
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
-use bun_collections::StringArrayHashMap;
+use bun_core::collections::StringArrayHashMap;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 #[cfg(not(windows))]
-use bun_paths::SEP_STR;
-use bun_paths::fs as bun_fs;
-use bun_paths::{self as path, PathBuffer, strings};
+use bun_core::paths::SEP_STR;
+use bun_core::paths::fs as bun_fs;
+use bun_core::paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
-use bun_paths::{OSPathBuffer, WPathBuffer};
+use bun_core::paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
@@ -868,7 +868,7 @@ pub(crate) fn to_bytes(
                 let mut dump_rel: Vec<u8> = Vec::new();
                 options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
                     .expect("write to Vec<u8>");
-                let mut path_buf = bun_paths::path_buffer_pool::get();
+                let mut path_buf = bun_core::paths::path_buffer_pool::get();
                 let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                     dump_code_dir,
                     &mut path_buf[..],
@@ -1540,7 +1540,7 @@ pub(crate) fn download_to_path(
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
-        let url = bun_url::URL::parse(&url_str_copy);
+        let url = bun_core::url::URL::parse(&url_str_copy);
         {
             // The unconditional
             // `progress.end()` below is sufficient: no fallible call sits between
@@ -1549,7 +1549,7 @@ pub(crate) fn download_to_path(
             // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
-            let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
+            let http_proxy: Option<bun_core::url::URL<'_>> = env.get_http_proxy_for(&url);
             let progress = refresher.start(b"Downloading", 0);
 
             let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
@@ -1819,7 +1819,7 @@ pub fn to_executable(
                 )));
             }
         };
-        let dest_path = if bun_paths::is_absolute(outfile) {
+        let dest_path = if bun_core::paths::is_absolute(outfile) {
             outfile
         } else {
             path::resolve_path::join_abs_string::<path::platform::Auto>(cwd_path, &[outfile])
@@ -1928,7 +1928,7 @@ pub fn to_executable(
         };
         let mut temp_posix_buf = PathBuffer::uninit();
         let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
-        let outfile_basename = bun_paths::basename(outfile);
+        let outfile_basename = bun_core::paths::basename(outfile);
         let mut outfile_posix_buf = PathBuffer::uninit();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
 
@@ -1939,7 +1939,7 @@ pub fn to_executable(
 
             let _ = Syscall::unlink(temp_posix);
 
-            if e.get_errno() == bun_errno::SystemErrno::EISDIR {
+            if e.get_errno() == bun_core::errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
                     bstr::BStr::new(outfile)
@@ -2099,7 +2099,7 @@ impl StandaloneModuleGraph {
                     return;
                 }
 
-                let page: usize = bun_alloc::page_size();
+                let page: usize = bun_core::alloc_impl::page_size();
                 let start = (base as usize) & !(page - 1);
                 let end_unaligned = base as usize + len;
                 let end = (end_unaligned + page - 1) & !(page - 1);

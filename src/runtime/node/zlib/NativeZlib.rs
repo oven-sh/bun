@@ -32,16 +32,16 @@ mod _impl {
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
     /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-    /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
+    /// `ref`/`deref` are provided by `bun_core::ptr::IntrusiveRc<NativeZlib>`; when the count hits
     /// zero it invokes [`NativeZlib::deinit`].
     #[bun_jsc::JsClass]
-    #[derive(bun_ptr::CellRefCounted)]
+    #[derive(bun_core::ptr::CellRefCounted)]
     #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
         pub ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
-        pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
@@ -93,7 +93,7 @@ mod _impl {
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
-                global_this: bun_ptr::BackRef::new(global),
+                global_this: bun_core::ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

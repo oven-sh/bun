@@ -704,7 +704,7 @@ impl ErrorDeferred {
             deferred: Box<ErrorDeferred>,
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
             // enqueued task (VM-owned), so a `BackRef` captures the invariant.
-            global_this: bun_ptr::BackRef<JSGlobalObject>,
+            global_this: bun_core::ptr::BackRef<JSGlobalObject>,
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
@@ -720,7 +720,7 @@ impl ErrorDeferred {
 
         let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
-            global_this: bun_ptr::BackRef::new(global_this),
+            global_this: bun_core::ptr::BackRef::new(global_this),
         }));
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of

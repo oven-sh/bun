@@ -3,12 +3,13 @@
 
 use crate::Error;
 use bun_ast::StoreRef;
-use bun_collections::IntegerBitSet;
+use bun_core::collections::IntegerBitSet;
 use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self, path_buffer_pool};
+#[allow(unused_imports)]
+use bun_core::paths::{self, path_buffer_pool};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
@@ -397,7 +398,7 @@ impl InitCommand {
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building.
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
                 let size: u64 = 'brk: {
@@ -538,7 +539,7 @@ impl InitCommand {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
                     }
-                    let ext = bun_paths::extension(file.name.slice_u8());
+                    let ext = bun_core::paths::extension(file.name.slice_u8());
                     let Some(loader) = bun_ast::Loader::from_string(ext) else {
                         continue;
                     };
@@ -678,14 +679,14 @@ impl InitCommand {
             let mut needed_dependencies = IntegerBitSet::<64>::init_empty();
             let mut needed_dev_dependencies = IntegerBitSet::<64>::init_empty();
             needed_dependencies.set_range_value(
-                bun_collections::bit_set::Range {
+                bun_core::collections::bit_set::Range {
                     start: 0,
                     end: dependencies.len(),
                 },
                 true,
             );
             needed_dev_dependencies.set_range_value(
-                bun_collections::bit_set::Range {
+                bun_core::collections::bit_set::Range {
                     start: 0,
                     end: dev_dependencies.len(),
                 },
@@ -873,7 +874,7 @@ impl InitCommand {
 
                 if steps.write_tsconfig {
                     'brk: {
-                        let extname = bun_paths::extension(&fields.entry_point);
+                        let extname = bun_core::paths::extension(&fields.entry_point);
                         let loader = options::DEFAULT_LOADERS
                             .get(extname)
                             .copied()
@@ -1399,7 +1400,7 @@ impl Template {
     pub(crate) fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<(), Error> {
         type Rope = bun_ast::E::Rope;
         fields.name = self.name().to_vec();
@@ -1411,7 +1412,7 @@ impl Template {
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
-            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
+            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_core::alloc_impl::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,
         })?;
         let the_scripts = self.scripts();
@@ -1686,7 +1687,7 @@ impl Template {
                 )
             };
             if let Err(err) = result {
-                if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST)) {
+                if matches!(err, crate::Error::Sys(bun_core::errno::SystemErrno::EEXIST)) {
                     bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",
                         bstr::BStr::new(path),
@@ -1950,7 +1951,7 @@ pub(crate) fn exists(path: &[u8]) -> bool {
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !bun_paths::is_absolute_loose(path)
+    !bun_core::paths::is_absolute_loose(path)
         && !path
             .split(|&c| c == b'/' || c == b'\\')
             .any(|seg| seg == b"..")

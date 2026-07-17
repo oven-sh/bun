@@ -1,4 +1,4 @@
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 
 /// The underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
@@ -17,7 +17,7 @@ impl IndexStringMap {
         &mut self,
         index: IndexInt,
         value: impl AsRef<[u8]>,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let duped = Box::<[u8]>::from(value.as_ref());
         // errdefer arena.free(duped) — deleted: `duped` is Drop, `?` handles cleanup.
         self.map.insert(index, duped);

@@ -22,7 +22,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_core::collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
@@ -178,7 +178,7 @@ pub fn init_global(
         // Dupe to keep Box<[u8]> ownership uniform.
         global.top_level_dir = Box::<[u8]>::from(dir);
     } else if global.top_level_dir.is_empty() {
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_core::paths::PathBuffer::uninit();
         match sys::getcwd(&mut buf[..]) {
             Ok(len) => {
                 global.top_level_dir = Box::<[u8]>::from(&buf[..len]);

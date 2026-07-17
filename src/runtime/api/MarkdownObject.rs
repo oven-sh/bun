@@ -581,7 +581,7 @@ impl<'a> ParseRenderer<'a> {
         marked_args: &'a mut MarkedArgumentBuffer,
         heading_ids: bool,
         react_version: Option<u8>,
-    ) -> Result<ParseRenderer<'a>, bun_alloc::AllocError> {
+    ) -> Result<ParseRenderer<'a>, bun_core::alloc_impl::AllocError> {
         let mut self_ = ParseRenderer {
             global_object,
             marked_args,
@@ -594,7 +594,7 @@ impl<'a> ParseRenderer<'a> {
         };
         // Root entry — its children array becomes the return value
         let root_array =
-            JSValue::create_empty_array(global_object, 0).map_err(|_| bun_alloc::AllocError)?;
+            JSValue::create_empty_array(global_object, 0).map_err(|_| bun_core::alloc_impl::AllocError)?;
         self_.marked_args.append(root_array);
         self_.stack.push(ParseStackEntry {
             children: root_array,
@@ -1146,7 +1146,7 @@ impl<'a> JsCallbackRenderer<'a> {
         global_object: &'a JSGlobalObject,
         src_text: &'a [u8],
         heading_ids: bool,
-    ) -> Result<JsCallbackRenderer<'a>, bun_alloc::AllocError> {
+    ) -> Result<JsCallbackRenderer<'a>, bun_core::alloc_impl::AllocError> {
         let mut self_ = JsCallbackRenderer {
             global_object,
             src_text,
@@ -1208,7 +1208,7 @@ impl<'a> JsCallbackRenderer<'a> {
     // Content stack operations
     // ========================================
 
-    fn append_to_top(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn append_to_top(&mut self, data: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         if let Some(top) = self.stack.last_mut() {
             top.buffer.extend_from_slice(data);
         }

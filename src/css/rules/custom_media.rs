@@ -2,7 +2,7 @@ use crate::css_rules::Location;
 use crate::media_query::MediaList;
 use crate::values::ident::{DashedIdent, DashedIdentFns};
 use crate::{PrintErr, Printer};
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 
 /// A [@custom-media](https://drafts.csswg.org/mediaqueries-5/#custom-mq) rule.
 pub struct CustomMediaRule {

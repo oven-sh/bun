@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -27,7 +27,7 @@ pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
 use sys::Stdio as FdStdio;
 
 // `const log = bun.sys.syslog;`
-bun_output::define_scoped_log!(log, SYS, visible);
+bun_core::define_scoped_log!(log, SYS, visible);
 
 /// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]

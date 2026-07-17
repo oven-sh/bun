@@ -4,7 +4,7 @@ use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
-use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
+use bun_core::collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -17,15 +17,15 @@ use bun_core::ZigStringSlice;
 use bun_core::strings;
 use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
-use bun_paths::resolve_path;
-use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
-use bun_ptr::Interned;
+use bun_core::paths::resolve_path;
+use bun_core::paths::string_paths::without_leading_path_separator;
+use bun_core::paths::{self as bun_path, PathBuffer};
+use bun_core::ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
 // Debug log scope for test-runner entrypoint loading.
-bun_output::declare_scope!(bun_test, hidden);
+bun_core::declare_scope!(bun_test, hidden);
 
 // ─── coverage façade ────────────────────────────────────────────────────────
 // Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
@@ -2033,8 +2033,8 @@ impl TestCommand {
         let mut snapshot_file_buf: Vec<u8> = Vec::new();
         // `Snapshots::ValuesHashMap` would be an inherent associated type alias
         // (unstable in Rust); spell out the underlying map instead.
-        let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
-            bun_collections::HashMap::new();
+        let mut snapshot_values: bun_core::collections::HashMap<u64, Box<[u8]>> =
+            bun_core::collections::HashMap::new();
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
@@ -2051,7 +2051,7 @@ impl TestCommand {
                     .map(|b| {
                         // SAFETY: backing bytes are owned by `ctx.test_options`
                         // (process-lifetime) and `exec()` never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                        unsafe { bun_core::ptr::detach_lifetime::<u8>(b) }
                     })
                     .collect()
             });
@@ -2061,7 +2061,7 @@ impl TestCommand {
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .map(|b| unsafe { bun_core::ptr::detach_lifetime::<u8>(b) })
             .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process
@@ -2078,7 +2078,7 @@ impl TestCommand {
                 // in this never-returning frame.
                 concurrent_test_glob: concurrent_test_glob_view
                     .as_deref()
-                    .map(|s| unsafe { bun_ptr::detach_lifetime(s) }),
+                    .map(|s| unsafe { bun_core::ptr::detach_lifetime(s) }),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
@@ -2100,16 +2100,16 @@ impl TestCommand {
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit).
-                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
+                    file_buf: unsafe { bun_core::ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
+                    values: unsafe { bun_core::ptr::detach_lifetime_mut(&mut snapshot_values) },
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
+                    counts: unsafe { bun_core::ptr::detach_lifetime_mut(&mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     inline_snapshots_to_write: unsafe {
-                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
+                        bun_core::ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
                     },
                     last_error_snapshot_name: None,
                 },
@@ -2126,7 +2126,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
+                test_options: unsafe { bun_core::ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
@@ -2264,10 +2264,10 @@ impl TestCommand {
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
-            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+            unsafe { bun_core::ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
-                if bun_paths::is_absolute(arg)
+                if bun_core::paths::is_absolute(arg)
                     || strings::starts_with(arg, b"./")
                     || strings::starts_with(arg, b"../")
                     || (cfg!(windows)
@@ -2327,7 +2327,7 @@ impl TestCommand {
                     .map(|b| {
                         // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
                         // and this frame never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                        unsafe { bun_core::ptr::detach_lifetime::<u8>(&**b) }
                     })
                     .collect()
             };
@@ -2356,7 +2356,7 @@ impl TestCommand {
                 // in this frame. Sound only because this frame never returns
                 // (every exit path is `global_exit()`), so the storage Vec is
                 // never dropped while `scanner.filter_names` is observed.
-                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                .map(|b| unsafe { bun_core::ptr::detach_lifetime::<u8>(b) })
                 .collect();
             #[cfg(not(windows))]
             let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
@@ -2367,7 +2367,7 @@ impl TestCommand {
             // and the underlying bytes are either in `ctx` (process-lifetime)
             // or in `filter_names_normalized_storage` above.
             scanner.filter_names =
-                unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
+                unsafe { bun_core::ptr::detach_lifetime(&filter_names_normalized[..]) };
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
@@ -3146,7 +3146,7 @@ impl TestCommand {
                 );
             }
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 bun_test,
                 "loadEntryPointForTestRunner(\"{}\")",
                 bstr::BStr::new(file_path)

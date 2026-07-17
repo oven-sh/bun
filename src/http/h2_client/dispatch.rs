@@ -7,7 +7,7 @@ use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
-use bun_picohttp as picohttp;
+use bun_core::picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 

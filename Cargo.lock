@@ -141,6 +141,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
+ "bun_core",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -182,7 +183,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
+ "bun_macros",
  "bun_perf",
  "bun_ptr",
  "bun_sys",
@@ -336,7 +337,6 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_css",
- "bun_dispatch",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
@@ -346,6 +346,7 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
+ "bun_macros",
  "bun_md",
  "bun_opaque",
  "bun_options_types",
@@ -454,8 +455,8 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_clap_macros",
  "bun_core",
+ "bun_macros",
  "const_format",
  "enum-map",
  "enumset",
@@ -463,16 +464,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_clap_macros"
-version = "0.0.0"
-dependencies = [
- "bun_output_tags",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -522,16 +513,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_core_macros"
-version = "0.0.0"
-dependencies = [
- "bun_output_tags",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "bun_crash_handler"
 version = "0.0.0"
 dependencies = [
@@ -542,9 +523,9 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_errno",
  "bun_io",
+ "bun_macros",
  "bun_options_types",
  "bun_ptr",
  "bun_sys",
@@ -590,8 +571,8 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_css_derive",
  "bun_io",
+ "bun_macros",
  "bun_ptr",
  "bun_wyhash",
  "const_format",
@@ -602,15 +583,6 @@ dependencies = [
  "strum",
  "thiserror",
  "typed-arena",
-]
-
-[[package]]
-name = "bun_css_derive"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -634,15 +606,6 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
-]
-
-[[package]]
-name = "bun_dispatch"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -675,8 +638,8 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_errno",
+ "bun_macros",
  "bun_sys",
  "bun_which",
  "bun_wyhash",
@@ -715,9 +678,9 @@ dependencies = [
  "bstr",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_dotenv",
  "bun_io",
+ "bun_macros",
  "bun_ptr",
  "bun_sys",
  "bun_threading",
@@ -772,6 +735,7 @@ dependencies = [
 name = "bun_hash"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_highway",
 ]
 
@@ -803,7 +767,6 @@ dependencies = [
  "bun_brotli",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",
@@ -811,6 +774,7 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
+ "bun_macros",
  "bun_picohttp",
  "bun_ptr",
  "bun_sys",
@@ -1016,8 +980,8 @@ dependencies = [
  "bstr",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_errno",
+ "bun_macros",
  "bun_opaque",
  "bun_ptr",
  "bun_spawn_sys",
@@ -1046,9 +1010,9 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
- "bun_dispatch",
  "bun_highway",
  "bun_io",
+ "bun_macros",
  "bun_options_types",
  "bun_ptr",
  "bun_react_compiler",
@@ -1151,7 +1115,7 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_jsc_macros",
+ "bun_macros",
  "bun_opaque",
  "bun_options_types",
  "bun_patch",
@@ -1177,15 +1141,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_jsc_macros"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -1218,6 +1173,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_core",
  "bun_opaque",
  "const_format",
  "enum-map",
@@ -1452,7 +1408,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
- "bun_core_macros",
+ "bun_macros",
  "const_format",
  "enum-map",
  "enumset",
@@ -1858,10 +1814,10 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_crash_handler",
- "bun_dispatch",
  "bun_errno",
  "bun_event_loop",
  "bun_io",
+ "bun_macros",
  "bun_opaque",
  "bun_output",
  "bun_ptr",
@@ -2077,7 +2033,7 @@ dependencies = [
  "bstr",
  "bun_boringssl",
  "bun_core",
- "bun_jsc_macros",
+ "bun_macros",
  "bun_opaque",
  "bun_ptr",
  "bun_uws_sys",

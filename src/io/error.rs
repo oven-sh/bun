@@ -9,7 +9,7 @@ pub enum Error {
     #[error("Unexpected")]
     Unexpected,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
 }
 
 impl Error {

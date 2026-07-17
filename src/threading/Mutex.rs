@@ -99,7 +99,7 @@ impl Mutex {
     pub fn lock_guard(&self) -> MutexGuard {
         self.lock();
         MutexGuard {
-            mutex: bun_ptr::BackRef::new(self),
+            mutex: bun_core::ptr::BackRef::new(self),
             _not_send: core::marker::PhantomData,
         }
     }
@@ -113,7 +113,7 @@ impl Mutex {
 /// `lock_guard()`: the mutex outlives this guard (always true when the guard
 /// is a local that drops before the owning struct).
 pub struct MutexGuard {
-    mutex: bun_ptr::BackRef<Mutex>,
+    mutex: bun_core::ptr::BackRef<Mutex>,
     // Preserve the previous `!Send`/`!Sync` auto-trait surface (the field was
     // `*const Mutex`): the Darwin `os_unfair_lock` / Windows `SRWLOCK` backends
     // require unlock on the locking thread.

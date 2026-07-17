@@ -1,4 +1,4 @@
-use bun_paths::strings;
+use bun_core::paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -6,7 +6,7 @@ use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{WStr, ZStr, ZigString};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
+use bun_core::paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
@@ -823,7 +823,7 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
-                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
+                let buf = bun_core::base64::simdutf_encode_url_safe_alloc(input);
                 Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
@@ -1005,11 +1005,11 @@ impl PathLikeExt for PathLike {
             // Anything over-long falls through to the plain copy at the
             // bottom, which fits without the prefix (or takes the too-long
             // fallback) and fails at the syscall.
-            if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
+            if bun_core::paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
                 if sliced.len() > 2
-                    && bun_paths::is_drive_letter(sliced[0])
+                    && bun_core::paths::is_drive_letter(sliced[0])
                     && sliced[1] == b':'
-                    && bun_paths::is_sep_any(sliced[2])
+                    && bun_core::paths::is_sep_any(sliced[2])
                 {
                     // Add the long path syntax. This affects most of node:fs
                     // Normalize the path directly into buf without an intermediate
@@ -1017,7 +1017,7 @@ impl PathLikeExt for PathLike {
                     // resolveCWDWithExternalBufZ would just memcpy it, making the
                     // temporary allocation unnecessary.
                     buf[0..4].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
-                    let n = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+                    let n = bun_core::paths::resolve_path::normalize_buf::<bun_core::paths::platform::Windows>(
                         sliced,
                         &mut buf[4..],
                     )
@@ -1028,12 +1028,12 @@ impl PathLikeExt for PathLike {
                 }
                 // reshaped for borrowck — capture the length so
                 // the `Ok` borrow ends at the match, then re-derive.
-                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
+                let resolved_len = match bun_core::paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
                     Ok(res) => Some(res.len()),
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
+                    Err(bun_core::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG)) => None,
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
@@ -1116,16 +1116,16 @@ impl PathLikeExt for PathLike {
         #[cfg(windows)]
         {
             let s = self.slice();
-            let mut b = bun_paths::path_buffer_pool::get();
+            let mut b = bun_core::paths::path_buffer_pool::get();
             // RAII guard puts back on Drop.
 
             // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
             // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
             if s.len() >= 4
-                && bun_paths::is_sep_any(s[0])
-                && bun_paths::is_sep_any(s[1])
+                && bun_core::paths::is_sep_any(s[0])
+                && bun_core::paths::is_sep_any(s[1])
                 && (s[2] == b'.' || s[2] == b'?')
-                && bun_paths::is_sep_any(s[3])
+                && bun_core::paths::is_sep_any(s[3])
             {
                 if !strings::fits_in_wide_path_buffer(s) {
                     return Err(NameTooLong);
@@ -1137,7 +1137,7 @@ impl PathLikeExt for PathLike {
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, s));
             }
-            if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
+            if !s.is_empty() && bun_core::paths::is_sep_any(s[0]) {
                 // Bail before the cwd resolution + normalization below write
                 // into fixed u8 buffers: UNC-shaped inputs pass through the
                 // resolver untouched and can reach `normalize_buf` at full
@@ -1148,17 +1148,17 @@ impl PathLikeExt for PathLike {
                 }
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
                 // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
+                let resolve = match bun_core::paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
                     buf, s,
                 ) {
                     Ok(r) => r,
                     // The cwd root + path don't fit the resolution buffer
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
+                    Err(bun_core::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
-                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+                let normal = bun_core::paths::resolve_path::normalize_buf::<bun_core::paths::platform::Windows>(
                     resolve,
                     &mut b[..],
                 );
@@ -1176,9 +1176,9 @@ impl PathLikeExt for PathLike {
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
-            let normal = bun_paths::resolve_path::normalize_string_buf::<
+            let normal = bun_core::paths::resolve_path::normalize_string_buf::<
                 true,
-                bun_paths::platform::Windows,
+                bun_core::paths::platform::Windows,
                 false,
             >(s, &mut b[..]);
             if !strings::fits_in_wide_path_buffer(normal) {
@@ -1707,7 +1707,7 @@ impl FileSystemFlags {
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(bun_core::libuv_sys::O::to_bun_o(flags))));
             }
             #[cfg(not(windows))]
             {
@@ -1875,7 +1875,7 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
+        use bun_core::libuv_sys::{
             UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
             UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
         };

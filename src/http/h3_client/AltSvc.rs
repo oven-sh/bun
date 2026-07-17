@@ -12,7 +12,7 @@
 //! honored; cross-host alternatives need extra certificate-authority checks
 //! (RFC 7838 §2.1) that are out of scope here.
 
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::{strings, time::timestamp};
 
 use crate::h3_client::h3_client;

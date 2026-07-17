@@ -1,17 +1,17 @@
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 
 use crate::IndexStringMap::IndexInt;
 
-/// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
+/// Abstracts over the two structurally-identical `Path` ports (`bun_core::paths::fs::Path`
 /// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
 /// the crates converge. Both expose `.text: &[u8]`, which is all we need.
 pub trait PathLike {
     fn path_text(&self) -> &[u8];
 }
 
-// `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
+// `bun_resolver::fs::Path` is now a re-export of `bun_core::paths::fs::Path` (D090),
 // so a single impl covers both.
-impl PathLike for bun_paths::fs::Path<'_> {
+impl PathLike for bun_core::paths::fs::Path<'_> {
     #[inline]
     fn path_text(&self) -> &[u8] {
         self.text
@@ -30,7 +30,7 @@ pub type Map = StringHashMap<IndexInt>;
 
 /// std `HashMap::entry` doesn't expose
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
-pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
+pub(crate) type GetOrPutResult<'a> = bun_core::collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
     pub fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
@@ -45,14 +45,14 @@ impl PathToSourceIndexMap {
         &mut self,
         path: &impl PathLike,
         value: IndexInt,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.put(path.path_text(), value)
     }
 
     // Takes `&[u8]` (not `impl AsRef<[u8]>`)
     // to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
-    pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
-        // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
+    pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_core::alloc_impl::AllocError> {
+        // PERF: bun_core::collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
         self.map.put(text, value)
     }
@@ -60,14 +60,14 @@ impl PathToSourceIndexMap {
     pub fn get_or_put_path(
         &mut self,
         path: &impl PathLike,
-    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+    ) -> Result<GetOrPutResult<'_>, bun_core::alloc_impl::AllocError> {
         self.get_or_put(path.path_text())
     }
 
     pub fn get_or_put(
         &mut self,
         text: impl AsRef<[u8]>,
-    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+    ) -> Result<GetOrPutResult<'_>, bun_core::alloc_impl::AllocError> {
         // PERF: see note in `put` re: key duplication.
         self.map.get_or_put(text.as_ref())
     }

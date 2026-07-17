@@ -4,7 +4,7 @@ use crate::InternalLoopData;
 use crate::Timespec;
 
 #[cfg(windows)]
-use bun_libuv_sys as uv;
+use bun_core::libuv_sys as uv;
 
 bun_core::declare_scope!(Loop, visible);
 

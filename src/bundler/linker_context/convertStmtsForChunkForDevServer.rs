@@ -1,14 +1,14 @@
 use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::{AllocError, Arena as Bump};
+use bun_core::alloc_impl::ArenaVecExt as _;
+use bun_core::alloc_impl::{AllocError, Arena as Bump};
 use bun_ast as js_ast;
 use bun_ast::ArrayBinding;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
 use bun_ast::{Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
 use bun_ast::{ImportRecordTag, Loader};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
@@ -51,7 +51,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
-    let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
+    let mut esm_decls: bun_core::alloc_impl::ArenaVec<'bump, ArrayBinding> = bun_core::alloc_impl::ArenaVec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
     let input_files = &c.parse_graph().input_files;

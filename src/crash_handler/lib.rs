@@ -32,7 +32,7 @@ pub mod handle_oom;
 pub mod error;
 pub use error::{Error, Result};
 
-/// Link-time target for `bun_alloc::out_of_memory()` — declared
+/// Link-time target for `bun_core::alloc_impl::out_of_memory()` — declared
 /// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
 /// and defined here.
 /// `pub(crate)` so external callers route through the T0 `bun_alloc` entry
@@ -46,7 +46,7 @@ pub(crate) fn out_of_memory() -> ! {
     )
 }
 
-/// `extern "Rust"` symbol resolved by `bun_alloc::out_of_memory()` at link
+/// `extern "Rust"` symbol resolved by `bun_core::alloc_impl::out_of_memory()` at link
 /// time. Lives in `.text` (read-only) so memory corruption cannot redirect it.
 #[doc(hidden)]
 #[unsafe(no_mangle)]
@@ -104,7 +104,7 @@ pub mod debug {
     // and `btjs` re-exports from this module.
     use crate::Error;
     #[cfg(not(windows))]
-    use bun_collections::HashMap;
+    use bun_core::collections::HashMap;
     #[cfg(not(windows))]
     use core::ffi::c_void;
 
@@ -256,7 +256,7 @@ pub mod debug {
             let _ = (address, self.base_address);
             Ok(SymbolInfo {
                 name: b"???".to_vec().into_boxed_slice(),
-                compile_unit_name: bun_paths::basename(&self.name).to_vec().into_boxed_slice(),
+                compile_unit_name: bun_core::paths::basename(&self.name).to_vec().into_boxed_slice(),
                 source_location: None,
             })
         }
@@ -272,7 +272,7 @@ pub mod debug {
                 // rather than erroring, so the caller still prints the address line.
                 return Ok(SymbolInfo {
                     name: b"???".to_vec().into_boxed_slice(),
-                    compile_unit_name: bun_paths::basename(&self.name).to_vec().into_boxed_slice(),
+                    compile_unit_name: bun_core::paths::basename(&self.name).to_vec().into_boxed_slice(),
                     source_location: None,
                 });
             }
@@ -282,10 +282,10 @@ pub mod debug {
                 .to_vec()
                 .into_boxed_slice();
             let compile_unit_name = if info.dli_fname.is_null() {
-                bun_paths::basename(&self.name).to_vec().into_boxed_slice()
+                bun_core::paths::basename(&self.name).to_vec().into_boxed_slice()
             } else {
                 // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-                bun_paths::basename(unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes())
+                bun_core::paths::basename(unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes())
                     .to_vec()
                     .into_boxed_slice()
             };
@@ -302,7 +302,7 @@ pub mod debug {
     #[cfg(not(any(target_vendor = "apple", windows)))]
     fn lookup_module_name_dl(address: usize) -> Option<Box<[u8]>> {
         bun_sys::elf::find_loaded_module(address)
-            .map(|m| bun_paths::basename(&m.name).to_vec().into_boxed_slice())
+            .map(|m| bun_core::paths::basename(&m.name).to_vec().into_boxed_slice())
     }
 
     #[cfg(target_vendor = "apple")]
@@ -315,7 +315,7 @@ pub mod debug {
         }
         // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
         let name = unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes();
-        Some(bun_paths::basename(name).to_vec().into_boxed_slice())
+        Some(bun_core::paths::basename(name).to_vec().into_boxed_slice())
     }
 
     // ── self debug-info singleton ────────────────────────────────────────
@@ -473,8 +473,8 @@ mod draft {
     // both makes `write!` ambiguous (E0034).
     use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-    use bun_base64::VLQ;
-    use bun_collections::BoundedArray;
+    use bun_core::base64::VLQ;
+    use bun_core::collections::BoundedArray;
     use bun_core::strings;
     use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
 
@@ -710,7 +710,7 @@ mod draft {
     }
 
     #[cfg(feature = "show_crash_trace")]
-    bun_dispatch::link_interface! {
+    bun_macros::link_interface! {
         pub BundleGenerateChunkCtx[Linker] {
             fn fmt(chunk: *const (), part_range: *const (), writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result;
         }
@@ -953,7 +953,7 @@ mod draft {
                             {
                                 abort();
                             }
-                        } else if bun_analytics::features::unsupported_uv_function
+                        } else if bun_core::analytics::features::unsupported_uv_function
                             .load(Ordering::Relaxed)
                             > 0
                         {
@@ -1184,7 +1184,7 @@ mod draft {
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
                             ), bstr::BStr::new(native_plugin_name)).is_err() { abort(); }
-                            } else if bun_analytics::features::unsupported_uv_function
+                            } else if bun_core::analytics::features::unsupported_uv_function
                                 .load(Ordering::Relaxed)
                                 > 0
                             {
@@ -1556,7 +1556,7 @@ mod draft {
                 CrashReason::Unreachable
             } else {
                 // SAFETY: process is about to abort; the borrow is never invalidated.
-                CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
+                CrashReason::Panic(unsafe { bun_core::collections::detach_lifetime(msg) })
             },
             match error_return_trace {
                 Some(ert) if ert.index > 0 => TraceSeed::ErrorReturn(ert),
@@ -1758,7 +1758,7 @@ mod draft {
                 // the kernel32 binding, `c_long` == `i32` on Win64.
                 let handle = bun_sys::windows::kernel32::AddVectoredExceptionHandler(
                     0,
-                    bun_ptr::cast_fn_ptr::<
+                    bun_core::ptr::cast_fn_ptr::<
                         extern "system" fn(*mut bun_sys::windows::EXCEPTION_POINTERS) -> c_long,
                         unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                     >(handle_segfault_windows),
@@ -1787,7 +1787,7 @@ mod draft {
     /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
     pub(crate) fn install_hooks() {
         bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
-        // T0 `bun_alloc::out_of_memory()` and `bun_core::dump_current_stack_trace()`
+        // T0 `bun_core::alloc_impl::out_of_memory()` and `bun_core::dump_current_stack_trace()`
         // reach this crate via link-time `extern "Rust"` symbols
         // (`__bun_crash_handler_out_of_memory` / `__bun_crash_handler_dump_stack_trace`)
         // — no runtime registration needed.
@@ -1840,7 +1840,7 @@ mod draft {
         // borrow is fully consumed by the `Display`/`TraceString` writes inside
         // this frame and never escapes.
         let reason =
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
+            CrashReason::Panic(unsafe { bun_core::collections::detach_lifetime(msg_buf.const_slice()) });
 
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
         {
@@ -2100,7 +2100,7 @@ mod draft {
                     target_os = "freebsd",
                     target_os = "macos"
                 ))]
-                let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
+                let platform = bun_core::analytics::GenerateHeader::generate_platform::for_os();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
                 {
                     // SAFETY: gnu_get_libc_version returns a static NUL-terminated string or null
@@ -2112,8 +2112,8 @@ mod draft {
                         unsafe { bun_core::ffi::cstr(version) }.to_bytes()
                     };
                     let kernel_version =
-                        bun_analytics::GenerateHeader::generate_platform::kernel_version();
-                    if platform.os == bun_analytics::schema::analytics::OperatingSystem::Wsl {
+                        bun_core::analytics::GenerateHeader::generate_platform::kernel_version();
+                    if platform.os == bun_core::analytics::schema::analytics::OperatingSystem::Wsl {
                         writeln!(
                             writer,
                             "WSL Kernel v{}.{}.{} | glibc v{}",
@@ -2138,7 +2138,7 @@ mod draft {
                 #[cfg(all(target_os = "linux", target_env = "musl"))]
                 {
                     let kernel_version =
-                        bun_analytics::GenerateHeader::generate_platform::kernel_version();
+                        bun_core::analytics::GenerateHeader::generate_platform::kernel_version();
                     write!(
                         writer,
                         "Linux Kernel v{}.{}.{} | musl\n",
@@ -2149,7 +2149,7 @@ mod draft {
                 #[cfg(target_os = "android")]
                 {
                     let kernel_version =
-                        bun_analytics::GenerateHeader::generate_platform::kernel_version();
+                        bun_core::analytics::GenerateHeader::generate_platform::kernel_version();
                     write!(
                         writer,
                         "Android Kernel v{}.{}.{} | bionic\n",
@@ -2214,7 +2214,7 @@ mod draft {
         }
 
         {
-            write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?;
+            write!(writer, "\n{}", bun_core::analytics::features::formatter()).map_err(fmt_err)?;
         }
         writer.write_all(b"\n")?;
 
@@ -2229,7 +2229,7 @@ mod draft {
             let mut page_faults: usize = 0;
             // SAFETY: all out-pointers are valid
             unsafe {
-                bun_alloc::mimalloc::mi_process_info(
+                bun_core::alloc_impl::mimalloc::mi_process_info(
                     &raw mut elapsed_msecs,
                     &raw mut user_msecs,
                     &raw mut system_msecs,
@@ -2414,7 +2414,7 @@ mod draft {
                         // GetModuleFileNameW output never has a trailing separator
                         // or bare drive prefix, so `basename_windows`'s
                         // stripping is a no-op on this domain.
-                        let basename = bun_paths::basename_windows(name);
+                        let basename = bun_core::paths::basename_windows(name);
                         Some(Box::<[u8]>::from(
                             &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
                         ))
@@ -2592,7 +2592,7 @@ mod draft {
         writer.write_all(VERSION_CHAR.as_bytes())?;
         writer.write_all(GIT_SHA.as_bytes())?;
 
-        let packed_features: u64 = bun_analytics::packed_features().bits();
+        let packed_features: u64 = bun_core::analytics::packed_features().bits();
         write_u64_as_two_vlqs(writer, packed_features as usize)?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
@@ -2630,11 +2630,11 @@ mod draft {
                     }
                     // Insufficient memory.
                     r if r == bun_zlib::ReturnCode::MemError as i32 => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                        return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                     }
                     // The buffer dest was not large enough to hold the compressed data.
                     r if r == bun_zlib::ReturnCode::BufError as i32 => {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+                        return Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC));
                     }
                     // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
                     // This is technically possible but impossible because we pass 9.
@@ -2642,10 +2642,10 @@ mod draft {
                 };
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(compressed) > b64_bytes.len() {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+                if bun_core::base64::encode_len(compressed) > b64_bytes.len() {
+                    return Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC));
                 }
-                let b64_len = bun_base64::encode(&mut b64_bytes, compressed);
+                let b64_len = bun_core::base64::encode(&mut b64_bytes, compressed);
 
                 writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
             }
@@ -2720,7 +2720,7 @@ mod draft {
         }
 
         // Honor DO_NOT_TRACK (and the bunfig telemetry setting)
-        if !bun_analytics::is_enabled() {
+        if !bun_core::analytics::is_enabled() {
             return false;
         }
 
@@ -3012,7 +3012,7 @@ mod draft {
         } else {
             // SAFETY: `err_name` outlives the local `TraceString` it is formatted through.
             let reason =
-                CrashReason::ZigError(unsafe { bun_collections::detach_lifetime(err_name) });
+                CrashReason::ZigError(unsafe { bun_core::collections::detach_lifetime(err_name) });
             let ts = TraceString {
                 trace,
                 reason,
@@ -3315,13 +3315,13 @@ mod draft {
     pub fn append_pre_crash_handler<T: 'static>(
         ptr: *mut T,
         handler: fn(&mut T) -> crate::Result<()>,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         // Rust can't capture `handler` in a bare `fn` item, so box a closure that
         // performs the cast+call. Errors are intentionally swallowed (best-effort dump).
         let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
             // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
             // when registered and remove_pre_crash_handler() unregisters it before drop.
-            let this = unsafe { bun_ptr::callback_ctx::<T>(opaque_ptr) };
+            let this = unsafe { bun_core::ptr::callback_ctx::<T>(opaque_ptr) };
             let _ = handler(this);
         });
 
@@ -3508,9 +3508,9 @@ mod draft {
         // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
         // ingest. The constant is tiny and this path is debug-only — build it once
         // at runtime in a stack BoundedArray (no heap, async-signal-safe).
-        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
+        let mut base_path_buf = BoundedArray::<u8, { bun_core::paths::MAX_PATH_BYTES }>::default();
         let _ = base_path_buf.append_slice(Environment::BASE_PATH);
-        let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
+        let _ = base_path_buf.append_slice(bun_core::paths::SEP_STR.as_bytes());
         let base_path: &[u8] = base_path_buf.const_slice();
         {
             if let Some(sl) = source_location {
@@ -3561,9 +3561,9 @@ mod draft {
                     }
                     Err(
                         crate::Error::EndOfFile
-                        | crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                        | crate::Error::Sys(bun_errno::SystemErrno::EINVAL)
-                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES),
+                        | crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
+                        | crate::Error::Sys(bun_core::errno::SystemErrno::EINVAL)
+                        | crate::Error::Sys(bun_core::errno::SystemErrno::EACCES),
                     ) => {}
                     Err(e) => return Err(e),
                 }
@@ -3738,7 +3738,7 @@ mod draft {
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
     pub(crate) unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
-        bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();
@@ -3767,7 +3767,7 @@ mod draft {
         let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(
             // SAFETY: noreturn — see panic_impl note
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
+            CrashReason::Panic(unsafe { bun_core::collections::detach_lifetime(msg) }),
             TraceSeed::BeginAddr(debug::return_address()),
         );
     }
@@ -3781,7 +3781,7 @@ mod draft {
             // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
             let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
             // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+            let s: &'static [u8] = unsafe { bun_core::collections::detach_lifetime(s) };
             CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
         } else {
             debug_assert!(matches!(

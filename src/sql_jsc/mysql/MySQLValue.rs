@@ -271,7 +271,7 @@ impl Value {
                 return Ok(if s.is_empty() {
                     Data::Empty
                 } else {
-                    Data::Temporary(bun_ptr::RawSlice::new(s))
+                    Data::Temporary(bun_core::ptr::RawSlice::new(s))
                 });
             }
             Value::String(slice) => {
@@ -279,7 +279,7 @@ impl Value {
                 return Ok(if s.is_empty() {
                     Data::Empty
                 } else {
-                    Data::Temporary(bun_ptr::RawSlice::new(s))
+                    Data::Temporary(bun_core::ptr::RawSlice::new(s))
                 });
             }
             Value::Bytes(b) => {
@@ -287,7 +287,7 @@ impl Value {
                 return Ok(if s.is_empty() {
                     Data::Empty
                 } else {
-                    Data::Temporary(bun_ptr::RawSlice::new(s))
+                    Data::Temporary(bun_core::ptr::RawSlice::new(s))
                 });
             }
         }

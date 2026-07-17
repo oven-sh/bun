@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr};
-use bun_paths::resolve_path::{self, Platform, platform};
+use bun_core::paths::resolve_path::{self, Platform, platform};
 use bun_sys::{E, FdExt, dir_iterator};
 
 use crate::shell::ExitCode;
@@ -178,7 +178,7 @@ impl Rm {
 
                             // Check that none of the paths will delete the root.
                             {
-                                let mut buf = bun_paths::PathBuffer::uninit();
+                                let mut buf = bun_core::paths::PathBuffer::uninit();
                                 let cwd = match bun_sys::getcwd_z(&mut buf) {
                                     Ok(c) => c.as_bytes().to_vec(),
                                     Err(err) => {
@@ -322,8 +322,8 @@ impl Rm {
                         };
                         let (sig, out_count) = match &Self::state_mut(interp, cmd).state {
                             RmState::Exec(e) => (
-                                bun_ptr::BackRef::new(&e.error_signal),
-                                bun_ptr::BackRef::new(&e.output_count),
+                                bun_core::ptr::BackRef::new(&e.error_signal),
+                                bun_core::ptr::BackRef::new(&e.output_count),
                             ),
                             _ => unreachable!(),
                         };
@@ -660,10 +660,10 @@ pub struct ShellRmTask {
     pub root_is_absolute: bool,
     /// Backref into `Rm::ExecState.error_signal`; the boxed `Rm` ExecState
     /// outlives every in-flight `ShellRmTask`.
-    pub error_signal: bun_ptr::BackRef<AtomicBool>,
+    pub error_signal: bun_core::ptr::BackRef<AtomicBool>,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
     /// bump it from worker threads.
-    output_count: bun_ptr::BackRef<AtomicUsize>,
+    output_count: bun_core::ptr::BackRef<AtomicUsize>,
     /// Main-thread callbacks that must complete before this task can be freed:
     /// always one for `on_shell_rm_task_done` (via `finish_concurrently`), plus
     /// one per DirTask whose verbose output was queued. Decremented by
@@ -713,8 +713,8 @@ impl ShellRmTask {
         opts: Opts,
         root_path: &[u8],
         cwd: bun_sys::Fd,
-        error_signal: bun_ptr::BackRef<AtomicBool>,
-        output_count: bun_ptr::BackRef<AtomicUsize>,
+        error_signal: bun_core::ptr::BackRef<AtomicBool>,
+        output_count: bun_core::ptr::BackRef<AtomicUsize>,
         is_absolute: bool,
         evtloop: EventLoopHandle,
         interp: *mut Interpreter,
@@ -920,7 +920,7 @@ impl ShellRmTask {
     }
 
     /// Join into `buf` honoring [`join_style`].
-    fn buf_join<'a>(&self, buf: &'a mut bun_paths::PathBuffer, parts: &[&[u8]]) -> &'a ZStr {
+    fn buf_join<'a>(&self, buf: &'a mut bun_core::paths::PathBuffer, parts: &[&[u8]]) -> &'a ZStr {
         if self.join_style == JoinStyle::Posix {
             resolve_path::join_z_buf::<platform::Posix>(buf.as_mut_slice(), parts)
         } else {
@@ -946,7 +946,7 @@ impl ShellRmTask {
                     out.extend_from_slice(p);
                 } else {
                     if !matches!(out.last(), Some(&c) if is_sep(c)) {
-                        out.push(bun_paths::SEP);
+                        out.push(bun_core::paths::SEP);
                     }
                     let p = if matches!(p.first(), Some(&c) if is_sep(c)) {
                         &p[1..]
@@ -977,7 +977,7 @@ impl ShellRmTask {
     /// dereferences `dir_task` to find out.
     fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
         let mut waiting = false;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_core::paths::PathBuffer::uninit();
         // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
@@ -1005,7 +1005,7 @@ impl ShellRmTask {
         &self,
         dir_task: *mut DirTask,
         is_absolute: bool,
-        buf: &mut bun_paths::PathBuffer,
+        buf: &mut bun_core::paths::PathBuffer,
         need_to_wait_out: &mut bool,
     ) -> bun_sys::Maybe<()> {
         // SAFETY: `dir_task` is live; this thread owns it.
@@ -1243,7 +1243,7 @@ impl ShellRmTask {
                     },
                 }
             } else {
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_core::paths::PathBuffer::uninit();
                 self.remove_entry_file(dir_task, path, is_abs, &mut buf, &mut state)?;
                 if state.enqueued {
                     return Ok(false);
@@ -1261,7 +1261,7 @@ impl ShellRmTask {
         parent_dir_task: *mut DirTask,
         path: &ZStr,
         is_absolute: bool,
-        buf: &mut bun_paths::PathBuffer,
+        buf: &mut bun_core::paths::PathBuffer,
         vtable: &mut V,
     ) -> bun_sys::Maybe<()> {
         let dirfd = self.cwd;
@@ -1616,7 +1616,7 @@ trait RemoveFileHandler {
         parent_dir_task: *mut DirTask,
         path: &ZStr,
         is_absolute: bool,
-        buf: &mut bun_paths::PathBuffer,
+        buf: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()>;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn on_dir_not_empty(
@@ -1624,7 +1624,7 @@ trait RemoveFileHandler {
         parent_dir_task: *mut DirTask,
         path: &ZStr,
         is_absolute: bool,
-        buf: &mut bun_paths::PathBuffer,
+        buf: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()>;
 }
 
@@ -1635,7 +1635,7 @@ impl RemoveFileHandler for DummyRemoveFile {
         _: *mut DirTask,
         _: &ZStr,
         _: bool,
-        _: &mut bun_paths::PathBuffer,
+        _: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         Ok(())
     }
@@ -1645,7 +1645,7 @@ impl RemoveFileHandler for DummyRemoveFile {
         _: *mut DirTask,
         _: &ZStr,
         _: bool,
-        _: &mut bun_paths::PathBuffer,
+        _: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         Ok(())
     }
@@ -1667,7 +1667,7 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
         parent: *mut DirTask,
         path: &ZStr,
         is_absolute: bool,
-        buf: &mut bun_paths::PathBuffer,
+        buf: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         if self.child_of_dir {
             self.task.enqueue_no_join(
@@ -1691,7 +1691,7 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
         parent: *mut DirTask,
         path: &ZStr,
         is_absolute: bool,
-        buf: &mut bun_paths::PathBuffer,
+        buf: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         if self.child_of_dir {
             self.task.enqueue_no_join(
@@ -1722,7 +1722,7 @@ impl RemoveFileHandler for RemoveFileParent {
         _: *mut DirTask,
         _: &ZStr,
         _: bool,
-        _: &mut bun_paths::PathBuffer,
+        _: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         self.treat_as_dir = true;
         Ok(())
@@ -1733,7 +1733,7 @@ impl RemoveFileHandler for RemoveFileParent {
         parent: *mut DirTask,
         path: &ZStr,
         _: bool,
-        _: &mut bun_paths::PathBuffer,
+        _: &mut bun_core::paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         self.treat_as_dir = true;
         if self.allow_enqueue {

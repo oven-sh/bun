@@ -1,11 +1,11 @@
 use core::ptr;
 
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::{AllocError, Arena as Bump};
+use bun_core::alloc_impl::ArenaVecExt as _;
+use bun_core::alloc_impl::{AllocError, Arena as Bump};
 // `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use self::StringEncoding as Encoding;
-use bun_alloc::ArenaVec as BumpVec;
+use bun_core::alloc_impl::ArenaVec as BumpVec;
 use bun_core::SmolStr;
 use smallvec::SmallVec;
 
@@ -661,7 +661,7 @@ bun_core::oom_from_alloc!(ParserError);
 impl From<ParserError> for crate::Error {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ParserError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             ParserError::UnexpectedToken => crate::Error::UnexpectedToken,
             ParserError::TooManyBraces => crate::Error::TooManyBraces,
         }

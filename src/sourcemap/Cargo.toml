@@ -42,9 +42,7 @@ bun_io.workspace = true
 # quote_for_json moved down to bun_string, so Chunk::print_source_map_contents*
 # is now un-gated without the cycle.
 bun_ast.workspace = true
-bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_semver.workspace = true
 bun_sys.workspace = true
-bun_url.workspace = true
 bun_zstd.workspace = true

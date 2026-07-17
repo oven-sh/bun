@@ -5,7 +5,7 @@ use bun_ast::{Loc, Log};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
-use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
+use bun_core::semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
 use bun_install::dependency::{self, DependencyExt as _};
 use bun_install::{
@@ -29,7 +29,7 @@ pub struct UpdateRequest {
     /// type map: `[]const u8` struct-field, never freed, points into a buffer
     /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
     /// invariant; see `version_buf()`).
-    pub version_buf: bun_ptr::RawSlice<u8>,
+    pub version_buf: bun_core::ptr::RawSlice<u8>,
     pub package_id: PackageID,
     pub is_aliased: bool,
     pub failed: bool,
@@ -45,7 +45,7 @@ impl Default for UpdateRequest {
             name: b"",
             name_hash: 0,
             version: dependency::Version::default(),
-            version_buf: bun_ptr::RawSlice::EMPTY,
+            version_buf: bun_core::ptr::RawSlice::EMPTY,
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
@@ -162,7 +162,7 @@ impl UpdateRequest {
                 let len = strings::replace(&input, b"\\\\", b"/", &mut temp);
                 let new_len = input.len() - len;
                 let input2 = &mut temp[..new_len];
-                bun_paths::resolve_path::platform_to_posix_in_place(input2);
+                bun_core::paths::resolve_path::platform_to_posix_in_place(input2);
                 input[..new_len].copy_from_slice(input2);
                 input.truncate(new_len);
             }
@@ -273,7 +273,7 @@ impl UpdateRequest {
 
             let mut request = UpdateRequest {
                 version,
-                version_buf: bun_ptr::RawSlice::new(input),
+                version_buf: bun_core::ptr::RawSlice::new(input),
                 ..UpdateRequest::default()
             };
             if let Some(name) = alias {

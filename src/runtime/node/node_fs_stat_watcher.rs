@@ -17,8 +17,8 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool,
     WorkPoolTask,
 };
-use bun_paths::resolve_path::{self as Path, platform};
-use bun_ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
+use bun_core::paths::resolve_path::{self as Path, platform};
+use bun_core::ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
@@ -27,10 +27,10 @@ use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
-bun_output::declare_scope!(StatWatcher, visible);
+bun_core::declare_scope!(StatWatcher, visible);
 
 macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(StatWatcher, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(StatWatcher, $($arg)*) };
 }
 
 fn stat_to_js_stats(
@@ -46,7 +46,7 @@ fn stat_to_js_stats(
 }
 
 /// This is a singleton struct that contains the timer used to schedule re-stat calls.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcherScheduler {
     current_interval: AtomicI32,
@@ -296,7 +296,7 @@ impl StatWatcherScheduler {
             // `ParentRef` preserves the `*mut` provenance for `set_timer` and
             // gives a safe `&StatWatcherScheduler` projection for
             // `get_interval()`.
-            scheduler: bun_ptr::ParentRef<StatWatcherScheduler>,
+            scheduler: bun_core::ptr::ParentRef<StatWatcherScheduler>,
             task: AnyTask,
         }
 
@@ -535,7 +535,7 @@ impl StatWatcherScheduler {
 // (worker-thread-only after init); `persistent`/`poll_ref`/`this_value` are
 // JS-thread-only. Read-only-after-construction fields stay bare.
 #[bun_jsc::JsClass(no_constructor)]
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
     pub next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
@@ -1008,7 +1008,7 @@ impl StatWatcher {
     pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {
         log!("init");
 
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_core::paths::path_buffer_pool::get();
         // guard puts back on Drop
         let mut slice = args.path.slice();
         if strings::starts_with(slice, b"file://") {

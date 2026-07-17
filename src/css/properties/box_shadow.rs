@@ -9,8 +9,8 @@ use crate::css_values::color::CssColor;
 use crate::css_values::length::Length;
 use crate::generics::{CssEql, DeepClone, IsCompatible};
 use crate::prefixes::Feature;
-use bun_alloc::Arena;
-use bun_alloc::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate)
+use bun_core::alloc_impl::Arena;
+use bun_core::alloc_impl::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate)
 
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
 pub struct BoxShadow {

@@ -6,11 +6,11 @@ use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
 };
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -26,8 +26,8 @@ use bun_ast::StmtNodeList;
 // existing backing storage, so we copy. The arena
 // reclaims both at end-of-parse.
 #[inline]
-fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
-    bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
+fn stmts_to_list<'a>(arena: &'a bun_core::alloc_impl::Arena, ptr: StmtNodeList) -> StmtList<'a> {
+    bun_core::alloc_impl::vec_from_iter_in(ptr.iter().copied(), arena)
 }
 #[inline]
 fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
@@ -1500,7 +1500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // here, so copy then clear.
                         let repl: &[Stmt] = p.commonjs_replacement_stmts.slice();
                         if stmts.is_empty() {
-                            *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.arena);
+                            *stmts = bun_core::alloc_impl::vec_from_iter_in(repl.iter().copied(), p.arena);
                         } else {
                             stmts.extend_from_slice(repl);
                         }

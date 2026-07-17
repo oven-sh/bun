@@ -1,9 +1,9 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use std::io::Write as _;
 
 use crate::Error;
 use crate::cli::ci_info as ci;
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -15,14 +15,14 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
-use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_paths::{self as path, PathBuffer};
+use bun_core::paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
+use bun_core::paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
-use bun_simdutf_sys::simdutf;
+use bun_core::simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
-use bun_url::URL;
+use bun_core::url::URL;
 // `LogLevel`/`AuthType`/`Access` from `bun_install::PackageManagerOptions`.
 use bun_ast::expr::Data as ExprData;
 use bun_core::OSPathChar;
@@ -40,7 +40,7 @@ use crate::api::bun_process::sync as spawn_sync;
 #[inline]
 fn json_get_string_cloned<'b>(
     expr: &bun_ast::Expr,
-    bump: &'b bun_alloc::Arena,
+    bump: &'b bun_core::alloc_impl::Arena,
     name: &[u8],
 ) -> Result<Option<&'b [u8]>, AllocError> {
     match expr.as_property(name) {
@@ -216,7 +216,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             total_files += usize::from(next.kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            if let Some(slash) = pathname.iter().position(|&c| bun_paths::is_sep_any_t(c)) {
+            if let Some(slash) = pathname.iter().position(|&c| bun_core::paths::is_sep_any_t(c)) {
                 let stripped = &pathname[slash + 1..];
                 if stripped.is_empty() {
                     continue;
@@ -237,7 +237,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                if !stripped.iter().any(|&c| bun_paths::is_sep_any_t(c)) {
+                if !stripped.iter().any(|&c| bun_core::paths::is_sep_any_t(c)) {
                     // check for package.json, readme.md, ...
                     let filename = &pathname[slash + 1..];
 
@@ -330,14 +330,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // alive across `normalized_package`. Zero-copy.
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         let (package_name, package_version, json, json_source) = {
             let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
             let log = manager.log_mut();
             let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
                 Err(e) => {
-                    if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
+                    if e == bun_parsers::Error::Alloc(bun_core::alloc_impl::AllocError) {
                         return Err(FromTarballError::OutOfMemory);
                     }
                     return Err(FromTarballError::InvalidPackageJSON);
@@ -479,7 +479,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if cause.value == bun_install::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
@@ -713,7 +713,7 @@ impl PublishCommand {
             script_env
                 .map
                 .put(b"npm_command", b"publish")
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
 
             // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
@@ -859,7 +859,7 @@ impl PublishCommand {
         // Parse the response to check if this specific version exists
         let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
         let mut log = bun_ast::Log::init();
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
             return false;
         };
@@ -977,7 +977,7 @@ impl PublishCommand {
         let res = match req.send_sync() {
             Ok(r) => r,
             Err(e) => {
-                if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
+                if e == bun_http::Error::Alloc(bun_core::alloc_impl::AllocError) {
                     return Err(PublishError::OutOfMemory);
                 }
                 Output::err(e, "failed to publish package", ());
@@ -1074,7 +1074,7 @@ impl PublishCommand {
                 let otp_res = match otp_req.send_sync() {
                     Ok(r) => r,
                     Err(e) => {
-                        if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
+                        if e == bun_http::Error::Alloc(bun_core::alloc_impl::AllocError) {
                             return Err(PublishError::OutOfMemory);
                         }
                         Output::err(e, "failed to publish package", ());
@@ -1147,14 +1147,14 @@ impl PublishCommand {
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         let manager_log: &mut bun_ast::Log = ctx.manager.log_mut();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
             Ok(j) => Some(j),
             Err(e) => {
-                if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
+                if e == bun_parsers::Error::Alloc(bun_core::alloc_impl::AllocError) {
                     return Err(GetOTPError::OutOfMemory);
                 }
                 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-registry-fetch/lib/check-response.js#L65
@@ -1293,7 +1293,7 @@ impl PublishCommand {
                     let res = match req.send_sync() {
                         Ok(r) => r,
                         Err(e) => {
-                            if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
+                            if e == bun_http::Error::Alloc(bun_core::alloc_impl::AllocError) {
                                 return Err(GetOTPError::OutOfMemory);
                             }
                             Output::err(e, "failed to send OTP request", ());
@@ -1326,7 +1326,7 @@ impl PublishCommand {
                         }
                         200 => {
                             // login successful
-                            let done_bump = bun_alloc::Arena::new();
+                            let done_bump = bun_core::alloc_impl::Arena::new();
                             let otp_done_source = bun_ast::Source::init_path_string(
                                 b"???",
                                 response_buf.list.as_slice(),
@@ -1338,7 +1338,7 @@ impl PublishCommand {
                             ) {
                                 Ok(j) => j,
                                 Err(e) => {
-                                    if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
+                                    if e == bun_parsers::Error::Alloc(bun_core::alloc_impl::AllocError) {
                                         return Err(GetOTPError::OutOfMemory);
                                     }
                                     Output::err("WebLogin", "failed to parse response json", ());
@@ -1411,7 +1411,7 @@ impl PublishCommand {
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         // Note: `E::String` stores `&'static [u8]` (lifetime erased per the
         // parser's Str convention); dupe formatted buffers into the
         // process-lifetime CLI arena so they outlive the AST nodes through printing.
@@ -1569,7 +1569,7 @@ impl PublishCommand {
         ) {
             Ok(w) => w,
             Err(e) => {
-                if e == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
+                if e == bun_js_printer::Error::Alloc(bun_core::alloc_impl::AllocError) {
                     return Err(AllocError);
                 }
                 Output::err_generic("failed to print normalized package.json: {}", (e.name(),));
@@ -1615,7 +1615,7 @@ impl PublishCommand {
 
     fn normalize_bin(
         json: &mut Expr,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         package_name: &[u8],
         workspace_root: Fd,
     ) -> Result<(), AllocError> {
@@ -1852,7 +1852,7 @@ impl PublishCommand {
 
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
-                                E::String::init(leak!(bun_paths::basename_posix(
+                                E::String::init(leak!(bun_core::paths::basename_posix(
                                     subpath.as_bytes()
                                 ))),
                                 bun_ast::Loc::EMPTY,

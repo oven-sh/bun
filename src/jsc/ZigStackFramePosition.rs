@@ -23,9 +23,9 @@ impl ZigStackFramePosition {
         *self == Self::INVALID
     }
 
-    pub fn decode<R>(reader: &mut R) -> Result<Self, bun_analytics::Error>
+    pub fn decode<R>(reader: &mut R) -> Result<Self, bun_core::analytics::Error>
     where
-        R: ?Sized + bun_analytics::Reader,
+        R: ?Sized + bun_core::analytics::Reader,
     {
         Ok(Self {
             line: Ordinal::from_zero_based(reader.read_value::<i32>()?),

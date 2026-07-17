@@ -1,4 +1,4 @@
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::strings;
 use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
@@ -36,7 +36,7 @@ impl HmrSocket {
             false
         };
         Box::new(HmrSocket {
-            dev: bun_ptr::BackRef::new_mut(dev),
+            dev: bun_core::ptr::BackRef::new_mut(dev),
             is_from_localhost,
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
@@ -283,7 +283,7 @@ impl HmrSocket {
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {
-                    let arena = bun_alloc::Arena::new();
+                    let arena = bun_core::alloc_impl::Arena::new();
                     let data = super::error_report_request::sanitize_for_terminal(data, &arena);
                     match kind {
                         ConsoleLogKind::Log => {

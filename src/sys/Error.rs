@@ -542,7 +542,7 @@ pub trait ReturnCodeExt: Sized {
         self.to_error(syscall_tag)
     }
     /// Translate the negative libuv errno to `bun.sys.E`.
-    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
+    /// `bun_core::libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
     /// (layering: it can't name `E`); this overlay yields the typed enum.
     fn err_enum_e(self) -> Option<crate::E>;
 }

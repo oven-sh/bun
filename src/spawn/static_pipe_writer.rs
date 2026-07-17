@@ -5,13 +5,13 @@ use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedWriter, WriteStatus};
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
+use bun_core::ptr::{IntrusiveRc, RawSlice, RefCount};
 use bun_sys;
 
 use crate::process::StdioKind;
 use crate::subprocess::{Source, StdioResult};
 
-bun_output::declare_scope!(StaticPipeWriter, hidden);
+bun_core::declare_scope!(StaticPipeWriter, hidden);
 
 /// Trait bound for the owning process type `P` of [`StaticPipeWriter`].
 ///
@@ -32,9 +32,9 @@ pub trait StaticPipeWriterProcess {
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
 // Cleanup lives in `impl Drop` below; the final Box free is
 // the derive's default destructor (`drop(heap::take(this))`).
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
-    /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::RefCount`.
+    /// Intrusive refcount; `ref`/`deref` provided via `bun_core::ptr::RefCount`.
     pub ref_count: RefCount<Self>,
     pub writer: IOWriter<P>,
     pub stdio_result: StdioResult,
@@ -97,7 +97,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn close(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) close()",
             std::ptr::from_ref(self) as usize
@@ -157,7 +157,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn start(&mut self) -> bun_sys::Result<()> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
@@ -211,7 +211,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
             std::ptr::from_ref(self) as usize,
@@ -242,7 +242,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn on_error(&mut self, err: &bun_sys::Error) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
             std::ptr::from_ref(self) as usize,
@@ -259,7 +259,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn on_close(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",
             std::ptr::from_ref(self) as usize

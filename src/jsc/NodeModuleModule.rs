@@ -55,7 +55,7 @@ fn find_path(
     let request_slice = request_bun_str.to_utf8();
     let request = request_slice.slice();
 
-    let absolute_request = bun_paths::is_absolute(request);
+    let absolute_request = bun_core::paths::is_absolute(request);
     if !absolute_request && paths_maybe.is_none() {
         return Ok(JSValue::FALSE);
     }
@@ -162,7 +162,7 @@ fn on_require_extension_modify(
     str: &[u8],
     loader: ApiLoader,
     value: JSValue,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
     let vm = global.bun_vm().as_mut();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
@@ -205,7 +205,7 @@ fn on_require_extension_modify(
 fn on_require_extension_modify_non_function(
     global: &JSGlobalObject,
     str: &[u8],
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     // SAFETY: see `on_require_extension_modify`.
     let vm = global.bun_vm().as_mut();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
@@ -232,7 +232,7 @@ pub fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,
     filename: &[u8],
 ) -> Option<&'a CustomLoader> {
-    let basename = bun_paths::basename(filename);
+    let basename = bun_core::paths::basename(filename);
     let mut next: usize = 0;
     while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {
         next = i + 1;

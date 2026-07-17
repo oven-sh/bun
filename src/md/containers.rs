@@ -1,6 +1,6 @@
 use core::mem::{align_of, size_of};
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 
 use crate::autolinks::is_list_bullet;
 use crate::parser::{self, BlockHeader, Parser};

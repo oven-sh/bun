@@ -24,7 +24,7 @@ pub enum Source {
     /// (process-static, or freed only by the libuv close callback after the
     /// `Source` is dropped), so the `BackRef` invariant holds and `Deref`
     /// yields `&Tty` without a per-site `unsafe`.
-    Tty(bun_ptr::BackRef<Tty>),
+    Tty(bun_core::ptr::BackRef<Tty>),
     File(Box<File>),
     SyncFile(Box<File>),
 }
@@ -238,7 +238,7 @@ impl Source {
     /// guarantee (single-threaded uv loop, no other `&Tty` live), so this
     /// remains the one centralised `unsafe` for tty mutation.
     #[inline]
-    fn tty_mut(tty: &mut bun_ptr::BackRef<Tty>) -> &mut Tty {
+    fn tty_mut(tty: &mut bun_core::ptr::BackRef<Tty>) -> &mut Tty {
         // SAFETY: `BackRef` invariant guarantees liveness/alignment; the uv
         // loop is single-threaded and `&mut Source` (or the sole `BackRef`
         // returned from `open_tty`) is the only access path, so no `&Tty`
@@ -354,7 +354,7 @@ impl Source {
         bun_sys::Result::Ok(pipe)
     }
 
-    pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
+    pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<bun_core::ptr::BackRef<Tty>> {
         bun_core::scoped_log!(PipeSource, "openTTY (fd = {})", fd);
 
         let uv_fd = fd.uv();
@@ -373,7 +373,7 @@ impl Source {
         // `heap::take`s it). The `BackRef` invariant — pointee outlives every
         // holder — is upheld because the only holder is the `Source::Tty` arm,
         // which is dropped before the close callback fires.
-        bun_sys::Result::Ok(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(tty)))
+        bun_sys::Result::Ok(bun_core::ptr::BackRef::from(bun_core::heap::into_raw_nn(tty)))
     }
 
     pub fn open_file(fd: Fd) -> Box<File> {
@@ -469,7 +469,7 @@ pub mod stdin_tty {
         core::ptr::eq(tty, value())
     }
 
-    pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
+    pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_core::ptr::BackRef<Tty>> {
         // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
         // unlock-on-drop, otherwise the mutex is held forever and the next call
         // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
@@ -485,7 +485,7 @@ pub mod stdin_tty {
         }
 
         // Destroy path must gate `heap::take` on `!is_stdin_tty(ptr)`.
-        bun_sys::Result::Ok(bun_ptr::BackRef::from(
+        bun_sys::Result::Ok(bun_core::ptr::BackRef::from(
             core::ptr::NonNull::new(value()).expect("stdin_tty value() is a process-global static"),
         ))
     }

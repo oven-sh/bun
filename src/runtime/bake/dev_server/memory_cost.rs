@@ -4,7 +4,7 @@ use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
     DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
 };
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 
 #[derive(Clone, Copy, Default)]
 pub struct MemoryCost {

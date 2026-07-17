@@ -166,7 +166,7 @@ pub(crate) extern "C" fn Bun__ensureSignalHandler() {
             if this.signal_handler.is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
                 this.signal_handler =
-                    Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
+                    Some(bun_core::ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
             }
         }
     }

@@ -229,7 +229,7 @@ impl Expect {
         // process. Returning
         // `&'static str` keeps the ~188 call sites and `throw()`'s `signature:
         // &'static str` parameter unchanged.
-        use bun_collections::HashMap;
+        use bun_core::collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
         static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
@@ -1010,7 +1010,7 @@ impl Expect {
         };
         match runner.snapshots.add_count(this, b"") {
             Ok(_) => {}
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => return Err(JsError::OutOfMemory),
+            Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError)) => return Err(JsError::OutOfMemory),
             Err(crate::Error::NoTest) => {}
             Err(crate::Error::SnapshotInConcurrentGroup) => {}
             Err(crate::Error::TestNotActive) => {}
@@ -2655,7 +2655,7 @@ impl ExpectCustomAsymmetricMatcher {
             return Ok(false);
         }
         match err {
-            JsError::OutOfMemory => Err(crate::Error::Alloc(bun_alloc::AllocError)),
+            JsError::OutOfMemory => Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError)),
             _ => Err(crate::Error::Unexpected),
         }
     }

@@ -33,8 +33,8 @@ use crate::mal_prelude::*;
 use std::io::Write;
 
 use bstr::BStr;
-use bun_collections::VecExt;
-use bun_collections::{DynamicBitSet, StringHashMap};
+use bun_core::collections::VecExt;
+use bun_core::collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
 use bun_core::strings;
@@ -911,8 +911,8 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                                         // e.g., target="../utils/logger.js" might match "src/utils/logger.js"
                                         if strings::index_of(target, b"..").is_some() {
                                             // This is a relative path, try matching just the filename parts
-                                            let target_base = bun_paths::basename(target);
-                                            let key_base = bun_paths::basename(input_key);
+                                            let target_base = bun_core::paths::basename(target);
+                                            let key_base = bun_core::paths::basename(input_key);
                                             if target_base == key_base {
                                                 // Check if paths share common suffix
                                                 let target_without_dots = strip_parent_refs(target);

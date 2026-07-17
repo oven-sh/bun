@@ -126,7 +126,7 @@ impl TextShadow {
             && self.spread.is_compatible(browsers)
     }
 
-    pub(crate) fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, alloc: &bun_core::alloc_impl::Arena) -> Self {
         // Fields deep-clone via `#[derive(Clone)]` (`CssColor`/`Length`
         // `Box`-carrying variants clone deeply onto the global heap), so a
         // plain Clone is equivalent; arena param retained for signature

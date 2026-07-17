@@ -8,7 +8,8 @@
 
 use crate::schema::api;
 use bun_ast::{Loader, LoaderOptional, Target};
-use bun_collections;
+#[allow(unused_imports)]
+use bun_core::collections as bun_collections;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -92,7 +93,7 @@ pub enum BundlePackage {
     Never,
 }
 
-pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
+pub type BundlePackageMap = bun_core::collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 

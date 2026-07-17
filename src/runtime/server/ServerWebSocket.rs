@@ -15,7 +15,7 @@ use crate::server::jsc::{
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 
-bun_output::declare_scope!(WebSocketServer, visible);
+bun_core::declare_scope!(WebSocketServer, visible);
 
 // No `'a` on a `.classes.ts` m_ctx payload — the JS wrapper outlives any
 // stack frame. The handler lives in `ServerConfig.websocket` for the server's
@@ -29,7 +29,7 @@ bun_output::declare_scope!(WebSocketServer, visible);
 // `JsRef`) carries the writes.
 #[bun_jsc::JsClass]
 pub struct ServerWebSocket {
-    handler: bun_ptr::BackRef<WebSocketServerHandler>,
+    handler: bun_core::ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
     // `AbortSignal` is an opaque C++ type
@@ -168,7 +168,7 @@ pub(super) fn send_status_to_js(
 ) -> JSValue {
     match status {
         SendStatus::Backpressure => {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 WebSocketServer,
                 "{}() backpressure ({} {})",
                 op,
@@ -178,11 +178,11 @@ pub(super) fn send_status_to_js(
             JSValue::js_number(-1.0)
         }
         SendStatus::Success => {
-            bun_output::scoped_log!(WebSocketServer, "{}() success ({} {})", op, len, suffix);
+            bun_core::scoped_log!(WebSocketServer, "{}() success ({} {})", op, len, suffix);
             JSValue::js_number(len as f64)
         }
         SendStatus::Dropped => {
-            bun_output::scoped_log!(WebSocketServer, "{}() dropped ({} {})", op, len, suffix);
+            bun_core::scoped_log!(WebSocketServer, "{}() dropped ({} {})", op, len, suffix);
             JSValue::js_number(0.0)
         }
     }
@@ -339,7 +339,7 @@ impl ServerWebSocket {
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
         let this = bun_core::heap::into_raw(Box::new(ServerWebSocket {
-            handler: bun_ptr::BackRef::new(handler),
+            handler: bun_core::ptr::BackRef::new(handler),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
             signal: Cell::new(signal),
@@ -374,7 +374,7 @@ impl ServerWebSocket {
     /// are detached `&'a` borrows of the server config (a separate allocation),
     /// so they may legally span the call.
     pub fn on_open(&self, ws: AnyWebSocket) {
-        bun_output::scoped_log!(WebSocketServer, "OnOpen");
+        bun_core::scoped_log!(WebSocketServer, "OnOpen");
         self.update_flags(|f| {
             f.set_packed_websocket_ptr(ws.raw() as usize as u64);
             f.set_closed(false);
@@ -388,7 +388,7 @@ impl ServerWebSocket {
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
         if vm.is_shutting_down() {
-            bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution");
+            bun_core::scoped_log!(WebSocketServer, "onOpen called after script execution");
             ws.close();
             return;
         }
@@ -419,7 +419,7 @@ impl ServerWebSocket {
         let result = corker.result;
         self.update_flags(|f| f.set_opened(true));
         if let Some(err_value) = result.to_error() {
-            bun_output::scoped_log!(WebSocketServer, "onOpen exception");
+            bun_core::scoped_log!(WebSocketServer, "onOpen exception");
 
             if !self.flags.get().closed() {
                 self.update_flags(|f| f.set_closed(true));
@@ -437,7 +437,7 @@ impl ServerWebSocket {
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub fn on_message(&self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
             opcode.0,
@@ -451,7 +451,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let vm = self.handler().vm();
         if vm.is_shutting_down() {
-            bun_output::scoped_log!(WebSocketServer, "onMessage called after script execution");
+            bun_core::scoped_log!(WebSocketServer, "onMessage called after script execution");
             ws.close();
             return;
         }
@@ -516,7 +516,7 @@ impl ServerWebSocket {
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub fn on_drain(&self, _ws: AnyWebSocket) {
-        bun_output::scoped_log!(WebSocketServer, "onDrain");
+        bun_core::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
         let vm = handler.vm();
         if self.is_closed() || vm.is_shutting_down() {
@@ -560,7 +560,7 @@ impl ServerWebSocket {
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) {
-        bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
+        bun_core::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_ping;
         let vm = handler.vm();
@@ -582,14 +582,14 @@ impl ServerWebSocket {
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
-            bun_output::scoped_log!(WebSocketServer, "onPing error");
+            bun_core::scoped_log!(WebSocketServer, "onPing error");
             handler.run_error_callback(vm, global_this, err);
         }
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) {
-        bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
+        bun_core::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_pong;
         if cb.is_empty_or_undefined_or_null() {
@@ -616,7 +616,7 @@ impl ServerWebSocket {
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
-            bun_output::scoped_log!(WebSocketServer, "onPong error");
+            bun_core::scoped_log!(WebSocketServer, "onPong error");
             handler.run_error_callback(vm, global_this, err);
         }
     }
@@ -625,7 +625,7 @@ impl ServerWebSocket {
     /// Re-entrant `ws.close()` from the close handler routes through the same
     /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
     pub fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) {
-        bun_output::scoped_log!(WebSocketServer, "onClose");
+        bun_core::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
         self.update_flags(|f| f.set_closed(true));
@@ -652,7 +652,7 @@ impl ServerWebSocket {
                 // `sig` was stored with a +1 ref by the upgrade caller; it
                 // stays live until this paired `unref()`, so the transient
                 // `BackRef` (pointee-outlives-holder) is sound for both calls.
-                let sig = bun_ptr::BackRef::from(sig);
+                let sig = bun_core::ptr::BackRef::from(sig);
                 sig.pending_activity_unref();
                 sig.unref();
             }
@@ -676,7 +676,7 @@ impl ServerWebSocket {
             if let Some(sig) = signal {
                 // `sig` is held alive by the +1 ref released in `_cleanup`;
                 // BackRef invariant (pointee outlives the temporary) holds.
-                let sig = bun_ptr::BackRef::from(sig);
+                let sig = bun_core::ptr::BackRef::from(sig);
                 if !sig.aborted() {
                     sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
@@ -686,7 +686,7 @@ impl ServerWebSocket {
                 Ok(v) => v,
                 Err(e) => {
                     let err = global_object.take_exception(e);
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         WebSocketServer,
                         "onClose error (message) {}",
                         was_not_empty
@@ -702,7 +702,7 @@ impl ServerWebSocket {
                 .call(global_object, JSValue::UNDEFINED, &call_args)
             {
                 let err = global_object.take_exception(e);
-                bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
+                bun_core::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 handler.run_error_callback(vm, global_object, err);
                 return;
             }
@@ -711,7 +711,7 @@ impl ServerWebSocket {
 
             // `sig` is held alive by the +1 ref released in `_cleanup`;
             // BackRef invariant (pointee outlives the temporary) holds.
-            let sig = bun_ptr::BackRef::from(sig);
+            let sig = bun_core::ptr::BackRef::from(sig);
             if !sig.aborted() {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }
@@ -740,14 +740,14 @@ impl ServerWebSocket {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(WebSocketServer, "finalize");
+        bun_core::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
         if let Some(signal) = self.signal.take() {
             // `signal` was stored with a +1 ref by the upgrade caller; it
             // stays live until this paired `unref()`, so the transient
             // `BackRef` (pointee-outlives-holder) is sound for both calls —
             // same pattern as `on_close()`'s `_cleanup` guard.
-            let sig = bun_ptr::BackRef::from(signal);
+            let sig = bun_core::ptr::BackRef::from(signal);
             sig.pending_activity_unref();
             sig.unref();
         }
@@ -761,12 +761,12 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<4>();
         if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "publish()");
+            bun_core::scoped_log!(WebSocketServer, "publish()");
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
         let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            bun_core::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
 
@@ -775,7 +775,7 @@ impl ServerWebSocket {
         let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
-            bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
+            bun_core::scoped_log!(WebSocketServer, "publish() topic invalid");
             return Err(global_this.throw(format_args!("publish requires a topic string")));
         }
 
@@ -831,12 +831,12 @@ impl ServerWebSocket {
         let args = callframe.arguments_old::<4>();
 
         if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "publish()");
+            bun_core::scoped_log!(WebSocketServer, "publish()");
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
         let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            bun_core::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
 
@@ -845,7 +845,7 @@ impl ServerWebSocket {
         let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
-            bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
+            bun_core::scoped_log!(WebSocketServer, "publish() topic invalid");
             return Err(global_this.throw(format_args!("publishText requires a topic string")));
         }
 
@@ -884,14 +884,14 @@ impl ServerWebSocket {
         let args = callframe.arguments_old::<4>();
 
         if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "publishBinary()");
+            bun_core::scoped_log!(WebSocketServer, "publishBinary()");
             return Err(
                 global_this.throw(format_args!("publishBinary requires at least 1 argument"))
             );
         }
 
         let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            bun_core::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
         let topic_value = args.ptr[0];
@@ -899,7 +899,7 @@ impl ServerWebSocket {
         let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
-            bun_output::scoped_log!(WebSocketServer, "publishBinary() topic invalid");
+            bun_core::scoped_log!(WebSocketServer, "publishBinary() topic invalid");
             return Err(global_this.throw(format_args!("publishBinary requires a topic string")));
         }
 
@@ -939,7 +939,7 @@ impl ServerWebSocket {
         array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
         let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            bun_core::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
 
@@ -971,7 +971,7 @@ impl ServerWebSocket {
         str: &JSString,
     ) -> JsResult<JSValue> {
         let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            bun_core::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
 
@@ -1049,12 +1049,12 @@ impl ServerWebSocket {
         let args = callframe.arguments_old::<2>();
 
         if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "send()");
+            bun_core::scoped_log!(WebSocketServer, "send()");
             return Err(global_this.throw(format_args!("send requires at least 1 argument")));
         }
 
         if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "send() closed");
+            bun_core::scoped_log!(WebSocketServer, "send() closed");
             return Ok(JSValue::js_number(0.0));
         }
 
@@ -1103,12 +1103,12 @@ impl ServerWebSocket {
         let args = callframe.arguments_old::<2>();
 
         if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "sendText()");
+            bun_core::scoped_log!(WebSocketServer, "sendText()");
             return Err(global_this.throw(format_args!("sendText requires at least 1 argument")));
         }
 
         if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendText() closed");
+            bun_core::scoped_log!(WebSocketServer, "sendText() closed");
             return Ok(JSValue::js_number(0.0));
         }
 
@@ -1143,7 +1143,7 @@ impl ServerWebSocket {
         compress: bool,
     ) -> JSValue {
         if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendText() closed");
+            bun_core::scoped_log!(WebSocketServer, "sendText() closed");
             return JSValue::js_number(0.0);
         }
 
@@ -1167,12 +1167,12 @@ impl ServerWebSocket {
         let args = callframe.arguments_old::<2>();
 
         if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "sendBinary()");
+            bun_core::scoped_log!(WebSocketServer, "sendBinary()");
             return Err(global_this.throw(format_args!("sendBinary requires at least 1 argument")));
         }
 
         if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendBinary() closed");
+            bun_core::scoped_log!(WebSocketServer, "sendBinary() closed");
             return Ok(JSValue::js_number(0.0));
         }
 
@@ -1202,7 +1202,7 @@ impl ServerWebSocket {
         compress: bool,
     ) -> JSValue {
         if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendBinary() closed");
+            bun_core::scoped_log!(WebSocketServer, "sendBinary() closed");
             return JSValue::js_number(0.0);
         }
 
@@ -1278,7 +1278,7 @@ impl ServerWebSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_data(&self, _global_this: &JSGlobalObject) -> JSValue {
-        bun_output::scoped_log!(WebSocketServer, "getData()");
+        bun_core::scoped_log!(WebSocketServer, "getData()");
         if let Some(this_value) = self.this_value.get().try_get() {
             return js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
         }
@@ -1287,7 +1287,7 @@ impl ServerWebSocket {
 
     #[bun_jsc::host_fn(setter)]
     pub fn set_data(&self, global_object: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-        bun_output::scoped_log!(WebSocketServer, "setData()");
+        bun_core::scoped_log!(WebSocketServer, "setData()");
         if let Some(this_value) = self.this_value.get().try_get() {
             js::data_set_cached(this_value, global_object, value);
         }
@@ -1296,7 +1296,7 @@ impl ServerWebSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_ready_state(&self, _global_this: &JSGlobalObject) -> JSValue {
-        bun_output::scoped_log!(WebSocketServer, "getReadyState()");
+        bun_core::scoped_log!(WebSocketServer, "getReadyState()");
 
         if self.is_closed() {
             return JSValue::js_number(3.0);
@@ -1316,7 +1316,7 @@ impl ServerWebSocket {
         _this_value: JSValue,
     ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
-        bun_output::scoped_log!(WebSocketServer, "close()");
+        bun_core::scoped_log!(WebSocketServer, "close()");
 
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);
@@ -1357,7 +1357,7 @@ impl ServerWebSocket {
         _callframe: &CallFrame,
         _this_value: JSValue,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(WebSocketServer, "terminate()");
+        bun_core::scoped_log!(WebSocketServer, "terminate()");
 
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);
@@ -1371,7 +1371,7 @@ impl ServerWebSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_binary_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_output::scoped_log!(WebSocketServer, "getBinaryType()");
+        bun_core::scoped_log!(WebSocketServer, "getBinaryType()");
 
         Ok(match self.flags.get().binary_type() {
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
@@ -1383,7 +1383,7 @@ impl ServerWebSocket {
 
     #[bun_jsc::host_fn(setter)]
     pub fn set_binary_type(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-        bun_output::scoped_log!(WebSocketServer, "setBinaryType()");
+        bun_core::scoped_log!(WebSocketServer, "setBinaryType()");
 
         match BinaryType::from_js_value(global_this, value)? {
             Some(val @ (BinaryType::ArrayBuffer | BinaryType::Buffer | BinaryType::Uint8Array)) => {
@@ -1403,7 +1403,7 @@ impl ServerWebSocket {
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(WebSocketServer, "getBufferedAmount()");
+        bun_core::scoped_log!(WebSocketServer, "getBufferedAmount()");
 
         if self.is_closed() {
             return Ok(JSValue::js_number(0.0));

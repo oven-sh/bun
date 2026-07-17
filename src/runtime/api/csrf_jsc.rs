@@ -52,7 +52,7 @@ fn get_optional_int_u64(
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
 pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    bun_core::analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
     let args = frame.arguments();
@@ -193,7 +193,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
 /// First argument is token (required), second is options (optional)
 #[bun_jsc::host_fn]
 pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    bun_core::analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
     if args.len() < 1 {

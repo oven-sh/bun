@@ -1,11 +1,11 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder};
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
 use bun_ast::op::Level;
@@ -35,7 +35,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
-            return Ok(bun_alloc::AstAlloc::vec());
+            return Ok(bun_core::alloc_impl::AstAlloc::vec());
         }
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);

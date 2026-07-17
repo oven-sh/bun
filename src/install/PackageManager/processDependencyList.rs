@@ -1,10 +1,10 @@
 use core::cell::Cell;
 
 use bun_core::{Global, Output};
-use bun_paths::dirname;
-use bun_paths::platform;
-use bun_paths::resolve_path::join_abs_string_z;
-use bun_semver::{ExternalString, String as SemverString};
+use bun_core::paths::dirname;
+use bun_core::paths::platform;
+use bun_core::paths::resolve_path::join_abs_string_z;
+use bun_core::semver::{ExternalString, String as SemverString};
 use bun_sys as sys;
 
 use crate::bun_json as json;

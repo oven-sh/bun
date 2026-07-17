@@ -1,9 +1,9 @@
 use crate::mal_prelude::*;
 use bstr::BStr;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
-use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::handle_oom;
 
 use crate::Graph::Graph;
@@ -89,7 +89,7 @@ pub fn find_imported_files_in_css_order<'a>(
         // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
         // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
         // backref, valid for the link step).
-        parse_graph: bun_ptr::BackRef<Graph<'a>>,
+        parse_graph: bun_core::ptr::BackRef<Graph<'a>>,
 
         has_external_import: bool,
         visited: Vec<Index>,
@@ -303,7 +303,7 @@ pub fn find_imported_files_in_css_order<'a>(
 
     let mut visitor = Visitor {
         arena,
-        parse_graph: bun_ptr::BackRef::from(
+        parse_graph: bun_core::ptr::BackRef::from(
             core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
         ),
         visited: Vec::<Index>::init_capacity(16),
@@ -459,7 +459,7 @@ pub fn find_imported_files_in_css_order<'a>(
             // `RawSlice` (vs raw `*const [_]`) so reads go through safe
             // `.slice()` under the back-reference invariant: the borrowed
             // storage (`css_asts` arena / `Layers` Vec) outlives this loop.
-            layers: bun_ptr::RawSlice<LayerName>,
+            layers: bun_core::ptr::RawSlice<LayerName>,
             indices: Vec<u32>,
         }
         let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
@@ -600,7 +600,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 // This is the first time we've seen this combination of layer names.
                 // Allocate a new set of duplicate indices to track this combination.
                 layer_duplicates.push(DuplicateEntry {
-                    layers: bun_ptr::RawSlice::new(layers_key),
+                    layers: bun_core::ptr::RawSlice::new(layers_key),
                     indices: Vec::new(),
                 });
             }
@@ -943,13 +943,13 @@ fn debug_css_order_impl(
         let tag = step.tag_name();
         debug!("CSS order {}:\n", tag);
 
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_core::alloc_impl::Arena::new();
         let parse_graph = this.parse_graph();
         let ast_urls_for_css = parse_graph.ast.items_url_for_css();
         // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
         // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
         let unique_keys: &[&[u8]] = unsafe {
-            bun_ptr::boxed_slices_as_borrowed(
+            bun_core::ptr::boxed_slices_as_borrowed(
                 parse_graph
                     .input_files
                     .items_unique_key_for_additional_file(),
@@ -967,7 +967,7 @@ fn debug_css_order_impl(
                 for (j, condition) in entry.conditions.slice_const().iter().enumerate() {
                     let mut printer = Printer::new(
                         &arena,
-                        bun_alloc::ArenaVec::new_in(&arena),
+                        bun_core::alloc_impl::ArenaVec::new_in(&arena),
                         &mut writer,
                         &PrinterOptions::default(),
                         Some(ImportInfo {

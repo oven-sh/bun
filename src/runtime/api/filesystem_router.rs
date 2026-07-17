@@ -19,10 +19,10 @@ pub mod kind_enum {
     }
 }
 
-use bun_paths::strings;
+use bun_core::paths::strings;
 use core::cell::UnsafeCell;
 
-use bun_alloc::Arena as ArenaAllocator;
+use bun_core::alloc_impl::Arena as ArenaAllocator;
 use bun_ast as Log;
 use bun_core::{ZigString, ZigStringSlice};
 use bun_jsc::js_object::ObjectInitializer;
@@ -31,14 +31,14 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
-use bun_ptr::BackRef;
+use bun_core::paths::{self as path, MAX_PATH_BYTES, PathBuffer};
+use bun_core::ptr::BackRef;
 
-use bun_http_types::URLPath;
+use bun_core::http_types::URLPath;
 use bun_resolver::Resolver;
 use bun_resolver::fs as Fs;
 use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
-use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
+use bun_core::url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::webcore::{Request, Response};
@@ -105,7 +105,7 @@ pub struct FileSystemRouter {
     // Note: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
     pub router: JsCell<Router::Router<'static>>,
     // Router borrows slices from this arena across calls;
-    // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
+    // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_core::alloc_impl::Arena` (mimalloc heap) is
     // the runtime-wide arena type, so allocations here are individually freeable too.
     pub arena: JsCell<Box<ArenaAllocator>>,
     pub asset_prefix: Option<BackRef<RefString>>,
@@ -205,7 +205,7 @@ impl FileSystemRouter {
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
                 let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
+                    unsafe { bun_core::ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
                 extensions.push(&leaked[1..]);
             }
         }
@@ -222,7 +222,7 @@ impl FileSystemRouter {
             // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
             // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
             let leaked: &'static [u8] =
-                unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
+                unsafe { bun_core::ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();
@@ -612,13 +612,13 @@ impl FileSystemRouter {
         // (early returns above this point already dropped/replaced `path`), except when
         // `URLPath::parse` percent-decoded — in that case nothing borrows `path_bytes`
         // anymore and `path` is swapped for the decode buffer below.
-        let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
+        let path_bytes: &[u8] = unsafe { bun_core::ptr::detach_lifetime(path.slice()) };
         let mut url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(
                     "{} parsing path: {}",
-                    bun_url::Error::from(err).name(),
+                    bun_core::url::Error::from(err).name(),
                     bstr::BStr::new(path.slice())
                 )));
             }
@@ -790,7 +790,7 @@ impl MatchedRoute {
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
-    ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
+    ) -> Result<Box<MatchedRoute>, bun_core::alloc_impl::AllocError> {
         // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
         // live for this call. Clone its contents into our own holder before re-pointing.
         let params_list = unsafe { (*match_.params).clone() };
@@ -969,10 +969,10 @@ impl MatchedRoute {
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
         // this is kind of bad. we should consider instead a way to inline the contents of the script.
         if client_framework_enabled {
-            // `bun_paths::fs::PathName<'_>` is the lifetime-generic mirror of
-            // `bun_paths::fs::PathName<'static>`; `generate_entry_point_path` only copies
+            // `bun_core::paths::fs::PathName<'_>` is the lifetime-generic mirror of
+            // `bun_core::paths::fs::PathName<'static>`; `generate_entry_point_path` only copies
             // `dir`/`base`/`ext` into `entry_point_tempbuf`, so a borrowed view suffices.
-            let path_name = bun_paths::fs::PathName::init(file_path);
+            let path_name = bun_core::paths::fs::PathName::init(file_path);
             bun_object::get_public_path(
                 Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
                     &mut entry_point_tempbuf,

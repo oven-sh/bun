@@ -4,13 +4,13 @@ use crate::Error;
 use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData, G};
 use bun_ast::{Loc, Log, Source};
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_core::collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self as path, PathBuffer};
+use bun_core::paths::{self as path, PathBuffer};
 use bun_sys;
 
 pub(crate) struct PmPkgCommand;
@@ -19,7 +19,7 @@ pub(crate) struct PmPkgCommand;
 /// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
 /// just a `LazyLock` borrow).
 #[inline]
-fn dummy_bump() -> &'static bun_alloc::Arena {
+fn dummy_bump() -> &'static bun_core::alloc_impl::Arena {
     crate::cli::cli_arena()
 }
 
@@ -158,7 +158,7 @@ impl PmPkgCommand {
         // Use the process-lifetime CLI arena
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let bump: &'static bun_core::alloc_impl::Arena = crate::cli::cli_arena();
         // SAFETY: CLI dispatch is single-threaded; no other borrow of
         // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
@@ -806,7 +806,7 @@ impl PmPkgCommand {
         // old list, ptr::read kept entries into the new list, then forget the
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
-        let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
+        let old = core::mem::ManuallyDrop::new(bun_core::alloc_impl::AstAlloc::take(&mut e_obj.properties));
         let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
         for prop in old.slice() {
             if let Some(k) = &prop.key {

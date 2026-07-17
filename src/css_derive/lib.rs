@@ -557,7 +557,7 @@ fn expand_deep_clone(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::DeepClone<#bump_lt> for #name #ty_g #where_g {
             #[inline]
-            fn deep_clone(&self, __bump: & #bump_lt ::bun_alloc::Arena) -> Self {
+            fn deep_clone(&self, __bump: & #bump_lt ::bun_core::alloc_impl::Arena) -> Self {
                 let _ = __bump;
                 #body
             }

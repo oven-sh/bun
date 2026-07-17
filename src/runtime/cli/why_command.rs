@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -12,7 +12,7 @@ use bun_install::dependency::Behavior;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
-use bun_semver as semver;
+use bun_core::semver as semver;
 
 use crate::command;
 use crate::package_manager_command::PackageManagerCommand;

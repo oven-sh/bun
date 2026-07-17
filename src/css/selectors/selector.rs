@@ -5,8 +5,8 @@ use crate::css_parser::{PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
 type SymbolList = Vec<bun_ast::Symbol>;
 
-use bun_alloc::Arena as Bump;
-use bun_collections::ArrayHashMap;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::collections::ArrayHashMap;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
@@ -543,11 +543,11 @@ fn is_selector_unused(
                 // Look up the borrowed `&[u8]` against the map's owned
                 // `Box<[u8]>` keys without allocating.
                 struct SliceAdapter;
-                impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
+                impl bun_core::collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
                     #[inline]
                     fn hash(&self, key: &[u8]) -> u32 {
                         use core::hash::{Hash, Hasher};
-                        let mut h = bun_wyhash::Wyhash11::init(0);
+                        let mut h = bun_core::wyhash::Wyhash11::init(0);
                         key.hash(&mut h);
                         h.finish() as u32
                     }

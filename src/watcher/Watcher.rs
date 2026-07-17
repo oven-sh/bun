@@ -3,7 +3,7 @@
 use core::fmt;
 use std::borrow::Cow;
 
-use bun_collections::MultiArrayList;
+use bun_core::collections::MultiArrayList;
 use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
@@ -268,7 +268,7 @@ impl Watcher {
     }
 
     pub fn get_hash(filepath: &[u8]) -> HashType {
-        bun_wyhash::hash(filepath) as HashType
+        bun_core::wyhash::hash(filepath) as HashType
     }
 
     /// # Safety
@@ -490,8 +490,8 @@ impl Watcher {
         #[cfg(windows)]
         {
             // on windows we can only watch items that are in the directory tree of the top level dir
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
+            let rel = bun_core::paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_core::paths::resolve_path::ParentEqual::Unrelated {
                 bun_core::warn!(
                     "File {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -512,7 +512,7 @@ impl Watcher {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
             // truly `'static`.
-            Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
+            Cow::Borrowed(unsafe { bun_core::collections::detach_lifetime(file_path) })
         };
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -523,7 +523,7 @@ impl Watcher {
             // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
             // so we must copy into a NUL-terminated scratch buffer (mirrors the
             // directory branch below) instead of pointing at the caller's slice.
-            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf = bun_core::paths::path_buffer_pool::get();
             let slice: &ZStr = if CLONE_FILE_PATH {
                 buf[0..file_path.len()].copy_from_slice(file_path);
                 buf[file_path.len()] = 0;
@@ -560,8 +560,8 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
+            let rel = bun_core::paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_core::paths::resolve_path::ParentEqual::Unrelated {
                 bun_core::warn!(
                     "Directory {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -585,11 +585,11 @@ impl Watcher {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
             // truly `'static`.
-            Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
+            Cow::Borrowed(unsafe { bun_core::collections::detach_lifetime(file_path) })
         };
 
         let parent_hash =
-            Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
+            Self::get_hash(bun_core::paths::fs::PathName::init(file_path).dir_with_trailing_slash());
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
@@ -598,7 +598,7 @@ impl Watcher {
         self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
-            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf = bun_core::paths::path_buffer_pool::get();
             let path: &ZStr = if CLONE_FILE_PATH
                 && !file_path.is_empty()
                 && file_path[file_path.len() - 1] == 0
@@ -654,7 +654,7 @@ impl Watcher {
         let _guard = LOCK.then(|| self.mutex.lock_guard());
 
         debug_assert!(file_path.len() > 1);
-        let pathname = bun_paths::fs::PathName::init(file_path);
+        let pathname = bun_core::paths::fs::PathName::init(file_path);
 
         let parent_dir = pathname.dir_with_trailing_slash();
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
@@ -816,7 +816,7 @@ impl Watcher {
         // Only open fd if we might need it
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let fd: Fd = {
-            let mut path_z = bun_paths::PathBuffer::uninit();
+            let mut path_z = bun_core::paths::PathBuffer::uninit();
             if file_path.len() >= path_z.len() {
                 return false;
             }
@@ -1101,7 +1101,7 @@ impl WatchItemColumns for WatchList {
     }
 }
 
-impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
+impl WatchItemColumns for bun_core::collections::multi_array_list::Slice<WatchItem> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
     }

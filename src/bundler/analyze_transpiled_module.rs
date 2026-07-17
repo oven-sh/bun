@@ -145,7 +145,7 @@ pub enum ModuleInfoError {
 
 /// All slice fields are **self-referential** views into `owner`
 /// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
-/// (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
+/// (`Owner::ModuleInfo`). They are stored as [`bun_core::ptr::RawSlice`] (raw fat
 /// pointers) because Rust references cannot express the self-borrow.
 ///
 /// Alignment: the on-disk format pads every multi-byte field to a 4-byte
@@ -153,13 +153,13 @@ pub enum ModuleInfoError {
 /// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
 /// aligned for `T` and `.slice()` is sound.
 pub struct ModuleInfoDeserialized {
-    pub strings_buf: bun_ptr::RawSlice<u8>,
-    pub strings_lens: bun_ptr::RawSlice<u32>,
-    pub requested_modules_keys: bun_ptr::RawSlice<StringID>,
-    pub requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
-    pub requested_modules_phases: bun_ptr::RawSlice<u8>,
-    pub buffer: bun_ptr::RawSlice<StringID>,
-    pub record_kinds: bun_ptr::RawSlice<RecordKind>,
+    pub strings_buf: bun_core::ptr::RawSlice<u8>,
+    pub strings_lens: bun_core::ptr::RawSlice<u32>,
+    pub requested_modules_keys: bun_core::ptr::RawSlice<StringID>,
+    pub requested_modules_values: bun_core::ptr::RawSlice<FetchParameters>,
+    pub requested_modules_phases: bun_core::ptr::RawSlice<u8>,
+    pub buffer: bun_core::ptr::RawSlice<StringID>,
+    pub record_kinds: bun_core::ptr::RawSlice<RecordKind>,
     pub flags: Flags,
     pub owner: Owner,
 }
@@ -320,13 +320,13 @@ impl ModuleInfoDeserialized {
         // erases the borrow lifetime — the structural invariant is upheld by
         // `owner` outliving the views.
         Ok(Box::new(ModuleInfoDeserialized {
-            strings_buf: bun_ptr::RawSlice::new(strings_buf),
-            strings_lens: bun_ptr::RawSlice::new(strings_lens),
-            requested_modules_keys: bun_ptr::RawSlice::new(requested_modules_keys),
-            requested_modules_values: bun_ptr::RawSlice::new(requested_modules_values),
-            requested_modules_phases: bun_ptr::RawSlice::new(requested_modules_phases),
-            buffer: bun_ptr::RawSlice::new(buffer),
-            record_kinds: bun_ptr::RawSlice::new(record_kinds),
+            strings_buf: bun_core::ptr::RawSlice::new(strings_buf),
+            strings_lens: bun_core::ptr::RawSlice::new(strings_lens),
+            requested_modules_keys: bun_core::ptr::RawSlice::new(requested_modules_keys),
+            requested_modules_values: bun_core::ptr::RawSlice::new(requested_modules_values),
+            requested_modules_phases: bun_core::ptr::RawSlice::new(requested_modules_phases),
+            buffer: bun_core::ptr::RawSlice::new(buffer),
+            record_kinds: bun_core::ptr::RawSlice::new(record_kinds),
             flags,
             owner: Owner::AllocatedSlice { slice: duped_raw },
         }))
@@ -482,20 +482,20 @@ impl ModuleInfoExt for ModuleInfo {
         let (strings_buf, strings_lens, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
-            strings_buf = bun_ptr::RawSlice::new(view.strings_buf);
-            strings_lens = bun_ptr::RawSlice::new(view.strings_lens);
-            rm_keys = bun_ptr::RawSlice::new(view.requested_modules_keys);
-            rm_values = bun_ptr::RawSlice::new(view.requested_modules_values);
+            strings_buf = bun_core::ptr::RawSlice::new(view.strings_buf);
+            strings_lens = bun_core::ptr::RawSlice::new(view.strings_lens);
+            rm_keys = bun_core::ptr::RawSlice::new(view.requested_modules_keys);
+            rm_values = bun_core::ptr::RawSlice::new(view.requested_modules_values);
             // Printer's `ModulePhase` is `#[repr(u8)] NoUninit` — safe to view as `&[u8]`.
-            rm_phases = bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, u8>(
+            rm_phases = bun_core::ptr::RawSlice::new(bytemuck::cast_slice::<_, u8>(
                 view.requested_modules_phases,
             ));
-            buffer = bun_ptr::RawSlice::new(view.buffer);
+            buffer = bun_core::ptr::RawSlice::new(view.buffer);
             // Printer's `RecordKind` is `#[repr(u8)] NoUninit` with the same
             // discriminant layout as this crate's `#[repr(transparent)] u8`
             // `RecordKind` (Pod) — `bytemuck::cast_slice` is the safe reinterpret.
             record_kinds =
-                bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, RecordKind>(view.record_kinds));
+                bun_core::ptr::RawSlice::new(bytemuck::cast_slice::<_, RecordKind>(view.record_kinds));
             let mut f = Flags::empty();
             f.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
             f.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);

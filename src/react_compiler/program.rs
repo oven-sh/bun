@@ -23,7 +23,7 @@ use crate::hir::environment_config::EnvironmentConfig;
 use crate::hir::environment_config::{
     ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
 };
-use bun_alloc::{AstAlloc, AstVec};
+use bun_core::alloc_impl::{AstAlloc, AstVec};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{
@@ -64,7 +64,7 @@ pub trait Host {
     fn module_scope(&self) -> &Scope;
     fn import_records(&self) -> &[ImportRecord];
     fn source(&self) -> &[u8];
-    fn arena(&self) -> &bun_alloc::Arena;
+    fn arena(&self) -> &bun_core::alloc_impl::Arena;
 
     /// Name bytes for any `Ref`, regardless of tag (`Symbol`,
     /// `SourceContentsSlice`, `AllocatedName`). Post-visit, identifier
@@ -1367,8 +1367,8 @@ fn maybe_compile_node(
 
     // SAFETY: the arena is owned by the `Host` implementor (the parser's `P`)
     // and outlives the `&mut dyn Host` borrow for the duration of this call.
-    let arena: &bun_alloc::Arena =
-        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(host.arena()) };
+    let arena: &bun_core::alloc_impl::Arena =
+        unsafe { &*std::ptr::from_ref::<bun_core::alloc_impl::Arena>(host.arena()) };
 
     match pipeline::compile_fn(
         &node,

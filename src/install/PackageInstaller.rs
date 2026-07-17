@@ -1,12 +1,12 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
-use bun_semver::String;
+use bun_core::paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+use bun_core::paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_core::semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
 
 use crate::bin_real as bin;
@@ -38,7 +38,7 @@ use crate::{
     TaskCallbackContext, TruncatedPackageNameHash, invalid_package_id,
 };
 
-bun_output::declare_scope!(PackageInstaller, hidden);
+bun_core::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
@@ -82,12 +82,12 @@ pub struct PackageInstaller<'a> {
     // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
     // Every `resolutions` call site is a read (`&raw const self.resolutions[i]`),
     // so it is also `RawSlice` here.
-    pub metas: bun_ptr::RawSlice<Package::Meta>,
-    pub names: bun_ptr::RawSlice<String>,
-    pub pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
-    pub pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
-    pub bins: bun_ptr::RawSlice<Bin>,
-    pub resolutions: bun_ptr::RawSlice<Resolution>,
+    pub metas: bun_core::ptr::RawSlice<Package::Meta>,
+    pub names: bun_core::ptr::RawSlice<String>,
+    pub pkg_dependencies: bun_core::ptr::RawSlice<DependencySlice>,
+    pub pkg_name_hashes: bun_core::ptr::RawSlice<PackageNameHash>,
+    pub bins: bun_core::ptr::RawSlice<Bin>,
+    pub resolutions: bun_core::ptr::RawSlice<Resolution>,
     pub node: &'a mut ProgressNode,
     pub destination_dir_subpath_buf: PathBuffer,
     pub folder_path_buf: PathBuffer,
@@ -100,7 +100,7 @@ pub struct PackageInstaller<'a> {
     /// set of completed tree ids
     pub completed_trees: Bitset,
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
-    pub tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
+    pub tree_ids_to_trees_the_id_depends_on: bun_core::collections::DynamicBitSetList,
     pub pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
     /// Value is the alias bytes the key hash was computed from; lookups must
@@ -221,7 +221,7 @@ impl NodeModulesFolder {
         {
             // Copy into a NUL-terminated PathBuffer.
             let mut path_buf = PathBuffer::uninit();
-            let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
+            let path_z = bun_core::paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return root
                 .open_at_with(path_z.as_bytes(), 0)
                 .map_err(|e| e.to_zig_err().into());
@@ -968,12 +968,12 @@ impl<'a> PackageInstaller<'a> {
         // the lifetime of this `PackageInstaller` (only grow, which is why
         // this fn exists — to re-snapshot after growth).
         let packages = self.lockfile_mut().packages.slice();
-        self.metas = bun_ptr::RawSlice::new(packages.items_meta());
-        self.names = bun_ptr::RawSlice::new(packages.items_name());
-        self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
-        self.bins = bun_ptr::RawSlice::new(packages.items_bin());
-        self.resolutions = bun_ptr::RawSlice::new(packages.items_resolution());
-        self.pkg_dependencies = bun_ptr::RawSlice::new(packages.items_dependencies());
+        self.metas = bun_core::ptr::RawSlice::new(packages.items_meta());
+        self.names = bun_core::ptr::RawSlice::new(packages.items_name());
+        self.pkg_name_hashes = bun_core::ptr::RawSlice::new(packages.items_name_hash());
+        self.bins = bun_core::ptr::RawSlice::new(packages.items_bin());
+        self.resolutions = bun_core::ptr::RawSlice::new(packages.items_resolution());
+        self.pkg_dependencies = bun_core::ptr::RawSlice::new(packages.items_dependencies());
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -1031,7 +1031,7 @@ impl<'a> PackageInstaller<'a> {
             let prev_tree_id = self.current_tree_id;
 
             if callbacks.is_empty() {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     PackageInstaller,
                     "Unexpected state: no callbacks for async task."
                 );
@@ -1087,7 +1087,7 @@ impl<'a> PackageInstaller<'a> {
         alias: &[u8],
         package_id: PackageID,
         resolution_tag: resolution::Tag,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &mut bun_core::paths::AutoAbsPath,
         log_level: Options::LogLevel,
     ) -> usize {
         if cfg!(debug_assertions) {
@@ -1175,7 +1175,7 @@ impl<'a> PackageInstaller<'a> {
         // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
         let string_buf_ptr =
-            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+            bun_core::ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
         macro_rules! string_buf {
             () => {
                 string_buf_ptr.slice()
@@ -1265,7 +1265,7 @@ impl<'a> PackageInstaller<'a> {
             )
             .expect("unreachable");
 
-            let name_and_version_hash = bun_semver::string::Builder::string_hash(&name_and_version);
+            let name_and_version_hash = bun_core::semver::string::Builder::string_hash(&name_and_version);
 
             let Some(patchdep) = self
                 .lockfile()
@@ -1299,7 +1299,7 @@ impl<'a> PackageInstaller<'a> {
         // `ParentRef` so `installer`'s lifetime is independent of `&mut self`.
         // BACKREF — none of these fields are dropped, moved, or resized while
         // `installer` is alive (see `PackageInstaller` field docs).
-        let node_modules_ref = bun_ptr::ParentRef::<NodeModulesFolder>::new(&self.node_modules);
+        let node_modules_ref = bun_core::ptr::ParentRef::<NodeModulesFolder>::new(&self.node_modules);
         let mut installer = PackageInstall {
             progress: if self.manager().options.log_level.show_progress() {
                 Some(self.progress_mut())
@@ -1325,7 +1325,7 @@ impl<'a> PackageInstaller<'a> {
             cache_dir_subpath: ZStr::EMPTY,
             file_count: 0,
         };
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             PackageInstaller,
             "Installing {}@{}",
             bstr::BStr::new(pkg_name.slice(string_buf!())),
@@ -1796,7 +1796,7 @@ impl<'a> PackageInstaller<'a> {
                         if let package_install::InstallResult::Failure(f) = &result {
                             if matches!(
                                 f.err,
-                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
                                     | crate::Error::FileNotFound
                             ) {
                                 break 'result package_install::InstallResult::Success;
@@ -2014,7 +2014,7 @@ impl<'a> PackageInstaller<'a> {
                         self.summary.fail += 1;
                     } else if matches!(
                         cause.err,
-                        crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                        crate::Error::Sys(bun_core::errno::SystemErrno::EACCES)
                             | crate::Error::AccessDenied
                     ) {
                         // there are two states this can happen
@@ -2271,7 +2271,7 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         folder_name: &[u8],
         log_level: Options::LogLevel,
-        package_path: &mut bun_paths::AutoAbsPath,
+        package_path: &mut bun_core::paths::AutoAbsPath,
         package_id: PackageID,
         optional: bool,
         resolution: &Resolution,

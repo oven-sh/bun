@@ -15,7 +15,7 @@ use crate::compat::Feature;
 use crate::css_parser as css;
 use crate::error::ParserError;
 use crate::printer::Printer;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
@@ -23,7 +23,7 @@ use css_values::length::{LengthPercentage, LengthValue};
 use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use crate::generics::{CssEql, DeepClone};
 use css::CssResult;
@@ -328,7 +328,7 @@ pub enum FontFamily {
     FamilyName(*const [u8]),
 }
 
-pub(crate) type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
+pub(crate) type FontFamilyHashMap<V> = bun_core::collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
@@ -342,15 +342,15 @@ impl FontFamily {
         }
 
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+        let bump: &'static bun_core::alloc_impl::Arena =
+            unsafe { &*std::ptr::from_ref::<bun_core::alloc_impl::Arena>(input.arena()) };
         let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
-        let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
+        let mut string: Option<bun_core::alloc_impl::ArenaVec<'_, u8>> = None;
         while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
         {
             if string.is_none() {
-                let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
+                let mut s = bun_core::alloc_impl::ArenaVec::<u8>::new_in(bump);
                 // SAFETY: arena-owned slice valid for 'bump.
                 s.extend_from_slice(unsafe { crate::arena_str(value) });
                 string = Some(s);
@@ -390,7 +390,7 @@ impl FontFamily {
                     .is_ok()
                 {
                     // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
-                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
+                    let mut id = bun_core::alloc_impl::ArenaVec::<u8>::new_in(dest.arena);
                     let mut first = true;
                     for slice in val.split(|b| *b == b' ') {
                         if first {
@@ -1026,7 +1026,7 @@ impl FontHandler {
 
                 let mut i: usize = 0;
                 while i < f.len() {
-                    use bun_collections::array_hash_map::MapEntry;
+                    use bun_core::collections::array_hash_map::MapEntry;
                     match seen.entry(f.at(i).clone()) {
                         MapEntry::Occupied(_) => {
                             let _ = f.ordered_remove(i);

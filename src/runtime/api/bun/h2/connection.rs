@@ -11,7 +11,7 @@ use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
 /// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather

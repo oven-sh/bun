@@ -1,4 +1,4 @@
-use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter};
+use bun_core::collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter};
 
 use crate::shell::EnvStr;
 

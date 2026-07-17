@@ -95,8 +95,8 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::AllocError;
-use bun_collections::IntegerBitSet;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::IntegerBitSet;
 use bun_core::{MutableString, strings};
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
@@ -122,20 +122,20 @@ type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct MultiPartUpload {
     pub queue: Option<Box<[UploadPart]>>,
     pub available: IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>,
 
     pub current_part_number: u16,
-    pub ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
+    pub ref_count: Cell<u32>, // intrusive refcount — see bun_core::ptr::IntrusiveRc
     pub ended: bool,
 
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
-    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub credentials: bun_core::ptr::IntrusiveRc<S3Credentials>,
     pub poll_ref: KeepAlive,
     pub vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
@@ -192,7 +192,7 @@ impl MultiPartUpload {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deref_(this: *mut Self) {
         // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+        unsafe { <Self as bun_core::ptr::CellRefCounted>::deref(this) }
     }
 }
 
@@ -210,7 +210,7 @@ pub struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub data: *const [u8],
-    pub ctx: bun_ptr::BackRef<MultiPartUpload>, // BACKREF (LIFETIMES.tsv)
+    pub ctx: bun_core::ptr::BackRef<MultiPartUpload>, // BACKREF (LIFETIMES.tsv)
     pub allocated_size: usize,
     pub state: PartState,
     pub part_number: u16, // max is 10,000
@@ -490,7 +490,7 @@ impl MultiPartUpload {
         self.available.unset(index);
         // SAFETY: `self` is a heap-stable `MultiPartUpload` (intrusive RC); every
         // `UploadPart` holds a ref so `self` outlives the part (BackRef invariant).
-        let self_ref = unsafe { bun_ptr::BackRef::from_raw(std::ptr::from_mut::<Self>(self)) };
+        let self_ref = unsafe { bun_core::ptr::BackRef::from_raw(std::ptr::from_mut::<Self>(self)) };
         if self.queue.is_none() {
             // queueSize will never change and is small (max 255)
             let mut queue: Vec<UploadPart> = Vec::with_capacity(queue_size);
@@ -665,7 +665,7 @@ impl MultiPartUpload {
         let this = this.cast::<Self>();
         // `adopt` consumes the prior +1 on Drop.
         // SAFETY: callback context — a ref was taken before the request was queued.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        let _deref_guard = unsafe { bun_core::ptr::ScopedRef::<Self>::adopt(this) };
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
@@ -1090,7 +1090,7 @@ impl MultiPartUpload {
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
         // and derefs on every exit path.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
+        let _deref_guard = unsafe { bun_core::ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
 
         if self.state == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case

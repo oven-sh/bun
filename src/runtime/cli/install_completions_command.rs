@@ -3,11 +3,11 @@ use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 #[cfg(not(windows))]
 use bun_core::{note, print_errorln};
-use bun_paths::PathBuffer;
+use bun_core::paths::PathBuffer;
 #[cfg(windows)]
-use bun_paths::WPathBuffer;
+use bun_core::paths::WPathBuffer;
 #[cfg(not(windows))]
-use bun_paths::{platform, resolve_path};
+use bun_core::paths::{platform, resolve_path};
 use bun_sys::{self, E, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
@@ -301,14 +301,14 @@ impl InstallCompletionsCommand {
                         if argv.len() > i + 1 {
                             let input: &[u8] = argv.get(i + 1).expect("len checked").as_bytes();
 
-                            if !bun_paths::is_absolute(input) {
+                            if !bun_core::paths::is_absolute(input) {
                                 completions_dir =
                                     resolve_path::join_abs::<platform::Auto>(cwd, input);
                             } else {
                                 completions_dir = input;
                             }
 
-                            if !bun_paths::is_absolute(completions_dir) {
+                            if !bun_core::paths::is_absolute(completions_dir) {
                                 pretty_errorln!(
                                     "<r><red>error:<r> Please pass an absolute path. {} is invalid",
                                     bstr::BStr::new(completions_dir),

@@ -1,19 +1,19 @@
 use bstr::BStr;
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
-use bun_collections::StringArrayHashMap;
+use bun_core::collections::StringArrayHashMap;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
-use bun_paths as path;
-use bun_paths::resolve_path;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
+use bun_core::paths as path;
+use bun_core::paths::resolve_path;
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
 
 use crate::lockfile_real::StringBuilder;
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
 
-bun_output::declare_scope!(Lockfile, hidden);
+bun_core::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
@@ -52,7 +52,7 @@ impl WorkspaceMap {
         self.map.get(key)
     }
 
-    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_core::alloc_impl::AllocError> {
         // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
@@ -156,7 +156,7 @@ fn process_workspace_name(
             break 'brk None;
         },
     };
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         Lockfile,
         "processWorkspaceName({}) = {}",
         BStr::new(abs_package_json_path.as_bytes()),
@@ -235,9 +235,9 @@ impl WorkspaceMap {
                 match process_workspace_name(json_cache, abs_package_json_path, log) {
                     Ok(e) => e,
                     Err(err) => {
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                            || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
-                            || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                        if err == crate::Error::Sys(bun_core::errno::SystemErrno::EISDIR)
+                            || err == crate::Error::Sys(bun_core::errno::SystemErrno::EPERM)
+                            || err == crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
                         {
                             let _ = log.add_error_fmt(
                                 Some(source),
@@ -421,7 +421,7 @@ impl WorkspaceMap {
                                 | glob::MatchResult::NegateMatch => {}
 
                                 glob::MatchResult::NegateNoMatch => {
-                                    bun_output::scoped_log!(
+                                    bun_core::scoped_log!(
                                         Lockfile,
                                         "skipping negated path: {}, {}\n",
                                         BStr::new(matched_path_without_package_json),
@@ -433,7 +433,7 @@ impl WorkspaceMap {
                         }
                     }
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         Lockfile,
                         "matched path: {}, dirname: {}\n",
                         BStr::new(matched_path),
@@ -458,7 +458,7 @@ impl WorkspaceMap {
                         Ok(e) => e,
                         Err(err) => {
                             let entry_base: &[u8] = path::basename(matched_path);
-                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if err == crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                                 continue;
                             } else if err == crate::Error::MissingPackageName {
                                 let _ = log.add_error_fmt(

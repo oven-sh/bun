@@ -13,9 +13,9 @@ use bun_install::package_manager::{
     self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
+use bun_core::paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 
 use crate::Command;
 
@@ -325,8 +325,8 @@ impl OutdatedCommand {
             catalog_name_hash: u64,
             behavior: Behavior,
         }
-        let mut catalog_map: bun_collections::HashMap<CatalogKey, Vec<PackageID>> =
-            bun_collections::HashMap::new();
+        let mut catalog_map: bun_core::collections::HashMap<CatalogKey, Vec<PackageID>> =
+            bun_core::collections::HashMap::new();
 
         for item in outdated_items {
             if item.is_catalog {

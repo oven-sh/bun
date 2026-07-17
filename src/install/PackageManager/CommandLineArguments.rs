@@ -17,7 +17,7 @@ use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
-use bun_paths::{self as Path, PathBuffer};
+use bun_core::paths::{self as Path, PathBuffer};
 
 use std::sync::OnceLock;
 

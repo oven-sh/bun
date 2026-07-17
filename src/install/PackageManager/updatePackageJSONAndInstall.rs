@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -12,7 +12,8 @@ use crate::bun_json as json;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
 use super::command_line_arguments::CommandLineArguments;
@@ -543,7 +544,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // Now, we _re_ parse our in-memory edited package.json
         // so we can commit the version we changed from the lockfile
-        let json_arena = bun_alloc::Arena::new();
+        let json_arena = bun_core::alloc_impl::Arena::new();
         let mut new_package_json: bun_ast::Expr =
             match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
                 Ok(v) => v,
@@ -670,7 +671,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             // This is not exactly correct
             let mut node_modules_buf = PathBuffer::uninit();
             node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-            node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
+            node_modules_buf[b"node_modules".len()] = bun_core::paths::SEP;
             let name_hashes = manager.lockfile.packages.items_name_hash();
             for request in updates.iter() {
                 // If the package no longer exists in the updated lockfile, delete the directory
@@ -679,7 +680,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 // This is a quick & dirty cleanup intended for when deleting top-level dependencies
                 if !name_hashes
                     .iter()
-                    .any(|h| *h == bun_semver::semver_string::Builder::string_hash(request.name))
+                    .any(|h| *h == bun_core::semver::semver_string::Builder::string_hash(request.name))
                 {
                     let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
                     offset_buf[..request.name.len()].copy_from_slice(request.name);

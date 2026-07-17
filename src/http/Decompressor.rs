@@ -1,5 +1,5 @@
 use bun_core::MutableString;
-use bun_http_types::Encoding::Encoding;
+use bun_core::http_types::Encoding::Encoding;
 
 // The streaming decoders below own only their C-side state and take
 // `(input, output)` per call to [`Decompressor::decompress_chunk`], so no

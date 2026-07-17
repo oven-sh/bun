@@ -17,13 +17,13 @@ pub enum Error {
     #[error("SourceMapTooLarge")]
     SourceMapTooLarge,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
+    Paths(#[from] bun_core::paths::Error),
     #[error(transparent)]
     Options(#[from] bun_options_types::Error),
 }

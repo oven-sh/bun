@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{ZBox, ZStr};
-use bun_paths::{PathBuffer, resolve_path};
-use bun_ptr::BackRef;
+use bun_core::paths::{PathBuffer, resolve_path};
+use bun_core::ptr::BackRef;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
@@ -507,8 +507,8 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
         let len =
-            resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
-        if len + 1 >= bun_paths::MAX_PATH_BYTES {
+            resolve_path::normalize_buf::<bun_core::paths::platform::Auto>(base, &mut buf[..]).len();
+        if len + 1 >= bun_core::paths::MAX_PATH_BYTES {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENAMETOOLONG,
                 bun_sys::Tag::rename,
@@ -518,7 +518,7 @@ impl ShellMvBatchedTask {
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
         bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
-            let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
+            let joined = resolve_path::join_z::<bun_core::paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())
         })
     }

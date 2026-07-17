@@ -59,7 +59,7 @@ pub use reactive::*;
 // =============================================================================
 
 /// `Vec` whose backing buffer lives in the parser's thread-local AST arena
-/// (see [`bun_alloc::AstAlloc`]). Same layout as `Vec<T>` (the allocator is a
+/// (see [`bun_core::alloc_impl::AstAlloc`]). Same layout as `Vec<T>` (the allocator is a
 /// ZST), so HIR types are unchanged in size. The arena is installed for the
 /// duration of `js_parser`'s visit pass — the hook point that calls into this
 /// compiler — so every `HirVec` allocated during a `compile_fn` lands in the
@@ -70,10 +70,10 @@ pub use reactive::*;
 /// global-heap allocations (`String`, `Box<T>`, `Vec<T>`): the arena bulk-
 /// frees on reset without walking elements, so any nested global allocation
 /// leaks per parse. Use [`StoreStr`] / [`HirBox`] / [`HirVec`] instead.
-pub type HirVec<T> = bun_alloc::AstVec<T>;
+pub type HirVec<T> = bun_core::alloc_impl::AstVec<T>;
 /// Arena-backed `Box<T>`. See [`HirVec`] for the leak rationale.
-pub type HirBox<T> = bun_alloc::AstBox<T>;
-pub use bun_alloc::AstAlloc;
+pub type HirBox<T> = bun_core::alloc_impl::AstBox<T>;
+pub use bun_core::alloc_impl::AstAlloc;
 /// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
 pub use bun_ast::StoreStr;
 
@@ -82,10 +82,10 @@ pub use bun_ast::StoreStr;
 #[macro_export]
 macro_rules! hir_vec {
     () => {
-        ::bun_alloc::AstAlloc::vec()
+        ::bun_core::alloc_impl::AstAlloc::vec()
     };
     ($($x:expr),+ $(,)?) => {{
-        let mut v = ::bun_alloc::AstAlloc::vec();
+        let mut v = ::bun_core::alloc_impl::AstAlloc::vec();
         $(v.push($x);)+
         v
     }};

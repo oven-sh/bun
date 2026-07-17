@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::Output;
 
 use crate::Dependency;
@@ -38,7 +38,7 @@ impl From<crate::network_task::ForManifestError> for StartManifestTaskError {
 impl From<StartManifestTaskError> for crate::Error {
     fn from(e: StartManifestTaskError) -> Self {
         match e {
-            StartManifestTaskError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            StartManifestTaskError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             StartManifestTaskError::InvalidURL => crate::Error::InvalidURL,
         }
     }
@@ -67,7 +67,7 @@ fn start_manifest_task(
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
-    let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
+    let scope = bun_core::ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
     // Backref address only — stored, not dereffed in this function.
     let manager_backref: *mut PackageManager = manager;
 
@@ -134,7 +134,7 @@ pub fn populate_manifest_cache(
     // `ParentRef::get()`. Mutation (`manifests`, whole-`&mut PackageManager`)
     // still goes through `manager_ptr` directly. Safe `From<NonNull>`
     // construction — `manager_ptr` was just derived from `&mut *manager`.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+    let mgr_ref = bun_core::ptr::ParentRef::<PackageManager>::from(
         core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
     );
     // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
@@ -183,7 +183,7 @@ pub fn populate_manifest_cache(
                 // reads are hoisted into the by-value `cache_ctx`, so the call
                 // holds only `&mut manifests`.
                 let scope =
-                    bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
+                    bun_core::ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                 // `manager_ptr` is the SRW root.
                 let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
@@ -238,7 +238,7 @@ pub fn populate_manifest_cache(
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
                     let scope =
-                        bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
+                        bun_core::ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
                     // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                     // `manager_ptr` is the SRW root.
                     let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(

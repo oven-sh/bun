@@ -184,7 +184,7 @@ impl Debugger {
         let Some(dbg) = this.debugger_mut() else {
             return;
         };
-        bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
         if !dbg.must_block_until_connected {
             return;
         }

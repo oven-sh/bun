@@ -119,7 +119,7 @@ impl PendingConnect {
         // `loop_ptr` read goes through the safe `Deref` impl instead of an
         // open-coded `(*this)`. Read *before* publishing — once pushed, the
         // HTTP thread may free `this` at any time via `drain_resolved`.
-        let loop_ptr = bun_ptr::ParentRef::from(
+        let loop_ptr = bun_core::ptr::ParentRef::from(
             NonNull::new(this).expect("on_dns_resolved_threadsafe: non-null"),
         )
         .r#loop();

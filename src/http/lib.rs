@@ -12,7 +12,7 @@ pub mod compress_body;
 pub mod decompressor;
 #[path = "H2Client.rs"]
 pub mod h2_client;
-pub use bun_http_types::h2 as h2_frame_parser;
+pub use bun_core::http_types::h2 as h2_frame_parser;
 #[path = "H3Client.rs"]
 pub mod h3_client;
 #[path = "HeaderBuilder.rs"]
@@ -90,9 +90,9 @@ pub type HttpThread = HTTPThread;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use HTTPClientResult as http_client_result;
-pub use bun_http_types::FetchRedirect::FetchRedirect;
-pub use bun_http_types::Method::Method;
-pub use bun_picohttp as picohttp;
+pub use bun_core::http_types::FetchRedirect::FetchRedirect;
+pub use bun_core::http_types::Method::Method;
+pub use bun_core::picohttp as picohttp;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -112,7 +112,7 @@ pub enum Protocol {
     Http3,
 }
 
-pub use bun_http_types::Encoding::Encoding;
+pub use bun_core::http_types::Encoding::Encoding;
 pub use header_value_iterator::HeaderValueIterator;
 pub use init_error::InitError;
 
@@ -126,17 +126,17 @@ pub const EXTREMELY_VERBOSE: bool = false;
 pub struct HTTPResponseMetadata {
     // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
     // outlives-holder invariant for the self-referential borrow.
-    pub url: bun_ptr::RawSlice<u8>,
+    pub url: bun_core::ptr::RawSlice<u8>,
     pub owned_buf: Box<[u8]>,
-    pub response: bun_picohttp::Response<'static>,
+    pub response: bun_core::picohttp::Response<'static>,
 }
 
 impl Default for HTTPResponseMetadata {
     fn default() -> Self {
         Self {
-            url: bun_ptr::RawSlice::EMPTY,
+            url: bun_core::ptr::RawSlice::EMPTY,
             owned_buf: Box::default(),
-            response: bun_picohttp::Response::default(),
+            response: bun_core::picohttp::Response::default(),
         }
     }
 }
@@ -155,18 +155,18 @@ impl Drop for HTTPResponseMetadata {
             // need to round-trip through `(ptr, len)` + `from_raw_parts`.
             unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
         }
-        self.response.headers = bun_picohttp::HeaderList::default();
+        self.response.headers = bun_core::picohttp::HeaderList::default();
         self.response.status = b"";
     }
 }
-pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
+pub use bun_core::http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Standalone items with no deps on HTTPClient/HTTPContext/ssl_*.
 // ═══════════════════════════════════════════════════════════════════════
 
 use bun_core::MutableString;
-use bun_http_types::FetchRedirect::CommonAbortReason;
+use bun_core::http_types::FetchRedirect::CommonAbortReason;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
@@ -546,7 +546,7 @@ impl HTTPClientResultCallback {
             // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
             // calling convention, the receiver casts `ctx` back before use.
             function: unsafe {
-                bun_ptr::cast_fn_ptr::<
+                bun_core::ptr::cast_fn_ptr::<
                     fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
                 >(callback)
@@ -591,7 +591,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
     // Uses the std Wyhash algorithm; safe —
     // every comparison hash is computed by this same fn at runtime, no
     // persisted hashes.
-    bun_wyhash::hash_ascii_lowercase(0, name)
+    bun_core::wyhash::hash_ascii_lowercase(0, name)
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
@@ -601,7 +601,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 // `shutdown`/`connect_group`/…) land.
 
 use bun_core::ZigStringSlice;
-use bun_url::URL;
+use bun_core::url::URL;
 use core::ptr::NonNull;
 
 /// Owned copies of the proxy environment captured at request creation so the
@@ -939,7 +939,7 @@ pub fn http_thread_mut() -> &'static mut HTTPThread {
 // TODO: this needs to be freed when Worker Threads are implemented
 // HTTP-thread-only; `RacyCell` is the alias-safe static cell.
 pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
-    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
+    Option<bun_core::collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
 > = bun_core::RacyCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -952,14 +952,14 @@ use core::ffi::c_uint;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_core::collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
-use bun_http_types::ETag::StringPointer;
+use bun_core::http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
 use crate::internal_state::{RequestStage, ResponseStage, Stage};
@@ -1145,7 +1145,7 @@ pub fn configure_http_client_with_alpn(
 }
 
 // ── EntryList column accessors ──────────────────────────────────────────
-use bun_http_types::ETag::HeaderEntryColumns;
+use bun_core::http_types::ETag::HeaderEntryColumns;
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn timeout(&self, seconds: c_uint) {
@@ -2237,7 +2237,7 @@ impl<'a> HTTPClient<'a> {
                 } else {
                     sni
                 };
-                combined = combined.wrapping_add(bun_wyhash::hash(sni_lower));
+                combined = combined.wrapping_add(bun_core::wyhash::hash(sni_lower));
                 any = true;
             }
         }
@@ -2414,7 +2414,7 @@ impl<'a> HTTPClient<'a> {
                         // this client; lifetime is erased here only because we don't yet thread
                         // struct lifetime params. The borrow is valid for the life of `self`.
                         self.if_modified_since =
-                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
+                            unsafe { bun_core::ptr::detach_lifetime(self.header_str(header_values[i])) };
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
@@ -2525,7 +2525,7 @@ impl<'a> HTTPClient<'a> {
                     format_args!("{body_len}"),
                 ) {
                     // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                    Ok(s) => unsafe { bun_ptr::detach_lifetime(s) },
+                    Ok(s) => unsafe { bun_core::ptr::detach_lifetime(s) },
                     Err(_) => b"0",
                 };
                 request_headers_buf[header_count] =
@@ -2549,11 +2549,11 @@ impl<'a> HTTPClient<'a> {
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
             // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
-            path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
+            path: unsafe { bun_core::ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
             // SAFETY: `request_headers_buf` is the per-HTTP-thread
             // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
-            headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
+            headers: unsafe { bun_core::ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
             bytes_read: 0,
         }
     }
@@ -2940,7 +2940,7 @@ impl<'a> HTTPClient<'a> {
         // `RawSlice` cursor; this is the same erasure pattern
         // `InternalState::init` uses for `original_request_body`.
         self.state.request_body =
-            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
+            bun_core::ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
         self.state.flags.body_compressed = true;
         Ok(())
     }
@@ -2959,7 +2959,7 @@ impl<'a> HTTPClient<'a> {
             .extend_from_slice(self.state.request_body.slice());
         // SAFETY: `compressed_request_body` lives on `self`; same erasure as
         // `compress_body_for_send`.
-        self.state.request_body = bun_ptr::RawSlice::new(unsafe {
+        self.state.request_body = bun_core::ptr::RawSlice::new(unsafe {
             &*core::ptr::from_ref::<[u8]>(self.compressed_request_body.as_slice())
         });
     }
@@ -3060,7 +3060,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if has_sent_headers && !self.request_body().is_empty() {
-            self.state.request_body = bun_ptr::RawSlice::new(
+            self.state.request_body = bun_core::ptr::RawSlice::new(
                 &self.state.request_body.slice()[self.state.request_sent_len - headers_len..],
             );
         }
@@ -3382,7 +3382,7 @@ impl<'a> HTTPClient<'a> {
 
                             self.state.request_sent_len += sent;
                             self.state.request_body =
-                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
+                                bun_core::ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
                         }
 
                         if self.request_body().is_empty() {
@@ -3440,7 +3440,7 @@ impl<'a> HTTPClient<'a> {
 
                             self.state.request_sent_len += sent;
                             self.state.request_body =
-                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
+                                bun_core::ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
 
                             if self.request_body().is_empty() {
                                 self.state.request_stage = RequestStage::Done;
@@ -3519,7 +3519,7 @@ impl<'a> HTTPClient<'a> {
                     let has_sent_headers = self.state.request_sent_len >= headers_len;
 
                     if has_sent_headers && !self.request_body().is_empty() {
-                        self.state.request_body = bun_ptr::RawSlice::new(
+                        self.state.request_body = bun_core::ptr::RawSlice::new(
                             &self.state.request_body.slice()
                                 [self.state.request_sent_len - headers_len..],
                         );
@@ -3673,7 +3673,7 @@ impl<'a> HTTPClient<'a> {
         // `incoming_data` or `self.state.response_message_buffer`; hold it as a
         // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
         // so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read = bun_ptr::RawSlice::new(incoming_data);
+        let mut to_read = bun_core::ptr::RawSlice::new(incoming_data);
         macro_rules! to_read {
             () => {
                 to_read.slice()
@@ -3686,7 +3686,7 @@ impl<'a> HTTPClient<'a> {
                 .state
                 .response_message_buffer
                 .append_slice_exact(incoming_data);
-            to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
+            to_read = bun_core::ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
             needs_move = false;
         }
 
@@ -3704,7 +3704,7 @@ impl<'a> HTTPClient<'a> {
                     let remaining = to_read!().len();
                     let buffer = &mut self.state.response_message_buffer.list;
                     buffer.drain_front(buffer.len().saturating_sub(remaining));
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                    to_read = bun_core::ptr::RawSlice::new(buffer.as_slice());
                 }
                 self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
@@ -3736,7 +3736,7 @@ impl<'a> HTTPClient<'a> {
                         let remaining = to_read!().len();
                         let buffer = &mut self.state.response_message_buffer.list;
                         buffer.drain_front(buffer.len().saturating_sub(remaining));
-                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                        to_read = bun_core::ptr::RawSlice::new(buffer.as_slice());
                     }
                     self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
@@ -3758,7 +3758,7 @@ impl<'a> HTTPClient<'a> {
 
             let bytes_read =
                 (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
+            to_read = bun_core::ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
 
             if response.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
@@ -4078,7 +4078,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
             // buffer is transferred to `owned_buf` immediately below and stored
             // alongside `href` in `HTTPResponseMetadata`.
-            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
+            let href = bun_core::ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
             let owned_buf = builder.move_to_slice();
@@ -5277,7 +5277,7 @@ impl<'a> HTTPClient<'a> {
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
                                 let normalized_url =
-                                    OwnedString::new(bun_url::href_from_string(&input));
+                                    OwnedString::new(bun_core::url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                                     return Err(crate::Error::RedirectURLInvalid);
@@ -5338,7 +5338,7 @@ impl<'a> HTTPClient<'a> {
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
                                 let normalized_url =
-                                    OwnedString::new(bun_url::href_from_string(&input));
+                                    OwnedString::new(bun_core::url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     return Err(crate::Error::RedirectURLInvalid);
                                 }
@@ -5362,7 +5362,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let base = BunString::borrow_utf8(original_url.href);
                                 let rel = BunString::borrow_utf8(location);
-                                let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
+                                let new_url_ = OwnedString::new(bun_core::url::join(&base, &rel));
 
                                 if new_url_.is_empty() {
                                     return Err(crate::Error::InvalidRedirectURL);

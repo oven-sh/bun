@@ -1,8 +1,8 @@
 use crate::bundled_ast::Flags as AstFlags;
 use crate::mal_prelude::*;
-use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
-use bun_alloc::ArenaVecExt as _;
-use bun_collections::{BoundedArray, VecExt};
+use bun_core::alloc_impl::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
+use bun_core::alloc_impl::ArenaVecExt as _;
+use bun_core::collections::{BoundedArray, VecExt};
 
 use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
@@ -145,7 +145,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // `G::Arg` is not `Copy`; duplicate the args element-wise.
             let dup_args: &mut [G::Arg] = {
-                let mut v = bun_alloc::ArenaVec::with_capacity_in(
+                let mut v = bun_core::alloc_impl::ArenaVec::with_capacity_in(
                     clousure_args.const_slice().len(),
                     temp_arena,
                 );
@@ -275,8 +275,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
     // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
     // reallocate after `tree_shaking_and_code_splitting` initializes it.
-    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
-        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+    let parts_live: bun_core::ptr::BackRef<bun_core::collections::AutoBitSet> =
+        bun_core::ptr::BackRef::new(&c.graph.parts_live[source_index]);
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
@@ -530,8 +530,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         match flags.wrap {
             WrapKind::Cjs => {
                 // Only include the arguments that are actually used
-                let mut args: bun_alloc::ArenaVec<'_, G::Arg> =
-                    bun_alloc::ArenaVec::with_capacity_in(
+                let mut args: bun_core::alloc_impl::ArenaVec<'_, G::Arg> =
+                    bun_core::alloc_impl::ArenaVec::with_capacity_in(
                         if ast
                             .flags
                             .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
@@ -642,7 +642,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     decls: Vec<G::Decl>,
                     // BackRef: the arena is the caller's `temp_arena: &Bump`,
                     // which strictly outlives this local helper struct.
-                    arena: bun_ptr::BackRef<Bump>,
+                    arena: bun_core::ptr::BackRef<Bump>,
                 }
 
                 impl ExportHoist {
@@ -669,14 +669,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ref_: Ref,
                     ) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
-                        let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
+                        let this = unsafe { bun_core::ptr::callback_ctx::<ExportHoist>(ctx) };
                         this.wrap_identifier(loc, ref_)
                     }
                 }
 
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
-                    arena: bun_ptr::BackRef::new(temp_arena),
+                    arena: bun_core::ptr::BackRef::new(temp_arena),
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 

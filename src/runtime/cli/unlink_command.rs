@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{AbsPath, PathBuffer, platform, resolve_path};
+use bun_core::paths::{AbsPath, PathBuffer, platform, resolve_path};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt};
 
 use bun_install::Features;

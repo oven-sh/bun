@@ -1,6 +1,6 @@
 //! JSC bridge for `bun.Semver.String`. Keeps `src/semver/` free of JSC types.
 
-use bun_semver::String as SemverString;
+use bun_core::semver::String as SemverString;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 

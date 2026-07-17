@@ -5,8 +5,8 @@ use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::{OwnedString, String as BunString};
-use bun_paths::resolve_path;
-use bun_paths::{Platform, SEP, SEP_STR};
+use bun_core::paths::resolve_path;
+use bun_core::paths::{Platform, SEP, SEP_STR};
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
 pub(crate) fn node_module_paths_for_js(
@@ -45,14 +45,14 @@ pub(crate) extern "C" fn node_module_paths_js_value(
 
     let sliced = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
-        resolve_path::dirname::<bun_paths::platform::Auto>(sliced.slice())
+        resolve_path::dirname::<bun_core::paths::platform::Auto>(sliced.slice())
     } else {
         sliced.slice()
     };
-    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut buf = bun_core::paths::path_buffer_pool::get();
 
-    let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        bun_paths::fs::FileSystem::instance().top_level_dir(),
+    let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_core::paths::platform::Auto>(
+        bun_core::paths::fs::FileSystem::instance().top_level_dir(),
         &mut **buf,
         &[base_path],
     );

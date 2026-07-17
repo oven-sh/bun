@@ -7,12 +7,12 @@
 // never reallocates inside this function, so we cache the column
 // base pointers once via `Slice::items_raw` and dereferences them at each
 // use site through `*mut [T]`. This is the documented escape hatch in
-// `bun_collections::multi_array_list::Slice::items_raw`.
+// `bun_core::collections::multi_array_list::Slice::items_raw`.
 
 use crate::mal_prelude::*;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
-use bun_collections::{HashMap, VecExt};
+use bun_core::collections::{HashMap, VecExt};
 use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
@@ -106,7 +106,7 @@ pub fn scan_imports_and_exports(
     let named_exports: *mut [NamedExports] = ast.named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
-    let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
+    let export_star_import_records: *mut [bun_core::alloc_impl::AstVec<u32>] = ast.export_star_import_records;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -614,8 +614,8 @@ pub fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies: bun_alloc::AstVec<Ref> =
-                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
+                let mut copies: bun_core::alloc_impl::AstVec<Ref> =
+                    bun_core::alloc_impl::AstAlloc::vec_with_capacity(aliases.len());
                 copies.resize(aliases.len(), Ref::NONE);
 
                 debug_assert_eq!(aliases.len(), copies.len());
@@ -721,13 +721,13 @@ pub fn scan_imports_and_exports(
                     // value column, which is not mutated for the rest of this
                     // loop body; the backref invariant (pointee outlives holder)
                     // lets the inner-loop reads go through safe `Deref`.
-                    let re_exports_ptr: bun_ptr::BackRef<[Dependency]>;
+                    let re_exports_ptr: bun_core::ptr::BackRef<[Dependency]>;
                     {
                         let import: &ImportData =
                             &col_ref!(imports_to_bind_list)[id].values()[itb_i];
                         import_source_index = import.data.source_index.get();
                         import_ref = import.data.import_ref;
-                        re_exports_ptr = bun_ptr::BackRef::new(import.re_exports.slice());
+                        re_exports_ptr = bun_core::ptr::BackRef::new(import.re_exports.slice());
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
@@ -736,9 +736,9 @@ pub fn scan_imports_and_exports(
                         // body never resizes; capture them as BackRefs (same
                         // discipline as `re_exports_ptr` above) so we can take
                         // `&mut col!(parts_list)[id]` without cloning.
-                        let local_parts: bun_ptr::BackRef<[u32]> =
-                            bun_ptr::BackRef::new(named_import.local_parts_with_uses.slice());
-                        let parts_declaring_symbol: bun_ptr::BackRef<[u32]> = bun_ptr::BackRef::new(
+                        let local_parts: bun_core::ptr::BackRef<[u32]> =
+                            bun_core::ptr::BackRef::new(named_import.local_parts_with_uses.slice());
+                        let parts_declaring_symbol: bun_core::ptr::BackRef<[u32]> = bun_core::ptr::BackRef::new(
                             this.graph
                                 .top_level_symbol_to_parts(import_source_index, import_ref),
                         );
@@ -779,7 +779,7 @@ pub fn scan_imports_and_exports(
                 let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
 
                 let mut dependencies =
-                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
+                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_core::alloc_impl::AstAlloc);
 
                 for alias in col_ref!(sorted_aliases)[id].iter() {
                     let exp = col_ref!(resolved_exports)[id].get(alias).unwrap();
@@ -1169,7 +1169,7 @@ struct DependencyWrapper<'a> {
     import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [bun_alloc::AstVec<u32>],
+    export_star_records: &'a [bun_core::alloc_impl::AstVec<u32>],
     output_format: options::Format,
 }
 
@@ -1255,7 +1255,7 @@ struct ExportStarContext<'a> {
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
-    export_star_records: *mut [bun_alloc::AstVec<u32>],
+    export_star_records: *mut [bun_core::alloc_impl::AstVec<u32>],
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1306,7 +1306,7 @@ impl<'a> ExportStarContext<'a> {
                 // `BackRef<[u8]>` — points into the `named_exports` key
                 // storage, which is not mutated in this loop; the backref
                 // invariant lets reads go through safe `Deref`.
-                let alias: bun_ptr::BackRef<[u8]> = bun_ptr::BackRef::new(
+                let alias: bun_core::ptr::BackRef<[u8]> = bun_core::ptr::BackRef::new(
                     col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref(),
                 );
                 let name = col_ref!(self.named_exports)[other_id].values()[ne_i];
@@ -1386,7 +1386,7 @@ mod __css_validation {
     use crate::bun_css::css_properties::css_modules::Specifier;
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
-    use bun_collections::{ArrayHashMap, StringArrayHashMap};
+    use bun_core::collections::{ArrayHashMap, StringArrayHashMap};
 
     // Keep the column element as a raw
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
@@ -1395,11 +1395,11 @@ mod __css_validation {
     /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
     /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
     struct SliceBoxAdapter;
-    impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
+    impl bun_core::collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
         fn hash(&self, key: &[u8]) -> u32 {
             // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
             // (std `Hash` over the byte slice → wyhash truncated to u32).
-            use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
+            use bun_core::collections::array_hash_map::{ArrayHashContext, AutoContext};
             AutoContext.hash(key)
         }
         fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {

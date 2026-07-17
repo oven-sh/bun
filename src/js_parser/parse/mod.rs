@@ -10,9 +10,9 @@ pub mod parse_stmt;
 pub mod parse_suffix;
 pub mod parse_typescript;
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 use crate::Error;
 use bun_core::strings;
@@ -752,7 +752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
-                return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
+                return Ok(unsafe { bun_core::collections::detach_lifetime(estr.slice8()) });
             } else {
                 // Lone surrogates are replaced with U+FFFD; the surrogate-error
                 // diagnostic path is dropped until the strict variant lands.
@@ -801,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
-                        let decls_slice = bun_collections::RawSlice::new(decls.slice());
+                        let decls_slice = bun_core::collections::RawSlice::new(decls.slice());
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
                                 S::Local {
@@ -837,7 +837,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
-                let decls_slice = bun_collections::RawSlice::new(decls.slice());
+                let decls_slice = bun_core::collections::RawSlice::new(decls.slice());
                 if opts.is_typescript_declare {
                     // TypeScript does not allow "using" declarations in ambient
                     // contexts ("declare using x", "declare namespace { using x }").
@@ -897,7 +897,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         opts.is_using_statement = true;
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
-                        let decls_slice = bun_collections::RawSlice::new(decls.slice());
+                        let decls_slice = bun_core::collections::RawSlice::new(decls.slice());
                         if opts.is_typescript_declare {
                             p.log().add_error(
                                 Some(p.source),
@@ -1319,7 +1319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
             // SAFETY: E::String slice8() is arena-owned for 'a.
-            text: unsafe { bun_collections::detach_lifetime(path_text.slice8()) },
+            text: unsafe { bun_core::collections::detach_lifetime(path_text.slice8()) },
             is_macro: false,
             import_tag: bun_ast::ImportRecordTag::None,
             loader: None,

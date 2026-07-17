@@ -8,14 +8,14 @@ use bun_bundler::ResolvedExports;
 use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::mal_prelude::*;
-use bun_collections::StringSet;
+use bun_core::collections::StringSet;
 use bun_core::MutableString;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser::js_lexer;
-use bun_paths as path;
-use bun_paths::fs::FileSystem;
-use bun_paths::resolve_path;
+use bun_core::paths as path;
+use bun_core::paths::fs::FileSystem;
+use bun_core::paths::resolve_path;
 use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
@@ -153,7 +153,7 @@ fn string_with_replacements(
     basename: &[u8],
     relative_name: &[u8],
     react_component_export: &[u8],
-) -> Result<Vec<u8>, bun_alloc::AllocError> {
+) -> Result<Vec<u8>, bun_core::alloc_impl::AllocError> {
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
@@ -247,8 +247,8 @@ pub fn generate_files(
     }
 
     // Normalize file paths
-    let mut normalized_buf = bun_paths::PathBuffer::uninit();
-    let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
+    let mut normalized_buf = bun_core::paths::PathBuffer::uninit();
+    let mut normalized_name: &[u8] = if bun_core::paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
             FileSystem::instance().top_level_dir(),
@@ -587,7 +587,7 @@ fn has_any_tailwind_classes_in_source_files(
 fn get_shadcn_components(
     bundler: &BundleV2,
     reachable_files: &[bun_ast::Index],
-) -> Result<StringSet, bun_alloc::AllocError> {
+) -> Result<StringSet, bun_core::alloc_impl::AllocError> {
     let input_files = bundler.graph.input_files.slice();
     let loaders = input_files.items_loader();
     let all = bundler.graph.ast.items_import_records();
@@ -612,7 +612,7 @@ fn get_shadcn_components(
 // Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
 // only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
 fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::uninit();
+    let mut buf = bun_core::paths::PathBuffer::uninit();
     bun_sys::exists_z(resolve_path::z(path, &mut buf))
 }
 

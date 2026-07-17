@@ -2,13 +2,13 @@ use std::io::Write as _;
 
 use bun_core::ZBox;
 
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::strings;
 use bun_uws_sys as uws;
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
-use bun_http_types::Method as http_method;
-use bun_url::URL;
+use bun_core::http_types::Method as http_method;
+use bun_core::url::URL;
 pub use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
@@ -667,7 +667,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// structs unify. All bytes are duped into `arena` so the resulting `&'static`
 /// slices live as long as `UserOptions.arena`.
 fn convert_file_system_router_type(
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
     src: crate::bake::FileSystemRouterType,
 ) -> crate::bake::bake_body::FileSystemRouterType {
     use crate::bake::bake_body as bb;
@@ -676,11 +676,11 @@ fn convert_file_system_router_type(
     // own `Framework::from_js` / `resolve` use it identically.
     // TODO(refactor): thread a real `'bump` through `bb::Framework`/
     // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
-    fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
+    fn dupe(arena: &bun_core::alloc_impl::Arena, bytes: &[u8]) -> &'static [u8] {
         bb::arena_erase(arena.alloc_slice_copy(bytes))
     }
     fn dupe_slice_of(
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         v: &[std::borrow::Cow<'static, [u8]>],
     ) -> &'static [&'static [u8]] {
         let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
@@ -1042,11 +1042,11 @@ impl ServerConfig {
 
                     // NOTE: the arena is created here and moved into
                     // `UserOptions` (lives until `args.bake` is dropped).
-                    let arena = bun_alloc::Arena::new();
+                    let arena = bun_core::alloc_impl::Arena::new();
 
                     let root = bb::arena_dupe_z(
                         &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
+                        bun_core::paths::fs::FileSystem::instance().top_level_dir(),
                     );
 
                     // Convert `crate::bake::FileSystemRouterType` (Cow-backed)

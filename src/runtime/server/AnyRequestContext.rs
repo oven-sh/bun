@@ -19,7 +19,7 @@ type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
 type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, true>;
 type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 
-// The `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from
+// The `bun_core::impl_tagged_ptr_union!` macro hits the orphan rule from
 // outside `bun_ptr`, so store `(tag: u8, ptr: *mut ())` as two fields.
 // A tagged-pointer pack would be 8 bytes instead of 16. AnyRequestContext is
 // stored inside `webcore::Request` (one per in-flight request); if profiling
@@ -213,7 +213,7 @@ impl AnyRequestContext {
             // SAFETY: the server backref outlives any AnyRequestContext (held only
             // for the duration of a request callback); `self` is a by-value tagged
             // pointer, so there is no input lifetime to tie the borrow to.
-            unsafe { bun_ptr::detach_lifetime_ref(r) }
+            unsafe { bun_core::ptr::detach_lifetime_ref(r) }
         }))
     }
 

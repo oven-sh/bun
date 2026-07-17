@@ -1,6 +1,6 @@
-use bun_collections::HashMap;
-use bun_collections::zig_hash_map::MapEntry as Entry;
-use bun_semver::string::Builder as StringBuilder;
+use bun_core::collections::HashMap;
+use bun_core::collections::zig_hash_map::MapEntry as Entry;
+use bun_core::semver::string::Builder as StringBuilder;
 use bun_sys::Fd;
 
 use crate::PackageNameHash;
@@ -24,7 +24,7 @@ impl Value {
 }
 
 type ManifestHashMap =
-    HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
+    HashMap<PackageNameHash, Value, bun_core::collections::IdentityContext<PackageNameHash>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CacheBehavior {
@@ -88,7 +88,7 @@ impl PackageManifestMap {
         &mut self,
         name_hash: PackageNameHash,
         manifest: npm::PackageManifest,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.hash_map.insert(name_hash, Value::Manifest(manifest));
         Ok(())
     }

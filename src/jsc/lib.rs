@@ -40,7 +40,7 @@ use core::ffi::{c_char, c_void};
 // See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_call, host_fn};
+pub use bun_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_call, host_fn};
 
 /// The calling convention used for JavaScript functions <> Native.
 ///
@@ -683,7 +683,7 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
         JsError::Thrown => core::fmt::Error,
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
-        JsError::OutOfMemory => bun_alloc::out_of_memory(),
+        JsError::OutOfMemory => bun_core::alloc_impl::out_of_memory(),
     }
 }
 
@@ -737,7 +737,7 @@ impl From<JsError> for crate::CrateError {
     #[inline]
     fn from(e: JsError) -> Self {
         match e {
-            JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
+            JsError::OutOfMemory => crate::CrateError::Alloc(bun_core::alloc_impl::AllocError),
             // `Terminated` (worker shutdown) has no distinct error tag of its
             // own, so collapse into `JSError` like every other thrown JS
             // exception.
@@ -1226,10 +1226,10 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 /// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Status as PromiseStatus;
 
-/// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
+/// `bun_core::ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
 /// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
 /// submodule taking a direct `bun_ptr` dep.
-pub use bun_ptr::RefPtr;
+pub use bun_core::ptr::RefPtr;
 
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
 /// so submodules can write `crate::String`.
@@ -1433,7 +1433,7 @@ impl FromJsEnum for bun_sys::SignalCode {
 // owns neither the trait nor the type. Powers
 // `JSValue::get_optional_enum::<FetchRedirect>()` in `Request::construct_into`
 // / `fetch.rs`. The `to_js` direction stays in `bun_http_jsc::fetch_enums_jsc`.
-impl FromJsEnum for bun_http_types::FetchRedirect::FetchRedirect {
+impl FromJsEnum for bun_core::http_types::FetchRedirect::FetchRedirect {
     fn from_js_value(
         v: JSValue,
         global: &JSGlobalObject,
@@ -1442,19 +1442,19 @@ impl FromJsEnum for bun_http_types::FetchRedirect::FetchRedirect {
         v.to_enum_from_map(
             global,
             property_name,
-            &bun_http_types::FetchRedirect::MAP,
+            &bun_core::http_types::FetchRedirect::MAP,
             "'follow', 'manual' or 'error'",
         )
     }
 }
 
-impl FromJsEnum for bun_http_types::FetchRequestMode::FetchRequestMode {
+impl FromJsEnum for bun_core::http_types::FetchRequestMode::FetchRequestMode {
     fn from_js_value(
         v: JSValue,
         global: &JSGlobalObject,
         property_name: &'static str,
     ) -> JsResult<Self> {
-        use bun_http_types::FetchRequestMode::FetchRequestMode;
+        use bun_core::http_types::FetchRequestMode::FetchRequestMode;
         v.to_enum_from_map(
             global,
             property_name,
@@ -1464,13 +1464,13 @@ impl FromJsEnum for bun_http_types::FetchRequestMode::FetchRequestMode {
     }
 }
 
-impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
+impl FromJsEnum for bun_core::http_types::FetchCacheMode::FetchCacheMode {
     fn from_js_value(
         v: JSValue,
         global: &JSGlobalObject,
         property_name: &'static str,
     ) -> JsResult<Self> {
-        use bun_http_types::FetchCacheMode::FetchCacheMode;
+        use bun_core::http_types::FetchCacheMode::FetchCacheMode;
         v.to_enum_from_map(
             global,
             property_name,
@@ -1830,7 +1830,7 @@ impl ZigStringJsc for bun_core::ZigString {
             // allocator. `default_alloc::free` agrees with the
             // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
             unsafe {
-                bun_alloc::default_alloc::free(
+                bun_core::alloc_impl::default_alloc::free(
                     self.byte_slice()
                         .as_ptr()
                         .cast_mut()
@@ -2089,7 +2089,7 @@ where
 {
     extern "C" fn callback<Context, F: FnTyped<Context>>(ctx: *mut c_void) {
         // SAFETY: caller guarantees ctx is a valid *mut Context.
-        let context: &mut Context = unsafe { bun_ptr::callback_ctx::<Context>(ctx) };
+        let context: &mut Context = unsafe { bun_core::ptr::callback_ctx::<Context>(ctx) };
         F::call(context);
     }
     callback::<Context, F>

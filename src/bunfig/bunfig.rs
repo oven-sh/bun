@@ -8,10 +8,10 @@
 
 #![allow(clippy::collapsible_if, clippy::needless_return)]
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::sync::atomic::Ordering;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
@@ -349,7 +349,7 @@ impl<'a> Parser<'a> {
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
     pub(crate) fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
-        bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
 
@@ -395,10 +395,10 @@ impl<'a> Parser<'a> {
 
             if let Some(expr) = json.get(b"telemetry") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                bun_analytics::set_enabled(if expr.as_bool().expect("infallible: type checked") {
-                    bun_analytics::TriState::Yes
+                bun_core::analytics::set_enabled(if expr.as_bool().expect("infallible: type checked") {
+                    bun_core::analytics::TriState::Yes
                 } else {
-                    bun_analytics::TriState::No
+                    bun_core::analytics::TriState::No
                 });
             }
         }
@@ -1029,7 +1029,7 @@ impl<'a> Parser<'a> {
                 self.ctx.debug.macros =
                     MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
             }
-            bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
+            bun_core::analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
 
         if let Some(expr) = json.get(b"external") {
@@ -1530,7 +1530,7 @@ impl<'a> Parser<'a> {
         // bunfig error; only OOM passes through unchanged.
         let remap = |e: FromExprError| -> crate::Error {
             match e {
-                FromExprError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+                FromExprError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
                 FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
                     crate::Error::InvalidBunfig
                 }

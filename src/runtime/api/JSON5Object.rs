@@ -1,4 +1,4 @@
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_js_parser::lexer;

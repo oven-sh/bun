@@ -305,7 +305,7 @@ pub use byte_stream::ByteStream;
 // thread-local storage; the bare `ObjectPool<Vec<u8>, true, 8>` alias used to
 // default to `UnwiredStorage` and panic on first `get_if_exists()`/`full()`
 // from `streams::HTTPSServerWritable::send`.
-bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
+bun_core::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`

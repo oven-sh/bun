@@ -47,7 +47,7 @@ pub use crate::work_task::{WorkTask, WorkTaskContext};
 bun_core::declare_scope!(EventLoop, hidden);
 
 pub type Queue =
-    bun_collections::LinearFifo<Task, bun_collections::linear_fifo::DynamicBuffer<Task>>;
+    bun_core::collections::LinearFifo<Task, bun_core::collections::linear_fifo::DynamicBuffer<Task>>;
 
 pub struct EventLoop {
     pub tasks: Queue,
@@ -100,10 +100,10 @@ pub struct EventLoop {
     #[cfg(unix)]
     /// Boxed `PosixSignalHandle` ring buffer, leaked once by
     /// `Bun__ensureSignalHandler` and live for the process lifetime. Stored as
-    /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
+    /// a [`bun_core::ptr::BackRef`] so the per-tick `drain()` / signal-context
     /// `enqueue()` reads go through the single audited `BackRef::deref`
     /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
-    pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
+    pub signal_handler: Option<bun_core::ptr::BackRef<PosixSignalHandle>>,
     #[cfg(not(unix))]
     pub signal_handler: (),
 }

@@ -6,13 +6,13 @@ use bun_ast::{Loc, Log};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
+use bun_core::paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
-use bun_semver::String as SemverString;
+use bun_core::semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
-use bun_wyhash::Wyhash11;
+use bun_core::wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
@@ -23,7 +23,7 @@ use crate::{
 
 pub use crate::lockfile::PatchedDep;
 
-bun_output::declare_scope!(InstallPatch, visible);
+bun_core::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).
 pub(crate) const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
@@ -43,7 +43,7 @@ pub struct PatchTask {
     /// Constructed via `BackRef::new_mut` so the underlying pointer carries
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
-    pub manager: bun_ptr::BackRef<PackageManager>,
+    pub manager: bun_core::ptr::BackRef<PackageManager>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub tempdir: Fd,
     pub project_dir: &'static [u8],
@@ -170,7 +170,7 @@ impl PatchTask {
     }
 
     pub fn run_from_thread_pool_impl(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             InstallPatch,
             "runFromThreadPoolImpl {}",
             <&'static str>::from(&self.callback)
@@ -209,7 +209,7 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), crate::Error> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
             <&'static str>::from(&self.callback)
@@ -314,14 +314,14 @@ impl PatchTask {
             ) {
                 PreinstallState::Done => {
                     // patched pkg in folder path, should now be handled by PackageInstall.install()
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         InstallPatch,
                         "pkg: {} done",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
                 }
                 PreinstallState::Extract => {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         InstallPatch,
                         "pkg: {} extract",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
@@ -373,7 +373,7 @@ impl PatchTask {
                     }
                 }
                 PreinstallState::ApplyPatch => {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         InstallPatch,
                         "pkg: {} apply patch",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
@@ -403,12 +403,12 @@ impl PatchTask {
     // 4. Apply patches to pkg in temp dir
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
-    pub fn apply(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub fn apply(&mut self) -> Result<(), bun_core::alloc_impl::AllocError> {
         let Callback::Apply(patch) = &mut self.callback else {
             unreachable!()
         };
         let log = &mut patch.logger;
-        bun_output::scoped_log!(InstallPatch, "apply patch task");
+        bun_core::scoped_log!(InstallPatch, "apply patch task");
         // bun.assert(this.callback == .apply) — enforced by the match above.
 
         let dir = self.project_dir;
@@ -770,7 +770,7 @@ impl PatchTask {
                 result: None,
                 logger: Log::init(),
             }),
-            manager: bun_ptr::BackRef::new_mut(manager),
+            manager: bun_core::ptr::BackRef::new_mut(manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -848,7 +848,7 @@ impl PatchTask {
                 task_id: None,
                 install_context: None,
             }),
-            manager: bun_ptr::BackRef::new_mut(pkg_manager),
+            manager: bun_core::ptr::BackRef::new_mut(pkg_manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),

@@ -424,7 +424,7 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
 /// Modifies text_buf in-place. Uses slug_counts for -N deduplication.
 pub fn generate_slug<'a>(
     text_buf: &'a mut Vec<u8>,
-    slug_counts: &mut bun_collections::StringHashMap<u32>,
+    slug_counts: &mut bun_core::collections::StringHashMap<u32>,
 ) -> &'a [u8] {
     let text_len = text_buf.len();
     let mut out_len: usize = 0;
@@ -485,7 +485,7 @@ pub struct HeadingIdTracker {
     pub enabled: bool,
     pub in_heading: bool,
     pub text_buf: Vec<u8>,
-    pub slug_counts: bun_collections::StringHashMap<u32>,
+    pub slug_counts: bun_core::collections::StringHashMap<u32>,
 }
 
 impl HeadingIdTracker {

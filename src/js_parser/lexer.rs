@@ -11,7 +11,7 @@ use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::{Indentation, IndentationCharacter};
 
 // Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
@@ -2505,7 +2505,7 @@ lexer_impl_header! {
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
             if let Some(relative_index) =
-                bun_highway::index_of_newline_or_non_ascii_or_hash_or_at(&contents[self.current..])
+                bun_core::highway::index_of_newline_or_non_ascii_or_hash_or_at(&contents[self.current..])
             {
                 let absolute_index = self.current + relative_index;
                 self.current = absolute_index; // Move TO the interesting char
@@ -2837,7 +2837,7 @@ lexer_impl_header! {
                     const FLAG_CHARACTERS: &[u8] = b"dgimsuvy";
                     const MIN_FLAG: u8 = b'd'; // min of FLAG_CHARACTERS
                     const MAX_FLAG: u8 = b'y'; // max of FLAG_CHARACTERS
-                    let mut flags = bun_collections::IntegerBitSet::<
+                    let mut flags = bun_core::collections::IntegerBitSet::<
                         { (MAX_FLAG - MIN_FLAG) as usize + 1 },
                     >::init_empty();
                     let _ = FLAG_CHARACTERS;
@@ -4135,11 +4135,11 @@ impl PragmaArg {
 /// the rest of the input has no such byte — the comment is unterminated, so
 /// the caller's next `step()` lands on EOF and reports the error.
 fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> usize {
-    bun_highway::index_of_interesting_character_in_multiline_comment(text_).unwrap_or(text_.len())
+    bun_core::highway::index_of_interesting_character_in_multiline_comment(text_).unwrap_or(text_.len())
 }
 
 fn index_of_interesting_character_in_string_literal(text_: &[u8], quote: u8) -> Option<usize> {
-    bun_highway::index_of_interesting_character_in_string_literal(text_, quote)
+    bun_core::highway::index_of_interesting_character_in_string_literal(text_, quote)
 }
 
 struct InvalidEscapeSequenceFormatter {

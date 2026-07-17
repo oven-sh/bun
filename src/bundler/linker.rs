@@ -4,19 +4,20 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_collections::HashMap;
-use bun_paths::{self, SEP};
+use bun_core::collections::HashMap;
+#[allow(unused_imports)]
+use bun_core::paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
-// the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
+// the singleton `FileSystem` / `DirnameStore`; `bun_core::paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
 // B-3 collapses them. Until then, construct
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
-use bun_paths::fs as PFs;
+use bun_core::paths::fs as PFs;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 use bun_sys::Fd;
-use bun_url::URL;
+use bun_core::url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
@@ -70,7 +71,7 @@ pub struct TaggedResolution {
 }
 
 // ── relative_paths_list singleton ────────────────────────────────────────
-// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
+// `bun_core::alloc_impl::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
 // `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1` (see `bun_alloc/lib.rs`).
 // `bss_string_list!` would be the canonical declare-site macro but
 // expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
@@ -78,7 +79,7 @@ pub struct TaggedResolution {
 // fallback under a `LazyLock` instead — same lifetime semantics
 // (process-static, never freed), just not BSS-backed. Swap to the macro once
 // the crate-level feature flag lands.
-pub(crate) type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
+pub(crate) type ImportPathsList = bun_core::alloc_impl::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
 
 /// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
 /// it can sit inside a `LazyLock`. The underlying list serializes its own
@@ -351,7 +352,7 @@ impl Linker {
         fd: Option<Fd>,
     ) -> crate::Result<&'static [u8]> {
         if IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
+            let hashed = bun_core::wyhash::hash(file_path.text);
             if let Some(v) = self.hashed_filenames.get(&hashed) {
                 return Ok(*v);
             }
@@ -374,7 +375,7 @@ impl Linker {
         let hash_name = dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?);
 
         if IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
+            let hashed = bun_core::wyhash::hash(file_path.text);
             self.hashed_filenames.insert(hashed, hash_name);
         }
 
@@ -654,14 +655,14 @@ impl Linker {
                     // directly. The threadlocal-buffer result must be
                     // dup'd to outlive this call.
                     let relative_name =
-                        dupe(bun_paths::resolve_path::relative(source_dir, source_path));
+                        dupe(bun_core::paths::resolve_path::relative(source_dir, source_path));
                     Ok(PFs::Path::init_with_pretty(source_path, relative_name))
                 } else {
                     Ok(PFs::Path::init_with_namespace(source_path, namespace))
                 }
             }
             ImportPathFormat::Relative => {
-                let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
+                let relative_name = bun_core::paths::resolve_path::relative(source_dir, source_path);
 
                 let pretty: &'static [u8];
                 let relative_name_out: &'static [u8];
@@ -703,9 +704,9 @@ impl Linker {
                         &mut buf,
                         "{}/{}",
                         bstr::BStr::new(strings::without_trailing_slash(origin.href)),
-                        bstr::BStr::new(bun_paths::strings::without_leading_slash(source_path)),
+                        bstr::BStr::new(bun_core::paths::strings::without_leading_slash(source_path)),
                     )
-                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                    .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                     Ok(PFs::Path::init(dupe(&buf)))
                 } else {
                     let mut absolute_pathname = PFs::PathName::init(source_path);
@@ -719,14 +720,14 @@ impl Linker {
 
                     let top_level_dir = self.fs().top_level_dir;
                     let mut base: &[u8] =
-                        bun_paths::resolve_path::relative(top_level_dir, source_path);
+                        bun_core::paths::resolve_path::relative(top_level_dir, source_path);
                     if let Some(dot) = strings::last_index_of_char(base, b'.') {
                         base = &base[0..dot];
                     }
 
                     let dirname = bun_core::dirname(base).unwrap_or(b"");
 
-                    let mut basename: &[u8] = bun_paths::basename(base);
+                    let mut basename: &[u8] = bun_core::paths::basename(base);
 
                     if use_hashed_name {
                         let basepath = PFs::Path::init(source_path);
@@ -757,7 +758,7 @@ impl Linker {
             hash_key = &path.text[fs.top_level_dir.len()..];
         }
 
-        bun_wyhash::hash(hash_key)
+        bun_core::wyhash::hash(hash_key)
     }
 
     pub fn enqueue_resolve_result(

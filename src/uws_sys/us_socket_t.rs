@@ -142,10 +142,10 @@ impl us_socket_t {
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
+            let errno = bun_core::errno::get_errno(length);
+            debug_assert!(errno != bun_core::errno::E::SUCCESS);
             return Err(crate::Error::Sys(
-                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+                bun_core::errno::SystemErrno::init(errno as i64).unwrap_or(bun_core::errno::SystemErrno::EIO),
             ));
         }
         debug_assert!(buf.len() >= length as usize);
@@ -160,10 +160,10 @@ impl us_socket_t {
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
+            let errno = bun_core::errno::get_errno(length);
+            debug_assert!(errno != bun_core::errno::E::SUCCESS);
             return Err(crate::Error::Sys(
-                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+                bun_core::errno::SystemErrno::init(errno as i64).unwrap_or(bun_core::errno::SystemErrno::EIO),
             ));
         }
         debug_assert!(buf.len() >= length as usize);

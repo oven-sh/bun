@@ -27,7 +27,6 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_io.workspace = true
 bun_ast.workspace = true
-bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_wyhash.workspace = true
-bun_css_derive = { path = "../css_derive" }
+bun_macros.workspace = true

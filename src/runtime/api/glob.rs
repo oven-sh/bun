@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::bun_string_jsc;
@@ -9,8 +9,8 @@ use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
     StringJsc as _, SysErrorJsc as _,
 };
-use bun_paths::resolve_path::join_string_buf;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
+use bun_core::paths::resolve_path::join_string_buf;
+use bun_core::paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the

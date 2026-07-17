@@ -29,7 +29,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 
 // Declared `extern "C"` so the
 // same fn-pointer type can flow across the FFI boundary (e.g.
@@ -48,8 +48,8 @@ impl DeferredTaskQueue {
         // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
         // gives insert-if-absent + report-existing semantics.
         match self.map.entry(ctx) {
-            bun_collections::hash_map::Entry::Occupied(_) => true,
-            bun_collections::hash_map::Entry::Vacant(v) => {
+            bun_core::collections::hash_map::Entry::Occupied(_) => true,
+            bun_core::collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
                 false
             }
@@ -69,7 +69,7 @@ impl DeferredTaskQueue {
         // remove by key — semantically identical (keys are unique), just an
         // extra hash per removal.
         // PERF: swap_remove(&K) re-hashes; restore swap_remove_at when
-        // bun_collections::ArrayHashMap grows it.
+        // bun_core::collections::ArrayHashMap grows it.
         let mut i: usize = 0;
         let mut last = self.map.len();
         while i < last {

@@ -45,7 +45,7 @@ pub struct WildcardPattern {
 /// `--external` `abs_paths`/`node_modules` through. The previous local ZST
 /// stub returned `count() == 0` / `contains(..) == false`, so the resolver
 /// silently ignored every `--external` absolute path / package name.
-pub use bun_collections::StringSet;
+pub use bun_core::collections::StringSet;
 
 #[derive(Default)]
 pub struct Conditions {
@@ -196,7 +196,7 @@ pub use ::bun_options_types::ForceNodeEnv;
 /// Bake `Framework` — only the
 /// `built_in_modules` field, which is the sole resolver-read member.
 pub struct Framework {
-    pub built_in_modules: bun_collections::StringArrayHashMap<bun_options_types::BuiltInModule>,
+    pub built_in_modules: bun_core::collections::StringArrayHashMap<bun_options_types::BuiltInModule>,
 }
 
 /// Resolver-tier `BundleOptions` — the canonical resolver-input struct.

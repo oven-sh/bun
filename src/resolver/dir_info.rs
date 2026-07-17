@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_alloc as allocators;
+use bun_core::alloc_impl as allocators;
 use bun_core::Generation;
 use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
@@ -35,14 +35,14 @@ pub type Index = IndexType;
 /// `Deref<Target = DirInfo>` so call sites read `dir.abs_path` instead of
 /// `unsafe { &*dir }.abs_path`.
 ///
-/// Wraps [`bun_ptr::BackRef`] (the canonical non-owning back-reference type)
+/// Wraps [`bun_core::ptr::BackRef`] (the canonical non-owning back-reference type)
 /// rather than open-coding `NonNull` + `unsafe as_ref` here: the BSSMap
 /// singleton strictly outlives every `DirInfoRef` (slots are never freed),
 /// which is exactly the `BackRef` invariant, so the deref `unsafe` lives once
 /// in `BackRef::get` instead of being re-derived per wrapper type.
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct DirInfoRef(bun_ptr::BackRef<DirInfo>);
+pub struct DirInfoRef(bun_core::ptr::BackRef<DirInfo>);
 
 impl DirInfoRef {
     /// Wrap a raw BSSMap slot pointer.
@@ -57,7 +57,7 @@ impl DirInfoRef {
     pub const unsafe fn from_raw(p: *mut DirInfo) -> Self {
         // SAFETY: caller contract — `p` is a non-null BSSMap slot that
         // outlives every copy of the handle (the `BackRef` invariant).
-        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw(p) })
+        DirInfoRef(unsafe { bun_core::ptr::BackRef::from_raw(p) })
     }
 
     /// Wrap a BSSMap slot reference. Safe: a `&mut DirInfo` obtained from
@@ -67,7 +67,7 @@ impl DirInfoRef {
     /// every `at_index` call.
     #[inline]
     pub fn from_slot(slot: &mut DirInfo) -> Self {
-        DirInfoRef(bun_ptr::BackRef::new_mut(slot))
+        DirInfoRef(bun_core::ptr::BackRef::new_mut(slot))
     }
 
     /// Raw pointer to the underlying slot. Preserves mut-provenance from the
@@ -304,7 +304,7 @@ impl DirInfo {
 
 // `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
-// the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
+// the use site and `bun_core::alloc_impl::BSSMapInner::init()` hands back the storage.
 // PORTING.md §Global mutable state: lazy singleton. `AtomicCell` over the
 // `Option<NonNull<_>>` because resolver-pool threads race on first access;
 // the load/CAS below makes the publish itself data-race-free. (The map's

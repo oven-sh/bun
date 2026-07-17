@@ -20,7 +20,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    pub vm: Option<bun_core::ptr::BackRef<VirtualMachine>>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,

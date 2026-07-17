@@ -5,10 +5,10 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
-use bun_paths::PathBuffer;
+use bun_core::paths::PathBuffer;
 use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
@@ -23,14 +23,14 @@ const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PA
 #[allow(non_upper_case_globals)]
 const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
 
-bun_output::declare_scope!(PathWatcherManager, visible);
+bun_core::declare_scope!(PathWatcherManager, visible);
 // Rust identifiers cannot contain '.', so
 // the static is declared by hand (instead of via `declare_scope!`) with the
 // tag string, keeping `BUN_DEBUG_fs.watch` env matching and the
 // `[fs.watch]` log prefix.
 #[allow(non_upper_case_globals)]
-pub static fs_watch: bun_output::ScopedLogger =
-    bun_output::ScopedLogger::new("fs.watch", bun_output::Visibility::Visible);
+pub static fs_watch: bun_core::ScopedLogger =
+    bun_core::ScopedLogger::new("fs.watch", bun_core::Visibility::Visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -297,7 +297,7 @@ impl PathWatcher {
         }
 
         #[cfg(debug_assertions)]
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             fs_watch,
             "emit({}, {}, {}, at {}) x {}",
             bstr::BStr::new(path),
@@ -402,7 +402,7 @@ impl PathWatcher {
     extern "C" fn uv_closed_callback(handler: *mut uv::uv_handle_t) {
         // Body discharges its own preconditions; safe `extern "C" fn` coerces
         // to libuv's `uv_close_cb` pointer type.
-        bun_output::scoped_log!(fs_watch, "onClose");
+        bun_core::scoped_log!(fs_watch, "onClose");
         // SAFETY: `uv_fs_event_t` is `#[repr(C)]` and prefixed with `uv_handle_t` (UvHandle impl);
         // libuv passes back the same pointer registered in `uv_close`.
         let event = handler.cast::<uv::uv_fs_event_t>();
@@ -434,7 +434,7 @@ impl PathWatcher {
     /// NOTE: not `impl Drop` — destruction is deferred through `uv_close` and the close callback
     /// frees the box, so this type is always managed via raw `*mut PathWatcher`.
     unsafe fn deinit(this: *mut PathWatcher) {
-        bun_output::scoped_log!(fs_watch, "deinit");
+        bun_core::scoped_log!(fs_watch, "deinit");
         // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
         let me = unsafe { &mut *this };
         me.handlers.clear();

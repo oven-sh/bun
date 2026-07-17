@@ -1,6 +1,6 @@
 use bun_ast::ExprData;
 use bun_ast::Ref;
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 
@@ -52,7 +52,7 @@ impl Globals {
     }
 }
 
-use bun_paths::fs::Path as FsPath;
+use bun_core::paths::fs::Path as FsPath;
 // `Path::init` is not `const fn`; lazily build the path.
 fn defines_path() -> FsPath<'static> {
     let mut p = FsPath::init(b"defines.json");
@@ -72,7 +72,7 @@ pub type Data = DefineData;
 
 fn env_string_store_put(
     store: &mut UserDefinesArray,
-    bump: &bun_alloc::Arena,
+    bump: &bun_core::alloc_impl::Arena,
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
@@ -110,7 +110,7 @@ pub fn copy_env_for_define(
     framework_defaults_values: &[&[u8]],
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
-    bump: &bun_alloc::Arena,
+    bump: &bun_core::alloc_impl::Arena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
     const INVALID_HASH: u64 = u64::MAX - 1;
@@ -121,7 +121,7 @@ pub fn copy_env_for_define(
     for (i, &key) in framework_defaults_keys.iter().enumerate() {
         if key.len() > PROCESS_ENV.len() && &key[..PROCESS_ENV.len()] == PROCESS_ENV {
             let hashable_segment = &key[PROCESS_ENV.len()..];
-            string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
+            string_map_hashes[i] = bun_core::wyhash::hash(hashable_segment);
         }
     }
 
@@ -164,7 +164,7 @@ pub fn copy_env_for_define(
                         key_buf.extend_from_slice(k);
                         env_string_store_put(to_string, bump, &key_buf, value)?;
                     } else {
-                        let hash = bun_wyhash::hash(k);
+                        let hash = bun_core::wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
                         if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
                             env_string_store_put(
@@ -207,14 +207,14 @@ pub trait DefineExt: Sized {
         &mut self,
         global: &[&[u8]],
         value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError>;
+    ) -> Result<(), bun_core::alloc_impl::AllocError>;
 
     fn init(
         user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
-    ) -> Result<Box<Define>, bun_alloc::AllocError>;
+    ) -> Result<Box<Define>, bun_core::alloc_impl::AllocError>;
 }
 
 impl DefineExt for Define {
@@ -222,7 +222,7 @@ impl DefineExt for Define {
         &mut self,
         global: &[&[u8]],
         value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
         // reshaped for borrowck — getOrPut split into entry-style match.
@@ -250,7 +250,7 @@ impl DefineExt for Define {
         string_defines: Option<UserDefinesArray>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
-    ) -> Result<Box<Define>, bun_alloc::AllocError> {
+    ) -> Result<Box<Define>, bun_core::alloc_impl::AllocError> {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
@@ -350,7 +350,7 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<DefineData, crate::Error>;
 
     fn from_mergeable_input_entry(
@@ -360,14 +360,14 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<(), crate::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<UserDefines, crate::Error>;
 }
 
@@ -379,7 +379,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<(), crate::Error> {
         user_defines.put_assume_capacity(
             key,
@@ -401,7 +401,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<DefineData, crate::Error> {
         let mut key_splitter = key.split(|b| *b == b'.');
         while let Some(part) = key_splitter.next() {
@@ -551,7 +551,7 @@ impl DefineDataExt for DefineData {
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
     ) -> Result<UserDefines, crate::Error> {
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);

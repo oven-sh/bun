@@ -13,6 +13,9 @@
 #![allow(incomplete_features, internal_features)]
 #![warn(unused_must_use)]
 
+#[allow(unused_imports)]
+pub(crate) use crate as collections;
+
 pub mod hive_array;
 pub mod multi_array_list;
 pub mod vec_ext;

@@ -5,9 +5,9 @@ pub enum Error {
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
 }
 
 impl Error {

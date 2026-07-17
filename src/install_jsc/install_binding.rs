@@ -38,7 +38,7 @@ pub mod bun_install_js_bindings {
             WriteStream, WriteStreamOptions, json_stringify,
         };
         use bun_install::lockfile::{LoadResult, Lockfile};
-        use bun_paths::resolve_path;
+        use bun_core::paths::resolve_path;
         use bun_sys::FdExt as _;
 
         let mut log = bun_ast::Log::init();

@@ -18,7 +18,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
@@ -26,7 +26,7 @@ use bun_core::{Environment, Output, env_var, fmt};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
-use bun_paths::{self as path, PathBuffer};
+use bun_core::paths::{self as path, PathBuffer};
 use bun_sys::{self as sys, Fd};
 
 // ============================================================================
@@ -253,7 +253,7 @@ impl History {
         self.modified = false;
     }
 
-    pub(crate) fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn add(&mut self, line: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         if line.is_empty() {
             return Ok(());
         }
@@ -342,14 +342,14 @@ impl LineEditor {
         self.cursor = 0;
     }
 
-    pub(crate) fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn set(&mut self, text: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
         Ok(())
     }
 
-    pub(crate) fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert(&mut self, ch: u8) -> Result<(), bun_core::alloc_impl::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.push(ch);
         } else {
@@ -359,7 +359,7 @@ impl LineEditor {
         Ok(())
     }
 
-    pub(crate) fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
@@ -1749,7 +1749,7 @@ impl<'a> Repl<'a> {
 
         if first.len() == text.len() {
             // No ANSI sequences - encode the original directly
-            let encoded: Vec<u8> = bun_base64::encode_alloc(text);
+            let encoded: Vec<u8> = bun_core::base64::encode_alloc(text);
             self.write(b"\x1b]52;c;");
             self.write(&encoded);
             self.write(b"\x07");
@@ -1760,7 +1760,7 @@ impl<'a> Repl<'a> {
             while let Some(slice) = it.next() {
                 clean.extend_from_slice(slice);
             }
-            let encoded: Vec<u8> = bun_base64::encode_alloc(&clean);
+            let encoded: Vec<u8> = bun_core::base64::encode_alloc(&clean);
             self.write(b"\x1b]52;c;");
             self.write(&encoded);
             self.write(b"\x07");
@@ -1795,7 +1795,7 @@ impl<'a> Repl<'a> {
         };
 
         // Create arena for parsing
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_core::alloc_impl::Arena::new();
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
@@ -1861,7 +1861,7 @@ impl<'a> Repl<'a> {
         // — see Symbol.rs note on the dangling-slice hazard.
         let arena = *ast.symbols.allocator();
         let symbols_map = bun_ast::symbol::Map::init_with_one_list(
-            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+            core::mem::replace(&mut ast.symbols, bun_core::alloc_impl::ArenaVec::new_in(arena))
                 .into_iter()
                 .collect(),
         );

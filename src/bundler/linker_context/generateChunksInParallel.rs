@@ -2,12 +2,12 @@ use crate::mal_prelude::*;
 use std::borrow::Cow;
 use std::io::Write as _;
 
-use bun_collections::AutoBitSet;
-use bun_collections::StringArrayHashMap;
-use bun_collections::StringHashMap;
+use bun_core::collections::AutoBitSet;
+use bun_core::collections::StringArrayHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_paths as path;
+use bun_core::paths as path;
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::BundleV2;
@@ -62,11 +62,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
         let ctx = GenerateChunkCtx {
-            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
+            chunk: bun_core::ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
-            c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
-            chunks: bun_ptr::BackRef::new_mut(chunks),
+            c: unsafe { bun_core::ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
+            chunks: bun_core::ptr::BackRef::new_mut(chunks),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -144,13 +144,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // stored in every ctx.
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
-                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
+                unsafe { bun_core::ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
+            let chunks_ref: bun_core::ptr::BackRef<[Chunk]> = bun_core::ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
                     c: c_ref,
                     chunks: chunks_ref,
-                    chunk: bun_ptr::BackRef::new_mut(chunk),
+                    chunk: bun_core::ptr::BackRef::new_mut(chunk),
                 });
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
@@ -220,7 +220,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
                                 // before `chunk_contexts` drops (we `wait_for_all` below).
                                 ctx: unsafe {
-                                    bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
+                                    bun_core::ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             });
                             batch.push(ThreadPoolLib::Batch::from(
@@ -243,7 +243,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
                                 // before `chunk_contexts` drops (we `wait_for_all` below).
                                 ctx: unsafe {
-                                    bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
+                                    bun_core::ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             });
                             batch.push(ThreadPoolLib::Batch::from(
@@ -265,7 +265,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
                             ctx: unsafe {
-                                bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
+                                bun_core::ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                             },
                         });
                         batch.push(ThreadPoolLib::Batch::from(
@@ -335,7 +335,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // `BackRef` (not `*mut`) — entries point at elements of the
             // stack-owned `chunks: &mut [Chunk]` above, which outlives the
             // `duplicates_map`; reads go through safe `Deref`.
-            sources: Vec<bun_ptr::BackRef<Chunk>>,
+            sources: Vec<bun_core::ptr::BackRef<Chunk>>,
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
@@ -377,7 +377,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new_mut(chunk));
+                dup.value_ptr.sources.push(bun_core::ptr::BackRef::new_mut(chunk));
                 continue;
             }
 
@@ -385,7 +385,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // use resolvePosix since we asserted above all seps are '/'
             #[cfg(windows)]
             if strings::index_of(&rel_path, b"/./").is_some() {
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_core::paths::PathBuffer::uninit();
                 let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
                     path::platform::Posix,
                 >(&rel_path, &mut buf));
@@ -600,8 +600,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // SAFETY: launder via raw ptr so this long-lived
         // shared borrow doesn't conflict with `c.log_disjoint()` inside
         // the chunk loop below. `c` outlives `static_route_visitor`.
-        c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
-        cache: bun_collections::ArrayHashMap::default(),
+        c: unsafe { bun_core::ptr::detach_lifetime_ref::<LinkerContext>(c) },
+        cache: bun_core::collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };
     // defer static_route_visitor.deinit() — handled by Drop
@@ -730,7 +730,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .output_source_map
                         .finalize(&code_result.shifts)
                         .expect("Failed to allocate memory for inline source map");
-                    let encode_len = bun_base64::encode_len(&output_source_map);
+                    let encode_len = bun_core::base64::encode_len(&output_source_map);
 
                     let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
                     let total_len = buffer.len() + source_map_start.len() + encode_len + 1;
@@ -742,7 +742,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let old_len = buf.len();
                     // Capacity reserved above; resize zero-fills then base64 overwrites.
                     buf.resize(old_len + encode_len, 0);
-                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
+                    let _ = bun_core::base64::encode(&mut buf[old_len..], &output_source_map);
 
                     buf.push(b'\n');
                     buffer = buf.into_boxed_slice();
@@ -976,7 +976,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .output_source_map
                         .finalize(&code_result.shifts)
                         .expect("Failed to allocate memory for external source map");
-                    let encode_len = bun_base64::encode_len(&output_source_map);
+                    let encode_len = bun_core::base64::encode_len(&output_source_map);
 
                     let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
                     let total_len =
@@ -989,7 +989,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let old_len = buf.len();
                     // Capacity reserved above; resize zero-fills then base64 overwrites.
                     buf.resize(old_len + encode_len, 0);
-                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
+                    let _ = bun_core::base64::encode(&mut buf[old_len..], &output_source_map);
 
                     buf.push(b'\n');
                     code_result.buffer = buf.into_boxed_slice();
@@ -1024,7 +1024,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                     {
-                        let mut fdpath = bun_paths::PathBuffer::uninit();
+                        let mut fdpath = bun_core::paths::PathBuffer::uninit();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1084,7 +1084,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 input_path: input_path_buf.into_boxed_slice(),
                                 input_loader: Loader::Js,
                                 hash: if chunk.template.placeholder.hash.is_some() {
-                                    Some(bun_wyhash::hash(&bytecode))
+                                    Some(bun_core::wyhash::hash(&bytecode))
                                 } else {
                                     None
                                 },
@@ -1151,7 +1151,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         input_path: in_path.into_boxed_slice(),
                                         input_loader: Loader::Js,
                                         hash: if chunk.template.placeholder.hash.is_some() {
-                                            Some(bun_wyhash::hash(module_info_bytes))
+                                            Some(bun_core::wyhash::hash(module_info_bytes))
                                         } else {
                                             None
                                         },

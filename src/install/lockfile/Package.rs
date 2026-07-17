@@ -1,14 +1,14 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
+use bun_core::collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_core::paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_resolver::fs::FileSystem;
-use bun_semver::semver_query::Wildcard;
-use bun_semver::version::VersionInt;
-use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
+use bun_core::semver::semver_query::Wildcard;
+use bun_core::semver::version::VersionInt;
+use bun_core::semver::{self as semver, ExternalString, String, Version as SemverVersion};
 
 use crate::bun_json::{E, Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
@@ -44,14 +44,14 @@ pub use meta::Meta;
 pub use scripts::Scripts;
 pub use workspace_map as WorkspaceMap;
 
-bun_output::declare_scope!(Lockfile, hidden);
+bun_core::declare_scope!(Lockfile, hidden);
 
 trait ExprStr {
-    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
+    fn as_utf8<'b>(&self, bump: &'b bun_core::alloc_impl::Arena) -> Option<&'b [u8]>;
 }
 impl ExprStr for Expr {
     #[inline]
-    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
+    fn as_utf8<'b>(&self, bump: &'b bun_core::alloc_impl::Arena) -> Option<&'b [u8]> {
         if let ExprData::EString(s) = &self.data {
             return Some(s.string(bump).expect("OOM"));
         }
@@ -62,13 +62,13 @@ impl ExprStr for Expr {
 enum JsonObjectStringRows<'a> {
     Classic(
         core::slice::Iter<'a, bun_ast::G::Property>,
-        &'a bun_alloc::Arena,
+        &'a bun_core::alloc_impl::Arena,
     ),
     Json(core::slice::Iter<'a, E::PropertyJSON>),
 }
 
 impl<'a> JsonObjectStringRows<'a> {
-    fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
+    fn new(expr: &'a Expr, bump: &'a bun_core::alloc_impl::Arena) -> Option<Self> {
         match &expr.data {
             ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
             ExprData::EObjectJSON(obj) => Some(Self::Json(obj.get().properties().iter())),
@@ -394,7 +394,7 @@ impl PackageField {
     }
 }
 
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub trait PackageColumns [SemverIntType: VersionInt] for Package<SemverIntType> {
         name: String,
         name_hash: PackageNameHash,
@@ -428,9 +428,9 @@ pub use bun_install_types::DependencyGroup;
 // carries the outlives-holder invariant (the lockfile outlives every sort
 // pass that constructs an Alphabetizer).
 pub(crate) struct Alphabetizer<SemverIntType: VersionInt> {
-    pub names: bun_ptr::RawSlice<String>,
-    pub buf: bun_ptr::RawSlice<u8>,
-    pub resolutions: bun_ptr::RawSlice<Resolution<SemverIntType>>,
+    pub names: bun_core::ptr::RawSlice<String>,
+    pub buf: bun_core::ptr::RawSlice<u8>,
+    pub resolutions: bun_core::ptr::RawSlice<Resolution<SemverIntType>>,
 }
 
 impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
@@ -479,7 +479,7 @@ impl Package<u64> {
         // for the disjoint borrows below.
         let mut builder_ = crate::string_builder!(new);
         let builder = &mut builder_;
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Lockfile,
             "Clone: {}@{} ({:?}, {} dependencies)",
             bstr::BStr::new(self.name.slice(old_string_buf)),
@@ -1069,7 +1069,7 @@ impl Diff {
         // recursive call only sorts `overrides`/`catalogs` and never reallocates
         // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
         // pointers remain valid for the loop body.
-        let mut to_deps: bun_ptr::RawSlice<Dependency> = to
+        let mut to_deps: bun_core::ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
             .into();
@@ -1078,11 +1078,11 @@ impl Diff {
                 to_deps.slice()
             };
         }
-        let from_deps: bun_ptr::RawSlice<Dependency> = from
+        let from_deps: bun_core::ptr::RawSlice<Dependency> = from
             .dependencies
             .get(from_lockfile.buffers.dependencies.as_slice())
             .into();
-        let from_resolutions: bun_ptr::RawSlice<PackageID> = from
+        let from_resolutions: bun_core::ptr::RawSlice<PackageID> = from
             .resolutions
             .get(from_lockfile.buffers.resolutions.as_slice())
             .into();
@@ -1511,7 +1511,7 @@ impl Diff {
                         // `&mut pm` reborrow below doesn't conflict. The entry
                         // lives in a `StringHashMap` whose backing storage is
                         // not touched by `parse_with_json`.
-                        let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
+                        let (source_ref, json_root): (bun_core::ptr::ParentRef<bun_ast::Source>, Expr) =
                             match pm
                                 .workspace_package_json_cache
                                 .get_with_path(
@@ -1521,7 +1521,7 @@ impl Diff {
                                 )
                                 .unwrap()
                             {
-                                Ok(entry) => (bun_ptr::ParentRef::new(&entry.source), entry.root),
+                                Ok(entry) => (bun_core::ptr::ParentRef::new(&entry.source), entry.root),
                                 Err(_) => break 'update_mapping false,
                             };
                         // BACKREF — entry storage is stable for the remainder
@@ -1659,7 +1659,7 @@ impl Diff {
 
 impl Package<u64> {
     pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
+        let mut hasher = bun_core::wyhash::Wyhash::init(0);
         hasher.update(name);
         // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
         hasher.update(unsafe {
@@ -1782,7 +1782,7 @@ impl Package<u64> {
         // (`allocate()` ran before this fn). No realloc occurs, so the detached
         // borrow stays valid; a tracked `&[u8]` would needlessly lock the builder.
         let buf: &[u8] =
-            unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
+            unsafe { bun_core::ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
@@ -2010,7 +2010,7 @@ impl Package<u64> {
                         });
                     if cfg!(debug_assertions) {
                         debug_assert!(path.len() > 0);
-                        debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
+                        debug_assert!(!bun_core::paths::is_absolute(path.slice(buf)));
                     }
                     dependency_version.value.workspace = path;
 
@@ -2166,7 +2166,7 @@ impl Package<u64> {
         let FEATURES = features;
         // Function-local arena for `asString` transcoding (transcoded strings
         // are only borrowed until `string_builder.append` copies them).
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         // split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
@@ -2296,7 +2296,7 @@ impl Package<u64> {
         let mut optional_peer_dependencies: ArrayHashMap<
             PackageNameHash,
             &[u8],
-            bun_collections::identity_context::U64,
+            bun_core::collections::identity_context::U64,
         > = ArrayHashMap::default();
         // defer optional_peer_dependencies.deinit(); — Drop handles it
 
@@ -3111,7 +3111,7 @@ pub mod serializer {
             let bytes: &[u8] = unsafe {
                 let _n = list.len();
                 let sz =
-                    bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
+                    bun_core::collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
                         field as usize,
                     );
                 {
@@ -3121,7 +3121,7 @@ pub mod serializer {
             };
             #[cfg(debug_assertions)]
             {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     Lockfile,
                     "save(\"{}\") = {} bytes",
                     bstr::BStr::new(field.name()),
@@ -3301,7 +3301,7 @@ pub mod serializer {
         let mut sliced = list.slice();
 
         for field in PackageField::ALL {
-            let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
+            let sz = bun_core::collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
                 field as usize,
             );
             // SAFETY: `items_raw` returns a column pointer with `n` elements of

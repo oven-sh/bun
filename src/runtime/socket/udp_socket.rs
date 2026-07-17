@@ -10,12 +10,12 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
     StringJsc, SysErrorJsc, SystemError,
 };
-use bun_ptr::BackRef;
+use bun_core::ptr::BackRef;
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
-use bun_libuv_sys::sockaddr_storage;
+use bun_core::libuv_sys::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
 #[cfg(not(windows))]
@@ -26,7 +26,7 @@ use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 use crate::api::SocketAddress;
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
 
-bun_output::declare_scope!(UdpSocket, visible);
+bun_core::declare_scope!(UdpSocket, visible);
 
 /// Local errno-classification shim — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
@@ -562,7 +562,7 @@ impl UDPSocket {
     }
 
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
-        bun_output::scoped_log!(UdpSocket, "udpSocket");
+        bun_core::scoped_log!(UdpSocket, "udpSocket");
 
         let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
@@ -1841,7 +1841,7 @@ impl UDPSocket {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
+        bun_core::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
         self.this_value.with_mut(|r| r.finalize());
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
         // back so its existing raw-ptr teardown path stays intact.

@@ -19,7 +19,7 @@ pub struct ResolveMessage {
     // Note: fields own their allocations and free on Drop / finalize.
     //
     // Note: only the referrer path's `.text` is ever read;
-    // store the duped text directly so we don't pull in `bun_paths::fs::Path`
+    // store the duped text directly so we don't pull in `bun_core::paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
     pub referrer: Option<Box<[u8]>>,
     pub logged: Cell<bool>,

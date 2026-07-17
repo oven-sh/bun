@@ -6,15 +6,15 @@
 pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     to: &[u8],
     dir: &[u8],
-    origin: &bun_url::URL,
+    origin: &bun_core::url::URL,
     asset_prefix: &[u8],
     writer: &mut W,
-    platform: bun_paths::Platform,
+    platform: bun_core::paths::Platform,
 ) {
     use bun_core::strings;
-    use bun_paths::{Platform, resolve_path};
+    use bun_core::paths::{Platform, resolve_path};
 
-    // bun_url::URL::join_write wants a `bun_io::Write`; route all
+    // bun_core::url::URL::join_write wants a `bun_io::Write`; route all
     // byte output through a Vec<u8> then forward to the caller's fmt::Write.
     // POSIX paths are arbitrary byte sequences — so use
     // a lossy conversion rather than silently dropping the whole component.
@@ -54,7 +54,7 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
             if write_bytes(writer, b"/abs:").is_err() {
                 return;
             }
-            if bun_paths::is_absolute(to) {
+            if bun_core::paths::is_absolute(to) {
                 let _ = write_bytes(writer, to);
             } else {
                 let fs = VirtualMachine::get().fs();
@@ -74,7 +74,7 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
 /// using the VM's top-level dir, no asset prefix, and loose path platform.
 pub(crate) fn get_public_path<W: core::fmt::Write>(
     to: &[u8],
-    origin: &bun_url::URL,
+    origin: &bun_core::url::URL,
     writer: &mut W,
 ) {
     get_public_path_with_asset_prefix(
@@ -83,7 +83,7 @@ pub(crate) fn get_public_path<W: core::fmt::Write>(
         origin,
         b"",
         writer,
-        bun_paths::Platform::Loose,
+        bun_core::paths::Platform::Loose,
     )
 }
 
@@ -99,11 +99,11 @@ use bun_jsc::{
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::MAX_PATH_BYTES;
+use bun_core::paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
-use bun_paths::PathBuffer;
+use bun_core::paths::PathBuffer;
 #[cfg(windows)]
-use bun_paths::WPathBuffer;
+use bun_core::paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
@@ -492,7 +492,7 @@ pub(crate) fn braces(
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
 
-    let mut arena = bun_alloc::Arena::new();
+    let mut arena = bun_core::alloc_impl::Arena::new();
     let _ = &mut arena;
 
     let mut lexer_output = 'lexer_output: {
@@ -591,7 +591,7 @@ pub(crate) fn braces(
 #[bun_jsc::host_fn]
 pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments_ = callframe.arguments_old::<2>();
-    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let mut path_buf = bun_core::paths::path_buffer_pool::get();
     // SAFETY: bun_vm() returns the live per-thread singleton VM for a Bun-owned global.
     let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
@@ -1063,7 +1063,7 @@ pub(crate) fn open_in_editor(
                         // outlives any caller; we never reallocate it while
                         // `edit.name` is observed (single-threaded JS VM).
                         edit.name =
-                            unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                            unsafe { bun_core::ptr::detach_lifetime(slot.name_storage.as_slice()) };
                         edit.detect_editor(env);
                         editor_choice = edit.editor;
                         if editor_choice.is_none() {
@@ -1439,7 +1439,7 @@ pub fn bun_resolve_sync_with_paths(
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
     // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_core::ptr::detach_lifetime(paths) });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
@@ -1456,7 +1456,7 @@ pub fn bun_resolve_sync_with_paths(
     })
 }
 
-bun_output::declare_scope!(importMetaResolve, visible);
+bun_core::declare_scope!(importMetaResolve, visible);
 
 // HOST_EXPORT(Bun__resolveSyncWithStrings, c)
 pub fn bun_resolve_sync_with_strings(
@@ -1465,7 +1465,7 @@ pub fn bun_resolve_sync_with_strings(
     source: &BunString,
     is_esm: bool,
 ) -> JSValue {
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         importMetaResolve,
         "source: {}, specifier: {}",
         source,
@@ -1758,10 +1758,10 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                         );
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
-                        bun_paths::resolve_path::platform::Auto,
+                    break 'brk bun_core::paths::resolve_path::join_abs_string_buf::<
+                        bun_core::paths::resolve_path::platform::Auto,
                     >(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
+                        bun_core::paths::fs::FileSystem::instance().top_level_dir(),
                         &mut buf,
                         paths,
                     );
@@ -2366,7 +2366,7 @@ pub mod JSZlib {
     // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
     // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
     // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
-    pub use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
+    pub use bun_core::alloc_impl::c_thunks::mi_free_ctx as global_deallocator;
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
     #[strum(serialize_all = "lowercase")]
@@ -2766,7 +2766,7 @@ pub mod JSZstd {
     use super::*;
 
     // `no_mangle` dropped: 0 C++ refs, 0 Rust refs.
-    pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
+    pub use bun_core::alloc_impl::c_thunks::mi_free_ctx as deallocator;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
         if let Some(option_obj) = options_val {
@@ -3051,8 +3051,8 @@ mod stdio_stores {
                 mode,
                 ..Default::default()
             }),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mime_type: bun_core::http_types::MimeType::NONE,
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         });
         StoreRef::from(store)

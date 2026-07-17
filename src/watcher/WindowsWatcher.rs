@@ -5,9 +5,9 @@ use core::ptr;
 
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 use bun_core::strings;
-use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
-use bun_paths::{PathBuffer, WPathBuffer};
-use bun_ptr::{BackRef, RawSlice};
+use bun_core::paths::resolve_path::{ParentEqual, is_parent_or_equal};
+use bun_core::paths::{PathBuffer, WPathBuffer};
+use bun_core::ptr::{BackRef, RawSlice};
 use bun_threading::Mutex;
 
 use bun_sys::windows as w;
@@ -221,7 +221,7 @@ impl WindowsWatcher {
     // `self` is the pre-allocated `platform` slot inside crate::Watcher
     // (64KB+ buffers; avoid moving).
     pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
-        use bun_paths::string_paths as paths;
+        use bun_core::paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
         let path_len_bytes: u16 = (wpath.len() * 2) as u16;

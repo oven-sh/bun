@@ -19,7 +19,7 @@ use core::ffi::c_void;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::{Alignment, AllocatorVTable, StdAllocator};
+use bun_core::alloc_impl::{Alignment, AllocatorVTable, StdAllocator};
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 use bun_sys as sys;
@@ -29,15 +29,15 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///
-/// `ref_count` must stay at this field offset for `bun_ptr::IntrusiveArc<Self>`.
+/// `ref_count` must stay at this field offset for `bun_core::ptr::IntrusiveArc<Self>`.
 //
 // Intrusive *atomic* refcount. Blob stores (and thus this allocator, smuggled
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
 // flavor would data-race on ref/deref.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct LinuxMemFdAllocator {
-    ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
+    ref_count: bun_core::ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub fd: Fd,
     pub size: usize,
 }
@@ -59,9 +59,9 @@ impl LinuxMemFdAllocator {
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    pub fn new(fd: Fd, size: usize) -> bun_ptr::IntrusiveArc<Self> {
-        bun_ptr::IntrusiveArc::new(Self {
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+    pub fn new(fd: Fd, size: usize) -> bun_core::ptr::IntrusiveArc<Self> {
+        bun_core::ptr::IntrusiveArc::new(Self {
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init(),
             fd,
             size,
         })
@@ -71,7 +71,7 @@ impl LinuxMemFdAllocator {
         // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
         // touches the interior-mutable atomic `ref_count` field.
         unsafe {
-            bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
+            bun_core::ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
         };
     }
 
@@ -88,7 +88,7 @@ impl LinuxMemFdAllocator {
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and Box-allocated; forwards
         // to the intrusive refcount which runs `destructor` on zero.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     /// # Safety
@@ -138,7 +138,7 @@ impl LinuxMemFdAllocator {
             let mut size = len;
 
             // size rounded up to nearest page
-            let page = bun_alloc::page_size();
+            let page = bun_core::alloc_impl::page_size();
             size = (size + page - 1) & !(page - 1);
 
             // The map type *replaces* the low TYPE bits (not OR). Mask out the
@@ -337,7 +337,7 @@ mod allocator_interface {
     pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
 }
 
-/// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
+/// For `bun_core::safety::register_alloc_vtable` (see `super::register_safety_vtables`).
 #[inline]
 pub(super) fn std_vtable() -> &'static AllocatorVTable {
     allocator_interface::VTABLE

@@ -13,7 +13,7 @@ use crate::parser::{
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, TempRef,
     VisitArgsOpts, is_eval_or_arguments,
 };
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
 use bun_ast::G::{Decl, PropertyKind};
 use bun_ast::OpCode;
@@ -26,12 +26,12 @@ use bun_ast::{
     AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
     Stmt, StmtData, Symbol,
 };
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::StrictModeKind;
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use core::ptr::NonNull;
 
 // In the AST crate, ListManaged is arena-backed.
@@ -204,7 +204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
         let mut duplicate_args_check: Option<
-            bun_collections::pool::PoolGuard<'static, StringVoidMap>,
+            bun_core::collections::pool::PoolGuard<'static, StringVoidMap>,
         > = None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
                 // during the visit pass, so the entry strictly outlives this loop body.
                 let mut replacement: Option<
-                    bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
+                    bun_core::ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
                 if IS_POSSIBLY_DECL_TO_REMOVE {
                     if let BData::BIdentifier(id) = decl.binding.data {
@@ -294,7 +294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .features
                             .replace_exports
                             .get_ptr(name)
-                            .map(|r| (bun_ptr::BackRef::new(r), r.is_replace()));
+                            .map(|r| (bun_core::ptr::BackRef::new(r), r.is_replace()));
                         if let Some((ptr, is_replace)) = found {
                             replacement = Some(ptr);
                             if self.options.features.dead_code_elimination && !is_replace {
@@ -422,7 +422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .features
                         .replace_exports
                         .get_ptr(name)
-                        .map(bun_ptr::BackRef::new)
+                        .map(bun_core::ptr::BackRef::new)
                     {
                         // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
                         // which is not mutated during the visit pass.
@@ -1879,7 +1879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 fn scopes_for_enum_at<'a>(
-    map: &bun_collections::ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
+    map: &bun_core::collections::ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
     loc: bun_ast::Loc,
 ) -> &'a [ScopeOrder<'a>] {
     map.get(&loc)

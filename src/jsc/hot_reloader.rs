@@ -1,13 +1,14 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_collections::{StringHashMap, StringSet};
+use bun_core::collections::{StringHashMap, StringSet};
 use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]
-use bun_paths::SEP;
-use bun_paths::strings;
-use bun_paths::{self, PathBuffer};
+use bun_core::paths::SEP;
+use bun_core::paths::strings;
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer};
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
@@ -476,7 +477,7 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// BACKREF to the owning context (Bundler / VM transpiler store) that
     /// created this reloader. Set once at init and never reassigned; the
     /// context outlives the reloader (and every `Task` it spawns).
-    pub ctx: bun_ptr::BackRef<Ctx>,
+    pub ctx: bun_core::ptr::BackRef<Ctx>,
     pub verbose: bool,
     pub pending_count: AtomicU32,
 
@@ -723,7 +724,7 @@ where
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: precondition — `ctx` is the live owning context; it
             // outlives the reloader and every Task spawned from it (BACKREF).
-            ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
+            ctx: unsafe { bun_core::ptr::BackRef::from_raw(ctx) },
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
             main: MainFile::default(),
@@ -789,7 +790,7 @@ where
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
-            ctx: unsafe { bun_ptr::BackRef::from_raw(this) },
+            ctx: unsafe { bun_core::ptr::BackRef::from_raw(this) },
             verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
@@ -943,7 +944,7 @@ where
                             // Note: `fs.relative_to(file_path)` would borrow `&*fs`
                             // while `rfs = &mut fs.fs` is live; inline the body so the
                             // split-borrow on `fs.top_level_dir` is visible to borrowck.
-                            bstr::BStr::new(bun_paths::resolve_path::relative(
+                            bstr::BStr::new(bun_core::paths::resolve_path::relative(
                                 fs.top_level_dir,
                                 file_path
                             ))
@@ -1025,7 +1026,7 @@ where
                                         // practice (re-watching a missing
                                         // entrypoint is a no-op downstream).
                                         let mut name_buf = [0u8; 256];
-                                        let basename = bun_paths::basename(self.main.file);
+                                        let basename = bun_core::paths::basename(self.main.file);
                                         let exists = if basename.len() < name_buf.len() {
                                             name_buf[..basename.len()].copy_from_slice(basename);
                                             name_buf[basename.len()] = 0;
@@ -1125,7 +1126,7 @@ where
                         // watch itself is re-armed on the JS thread by
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
                         if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
-                            let main_basename = bun_paths::basename(self.main.file);
+                            let main_basename = bun_core::paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
                                 let changed_name: &[u8] = match changed_name_ {
                                     Some(z) => z.as_bytes(),
@@ -1188,7 +1189,7 @@ where
                                 if loader != bun_ast::Loader::File {
                                     // Both arms of `'brk` assign these before
                                     // any read.
-                                    let path_string: bun_ptr::Interned;
+                                    let path_string: bun_core::ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
                                         if let Some(file_ent) = dir_ent.entries().get(changed_name)
@@ -1274,7 +1275,7 @@ where
                                     if self.verbose {
                                         Self::debug(format_args!(
                                             "File change: {}",
-                                            bstr::BStr::new(bun_paths::resolve_path::relative(
+                                            bstr::BStr::new(bun_core::paths::resolve_path::relative(
                                                 fs.top_level_dir,
                                                 abs_path,
                                             ))
@@ -1287,7 +1288,7 @@ where
                         if self.verbose {
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
-                                bstr::BStr::new(bun_paths::resolve_path::relative(
+                                bstr::BStr::new(bun_core::paths::resolve_path::relative(
                                     fs.top_level_dir,
                                     file_path
                                 )),

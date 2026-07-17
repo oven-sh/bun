@@ -10,8 +10,8 @@ use crate::properties::{Property, PropertyId};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
 };
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 // Clone derive gated on `Image` gaining `Clone` upstream.
@@ -594,7 +594,7 @@ pub struct BackgroundHandler {
     pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
+    // TODO(perf): should be `bun_core::alloc_impl::ArenaVec<'bump, Property>`; threading
     // `'bump` through BackgroundHandler would avoid the heap alloc.
     pub decls: Vec<Property>,
     pub flushed_properties: BackgroundProperty,

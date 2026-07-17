@@ -1,7 +1,7 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 use crate::shared::Data;
-use bun_ptr::RawSlice;
+use bun_core::ptr::RawSlice;
 
 bun_core::declare_scope!(Postgres, hidden);
 

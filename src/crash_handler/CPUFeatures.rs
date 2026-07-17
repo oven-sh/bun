@@ -104,9 +104,9 @@ impl CPUFeatures {
         #[cfg(target_arch = "x86_64")]
         {
             use core::sync::atomic::Ordering;
-            bun_analytics::features::no_avx
+            bun_core::analytics::features::no_avx
                 .fetch_add(usize::from(!flags.contains(Flags::AVX)), Ordering::Relaxed);
-            bun_analytics::features::no_avx2
+            bun_core::analytics::features::no_avx2
                 .fetch_add(usize::from(!flags.contains(Flags::AVX2)), Ordering::Relaxed);
         }
 

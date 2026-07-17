@@ -20,8 +20,8 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
-use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, platform};
+use bun_core::paths::resolve_path;
+use bun_core::paths::{PathBuffer, platform};
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -44,7 +44,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
 /// Resolve `filename` against `cwd`, open it, read its full contents, close it,
 /// and return the buffer.
 ///
-/// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
+/// Built on `bun_core::paths::resolve_path` + `bun_sys::File::read_from`, which is
 /// the cross-platform path the rest of the runtime uses.
 pub fn read_file(cwd: &[u8], filename: &[u8]) -> crate::Result<Vec<u8>> {
     let mut buf = PathBuffer::uninit();

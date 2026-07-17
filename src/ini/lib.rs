@@ -7,7 +7,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 use core::fmt;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::{Loc, Log, Source};
 
 type OOM<T> = Result<T, AllocError>;
@@ -150,9 +150,9 @@ impl ConfigItem {
             if self.value.is_empty() {
                 return Ok(Some(Box::default()));
             }
-            let len = bun_base64::decode_len(&self.value);
+            let len = bun_core::base64::decode_len(&self.value);
             let mut slice = vec![0u8; len].into_boxed_slice();
-            let result = bun_base64::decode(&mut slice[..], &self.value);
+            let result = bun_core::base64::decode(&mut slice[..], &self.value);
             if !result.is_successful() {
                 log.add_error_fmt_opts(
                     format_args!("{} is not valid base64", <&'static str>::from(self.optname)),
@@ -224,16 +224,16 @@ mod draft {
     use core::fmt;
     use core::ptr;
 
-    use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
+    use bun_core::alloc_impl::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
     use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
-    use bun_collections::{ArrayHashMap, VecExt};
+    use bun_core::collections::{ArrayHashMap, VecExt};
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
-    use bun_url::URL;
+    use bun_core::url::URL;
 
     use super::{
         ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
@@ -1941,9 +1941,9 @@ mod draft {
         );
             return Ok(());
         }
-        let decode_len = bun_base64::decode_len(&conf_item.value);
+        let decode_len = bun_core::base64::decode_len(&conf_item.value);
         let mut decoded = vec![0u8; decode_len].into_boxed_slice();
-        let result = bun_base64::decode(&mut decoded[..], &conf_item.value);
+        let result = bun_core::base64::decode(&mut decoded[..], &conf_item.value);
         if !result.is_successful() {
             log.add_error_opts(
                 b"invalid _auth value, expected valid base64",

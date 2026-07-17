@@ -1,20 +1,20 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use std::io::Write as _;
 
 use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
-use bun_alloc::AllocError;
-use bun_collections::{HashMap, IdentityContext, StringSet};
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::{HashMap, IdentityContext, StringSet};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
-use bun_picohttp as picohttp;
-use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
+use bun_core::picohttp as picohttp;
+use bun_core::semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
-use bun_url::{OwnedURL, URL};
-use bun_wyhash::Wyhash11;
+use bun_core::url::{OwnedURL, URL};
+use bun_core::wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
 use crate::external_slice::ExternalPackageNameHashList;
@@ -167,7 +167,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let res = match req.send_sync() {
         Ok(res) => res,
-        Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
+        Err(bun_http::Error::Alloc(bun_core::alloc_impl::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
         }
         Err(e) => {
@@ -194,7 +194,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
     let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
-        Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+        Err(bun_parsers::Error::Alloc(bun_core::alloc_impl::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
         }
         Err(e) => {
@@ -231,7 +231,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
         let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
-            Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+            Err(bun_parsers::Error::Alloc(bun_core::alloc_impl::AllocError)) => {
                 return Err(AllocError);
             }
             Err(_) => break 'message None,
@@ -296,7 +296,7 @@ pub mod registry {
     // bun_string; the `object_pool!` macro generates the per-monomorphization
     // thread-local storage so `BodyPool::get()` doesn't hit `UnwiredStorage`'s
     // `unreachable!()`.
-    bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
+    bun_core::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
     #[derive(Default, Clone)]
     pub struct Scope {
@@ -319,7 +319,7 @@ pub mod registry {
 
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
-            bun_semver::semver_string::Builder::string_hash(str)
+            bun_core::semver::semver_string::Builder::string_hash(str)
         }
 
         pub fn get_name(name: &[u8]) -> &[u8] {
@@ -522,7 +522,7 @@ pub mod registry {
     }
 
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
-    pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
+    pub type Map = HashMap<u64, Scope, bun_core::collections::IdentityContext<u64>>;
 
     pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),
@@ -1071,7 +1071,7 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::PathBuffer::uninit();
+            let mut realpath_buf = bun_core::paths::PathBuffer::uninit();
             // SAFETY: `crate::package_manager::get()` returns the live
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
@@ -1079,7 +1079,7 @@ pub mod package_manifest {
             let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                bun_core::paths::resolve_path::join_abs_string_buf_z::<bun_core::paths::platform::Auto>(
                     &tmpdir_stub.path,
                     &mut realpath_buf[..],
                     &[tmp_path.as_bytes()],
@@ -1151,10 +1151,10 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::PathBuffer::uninit();
+                let mut realpath2_buf = bun_core::paths::PathBuffer::uninit();
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
-                    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                    bun_core::paths::resolve_path::join_abs_string_buf_z::<bun_core::paths::platform::Auto>(
                         cache_dir_abs,
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],

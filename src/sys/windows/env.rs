@@ -1,6 +1,6 @@
 use core::ffi::c_char;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 
 /// After running `convert_env_to_wtf8`, the pointers in the process environment block will point into this buffer.
 // PORTING.md §Global mutable state: written exactly once at program startup

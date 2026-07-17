@@ -69,7 +69,7 @@ pub use process::{
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
 // via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
 // variant here + one `link_impl_ProcessExit!` in the owning crate.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub ProcessExit[
         Subprocess,
         LifecycleScript,
@@ -305,7 +305,7 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         let mut iter = opts.argv.iter();
         let argv0 = iter
             .next()
-            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+            .ok_or(crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
         // `Command::new` does PATH/PATHEXT lookup on Windows.
         let mut cmd = std::process::Command::new(to_os(argv0));
         for arg in iter {
@@ -318,9 +318,9 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         cmd.stdin(std::process::Stdio::null());
 
         let out = cmd.output().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+            std::io::ErrorKind::NotFound => crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT),
             std::io::ErrorKind::PermissionDenied => {
-                crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                crate::Error::Sys(bun_core::errno::SystemErrno::EACCES)
             }
             _ => crate::Error::Unexpected,
         })?;

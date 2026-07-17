@@ -22,7 +22,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use bun_collections::BoundedArray;
+use bun_core::collections::BoundedArray;
 use bun_core::strings;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
@@ -581,7 +581,7 @@ fn skip_branch(state: &mut State, glob: &[u8]) {
     }
 }
 
-use bun_paths::is_sep_native as is_separator;
+use bun_core::paths::is_sep_native as is_separator;
 
 #[inline(always)]
 fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {

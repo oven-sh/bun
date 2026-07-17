@@ -17,7 +17,7 @@
 use core::ptr::{self, NonNull};
 
 use bun_jsc::JSGlobalObject;
-use bun_output::{declare_scope, scoped_log};
+use bun_core::{declare_scope, scoped_log};
 use bun_spawn::{self, Process};
 
 #[cfg(target_os = "macos")]

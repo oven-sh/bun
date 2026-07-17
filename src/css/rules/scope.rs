@@ -80,7 +80,7 @@ impl<R> ScopeRule<R> {
 }
 
 impl<R> ScopeRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

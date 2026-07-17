@@ -35,7 +35,7 @@ pub fn write_request(
     // h3 body bytes flow into lsquic's send buffer asynchronously — compress
     // into the Vec so the cursor stays valid across event-loop ticks.
     client.compress_body_for_send(false)?;
-    let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
+    let req_body: bun_core::ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
     let is_bytes = matches!(
@@ -202,7 +202,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             break;
         }
         remaining =
-            bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
+            bun_core::ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
     }
     stream.pending_body = remaining;
     if remaining.is_empty() {

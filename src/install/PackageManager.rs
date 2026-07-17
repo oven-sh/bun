@@ -8,9 +8,9 @@ use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
-use bun_alloc::AllocError;
-use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::linear_fifo::{DynamicBuffer, StaticBuffer};
+use bun_core::collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -20,13 +20,13 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
-use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
-use bun_semver as Semver;
+use bun_core::paths::resolve_path::{self, PosixToWinNormalizer, platform};
+use bun_core::paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_core::semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
-use bun_url::URL;
+use bun_core::url::URL;
 
 /// Caches the result of a getter the first time `get()` is called.
 /// The getter receives `&mut PackageManager` explicitly and the caller
@@ -336,7 +336,7 @@ pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 const DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL: usize = 64;
 const DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES: usize = 64;
 
-bun_output::declare_scope!(PackageManager, hidden);
+bun_core::declare_scope!(PackageManager, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PackageManager
@@ -351,7 +351,7 @@ pub struct PackageManager {
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
     // this arena has process lifetime.
-    pub ast_arena: bun_alloc::Arena,
+    pub ast_arena: bun_core::alloc_impl::Arena,
     // Raw ptr rather than `&'a mut bun_ast::Log`: PackageManager is a leaked singleton
     // stored in a `static`, which cannot carry a lifetime parameter. Invariant: the
     // pointed-to Log must outlive every use of the singleton.
@@ -364,7 +364,7 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
-    pub env: Option<bun_ptr::BackRef<dot_env::Loader<'static>>>,
+    pub env: Option<bun_core::ptr::BackRef<dot_env::Loader<'static>>>,
     pub progress: Progress,
     pub downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
@@ -1137,8 +1137,8 @@ fn configure_env_for_scripts_run(
     }
 
     // The resolver-tier
-    // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
-    let paths_fs = bun_paths::fs::FileSystem::instance();
+    // `FileSystem` mirrors `bun_core::paths::fs::FileSystem` for `top_level_dir`.
+    let paths_fs = bun_core::paths::fs::FileSystem::instance();
     this.env_mut().load_ccache_path(paths_fs);
 
     {
@@ -1453,7 +1453,7 @@ pub fn init(
         let cwd_ptr = CWD_BUF.get().cast::<u8>();
         #[cfg(windows)]
         {
-            let _ = bun_paths::path_to_posix_buf::<u8>(
+            let _ = bun_core::paths::path_to_posix_buf::<u8>(
                 top_level_dir_no_trailing_slash,
                 &mut *CWD_BUF.get(),
             );
@@ -1725,7 +1725,7 @@ pub fn init(
                             .iter()
                             .zip(workspace_names.values().iter())
                         {
-                            let child_path: &[u8] = if bun_paths::is_absolute(path_) {
+                            let child_path: &[u8] = if bun_core::paths::is_absolute(path_) {
                                 child_cwd
                             } else {
                                 resolve_path::relative_normalized::<platform::Auto, true>(
@@ -1956,12 +1956,12 @@ pub fn init(
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, ctx.log);
         wr!(root_dir, entries_option);
-        wr!(ast_arena, bun_alloc::Arena::new());
+        wr!(ast_arena, bun_core::alloc_impl::Arena::new());
         // reborrow `&mut *env` so the local stays usable for
         // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
-        wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(env, Some(bun_core::ptr::BackRef::new_mut(&mut *env)));
         wr!(cpu_count, cpu_count);
         wr!(
             thread_pool,
@@ -2162,7 +2162,7 @@ pub fn init(
     // `ParentRef` so the two read-only `options` projections below go through
     // safe `Deref` instead of per-site raw deref. Safe `From<NonNull>`
     // construction — `manager_ptr` is the live singleton address.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+    let mgr_ref = bun_core::ptr::ParentRef::<PackageManager>::from(
         NonNull::new(manager_ptr).expect("manager singleton non-null"),
     );
     let mut ca: Vec<ZBox> = Vec::new();
@@ -2182,7 +2182,7 @@ pub fn init(
         let options = &mgr_ref.options;
         if !options.ca_file_name.is_empty() {
             // resolve with original cwd
-            if bun_paths::is_absolute(options.ca_file_name) {
+            if bun_core::paths::is_absolute(options.ca_file_name) {
                 abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
                 let mut path_buf = PathBuffer::uninit();
@@ -2393,12 +2393,12 @@ pub(crate) fn init_with_runtime_once(
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(log, std::ptr::from_mut(log));
         wr!(root_dir, root_dir);
-        wr!(ast_arena, bun_alloc::Arena::new());
+        wr!(ast_arena, bun_core::alloc_impl::Arena::new());
         // reborrow `&mut *env` so the local stays usable for
         // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
-        wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(env, Some(bun_core::ptr::BackRef::new_mut(&mut *env)));
         wr!(cpu_count, cpu_count);
         wr!(
             thread_pool,

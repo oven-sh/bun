@@ -21,7 +21,7 @@ pub mod mapping;
 #[path = "ParsedSourceMap.rs"]
 pub mod parsed_source_map;
 
-pub use bun_base64::vlq;
+pub use bun_core::base64::vlq;
 pub use vlq::{VLQ, encode as encode_vlq};
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
@@ -468,7 +468,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
     //
     // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
     //       adjust the size
-    let arena = bun_alloc::Arena::new();
+    let arena = bun_core::alloc_impl::Arena::new();
 
     let (new_load_hint, mut parsed): (SourceMapLoadHint, ParseUrl) = 'parsed: {
         let mut inline_err: Option<crate::Error> = None;
@@ -561,7 +561,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     }
                 }
 
-                let mut load_path_buf = bun_paths::path_buffer_pool::get();
+                let mut load_path_buf = bun_core::paths::path_buffer_pool::get();
                 // `+ 4` for ".map" plus a trailing NUL for the
                 // `&ZStr` open path; reserve `+ 5`.
                 if source_filename.len() + 5 > load_path_buf.len() {
@@ -778,7 +778,7 @@ impl SourceMapPieces {
     pub fn finalize(
         &mut self,
         shifts_: &[SourceMapShifts],
-    ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    ) -> Result<Box<[u8]>, bun_core::alloc_impl::AllocError> {
         // Nothing to splice: avoid re-joining (and re-allocating) the entire
         // source-map JSON when there are no mappings or suffix to merge in.
         if self.mappings.is_empty() && self.suffix.is_empty() {
@@ -882,7 +882,7 @@ impl SourceMapPieces {
 /// Temporary allocations are made to the `arena` allocator, which
 /// should be an arena allocator (caller is assumed to call `reset`).
 pub fn parse_url(
-    arena: &bun_alloc::Arena,
+    arena: &bun_core::alloc_impl::Arena,
     source: &[u8],
     hint: ParseUrlResultHint,
 ) -> crate::Result<ParseUrl> {
@@ -906,9 +906,9 @@ pub fn parse_url(
                         }
                         let base64_data = &after[comma + 1..];
 
-                        let len = bun_base64::decode_len(base64_data);
+                        let len = bun_core::base64::decode_len(base64_data);
                         let bytes = arena.alloc_slice_fill_default::<u8>(len);
-                        let decoded = bun_base64::decode(bytes, base64_data);
+                        let decoded = bun_core::base64::decode(bytes, base64_data);
                         if !decoded.is_successful() {
                             return Err(crate::Error::InvalidBase64);
                         }
@@ -1035,7 +1035,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
                 if let Some(names) = json.get(b"names") {
                     if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
                         let arr = arr.get();
-                        let mut names_list: Vec<bun_semver::String> =
+                        let mut names_list: Vec<bun_core::semver::String> =
                             Vec::with_capacity(arr.items().len());
                         let mut names_buffer: Vec<u8> = Vec::new();
 
@@ -1044,7 +1044,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
                                 return Err(crate::Error::InvalidSourceMap);
                             };
 
-                            names_list.push(bun_semver::String::init_append_if_needed(
+                            names_list.push(bun_core::semver::String::init_append_if_needed(
                                 &mut names_buffer,
                                 str,
                             )?);
@@ -1217,7 +1217,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
 }
 
 pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
-    origin: &bun_url::URL<'_>,
+    origin: &bun_core::url::URL<'_>,
     source: &bun_ast::Source,
     asset_prefix_path: &[u8],
     writer: &mut W,

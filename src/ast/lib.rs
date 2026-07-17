@@ -16,7 +16,7 @@
 use core::fmt;
 use std::borrow::Cow;
 
-// `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
+// `bun_core::alloc_impl::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
 
@@ -306,7 +306,7 @@ impl Ref {
     }
     #[inline]
     pub fn hash64(self) -> u64 {
-        bun_wyhash::hash(&self.as_u64().to_ne_bytes())
+        bun_core::wyhash::hash(&self.as_u64().to_ne_bytes())
     }
 
     // ── User bits (E::Identifier-family side flags) ──────────────────────
@@ -424,7 +424,7 @@ impl fmt::Debug for Ref {
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
 #[derive(Clone, Copy)]
 pub struct PathContentsPair {
-    pub path: bun_paths::fs::Path<'static>,
+    pub path: bun_core::paths::fs::Path<'static>,
     pub contents: &'static [u8],
 }
 
@@ -502,7 +502,7 @@ impl IntoStr for &[u8] {
     #[inline]
     fn into_str(self) -> Str {
         // SAFETY: lifetime erasure; see module-level OWNERSHIP note.
-        unsafe { bun_collections::detach_lifetime(self) }
+        unsafe { bun_core::collections::detach_lifetime(self) }
     }
 }
 impl IntoStr for &str {
@@ -1575,7 +1575,7 @@ impl Log {
         // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
         // and never removed; its heap allocation is stable across the `Vec`'s
         // growth, so the returned slice is valid for the life of `self`.
-        let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
+        let view: &'static [u8] = unsafe { bun_core::collections::detach_lifetime(&boxed[..]) };
         self.owned_strings.push(boxed);
         view
     }
@@ -2648,7 +2648,7 @@ pub fn usize2loc(loc: usize) -> Loc {
 
 #[derive(Clone)]
 pub struct Source {
-    pub path: bun_paths::fs::Path<'static>,
+    pub path: bun_core::paths::fs::Path<'static>,
 
     /// `Cow` so `source_from_file` / `File::to_source_at` can hand
     /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
@@ -2672,7 +2672,7 @@ pub struct Source {
 impl Default for Source {
     fn default() -> Self {
         Source {
-            path: bun_paths::fs::Path::default(),
+            path: bun_core::paths::fs::Path::default(),
             contents: Cow::Borrowed(b""),
             contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
@@ -2932,7 +2932,7 @@ impl Source {
     }
 
     pub fn init_empty_file(filepath: impl IntoStr) -> Source {
-        let path = bun_paths::fs::Path::init(filepath.into_str());
+        let path = bun_core::paths::fs::Path::init(filepath.into_str());
         Source {
             path,
             contents: Cow::Borrowed(b""),
@@ -2962,7 +2962,7 @@ impl Source {
     }
 
     pub fn init_path_string(path_string: impl IntoStr, contents: impl IntoStr) -> Source {
-        let path = bun_paths::fs::Path::init(path_string.into_str());
+        let path = bun_core::paths::fs::Path::init(path_string.into_str());
         Source {
             path,
             contents: Cow::Borrowed(contents.into_str()),
@@ -2973,7 +2973,7 @@ impl Source {
     /// `init_path_string` with heap-owned contents — used by `source_from_file`
     /// so the read buffer is dropped with the `Source` instead of leaked.
     pub fn init_path_string_owned(path_string: impl IntoStr, contents: Vec<u8>) -> Source {
-        let path = bun_paths::fs::Path::init(path_string.into_str());
+        let path = bun_core::paths::fs::Path::init(path_string.into_str());
         Source {
             path,
             contents: Cow::Owned(contents),
@@ -3415,7 +3415,7 @@ impl<T: 'static> Drop for DebugOnlyDisablerScope<T> {
     }
 }
 
-/// Per-thread side [`bun_alloc::ast_alloc::AstAllocState`] that backs
+/// Per-thread side [`bun_core::alloc_impl::ast_alloc::AstAllocState`] that backs
 /// `AstAlloc` while the bundler's `Stmt.Data.Store` / `Expr.Data.Store`
 /// block-store is active and **no** `ASTMemoryAllocator` scope is in effect.
 /// See `NewStore::reset` for the leak this closes.
@@ -3423,7 +3423,7 @@ pub mod store_ast_alloc_heap {
     use core::cell::Cell;
     use core::ptr;
 
-    use bun_alloc::ast_alloc::{self, AstAllocState};
+    use bun_core::alloc_impl::ast_alloc::{self, AstAllocState};
 
     /// Address of this thread's installed side state (the "entered" flag and
     /// the identity check for `reset()`/`exit()`). Never dereferenced.
@@ -3495,15 +3495,15 @@ pub mod store_ast_alloc_heap {
 // store, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free the whole
 // tree by dropping the arena. Set/restored by `ASTMemoryAllocator::Scope`.
 #[thread_local]
-static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
+static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_core::alloc_impl::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
+pub(crate) fn data_store_override() -> *const bun_core::alloc_impl::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
+pub(crate) fn set_data_store_override(p: *const bun_core::alloc_impl::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 
@@ -3535,7 +3535,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
     // needed. Storage lives until `store_ast_alloc_heap::reset()`; callers must
     // not hold the slice across that boundary (same contract as every
     // `StoreRef`/`StoreStr`).
-    let mut v: Vec<u8, bun_alloc::AstAlloc> = bun_alloc::AstAlloc::vec();
+    let mut v: Vec<u8, bun_core::alloc_impl::AstAlloc> = bun_core::alloc_impl::AstAlloc::vec();
     v.extend_from_slice(bytes);
     v.leak()
 }

@@ -691,7 +691,7 @@ pub type FormatOSPath<'a> = FormatUTF16<'a>;
 #[cfg(not(windows))]
 pub type FormatOSPath<'a> = FormatUTF8<'a>;
 
-// TYPE_ONLY: bun_paths::OSPathSlice → bun_core (move-in pass).
+// TYPE_ONLY: bun_core::paths::OSPathSlice → bun_core (move-in pass).
 pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> FormatOSPath<'_> {
     FormatOSPath {
         buf,

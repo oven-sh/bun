@@ -8,8 +8,8 @@
 // `bun_base64`) live in `bun_js_parser::parser::Runtime` to avoid the
 // `bun_options_types → bun_ast → bun_options_types` cycle.
 
-use bun_collections::StringArrayHashMap;
-use bun_wyhash::Wyhash11;
+use bun_core::collections::StringArrayHashMap;
+use bun_core::wyhash::Wyhash11;
 
 use crate::{Expr, Ref};
 

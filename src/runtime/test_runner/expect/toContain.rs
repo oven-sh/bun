@@ -74,7 +74,7 @@ impl Expect {
                 debug_assert!(!entry_.is_null());
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
                 // for_each as opaque userdata; non-null asserted above.
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
+                let entry = unsafe { bun_core::ptr::callback_ctx::<ExpectedEntry>(entry_) };
                 // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
                 // stack frame, which outlives the synchronous for_each this callback runs inside.
                 let global = unsafe { &*entry.global };

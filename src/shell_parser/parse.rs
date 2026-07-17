@@ -9,8 +9,8 @@ use core::fmt;
 use core::mem::size_of;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_core::{String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
@@ -175,7 +175,7 @@ pub mod ast {
             cost
         }
 
-        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::alloc_impl::AllocError> {
             let condexpr = bump.alloc(self);
             Ok(Expr::CondExpr(condexpr))
         }
@@ -410,7 +410,7 @@ pub mod ast {
     }
 
     impl<'arena> If<'arena> {
-        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::alloc_impl::AllocError> {
             let i = bump.alloc(self);
             Ok(Expr::If(i))
         }
@@ -502,7 +502,7 @@ pub mod ast {
             }
         }
 
-        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
+        pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::alloc_impl::AllocError> {
             match self {
                 CmdOrAssigns::Cmd(cmd) => {
                     let cmd_ptr = bump.alloc(cmd);
@@ -747,7 +747,7 @@ pub mod ast {
             self,
             right: &Atom<'arena>,
             bump: &'arena Bump,
-        ) -> Result<Atom<'arena>, bun_alloc::AllocError> {
+        ) -> Result<Atom<'arena>, bun_core::alloc_impl::AllocError> {
             use SimpleAtom as SA;
             match (&self, right) {
                 (Atom::Simple(l), Atom::Simple(r)) => {
@@ -937,7 +937,7 @@ pub struct Parser<'bump> {
     pub alloc: &'bump Bump,
     pub jsobjs: &'bump mut [JSValue],
     pub current: u32,
-    pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
+    pub errors: bun_core::alloc_impl::ArenaVec<'bump, ParserError<'bump>>,
     pub inside_subshell: Option<SubshellKind>,
 }
 
@@ -976,7 +976,7 @@ impl<'bump> Parser<'bump> {
             alloc: bump,
             jsobjs,
             current: 0,
-            errors: bun_alloc::ArenaVec::new_in(bump),
+            errors: bun_core::alloc_impl::ArenaVec::new_in(bump),
             inside_subshell: None,
         })
     }
@@ -996,7 +996,7 @@ impl<'bump> Parser<'bump> {
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
             jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
-            errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
+            errors: core::mem::replace(&mut self.errors, bun_core::alloc_impl::ArenaVec::new_in(self.alloc)),
             inside_subshell: Some(kind),
         }
     }
@@ -1009,7 +1009,7 @@ impl<'bump> Parser<'bump> {
         };
         self.errors = core::mem::replace(
             &mut subparser.errors,
-            bun_alloc::ArenaVec::new_in(self.alloc),
+            bun_core::alloc_impl::ArenaVec::new_in(self.alloc),
         );
         self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
@@ -1023,7 +1023,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn parse_impl(&mut self) -> ParseResult<ast::Script<'bump>> {
-        let mut stmts = bun_alloc::ArenaVec::new_in(self.alloc);
+        let mut stmts = bun_core::alloc_impl::ArenaVec::new_in(self.alloc);
         if self.tokens.is_empty()
             || (self.tokens.len() == 1 && matches!(self.tokens[0], Token::Eof))
         {
@@ -1057,7 +1057,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
-        let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
+        let mut exprs = bun_core::alloc_impl::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {
             !self.match_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
@@ -1115,7 +1115,7 @@ impl<'bump> Parser<'bump> {
         let mut expr = self.parse_compound_cmd()?;
 
         if self.peek().tag() == TokenTag::Pipe {
-            let mut pipeline_items = bun_alloc::ArenaVec::new_in(self.alloc);
+            let mut pipeline_items = bun_core::alloc_impl::ArenaVec::new_in(self.alloc);
             let item = match expr.as_pipeline_item() {
                 Some(i) => i,
                 None => {
@@ -1519,7 +1519,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn parse_simple_cmd(&mut self) -> ParseResult<ast::CmdOrAssigns<'bump>> {
-        let mut assigns = bun_alloc::ArenaVec::new_in(self.alloc);
+        let mut assigns = bun_core::alloc_impl::ArenaVec::new_in(self.alloc);
         while if self.inside_subshell.is_none() {
             !self.check_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
         } else {
@@ -1571,7 +1571,7 @@ impl<'bump> Parser<'bump> {
             }
         };
 
-        let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
+        let mut name_and_args = bun_core::alloc_impl::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
         while let Some(arg) = self.parse_atom()? {
             name_and_args.push(arg);
@@ -1708,7 +1708,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn parse_atom(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
-        let mut atoms = bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
+        let mut atoms = bun_core::alloc_impl::ArenaVec::with_capacity_in(1, self.alloc);
         let mut has_brace_open = false;
         let mut has_brace_close = false;
         let mut has_comma = false;
@@ -2100,7 +2100,7 @@ impl<'bump> Parser<'bump> {
         // bumpalo::collections::Vec<u8> doesn't impl io::Write.
         // Format into a stack String, then bump-copy. TODO: collapse to
         // a bumpalo `String` writer once available.
-        let s = bun_alloc::ArenaString::from_str_in(&std::fmt::format(args), self.alloc);
+        let s = bun_core::alloc_impl::ArenaString::from_str_in(&std::fmt::format(args), self.alloc);
         let msg = s.into_bump_str().as_bytes();
         self.errors.push(ParserError { msg });
         Ok(())
@@ -2437,18 +2437,18 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     /// anytime characters are added to the string pool this needs to be updated
     pub j: u32,
 
-    pub strpool: bun_alloc::ArenaVec<'bump, u8>,
-    pub tokens: bun_alloc::ArenaVec<'bump, Token>,
+    pub strpool: bun_core::alloc_impl::ArenaVec<'bump, u8>,
+    pub tokens: bun_core::alloc_impl::ArenaVec<'bump, Token>,
     pub delimit_quote: bool,
     pub in_subshell: Option<SubShellKind>,
     pub subshell_depth: u32,
-    pub errors: bun_alloc::ArenaVec<'bump, LexError>,
+    pub errors: bun_core::alloc_impl::ArenaVec<'bump, LexError>,
 
     /// Strpool ranges that hold bytes spliced in from interpolated JS values
     /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
     /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
     /// one must not create an env assignment).
-    pub js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
+    pub js_string_ranges: bun_core::alloc_impl::ArenaVec<'bump, TextRange>,
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
@@ -2469,10 +2469,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     ) -> Self {
         Self {
             chars: ShellCharIter::<ENCODING>::init(src),
-            tokens: bun_alloc::ArenaVec::new_in(bump),
-            strpool: bun_alloc::ArenaVec::new_in(bump),
-            errors: bun_alloc::ArenaVec::new_in(bump),
-            js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
+            tokens: bun_core::alloc_impl::ArenaVec::new_in(bump),
+            strpool: bun_core::alloc_impl::ArenaVec::new_in(bump),
+            errors: bun_core::alloc_impl::ArenaVec::new_in(bump),
+            js_string_ranges: bun_core::alloc_impl::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2511,12 +2511,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let bump = self.strpool.bump();
         let mut sublexer = Self {
             chars: self.chars,
-            strpool: core::mem::replace(&mut self.strpool, bun_alloc::ArenaVec::new_in(bump)),
-            tokens: core::mem::replace(&mut self.tokens, bun_alloc::ArenaVec::new_in(bump)),
-            errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(bump)),
+            strpool: core::mem::replace(&mut self.strpool, bun_core::alloc_impl::ArenaVec::new_in(bump)),
+            tokens: core::mem::replace(&mut self.tokens, bun_core::alloc_impl::ArenaVec::new_in(bump)),
+            errors: core::mem::replace(&mut self.errors, bun_core::alloc_impl::ArenaVec::new_in(bump)),
             js_string_ranges: core::mem::replace(
                 &mut self.js_string_ranges,
-                bun_alloc::ArenaVec::new_in(bump),
+                bun_core::alloc_impl::ArenaVec::new_in(bump),
             ),
             in_subshell: Some(kind),
             subshell_depth: self.subshell_depth + 1,
@@ -2535,12 +2535,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     fn continue_from_sublexer(&mut self, sublexer: &mut Self) {
         log!("[lex] drop sublexer");
         let bump = sublexer.strpool.bump();
-        self.strpool = core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
-        self.tokens = core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
-        self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
+        self.strpool = core::mem::replace(&mut sublexer.strpool, bun_core::alloc_impl::ArenaVec::new_in(bump));
+        self.tokens = core::mem::replace(&mut sublexer.tokens, bun_core::alloc_impl::ArenaVec::new_in(bump));
+        self.errors = core::mem::replace(&mut sublexer.errors, bun_core::alloc_impl::ArenaVec::new_in(bump));
         self.js_string_ranges = core::mem::replace(
             &mut sublexer.js_string_ranges,
-            bun_alloc::ArenaVec::new_in(bump),
+            bun_core::alloc_impl::ArenaVec::new_in(bump),
         );
 
         self.chars = sublexer.chars;
@@ -4187,7 +4187,7 @@ pub const SPECIAL_CHARS: [u8; 37] = [
     SPECIAL_JS_CHAR,
 ];
 
-// `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
+// `bun_core::collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
 // 256-entry membership table is materialised as `[bool; 256]` instead — same
 // O(1) byte-indexed lookup, const-evaluable.
 pub struct ByteTable(pub [bool; 256]);
@@ -4217,7 +4217,7 @@ pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: BunString,
     outbuf: &mut Vec<u8>,
-) -> Result<bool, bun_alloc::AllocError> {
+) -> Result<bool, bun_core::alloc_impl::AllocError> {
     if bunstr.is_utf16() {
         let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
         return Ok(!res.is_invalid);
@@ -4238,7 +4238,7 @@ pub fn escape_bun_str<const ADD_QUOTES: bool>(
 pub fn escape_8bit<const ADD_QUOTES: bool, const LATIN1: bool>(
     str: &[u8],
     outbuf: &mut Vec<u8>,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     outbuf.reserve(str.len());
 
     if ADD_QUOTES {
@@ -4276,7 +4276,7 @@ pub struct EscapeUtf16Result {
 pub fn escape_utf16<const ADD_QUOTES: bool>(
     str: &[u16],
     outbuf: &mut Vec<u8>,
-) -> Result<EscapeUtf16Result, bun_alloc::AllocError> {
+) -> Result<EscapeUtf16Result, bun_core::alloc_impl::AllocError> {
     if ADD_QUOTES {
         outbuf.push(b'"');
     }

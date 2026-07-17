@@ -1,10 +1,10 @@
 use core::ptr::NonNull;
 
 use crate::BundledAst as JSAst;
-use bun_alloc::Arena as ThreadLocalArena;
-use bun_alloc::{AstAlloc, AstVec};
+use bun_core::alloc_impl::Arena as ThreadLocalArena;
+use bun_core::alloc_impl::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::MultiArrayList;
+use bun_core::collections::MultiArrayList;
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -23,7 +23,7 @@ pub struct Graph<'a> {
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool>,
+    pub pool: bun_core::ptr::BackRef<ThreadPool>,
     pub heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
@@ -127,7 +127,7 @@ impl Default for InputFile {
 // SoA column accessors on `MultiArrayList<InputFile>` and `Slice<InputFile>`.
 // Field name + type are checked against `InputFile`'s reflected layout at
 // compile time by the underlying `items::<"name", T>()`.
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub trait InputFileColumns for InputFile {
         source: bun_ast::Source,
         secondary_path: AstVec<u8>,
@@ -154,7 +154,7 @@ impl<'a> Graph<'a> {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use.
-            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
+            pool: bun_core::ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),

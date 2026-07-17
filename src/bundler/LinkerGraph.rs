@@ -1,24 +1,24 @@
 use crate::bundled_ast;
 use crate::mal_prelude::*;
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::ImportKind;
 use bun_ast::base::RefTag;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
-use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
+use bun_core::collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
 use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
-// Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
+// Note: `BundledAstColumns` is emitted by `bun_core::multi_array_columns!`
 // on `BundledAst` in `crate::bundled_ast` (the same macro output
 // `scanImportsAndExports.rs` already imports as `BundledAstField`).
 bun_core::declare_scope!(LinkerGraph, visible);
 
 pub mod entry_point {
-    use bun_collections::MultiArrayList;
+    use bun_core::collections::MultiArrayList;
     use bun_core::RawSlice;
 
     #[derive(Default)]
@@ -30,7 +30,7 @@ pub mod entry_point {
 
     pub type List = MultiArrayList<EntryPoint>;
 
-    bun_collections::multi_array_columns! {
+    bun_core::multi_array_columns! {
         pub trait EntryPointColumns for EntryPoint {
             output_path: RawSlice<u8>,
             source_index: crate::IndexInt,
@@ -75,10 +75,10 @@ pub mod entry_point {
 }
 
 pub mod js_meta {
-    use bun_alloc::{AstAlloc, AstVec};
+    use bun_core::alloc_impl::{AstAlloc, AstVec};
     use bun_ast::{Dependency, Ref};
-    use bun_collections::array_hash_map::StringContext;
-    use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap};
+    use bun_core::collections::array_hash_map::StringContext;
+    use bun_core::collections::{ArrayHashMap, AutoContext, StringArrayHashMap};
 
     use crate::{ImportTracker, Index, WrapKind};
 
@@ -159,7 +159,7 @@ pub mod js_meta {
         }
     }
 
-    bun_collections::multi_array_columns! {
+    bun_core::multi_array_columns! {
         pub trait JSMetaColumns for JSMeta {
             probably_typescript_type: ProbablyTypescriptType,
             imports_to_bind: RefImportData,
@@ -205,7 +205,7 @@ pub struct LinkerGraph<'a> {
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
     // grow a `'bump` parameter; threading `'bump` would require `Chunk` and
     // `html_import_manifest` to gain lifetimes first.
-    pub bump: bun_ptr::BackRef<Arena>,
+    pub bump: bun_core::ptr::BackRef<Arena>,
 
     pub code_splitting: bool,
 
@@ -282,7 +282,7 @@ impl<'a> LinkerGraph<'a> {
             parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            bump: bun_ptr::BackRef::new(bump),
+            bump: bun_core::ptr::BackRef::new(bump),
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
@@ -304,7 +304,7 @@ impl Default for LinkerGraph<'_> {
             symbols: symbol::Map::default(),
             // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
             // dangling sentinel (never read before assignment).
-            bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
+            bump: bun_core::ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
@@ -384,7 +384,7 @@ pub(crate) fn add_part_to_file(
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
     id: u32,
     part: Part,
-) -> Result<u32, bun_alloc::AllocError> {
+) -> Result<u32, bun_core::alloc_impl::AllocError> {
     let part_id = parts[id as usize].len() as u32;
     parts[id as usize].push(part);
 
@@ -413,7 +413,7 @@ pub(crate) fn add_part_to_file(
             if let Some(original_parts) = ctx.ast_tlsp[id as usize].get(&ref_) {
                 original_parts.clone()
             } else {
-                bun_alloc::AstAlloc::vec()
+                bun_core::alloc_impl::AstAlloc::vec()
             }
         });
         slot.push(part_id);
@@ -439,7 +439,7 @@ pub fn generate_symbol_import_and_use(
     // and the structurally identical `bun_ast::Index` until the two newtypes
     // unify. Accept either via `Into` and normalize once.
     source_index_to_import_from: impl Into<Index>,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     let source_index_to_import_from: Index = source_index_to_import_from.into();
     if use_count == 0 {
         return Ok(());
@@ -574,7 +574,7 @@ impl<'a> LinkerGraph<'a> {
         entry_point_part_index: Index,
         name: &[u8],
         count: u32,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         if count == 0 {
             return Ok(());
         }
@@ -595,7 +595,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
+    pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_core::alloc_impl::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
             ast.parts,
@@ -613,7 +613,7 @@ impl<'a> LinkerGraph<'a> {
         ref_: Ref,
         use_count: u32,
         source_index_to_import_from: impl Into<Index>,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let ast = self.ast.split_mut();
         let meta = self.meta.split_mut();
         generate_symbol_import_and_use(
@@ -909,10 +909,10 @@ impl<'a> LinkerGraph<'a> {
     /// `self.symbols: symbol::Map` (global).
     pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
-            bun_alloc::transfer_arena(v, heap);
+            bun_core::alloc_impl::transfer_arena(v, heap);
         }
         for v in self.ast.items_parts_mut() {
-            bun_alloc::transfer_arena(v, heap);
+            bun_core::alloc_impl::transfer_arena(v, heap);
         }
     }
 
@@ -1013,8 +1013,8 @@ pub struct File {
     /// a Source.Index to its output path inb reakOutputIntoPieces
     pub entry_point_chunk_index: u32,
 
-    pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
-    pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
+    pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_core::alloc_impl::AstAlloc>,
+    pub quoted_source_contents: Option<bun_core::alloc_impl::AstVec<u8>>,
 }
 
 impl File {
@@ -1036,7 +1036,7 @@ impl Default for File {
             distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
-            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
+            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_core::alloc_impl::AstAlloc),
             quoted_source_contents: None,
         }
     }
@@ -1044,14 +1044,14 @@ impl Default for File {
 
 pub(crate) type FileList = MultiArrayList<File>;
 
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub trait FileColumns for File {
         entry_bits: AutoBitSet,
         input_file: Index,
         distance_from_entry_point: u32,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
-        line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
-        quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
+        line_offset_table: bun_sourcemap::line_offset_table::List<bun_core::alloc_impl::AstAlloc>,
+        quoted_source_contents: Option<bun_core::alloc_impl::AstVec<u8>>,
     }
 }

@@ -854,7 +854,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn add_line_to_current_block(&mut self, line: &Line) -> Result<(), bun_alloc::AllocError> {
+    pub fn add_line_to_current_block(&mut self, line: &Line) -> Result<(), bun_core::alloc_impl::AllocError> {
         if let Some(cb_off) = self.current_block {
             let hdr = self.get_block_header_at(cb_off);
             hdr.n_lines += 1;

@@ -8,10 +8,10 @@ use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::Error as AnyError;
-use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
+use bun_core::alloc_impl::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
 use bun_ast::{Loc, Location, Log, Msg, Source};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_sys::Fd;
@@ -113,7 +113,7 @@ pub struct ParseTask {
     /// BACKREF (LIFETIMES.tsv) — written through in
     /// `on_complete`. `None` only in the `default()` placeholder; every
     /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    pub ctx: Option<bun_core::ptr::ParentRef<BundleV2<'static>>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub package_version: ast::StoreStr,
     pub package_name: ast::StoreStr,
@@ -132,7 +132,7 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result {
     pub task: EventLoop::Task,
-    pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
+    pub ctx: bun_core::ptr::ParentRef<BundleV2<'static>>,
     pub value: ResultValue,
     pub watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
@@ -219,7 +219,7 @@ impl ParseTask {
     #[inline]
     pub unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
         // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
-        unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
+        unsafe { bun_core::ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
     pub fn init(
@@ -246,7 +246,7 @@ impl ParseTask {
         // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
         // write provenance from the `*mut BundleV2` parameter; caller passes a
         // live `&mut BundleV2` coerced to `*mut`.
-        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let ctx_ref = unsafe { bun_core::ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
             ctx: Some(ctx_ref),
@@ -561,10 +561,10 @@ pub mod parse_worker {
             is_entry_point: false,
         };
         let source = Source {
-            // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
+            // `bun_ast::Source.path` is `bun_core::paths::fs::Path<'static>`, distinct
             // from `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // directly rather than `clone()` across the type boundary.
-            path: bun_paths::fs::Path {
+            path: bun_core::paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
                 pretty: b"",
@@ -918,7 +918,7 @@ pub mod parse_worker {
                 let path_to_use: &[u8] = 'brk: {
                     // Implements embedded sqlite
                     if loader == Loader::SqliteEmbedded {
-                        let mut buf = bun_alloc::ArenaString::new_in(bump);
+                        let mut buf = bun_core::alloc_impl::ArenaString::new_in(bump);
                         write!(
                             &mut buf,
                             "{}",
@@ -1036,7 +1036,7 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let mut buf = bun_alloc::ArenaString::new_in(bump);
+                let mut buf = bun_core::alloc_impl::ArenaString::new_in(bump);
                 write!(
                     &mut buf,
                     "{}",
@@ -1117,7 +1117,7 @@ pub mod parse_worker {
                     b"",
                 )?
                 .unwrap();
-                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
+                ast.import_records = bun_core::alloc_impl::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1177,7 +1177,7 @@ pub mod parse_worker {
                     let mut parseropts = bun_css::ParserOptions::default(None);
                     parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
                     if enable_css_modules {
-                        parseropts.filename = bun_paths::basename(source.path.pretty);
+                        parseropts.filename = bun_core::paths::basename(source.path.pretty);
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
                     parseropts
@@ -1245,7 +1245,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(lazy?.unwrap());
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
-                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
+                ast.import_records = bun_core::alloc_impl::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
             // TODO:
@@ -1266,18 +1266,18 @@ pub mod parse_worker {
                     //
                     // To avoid a mutex, the actual insertion of the asset to DevServer
                     // is done on the bundler thread.
-                    let mut buf = bun_alloc::ArenaString::new_in(bump);
+                    let mut buf = bun_core::alloc_impl::ArenaString::new_in(bump);
                     write!(
                         &mut buf,
                         "{}/{}{}",
                         crate::bake_types::ASSET_PREFIX,
                         bun_core::fmt::bytes_to_hex_lower_string(&content_hash.to_ne_bytes()),
-                        bstr::BStr::new(bun_paths::extension(source.path.text)),
+                        bstr::BStr::new(bun_core::paths::extension(source.path.text)),
                     )
                     .expect("unreachable");
                     buf.into_bump_str().as_bytes()
                 } else {
-                    let mut buf = bun_alloc::ArenaString::new_in(bump);
+                    let mut buf = bun_core::alloc_impl::ArenaString::new_in(bump);
                     write!(
                         &mut buf,
                         "{}",
@@ -1453,7 +1453,7 @@ pub mod parse_worker {
                             // the BundleV2 — both outlive the log's consumption.
                             file_path.text,
                         );
-                        if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if e == bun_resolver::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                             let _ = log.add_error_fmt(
                                 Some(&source),
                                 Loc::EMPTY,
@@ -1462,7 +1462,7 @@ pub mod parse_worker {
                                     bun_core::fmt::quote(file_path.text)
                                 ),
                             );
-                            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+                            return Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT));
                         } else {
                             let _ = log.add_error_fmt(
                                 Some(&source),
@@ -2240,7 +2240,7 @@ pub mod parse_worker {
         // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
         // reads through the returned ASTs. `arena` is a `*const Bump` field; the
         // deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
+        let bump: &'static Bump = unsafe { bun_core::ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
@@ -2351,10 +2351,10 @@ pub mod parse_worker {
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source` parameter is satisfied (`bump` is the same arena).
         let source: &'static Source = bump.alloc(Source {
-            // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
+            // `Source.path` is `bun_core::paths::fs::Path<'static>`, distinct from
             // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // field-by-field across the type boundary.
-            path: bun_paths::fs::Path {
+            path: bun_core::paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,
                 pretty: file_path.pretty,
@@ -2411,7 +2411,7 @@ pub mod parse_worker {
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
-        opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
+        opts.allow_unresolved = unsafe { bun_core::collections::detach_ref(&topts.allow_unresolved) };
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
@@ -2550,7 +2550,7 @@ pub mod parse_worker {
             // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
             // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
             unsafe {
-                bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
+                bun_core::collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
             }
         });
 

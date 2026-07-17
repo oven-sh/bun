@@ -8,7 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -36,7 +36,7 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
@@ -59,9 +59,9 @@ impl JSMySQLQuery {
     /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
     /// (live, non-null) is always satisfied.
     #[inline]
-    pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+    pub fn ref_guard(&self) -> bun_core::ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+        unsafe { bun_core::ptr::ScopedRef::new(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -88,7 +88,7 @@ impl JSMySQLQuery {
 
     pub fn finalize(self: Box<Self>) {
         debug!("MySQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+        bun_core::ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
     }
 
     // Reached from JS via `put_host_functions!` in `mysql.rs`.

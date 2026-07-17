@@ -9,7 +9,7 @@ use std::sync::{Once, OnceLock};
 use bstr::BStr;
 
 use crate::napi;
-use bun_collections::StringArrayHashMap;
+use bun_core::collections::StringArrayHashMap;
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{ZStr, ZigString};
 use bun_jsc::{
@@ -17,8 +17,8 @@ use bun_jsc::{
     JsError, JsResult, SystemError, ZigStringJsc,
 };
 #[cfg(target_os = "macos")]
-use bun_paths as path;
-use bun_paths::PathBuffer;
+use bun_core::paths as path;
+use bun_core::paths::PathBuffer;
 use bun_resolver::fs as Fs;
 use bun_sys;
 
@@ -68,7 +68,7 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
 // via the early-return guards in the host-fns below.
 use bun_tcc_sys as TCC;
 
-bun_output::declare_scope!(TCC, visible);
+bun_core::declare_scope!(TCC, visible);
 
 unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
@@ -625,8 +625,8 @@ impl CompileC {
             },
         }) {
             Ok(s) => s,
-            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(crate::Error::Alloc(bun_alloc::AllocError));
+            Err(TCC::Error::Alloc(bun_core::alloc_impl::AllocError)) => {
+                return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
             }
             Err(_) => {
                 debug_assert!(self.has_deferred_errors());
@@ -639,7 +639,7 @@ impl CompileC {
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+                bun_core::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
             }
         }
 
@@ -688,13 +688,13 @@ impl CompileC {
                         .add_sys_include_path(zstr!("/opt/homebrew/include"))
                         .is_err()
                     {
-                        bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                        bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                     }
                 }
 
                 if dir_exists(b"/opt/homebrew/lib") {
                     if state.add_library_path(zstr!("/opt/homebrew/lib")).is_err() {
-                        bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                        bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                     }
                 }
             }
@@ -703,13 +703,13 @@ impl CompileC {
         {
             if let Some(include_dir) = Self::get_system_include_dir() {
                 if state.add_sys_include_path(include_dir).is_err() {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
                 }
             }
 
             if let Some(library_dir) = Self::get_system_library_dir() {
                 if state.add_library_path(library_dir).is_err() {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                 }
             }
         }
@@ -721,13 +721,13 @@ impl CompileC {
                     .add_sys_include_path(zstr!("/usr/local/include"))
                     .is_err()
                 {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
                 }
             }
 
             if dir_exists(b"/usr/local/lib") {
                 if state.add_library_path(zstr!("/usr/local/lib")).is_err() {
-                    bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                    bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
                 }
             }
 
@@ -738,7 +738,7 @@ impl CompileC {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_sys_include_path(&path_z).is_err() {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 TCC,
                                 "TinyCC failed to add C_INCLUDE_PATH: {}",
                                 BStr::new(path)
@@ -754,7 +754,7 @@ impl CompileC {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_library_path(&path_z).is_err() {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 TCC,
                                 "TinyCC failed to add LIBRARY_PATH: {}",
                                 BStr::new(path)
@@ -826,7 +826,7 @@ impl CompileC {
         for library_dir in self.library_dirs.items.iter() {
             // register all, even if some fail. Only fail after all have been registered.
             if state.add_library_path(library_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
+                bun_core::scoped_log!(TCC, "TinyCC failed to add library path");
             }
         }
         self.error_check()
@@ -1440,7 +1440,7 @@ impl FFI {
             return invalid_options_arg(global);
         };
 
-        let mut filepath_buf = bun_paths::path_buffer_pool::get();
+        let mut filepath_buf = bun_core::paths::path_buffer_pool::get();
         let name: &[u8] = 'brk: {
             let ext: &[u8] = match () {
                 // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
@@ -2126,7 +2126,7 @@ impl Function {
             },
         }) {
             Ok(s) => s,
-            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
+            Err(TCC::Error::Alloc(bun_core::alloc_impl::AllocError)) => {
                 return Err(crate::Error::TCCMissing);
             }
             // 1. .Memory is always a valid option, so InvalidOptions is

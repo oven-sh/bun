@@ -1,4 +1,4 @@
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
@@ -29,7 +29,7 @@ pub enum JsonMode {
 /// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
 /// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
 pub struct JsonCache {
-    bump: Option<bun_alloc::Arena>,
+    bump: Option<bun_core::alloc_impl::Arena>,
 }
 
 impl JsonCache {
@@ -45,11 +45,11 @@ impl JsonCache {
         func: fn(
             &bun_ast::Source,
             &mut bun_ast::Log,
-            &bun_alloc::Arena,
+            &bun_core::alloc_impl::Arena,
         ) -> Result<bun_ast::Expr, bun_parsers::Error>,
     ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
-        let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump = self.bump.get_or_insert_with(bun_core::alloc_impl::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
         Ok(result)
@@ -267,7 +267,7 @@ impl TSConfigJSON {
     fn str_replacing_templates(
         input: Box<[u8]>,
         source: &bun_ast::Source,
-    ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    ) -> Result<Box<[u8]>, bun_core::alloc_impl::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
         let mut string_builder = bun_core::StringBuilder {
@@ -327,7 +327,7 @@ impl TSConfigJSON {
         };
         let json: bun_ast::Expr = parsed.root;
 
-        bun_analytics::features::tsconfig.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        bun_core::analytics::features::tsconfig.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         let mut result = TSConfigJSON {
             abs_path: Box::from(source.path.text),
@@ -557,7 +557,7 @@ impl TSConfigJSON {
             // Parse "paths"
             if let Some(paths_prop) = paths_v {
                 if let Some(paths) = paths_prop.as_object() {
-                    bun_analytics::features::tsconfig_paths
+                    bun_core::analytics::features::tsconfig_paths
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                     result.base_url_for_paths = if !result.base_url.is_empty() {
@@ -785,12 +785,12 @@ impl TSConfigJSON {
         }
 
         // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (bun_paths::is_sep_any(c1) || (c1 == b'.' && bun_paths::is_sep_any(c2))) {
+        if c0 == b'.' && (bun_core::paths::is_sep_any(c1) || (c1 == b'.' && bun_core::paths::is_sep_any(c2))) {
             return true;
         }
 
         // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && bun_paths::is_sep_any(c2) {
+        if c1 == b':' && bun_core::paths::is_sep_any(c2) {
             match c0 {
                 b'a'..=b'z' | b'A'..=b'Z' => {
                     return true;
@@ -800,7 +800,7 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if bun_paths::is_sep_any(c0) {
+        if bun_core::paths::is_sep_any(c0) {
             return true;
         }
 

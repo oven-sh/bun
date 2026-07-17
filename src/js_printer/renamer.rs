@@ -2,7 +2,7 @@ use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 
 use bun_ast as js_ast;
 use bun_ast::lexer_tables::{
@@ -11,8 +11,8 @@ use bun_ast::lexer_tables::{
 use bun_ast::symbol;
 use bun_ast::symbol::SlotNamespace;
 use bun_ast::{Ref, Symbol};
-use bun_collections::hive_array::Fallback as HiveArrayFallback;
-use bun_collections::{HashMap, StringHashMap, VecExt};
+use bun_core::collections::hive_array::Fallback as HiveArrayFallback;
+use bun_core::collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 use bun_options_types::Format;
@@ -89,11 +89,11 @@ impl core::borrow::Borrow<[u8]> for NameKey {
 }
 
 /// Per-`NumberScope` map of assigned names → next collision counter.
-/// `bun_wyhash::BuildHasher` matches `StringHashMap` so the renamer keeps its
+/// `bun_core::wyhash::BuildHasher` matches `StringHashMap` so the renamer keeps its
 /// existing hash quality; `NameKey` is a `Copy` lifetime-erased slice so insert
 /// never heap-allocates a key copy and drop never frees one.
 pub(crate) type NameCountMap =
-    bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
+    bun_core::collections::hashbrown::HashMap<NameKey, u32, bun_core::wyhash::BuildHasher>;
 
 pub struct NoOpRenamer<'a> {
     // `symbol::Map` is `Vec<Vec<Symbol>>` (owning). Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
@@ -241,7 +241,7 @@ pub enum TinyString {
 }
 
 impl TinyString {
-    pub(crate) fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
+    pub(crate) fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_core::alloc_impl::AllocError> {
         if input.len() <= 15 {
             Ok(TinyString::InlineString(InlineString::init(input)))
         } else {
@@ -289,7 +289,7 @@ impl MinifyRenamer {
         symbols: symbol::Map,
         first_top_level_slots: &js_ast::SlotCounts,
         reserved_names: StringHashMap<u32>,
-    ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
+    ) -> Result<Box<MinifyRenamer>, bun_core::alloc_impl::AllocError> {
         let mut slots = SymbolSlotList::default();
 
         for (ns, &count) in first_top_level_slots.slots.iter() {
@@ -346,7 +346,7 @@ impl MinifyRenamer {
         top_level_symbols: &mut Vec<StableSymbolCount>,
         symbol_uses: &js_ast::part::SymbolUseMap,
         stable_source_indices: &[u32],
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         // ArrayHashMap exposes parallel keys()/values() slices, no .iter().
         for (key, value) in symbol_uses.keys().iter().zip(symbol_uses.values().iter()) {
             self.accumulate_symbol_use_count(
@@ -365,7 +365,7 @@ impl MinifyRenamer {
         ref_: Ref,
         count: u32,
         stable_source_indices: &[u32],
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let mut ref_ = self.symbols.follow(ref_);
         let mut symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
@@ -403,7 +403,7 @@ impl MinifyRenamer {
     pub fn allocate_top_level_symbol_slots(
         &mut self,
         top_level_symbols: &[StableSymbolCount],
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         for stable in top_level_symbols {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
@@ -595,7 +595,7 @@ impl NumberRenamer {
     pub fn init(
         symbols: symbol::Map,
         root_names: &StringHashMap<u32>,
-    ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
+    ) -> Result<Box<NumberRenamer>, bun_core::alloc_impl::AllocError> {
         let len = symbols.symbols_for_source.len();
         let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
             .take(len)
@@ -637,7 +637,7 @@ impl NumberRenamer {
         &mut self,
         scope: &js_ast::Scope,
         source_index: u32,
-        parent: Option<bun_ptr::ParentRef<NumberScope>>,
+        parent: Option<bun_core::ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
     ) {
         let s: *mut NumberScope = self
@@ -700,7 +700,7 @@ impl NumberRenamer {
                         // `s` is non-null (either `initial_scope` or a fresh
                         // pool slot from a prior iteration); the new child
                         // outlives this `ParentRef` only until `put()` below.
-                        parent: Some(bun_ptr::ParentRef::from(
+                        parent: Some(bun_core::ptr::ParentRef::from(
                             core::ptr::NonNull::new(s).expect("number_scope non-null"),
                         )),
                         // Pre-size to the AST scope's symbol count so the
@@ -810,7 +810,7 @@ pub struct NumberScope {
     /// `assign_names_recursive_with_number_scope` call, both of which strictly
     /// outlive this child (children are `put()` back before their parent), so
     /// `ParentRef::get()` is sound without per-site `unsafe`.
-    pub parent: Option<bun_ptr::ParentRef<NumberScope>>,
+    pub parent: Option<bun_core::ptr::ParentRef<NumberScope>>,
     pub name_counts: NameCountMap,
 }
 
@@ -832,7 +832,7 @@ impl NameUse {
         let hash = {
             use core::hash::BuildHasher;
 
-            <bun_wyhash::BuildHasher as Default>::default().hash_one(name)
+            <bun_core::wyhash::BuildHasher as Default>::default().hash_one(name)
         };
 
         if let Some((_, &count)) = this
@@ -843,7 +843,7 @@ impl NameUse {
             return NameUse::SameScope(count);
         }
 
-        let mut s: Option<bun_ptr::ParentRef<NumberScope>> = this.parent;
+        let mut s: Option<bun_core::ptr::ParentRef<NumberScope>> = this.parent;
 
         while let Some(scope) = s {
             // `ParentRef<NumberScope>: Deref` — safe backref deref under the
@@ -1022,7 +1022,7 @@ impl NumberScope {
     /// the bytes are bump-allocated into `arena` so the resulting [`NameKey`]
     /// outlives the renamer.
     fn entry_or_arena_dup(&mut self, prefix: &[u8], arena: &Bump) -> &mut u32 {
-        use bun_collections::hashbrown::hash_map::RawEntryMut;
+        use bun_core::collections::hashbrown::hash_map::RawEntryMut;
         match self.name_counts.raw_entry_mut().from_key(prefix) {
             RawEntryMut::Occupied(o) => o.into_mut(),
             RawEntryMut::Vacant(v) => {
@@ -1107,7 +1107,7 @@ impl ExportRenamer {
 
 pub fn compute_initial_reserved_names(
     output_format: Format,
-) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
+) -> Result<StringHashMap<u32>, bun_core::alloc_impl::AllocError> {
     #[cfg(target_arch = "wasm32")]
     {
         unreachable!();

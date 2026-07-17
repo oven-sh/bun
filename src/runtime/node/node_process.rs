@@ -129,7 +129,7 @@ mod _impl {
     use bun_jsc::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
     };
-    use bun_paths::{PathBuffer, SEP};
+    use bun_core::paths::{PathBuffer, SEP};
     use bun_sys as Syscall;
 
     #[cfg(windows)]
@@ -282,9 +282,9 @@ mod _impl {
             // confuse these with script names.
             // Build the set lazily at runtime from the `AUTO_PARAMS` table:
             // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
+            static MAP: std::sync::LazyLock<bun_core::collections::StringSet> =
                 std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
+                    let mut set = bun_core::collections::StringSet::new();
                     for param in crate::cli::arguments::AUTO_PARAMS.iter() {
                         if param.takes_value != bun_clap::Values::None {
                             if let Some(name) = param.names.long {
@@ -454,7 +454,7 @@ mod _impl {
                     bun_sys::Result::Err(err) => {
                         // roll back to the previous top_level_dir
                         let mut rollback = PathBuffer::uninit();
-                        let _ = Syscall::chdir(bun_paths::resolve_path::z(
+                        let _ = Syscall::chdir(bun_core::paths::resolve_path::z(
                             fs.top_level_dir,
                             &mut rollback,
                         ));
@@ -467,7 +467,7 @@ mod _impl {
                 // the FileSystem singleton, so the detached borrow never
                 // outlives its backing storage.
                 fs.top_level_dir =
-                    unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
+                    unsafe { bun_core::ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
 
                 let len = fs.top_level_dir.len();
                 // Ensure the path ends with a slash
@@ -476,18 +476,18 @@ mod _impl {
                     fs.top_level_dir_buf[len + 1] = 0;
                     // SAFETY: see above.
                     fs.top_level_dir =
-                        unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
+                        unsafe { bun_core::ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
                 }
                 // The cwd is stored both in the resolver's
                 // `FileSystem.top_level_dir` (written above) and in
-                // `bun_core::TOP_LEVEL_DIR` (read by `bun_paths::fs::
+                // `bun_core::TOP_LEVEL_DIR` (read by `bun_core::paths::fs::
                 // FileSystem::top_level_dir()` → `GlobWalker::init`). Keep them
                 // in sync so a `process.chdir()` before `new Glob(...).scan()`
                 // is observed.
                 bun_core::set_top_level_dir(fs.top_level_dir);
                 #[cfg(windows)]
                 let without_trailing_slash =
-                    bun_paths::string_paths::without_trailing_slash_windows_path;
+                    bun_core::paths::string_paths::without_trailing_slash_windows_path;
                 #[cfg(not(windows))]
                 let without_trailing_slash = strings::without_trailing_slash;
                 let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));

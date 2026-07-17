@@ -1,8 +1,8 @@
 use core::fmt;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};

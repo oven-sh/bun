@@ -9,7 +9,7 @@ use super::parse_args_utils::{
 };
 use super::validators;
 
-bun_output::declare_scope!(parseArgs, hidden);
+bun_core::declare_scope!(parseArgs, hidden);
 
 /// Represents a slice of a JSValue array
 #[derive(Copy, Clone)]
@@ -501,7 +501,7 @@ fn parse_option_definitions(
             }
         }
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             parseArgs,
             "[OptionDef] \"{}\" (type={}, short={}, multiple={}, default={})",
             String::init(long_option),
@@ -541,7 +541,7 @@ fn tokenize_args(
         let arg = arg_ref.as_bun_string(global)?;
 
         let token_rawtype = classify_token(&arg, options);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             parseArgs,
             " [Arg #{}] {} ({})",
             index,
@@ -580,7 +580,7 @@ fn tokenize_args(
                     // e.g. '-f', "bar"
                     value = ValueRef::Jsvalue(args.get(global, index + 1)?);
                     has_inline_value = false;
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         parseArgs,
                         "   (lone_short_option consuming next token as value)"
                     );
@@ -625,7 +625,7 @@ fn tokenize_args(
                             // e.g. '-f', "bar"
                             value = ValueRef::Jsvalue(args.get(global, index + 1)?);
                             has_inline_value = false;
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 parseArgs,
                                 "   (short_option_group short option consuming next token as value)"
                             );
@@ -714,7 +714,7 @@ fn tokenize_args(
                 if option_type == OptionValueType::String && index + 1 < num_args && !negative {
                     // e.g. '--foo', "bar"
                     value = Some(args.get(global, index + 1)?);
-                    bun_output::scoped_log!(parseArgs, "  (consuming next as value)");
+                    bun_core::scoped_log!(parseArgs, "  (consuming next as value)");
                 }
 
                 ctx.handle_token(&Token::Option(OptionToken {
@@ -1001,7 +1001,7 @@ fn parse_args_impl(
     //  +
     // Phase 2: process tokens into parsed option values and positionals
     //
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         parseArgs,
         "Phase 1+2: tokenize args (args.len={})",
         args.end - args.start
@@ -1036,13 +1036,13 @@ fn parse_args_impl(
     //
     // Phase 3: fill in default values for missing args
     //
-    bun_output::scoped_log!(parseArgs, "Phase 3: fill defaults");
+    bun_core::scoped_log!(parseArgs, "Phase 3: fill defaults");
 
     for option in &option_defs {
         if let Some(default_value) = option.default_value {
             if !option.long_name.eql_comptime(b"__proto__") {
                 if state.values.get_own(global, &option.long_name)?.is_none() {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         parseArgs,
                         "  Setting \"{}\" to default value",
                         option.long_name
@@ -1058,7 +1058,7 @@ fn parse_args_impl(
     //
     // Phase 4: build the resulting object: `{ values: {...}, positionals: [...], tokens?: [...] }`
     //
-    bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
+    bun_core::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
     if return_tokens {

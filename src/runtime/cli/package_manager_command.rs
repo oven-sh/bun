@@ -12,7 +12,7 @@ use bun_install::package_manager_real::{
     package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
-use bun_paths::{self as Path, PathBuffer};
+use bun_core::paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
@@ -313,7 +313,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         if let Some(path) = env_var::PATH.get() {
                             // skip empty segments
                             let mut path_iter = path
-                                .split(|b| *b == bun_paths::DELIMITER)
+                                .split(|b| *b == bun_core::paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
                                 if strings::eql(entry, output_path) {
@@ -817,9 +817,9 @@ fn print_node_modules_folder_structure(
             &mut possible_path,
             "{}{}{}{}node_modules",
             bstr::BStr::new(directory.relative_path.as_bytes()),
-            bun_paths::SEP_STR,
+            bun_core::paths::SEP_STR,
             bstr::BStr::new(package_name),
-            bun_paths::SEP_STR,
+            bun_core::paths::SEP_STR,
         )
         .expect("unreachable");
 

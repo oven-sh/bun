@@ -705,8 +705,8 @@ where
                 // strictly outlive the host-fn call, satisfying the `ParentRef`
                 // invariant. Safe `From<NonNull>` + `Deref` collapse the per-thunk
                 // raw `&*ptr` pair to one audited deref site in `bun_ptr`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
+                let global = bun_core::ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
+                let frame = bun_core::ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
                 match f(&global, &frame) {
                     Ok(v) => v,
                     Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
@@ -735,8 +735,8 @@ where
                 let f: F = bun_core::ffi::conjure_zst::<F>();
                 // JSC passes live non-null pointers; both outlive the host-fn
                 // call (the `ParentRef` invariant). Safe `Deref` recovers `&T`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
+                let global = bun_core::ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
+                let frame = bun_core::ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
                 f(&global, &frame)
             }
         }

@@ -5,7 +5,7 @@ use crate::css_rules::supports::SupportsCondition;
 use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::ImportRecord;
 
 /// Layer slot used in both `ImportConditions.layer` and `ImportRule.layer`.

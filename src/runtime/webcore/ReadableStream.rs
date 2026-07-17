@@ -6,7 +6,7 @@ use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -334,7 +334,7 @@ impl ReadableStream {
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(global_this)),
+                    global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
@@ -343,7 +343,7 @@ impl ReadableStream {
             }
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(global_this)),
+                    global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
@@ -402,7 +402,7 @@ impl ReadableStream {
         match &store.data {
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(global_this)),
+                    global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
@@ -425,7 +425,7 @@ impl ReadableStream {
         buffered_reader: &mut bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
-            global_this: Some(bun_ptr::BackRef::new(global_this)),
+            global_this: Some(bun_core::ptr::BackRef::new(global_this)),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
@@ -541,7 +541,7 @@ pub enum Source {
 }
 
 impl Source {
-    /// Shared borrow of the `Bytes` payload as a [`BackRef`](bun_ptr::BackRef).
+    /// Shared borrow of the `Bytes` payload as a [`BackRef`](bun_core::ptr::BackRef).
     ///
     /// The pointer is the JS wrapper's `m_ctx` heap allocation returned by
     /// `ReadableStreamTag__tagged` and is non-null and live while the owning
@@ -551,18 +551,18 @@ impl Source {
     /// re-derives a fresh `&ByteStream` from `m_ctx` aliases shared-only.
     ///
     /// Centralises the per-site raw-pointer deref so call sites are
-    /// unsafe-free; the one audited deref lives in [`bun_ptr::BackRef::get`].
+    /// unsafe-free; the one audited deref lives in [`bun_core::ptr::BackRef::get`].
     #[inline]
-    pub fn bytes(self) -> Option<bun_ptr::BackRef<ByteStream>> {
+    pub fn bytes(self) -> Option<bun_core::ptr::BackRef<ByteStream>> {
         match self {
-            Source::Bytes(p) => Some(bun_ptr::BackRef::from(
+            Source::Bytes(p) => Some(bun_core::ptr::BackRef::from(
                 NonNull::new(p).expect("Source::Bytes payload is non-null"),
             )),
             _ => None,
         }
     }
 
-    /// Shared borrow of the `File` payload as a [`BackRef`](bun_ptr::BackRef).
+    /// Shared borrow of the `File` payload as a [`BackRef`](bun_core::ptr::BackRef).
     ///
     /// Same invariant as [`bytes`](Self::bytes): the pointer is the JS
     /// wrapper's `m_ctx` heap allocation, non-null and live while the owning
@@ -570,9 +570,9 @@ impl Source {
     /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
     /// that re-derives a fresh `&FileReader` from `m_ctx` aliases shared-only.
     #[inline]
-    pub fn file(self) -> Option<bun_ptr::BackRef<FileReader>> {
+    pub fn file(self) -> Option<bun_core::ptr::BackRef<FileReader>> {
         match self {
-            Source::File(p) => Some(bun_ptr::BackRef::from(
+            Source::File(p) => Some(bun_core::ptr::BackRef::from(
                 NonNull::new(p).expect("Source::File payload is non-null"),
             )),
             _ => None,
@@ -683,7 +683,7 @@ pub struct NewSource<C: SourceContext> {
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
-    pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
+    pub global_this: Option<bun_core::ptr::BackRef<JSGlobalObject>>,
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
@@ -1083,7 +1083,7 @@ impl<C: SourceContext> NewSource<C> {
         global_this: &JSGlobalObject,
         _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.global_this = Some(bun_ptr::BackRef::new(global_this));
+        self.global_this = Some(bun_core::ptr::BackRef::new(global_this));
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
@@ -1146,7 +1146,7 @@ impl<C: SourceContext> NewSource<C> {
         // stored fn pointer against `on_js_close` to decide whether to pass
         // `self` (JS path) or `close_ctx` (native path).
         self.close_handler = Some(Self::on_js_close);
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
+        self.global_this = Some(bun_core::ptr::BackRef::new(global_object));
 
         if value.is_undefined() {
             if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
@@ -1182,7 +1182,7 @@ impl<C: SourceContext> NewSource<C> {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
+        self.global_this = Some(bun_core::ptr::BackRef::new(global_object));
 
         let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return Ok(());

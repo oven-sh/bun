@@ -13,14 +13,14 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
-use bun_collections::LinearFifo;
-use bun_collections::linear_fifo::DynamicBuffer;
+use bun_core::collections::LinearFifo;
+use bun_core::collections::linear_fifo::DynamicBuffer;
 use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::{AsCtxPtr, ThisPtr};
+use bun_core::ptr::{AsCtxPtr, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -63,7 +63,7 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
     pub ref_count: Cell<u32>,
@@ -122,7 +122,7 @@ pub struct WebSocket<const SSL: bool> {
     ///
     /// intrusive refcount is hand-rolled on `WebSocketProxyTunnel`
     /// (`ref_()`/`deref()`); stored as `NonNull` rather than `RefPtr` because
-    /// the tunnel does not (yet) implement `bun_ptr::RefCounted`. Ownership
+    /// the tunnel does not (yet) implement `bun_core::ptr::RefCounted`. Ownership
     /// semantics match `RefPtr`: assigning here implies a held ref, released
     /// in `clear_data` via `WebSocketProxyTunnel::deref`.
     pub proxy_tunnel: Cell<Option<NonNull<WebSocketProxyTunnel>>>,
@@ -212,7 +212,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the intrusive refcount now and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
         // SAFETY: called from C++ with a valid `heap::alloc` pointer.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; the guard's ref keeps
         // the allocation alive past every re-entrant call below.
         let this = unsafe { &*this_ptr };
@@ -451,7 +451,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn buffer_payload(&self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn buffer_payload(&self, data: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         let mut receive_buffer = self.receive_buffer.borrow_mut();
         let writable = receive_buffer.writable_with_size(data.len())?;
         writable[..data.len()].copy_from_slice(data);
@@ -1311,7 +1311,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
@@ -1362,7 +1362,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
@@ -1399,7 +1399,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
@@ -1474,7 +1474,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
@@ -1737,7 +1737,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = unsafe { bun_core::ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
@@ -2069,7 +2069,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
+        bun_core::highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
     }
 
     /// In-place variant for when output and input alias the same buffer
@@ -2085,7 +2085,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
+        bun_core::highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
     }
 }
 

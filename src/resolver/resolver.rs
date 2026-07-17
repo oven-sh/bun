@@ -18,7 +18,7 @@ use std::io::Write as _;
 //   • perf / crash_handler                     — real bun_perf / bun_crash_handler
 use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
-use ::bun_semver as Semver;
+use bun_core::semver as Semver;
 // Re-exported so downstream (bun_bundler) can name the trait in
 // `Transpiler::get_package_manager`'s return type without a direct
 // `bun_install_types` dep (LAYERING: pass-through, no new edge).
@@ -42,7 +42,7 @@ unsafe extern "Rust" {
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader<'static>>,
-    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
+    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_core::errno::SystemErrno>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -67,16 +67,16 @@ pub(crate) mod __forward_decls {}
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
 // glob / explicit re-export below, no local re-implementation.
 mod bun_paths {
-    pub(super) use ::bun_paths::resolve_path::PosixToWinNormalizer;
-    pub(super) use ::bun_paths::resolve_path::is_sep_any;
-    pub(super) use ::bun_paths::*;
+    pub(super) use ::bun_core::paths::resolve_path::PosixToWinNormalizer;
+    pub(super) use ::bun_core::paths::resolve_path::is_sep_any;
+    pub(super) use ::bun_core::paths::*;
 
     /// Value-dispatch over `Platform` to the const-generic `PlatformT`
     /// monomorphizations in `resolve_path`. The resolver body threads
     /// `Platform::AUTO` / `Platform::Loose` at runtime.
     macro_rules! dispatch_platform {
         ($p:expr, |$P:ident| $body:expr) => {{
-            use ::bun_paths::resolve_path::{self as rp, platform};
+            use ::bun_core::paths::resolve_path::{self as rp, platform};
             match $p {
                 rp::Platform::Loose => {
                     type $P = platform::Loose;
@@ -98,7 +98,7 @@ mod bun_paths {
         }};
     }
     pub(super) fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
+        dispatch_platform!(platform, |P| ::bun_core::paths::resolve_path::dirname::<P>(p))
     }
     /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
     pub(super) fn join_abs_string_buf<'b>(
@@ -109,7 +109,7 @@ mod bun_paths {
     ) -> &'b [u8] {
         dispatch_platform!(
             platform,
-            |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
+            |P| ::bun_core::paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
     pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
@@ -118,14 +118,14 @@ mod bun_paths {
         // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
         // pass exactly one part). Re-erase to `'static` so the resolver can hold it
         // across `&mut self` calls.
-        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
+        let s = dispatch_platform!(platform, |P| ::bun_core::paths::resolve_path::join_abs::<P>(
             cwd, part
         ));
         // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-        unsafe { bun_ptr::detach_lifetime(s) }
+        unsafe { bun_core::ptr::detach_lifetime(s) }
     }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
+        dispatch_platform!(platform, |P| ::bun_core::paths::resolve_path::join::<P>(parts))
     }
     pub(super) fn join_string_buf<'b>(
         buf: &'b mut [u8],
@@ -134,7 +134,7 @@ mod bun_paths {
     ) -> &'b [u8] {
         dispatch_platform!(
             platform,
-            |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts)
+            |P| ::bun_core::paths::resolve_path::join_string_buf::<P>(buf, parts)
         )
     }
     /// Compile-time platform-separator literal (`/` → `\` on Windows). A
@@ -167,7 +167,7 @@ mod bun_paths {
     pub(super) use __resolver_path_literal as path_literal;
     #[cfg(windows)]
     pub(super) fn windows_filesystem_root(p: &[u8]) -> &[u8] {
-        ::bun_paths::resolve_path::windows_filesystem_root(p)
+        ::bun_core::paths::resolve_path::windows_filesystem_root(p)
     }
 }
 // bun_core::strings shim — re-export the canonical `immutable/paths` helpers
@@ -176,11 +176,11 @@ mod bun_paths {
 // re-implementing them. The previous local copies diverged from the spec
 // (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
-    pub(super) use bun_paths::strings::paths::{
+    pub(super) use bun_core::paths::strings::paths::{
         char_is_any_slash, path_contains_node_modules_folder, without_leading_path_separator,
         without_trailing_slash_windows_path,
     };
-    pub(super) use bun_paths::strings::*;
+    pub(super) use bun_core::paths::strings::*;
 }
 // bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
 // (`openDirAbsoluteZ` / `Dir.openDirZ`) on top of the real `::bun_sys` crate.
@@ -231,7 +231,7 @@ mod bun_sys {
 /// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_core::paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
@@ -239,7 +239,7 @@ impl FdExt for ::bun_sys::Fd {
         let _ = ::bun_sys::close(self);
     }
     #[inline]
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_core::paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
         ::bun_sys::get_fd_path(self, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -256,11 +256,11 @@ use self::bun_paths as ResolvePath;
 use ::bun_ast::import_record as ast;
 use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
-use bun_collections::BoundedArray;
+use bun_core::collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
-use bun_ptr::Interned;
+use bun_core::ptr::Interned;
 use bun_sys::Fd as FD;
 use bun_threading::Mutex;
 
@@ -283,7 +283,7 @@ use crate::result::{
     PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
-use bun_alloc as allocators;
+use bun_core::alloc_impl as allocators;
 // `bun.resolver.SideEffects` — same type as `Result.primary_side_effects_data`
 // (re-exported from `bun_ast`; see `result.rs`).
 use bun_ast::SideEffects;
@@ -495,7 +495,7 @@ impl<C> ResolveWatcher<C> {
             // (Rust-ABI, thin-ptr first arg). The callback body discharges its
             // own type-recovery.
             callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
+                bun_core::ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
             },
         }
     }
@@ -1297,7 +1297,7 @@ impl<'a> Resolver<'a> {
                 // "import 'data:text/javascript,console.log(123)';"
                 // "@import 'data:text/css,body{background:white}';"
                 let mime = data_url.decode_mime_type();
-                use ::bun_http_types::MimeType::Category;
+                use ::bun_core::http_types::MimeType::Category;
                 if matches!(
                     mime.category,
                     Category::Javascript | Category::Css | Category::Json | Category::Text
@@ -1765,7 +1765,7 @@ impl<'a> Resolver<'a> {
                         // the slot is reused (resolver mutex held). Capture as `BackRef`
                         // (Copy, Deref) so the closure stays Copy-only while the read is
                         // a safe `BackRef::get()` instead of a raw-ptr deref.
-                        let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
+                        let entry_ref = bun_core::ptr::BackRef::<Fs::file_system::Entry>::from(
                             core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
                         );
                         scopeguard::defer! {
@@ -4232,8 +4232,8 @@ impl<'a> Resolver<'a> {
 
         queue[0].write(DirEntryResolveQueueItem {
             result: top_result,
-            unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
-            safe_path: bun_ptr::RawSlice::EMPTY,
+            unsafe_path: bun_core::ptr::RawSlice::new(&path[..input_path_len]),
+            safe_path: bun_core::ptr::RawSlice::EMPTY,
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
@@ -4286,9 +4286,9 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             queue[i].write(DirEntryResolveQueueItem {
-                unsafe_path: bun_ptr::RawSlice::new(top),
+                unsafe_path: bun_core::ptr::RawSlice::new(top),
                 result,
-                safe_path: bun_ptr::RawSlice::EMPTY,
+                safe_path: bun_core::ptr::RawSlice::EMPTY,
                 fd: FD::INVALID,
             });
 
@@ -4297,7 +4297,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
-                        slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                        slot.safe_path = bun_core::ptr::RawSlice::new(entries.dir);
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4321,9 +4321,9 @@ impl<'a> Resolver<'a> {
                 top_parent = result;
             } else {
                 queue[i].write(DirEntryResolveQueueItem {
-                    unsafe_path: bun_ptr::RawSlice::new(root_path),
+                    unsafe_path: bun_core::ptr::RawSlice::new(root_path),
                     result,
-                    safe_path: bun_ptr::RawSlice::EMPTY,
+                    safe_path: bun_core::ptr::RawSlice::EMPTY,
                     fd: FD::INVALID,
                 });
                 if let Some(top_entry) = rfs!().entries.get(top) {
@@ -4331,7 +4331,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
-                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            slot.safe_path = bun_core::ptr::RawSlice::new(entries.dir);
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4462,8 +4462,8 @@ impl<'a> Resolver<'a> {
                             // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                             // list which contains such paths and treating them as missing means we just
                             // ignore them during path resolution.
-                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                                || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                            if err == crate::Error::Sys(bun_core::errno::SystemErrno::ENOTDIR)
+                                || err == crate::Error::Sys(bun_core::errno::SystemErrno::EISDIR)
                             {
                                 return Ok(None);
                             }
@@ -4478,7 +4478,7 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if err != crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -4510,7 +4510,7 @@ impl<'a> Resolver<'a> {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
                 // `&'static [u8]` (set from `entries.dir` above); widen the
                 // `RawSlice`-tied borrow back to its true `'static` lifetime.
-                unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
+                unsafe { bun_core::ptr::detach_lifetime(queue_top_safe_path) }
             } else {
                 // ensure trailing slash
                 if _safe_path.is_none() {
@@ -4617,7 +4617,7 @@ impl<'a> Resolver<'a> {
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
-                    // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
+                    // NOTE: bun_core::collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
                 new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
@@ -5220,7 +5220,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+            let ext = bun_core::ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
             if self
                 .load_index_with_extension(dir_info, &ext, out)
                 .is_success()
@@ -5235,7 +5235,7 @@ impl<'a> Resolver<'a> {
         for i in 0..n {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            let ext = bun_core::ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if self
                 .load_index_with_extension(dir_info, &ext, out)
                 .is_success()
@@ -5521,7 +5521,7 @@ impl<'a> Resolver<'a> {
                 // borrow so the loop body can take `&mut self`. Backing
                 // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
                 // never mutated during resolve.
-                let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
+                let main_field_keys = bun_core::ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
                 let mf_ext_order = options::ExtOrder::MainField;
                 // The bundler projects "user did not pass --main-fields" as an
                 // explicit bool because the owned `Box<[Box<[u8]>]>` can never
@@ -5710,21 +5710,21 @@ impl<'a> Resolver<'a> {
         // while each read goes through safe `BackRef: Deref` (pointee outlives
         // holder by ARENA invariant).
         // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
-        let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
+        let dir_entry: bun_core::ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
             match unsafe { &mut *rfs }.read_directory(
                 dir_path,
                 None,
                 self.generation,
                 self.store_fd,
             ) {
-                Ok(e) => bun_ptr::BackRef::new_mut(e),
+                Ok(e) => bun_core::ptr::BackRef::new_mut(e),
                 Err(_) => dec_ret!(None),
             };
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
-                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
+                | crate::Error::Sys(bun_core::errno::SystemErrno::ENOTDIR) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -5742,7 +5742,7 @@ impl<'a> Resolver<'a> {
 
         // ARENA-backed `DirEntry` (see `dir_entry` note above) — `BackRef` so each
         // `entries!()` is a fresh safe shared borrow instead of an open-coded raw deref.
-        let entries = bun_ptr::BackRef::new(dir_entry.entries());
+        let entries = bun_core::ptr::BackRef::new(dir_entry.entries());
         macro_rules! entries {
             () => {
                 entries.get()
@@ -5803,7 +5803,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+            let ext = bun_core::ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
             if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }
@@ -5816,7 +5816,7 @@ impl<'a> Resolver<'a> {
         for i in 0..n {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            let ext = bun_core::ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }
@@ -5955,7 +5955,7 @@ impl<'a> Resolver<'a> {
         // (see `load_as_file`); detach the borrowck lifetime via `BackRef` so the
         // `&mut self` calls below (debug_logs / fs_ref) don't conflict, while
         // each read stays a safe `BackRef: Deref`.
-        let entries = bun_ptr::BackRef::new(entries);
+        let entries = bun_core::ptr::BackRef::new(entries);
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -6031,7 +6031,7 @@ impl<'a> Resolver<'a> {
         // `DirEntry` is a separate process-lifetime allocation, so the shared
         // `BackRef` survives entries-map traffic. All uses below are `&self`
         // reads under `entries_mutex`.
-        let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
+        let dir_entries = bun_core::ptr::BackRef::new(unsafe { &*_entries }.entries());
         macro_rules! entries {
             () => {
                 dir_entries.get()
@@ -6411,7 +6411,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if err == crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -6421,7 +6421,7 @@ impl<'a> Resolver<'a> {
                                 ),
                             );
                         } else if err != crate::Error::ParseErrorAlreadyLogged
-                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                            && err != crate::Error::Sys(bun_core::errno::SystemErrno::EISDIR)
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
@@ -6452,7 +6452,7 @@ impl<'a> Resolver<'a> {
                     // this extends-chain walk and freed via heap::take below. Hold as
                     // `BackRef` (pointee outlives holder) so the loop body reads via safe
                     // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
+                    let mut current = bun_core::ptr::BackRef::from(
                         core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
                     );
                     while !current.extends.is_empty() {
@@ -6481,7 +6481,7 @@ impl<'a> Resolver<'a> {
                             };
                         if let Some(parent_config) = parent_config_maybe {
                             parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
+                            current = bun_core::ptr::BackRef::from(
                                 core::ptr::NonNull::new(parent_config).expect("heap alloc"),
                             );
                         } else {
@@ -6611,7 +6611,7 @@ impl<'b> BrowserMapPath<'b> {
             // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
             // cache is process-global); the `'b` borrow on `map` artificially shortens
             // what is process-lifetime storage. `Interned` is the canonical proof type.
-            self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+            self.remapped = unsafe { bun_core::ptr::Interned::assume(result) }.as_bytes();
             return true;
         }
 
@@ -6633,7 +6633,7 @@ impl<'b> BrowserMapPath<'b> {
                 // }
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = unsafe { bun_core::ptr::Interned::assume(_remapped) }.as_bytes();
                     return true;
                 }
             }
@@ -6656,7 +6656,7 @@ impl<'b> BrowserMapPath<'b> {
 
         if let Some(_remapped) = map.get(index_path) {
             // SAFETY: ARENA — see `result` note above.
-            self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+            self.remapped = unsafe { bun_core::ptr::Interned::assume(_remapped) }.as_bytes();
             return true;
         }
 
@@ -6675,7 +6675,7 @@ impl<'b> BrowserMapPath<'b> {
                 // }
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = unsafe { bun_core::ptr::Interned::assume(_remapped) }.as_bytes();
                     return true;
                 }
             }

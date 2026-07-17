@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
-use bun_collections::LinearFifo;
+use bun_core::collections::LinearFifo;
 use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -628,7 +628,7 @@ pub enum Phase {
 }
 
 pub struct BunTest {
-    pub bun_test_root: bun_ptr::BackRef<BunTestRoot>,
+    pub bun_test_root: bun_core::ptr::BackRef<BunTestRoot>,
     pub in_run_loop: bool,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     pub file_id: FileId,
@@ -671,7 +671,7 @@ impl BunTest {
         let _g = group_begin!();
 
         BunTest {
-            bun_test_root: bun_ptr::BackRef::from(bun_test_root),
+            bun_test_root: bun_core::ptr::BackRef::from(bun_test_root),
             in_run_loop: false,
             phase: Phase::Collection,
             file_id,
@@ -735,10 +735,10 @@ impl BunTest {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
-        bun_ptr::IntrusiveRc::new(RefData {
+        bun_core::ptr::IntrusiveRc::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
         })
     }
 
@@ -757,7 +757,7 @@ impl BunTest {
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
         // SAFETY: `raw_ref` was produced by `IntrusiveRc::into_raw` in `run_test_callback`
         // and round-tripped via `asPromisePtr`; we adopt the +1 it carried.
-        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
+        let refdata: RefDataPtr = unsafe { bun_core::ptr::IntrusiveRc::from_raw(raw_ref) };
         // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
         if let Some(runner) = Jest::runner() {
             let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
@@ -1055,7 +1055,7 @@ impl BunTest {
                         // Basename only so the hash is platform-independent (path
                         // separators and absolute prefixes differ on Windows).
                         Some(bun_core::rand::DefaultPrng::init(
-                            bun_wyhash::hash(bun_paths::basename(path)).wrapping_add(seed as u64),
+                            bun_core::wyhash::hash(bun_core::paths::basename(path)).wrapping_add(seed as u64),
                         ))
                     }
                 } else {
@@ -1238,12 +1238,12 @@ impl BunTest {
                             // owned by `dcb_data.r#ref` (set just above; GC
                             // roots `done_callback` for this frame). Bump the
                             // refcount 1→2.
-                            unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
+                            unsafe { bun_core::ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
                             Self::ref_(this_strong, cfg_data)
                         };
                         // Track the `+1` handed to `Promise.then()` in case the promise never settles.
-                        let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);
+                        let raw_ref: *mut RefData = bun_core::ptr::IntrusiveRc::into_raw(this_ref);
                         this_strong
                             .bun_test_root
                             .get()
@@ -1488,15 +1488,15 @@ impl fmt::Display for RefDataValue {
 }
 
 // Intrusive single-thread refcount.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 #[ref_count(destroy = Self::destroy)]
 pub struct RefData {
     pub buntest_weak: BunTestPtrWeak,
     pub phase: RefDataValue,
-    pub ref_count: bun_ptr::RefCount<RefData>,
+    pub ref_count: bun_core::ptr::RefCount<RefData>,
 }
-// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
-pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
+// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_core::ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
+pub type RefDataPtr = bun_core::ptr::IntrusiveRc<RefData>;
 impl RefData {
     /// `RefCounted` destructor — last ref dropped.
     ///
@@ -1565,7 +1565,7 @@ pub enum HandleUncaughtExceptionResult {
     ShowUnhandledErrorInDescribe,
 }
 
-pub type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
+pub type ResultQueue = LinearFifo<RefDataValue, bun_core::collections::linear_fifo::DynamicBuffer<RefDataValue>>;
 // bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
 pub enum StepResult {

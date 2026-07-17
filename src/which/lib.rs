@@ -4,13 +4,13 @@ use bstr::BStr;
 use bun_core::{WStr, w};
 use bun_core::{ZStr, strings};
 #[cfg(not(windows))]
-use bun_paths::DELIMITER;
+use bun_core::paths::DELIMITER;
 #[cfg(windows)]
-use bun_paths::resolve_path::PosixToWinNormalizer;
-use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_core::paths::resolve_path::PosixToWinNormalizer;
+use bun_core::paths::resolve_path::posix_to_platform_in_place;
 #[cfg(windows)]
-use bun_paths::w_path_buffer_pool;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool};
+use bun_core::paths::w_path_buffer_pool;
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool};
 
 #[allow(non_upper_case_globals)]
 mod scope {

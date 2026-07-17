@@ -10,7 +10,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as
 use bun_s3_signing::{
     ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
 };
-use bun_url::URL;
+use bun_core::url::URL;
 
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
 /// JS string, and non-empty. Shared ladder for the S3 option parsers
@@ -75,7 +75,7 @@ pub(crate) fn get_credentials_with_options(
     default_request_payer: bool,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {
-    bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
+    bun_core::analytics::features::s3.fetch_add(1, Ordering::Relaxed);
     // get ENV config
     // `S3Credentials`
     // carries an intrusive ref-count and is not `Copy`; `Clone` performs a
@@ -256,7 +256,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentDisposition must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials.content_disposition = Some(bun_core::ptr::RawSlice::new(utf8.slice()));
                 new_credentials._content_disposition_slice = Some(utf8);
             }
 
@@ -266,7 +266,7 @@ pub(crate) fn get_credentials_with_options(
                         "type must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_type = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials.content_type = Some(bun_core::ptr::RawSlice::new(utf8.slice()));
                 new_credentials._content_type_slice = Some(utf8);
             }
 
@@ -278,7 +278,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentEncoding must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(utf8.slice()));
+                new_credentials.content_encoding = Some(bun_core::ptr::RawSlice::new(utf8.slice()));
                 new_credentials._content_encoding_slice = Some(utf8);
             }
 

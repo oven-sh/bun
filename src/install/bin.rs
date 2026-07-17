@@ -2,20 +2,20 @@ use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::Error;
-use bun_alloc::AllocError;
-use bun_collections::{StringHashMap, VecExt};
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::{StringHashMap, VecExt};
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
 #[cfg(not(windows))]
-use bun_paths::MAX_PATH_BYTES;
+use bun_core::paths::MAX_PATH_BYTES;
 #[cfg(windows)]
-use bun_paths::WPathBuffer;
-use bun_paths::platform::Auto as PlatformAuto;
-use bun_paths::resolve_path;
-use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
-use bun_semver::{ExternalString, String};
+use bun_core::paths::WPathBuffer;
+use bun_core::paths::platform::Auto as PlatformAuto;
+use bun_core::paths::resolve_path;
+use bun_core::paths::strings;
+use bun_core::paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_core::semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -28,7 +28,7 @@ use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
 
-bun_output::declare_scope!(BinLinker, hidden);
+bun_core::declare_scope!(BinLinker, hidden);
 
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
@@ -205,7 +205,7 @@ impl Bin {
     /// Used for packages read from text lockfile / pnpm migration.
     pub fn parse_append(
         bin_expr: &Expr,
-        buf: &mut bun_semver::string::Buf,
+        buf: &mut bun_core::semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
         match &bin_expr.data {
@@ -252,7 +252,7 @@ impl Bin {
     fn parse_append_object<'a>(
         len: usize,
         mut pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
-        buf: &mut bun_semver::string::Buf,
+        buf: &mut bun_core::semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
         match len {
@@ -303,7 +303,7 @@ impl Bin {
 
     pub fn parse_append_from_directories(
         bin_expr: &Expr,
-        buf: &mut bun_semver::string::Buf,
+        buf: &mut bun_core::semver::string::Buf,
     ) -> Result<Bin, AllocError> {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {
             return Ok(Bin {
@@ -475,10 +475,10 @@ pub enum ToJsonStyle {
 }
 
 // The canonical
-// `bun_semver::StringBuilder` trait (count + append<T> + provided
+// `bun_core::semver::StringBuilder` trait (count + append<T> + provided
 // append_string/append_external_string wrappers). Re-exported so
 // `bin_real::StringBuilder` paths still resolve.
-pub use bun_semver::StringBuilder;
+pub use bun_core::semver::StringBuilder;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -701,8 +701,8 @@ impl<'a> NamesIterator<'a> {
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
 pub struct PriorityQueueContext {
-    pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
-    pub string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub dependencies: bun_core::ptr::BackRef<Vec<Dependency>>,
+    pub string_buf: bun_core::ptr::BackRef<Vec<u8>>,
 }
 
 impl PriorityQueueContext {
@@ -721,7 +721,7 @@ impl PriorityQueueContext {
     }
 }
 
-impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
+impl bun_core::collections::PriorityCompare<DependencyID> for PriorityQueueContext {
     #[inline]
     fn compare(&self, a: &DependencyID, b: &DependencyID) -> core::cmp::Ordering {
         self.less_than(*a, *b)
@@ -730,7 +730,7 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
-pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
+pub(crate) type PriorityQueue = bun_core::collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
 pub type Context = PriorityQueueContext;
@@ -942,7 +942,7 @@ impl<'a> Linker<'a> {
                 Ok(f) => f,
                 Err(err) => {
                     let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
+                    if err != crate::Error::Sys(bun_core::errno::SystemErrno::EISDIR) {
                         // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
@@ -998,7 +998,7 @@ impl<'a> Linker<'a> {
             // Nothing to do!
             return;
         }
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             BinLinker,
             "Normalizing shebang for {}",
             bstr::BStr::new(abs_target.as_bytes())
@@ -1014,7 +1014,7 @@ impl<'a> Linker<'a> {
         let Ok(tmpname) = path::fs::FileSystem::tmpname(
             path::basename(abs_target.as_bytes()),
             &mut tmpname_buf,
-            bun_wyhash::hash(chunk_without_newline),
+            bun_core::wyhash::hash(chunk_without_newline),
         ) else {
             return;
         };
@@ -1154,7 +1154,7 @@ impl<'a> Linker<'a> {
                 Ok(f) => break 'bunx_file f,
                 Err(err) => {
                     let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
+                    if err != crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) || global {
                         self.err = Some(err);
                         return;
                     }
@@ -1253,7 +1253,7 @@ impl<'a> Linker<'a> {
             crate::windows_shim::embedded_executable_data(),
         ) {
             let err: crate::Error = err.into();
-            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
+            if err == crate::Error::Sys(bun_core::errno::SystemErrno::EBUSY) {
                 // exe is most likely running. bunx file has already been updated, ignore error
                 return;
             }
@@ -1611,7 +1611,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        self.err = Some(crate::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
@@ -1643,7 +1643,7 @@ impl<'a> Linker<'a> {
                     let target_needs_resolved_containment_check =
                         bin_target_needs_resolved_containment_check(target);
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        self.err = Some(crate::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
 
@@ -1700,7 +1700,7 @@ impl<'a> Linker<'a> {
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
                             self.err =
-                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                                Some(crate::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1794,7 +1794,7 @@ impl<'a> Linker<'a> {
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
                                     self.err = Some(crate::Error::Sys(
-                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                        bun_core::errno::SystemErrno::ENAMETOOLONG,
                                     ));
                                     return;
                                 }
@@ -1838,7 +1838,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        self.err = Some(crate::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
@@ -1858,7 +1858,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        self.err = Some(crate::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
 
@@ -1888,7 +1888,7 @@ impl<'a> Linker<'a> {
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
                             self.err =
-                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                                Some(crate::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1937,7 +1937,7 @@ impl<'a> Linker<'a> {
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
                                     self.err = Some(crate::Error::Sys(
-                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                        bun_core::errno::SystemErrno::ENAMETOOLONG,
                                     ));
                                     return;
                                 }

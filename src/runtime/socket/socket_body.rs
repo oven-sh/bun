@@ -8,12 +8,12 @@ use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
-use bun_ptr::IntrusiveRc;
+use bun_core::ptr::IntrusiveRc;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
 use bun_boringssl_sys::SSL_CTX;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `err.to_js(global)` on `sys::Error` (the `SysErrorJsc` trait method) is only
@@ -61,9 +61,9 @@ mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
 
-bun_output::declare_scope!(Socket, visible);
+bun_core::declare_scope!(Socket, visible);
 macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(Socket, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(Socket, $($arg)*) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ extern "C" fn select_alpn_callback(
     }
     // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open), kept
     // live for this handshake callback by the JS wrapper's ref.
-    let this = unsafe { bun_ptr::ThisPtr::new(this_ptr.cast::<TLSSocket>()) };
+    let this = unsafe { bun_core::ptr::ThisPtr::new(this_ptr.cast::<TLSSocket>()) };
     // Same handlers-presence guard as every other dispatch entry point:
     // an idle socket has dropped its Handlers, and the ALPN selection
     // callback can still fire for a connection JS already detached -
@@ -252,7 +252,7 @@ pub struct NewSocket<const SSL: bool> {
     pub owned_ssl_ctx: Cell<Option<*mut SSL_CTX>>,
 
     pub flags: Cell<Flags>,
-    pub ref_count: bun_ptr::RefCount<Self>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
+    pub ref_count: bun_core::ptr::RefCount<Self>, // intrusive — see `bun_core::ptr::IntrusiveRc<Self>`
     /// The callbacks this socket dispatches to: shared with its listener and
     /// sibling sockets (server), or with its own reconnects and TLS twin
     /// (client). `None` once the socket has gone idle or been detached, which
@@ -298,9 +298,9 @@ pub struct NewSocket<const SSL: bool> {
 pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 // Intrusive refcount mixin.
-impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
+impl<const SSL: bool> bun_core::ptr::RefCounted for NewSocket<SSL> {
     type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_core::ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` points to a live Self.
         unsafe { &raw mut (*this).ref_count }
     }
@@ -315,7 +315,7 @@ impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
 /// it may have synchronously reconnected onto a fresh set — then consumes the
 /// +1 the caller transferred into `on_close`.
 struct CloseTeardown<const SSL: bool> {
-    socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
+    socket: bun_core::ptr::ThisPtr<NewSocket<SSL>>,
     entered: Rc<Handlers>,
 }
 
@@ -372,7 +372,7 @@ impl Drop for PendingSystemError {
 /// teardown is gated on the socket still holding the `Handlers` we entered with:
 /// `onConnectError` can reconnect, and we must not tear that connection down.
 struct ConnectErrorTeardown<const SSL: bool> {
-    socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
+    socket: bun_core::ptr::ThisPtr<NewSocket<SSL>>,
     entered: Rc<Handlers>,
     needs_deref: bool,
 }
@@ -396,7 +396,7 @@ impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
 /// Bind it to a named local — `let _ = ...` drops at the end of the statement,
 /// running the exit before the user's callback.
 struct ScopeExit<const SSL: bool> {
-    socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
+    socket: bun_core::ptr::ThisPtr<NewSocket<SSL>>,
     scope: Option<super::handlers::Scope>,
 }
 
@@ -434,7 +434,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that access.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
+        unsafe { bun_core::ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
     }
     // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed so the
     // `*mut Self` formed for `RefCount::deref` (and onward into
@@ -445,7 +445,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn deref(&self) {
         // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
         // (→ `deinit_and_destroy`) runs and `self` is not used after.
-        unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
+        unsafe { bun_core::ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 
     // ── codegen accessors ──
@@ -503,9 +503,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Heap-allocates the socket; ownership passes to the intrusive refcount.
     /// The returned handle is live by construction.
-    pub fn new(init: Self) -> bun_ptr::ThisPtr<Self> {
+    pub fn new(init: Self) -> bun_core::ptr::ThisPtr<Self> {
         // SAFETY: freshly allocated, non-null.
-        unsafe { bun_ptr::ThisPtr::new(bun_core::heap::into_raw(Box::new(init))) }
+        unsafe { bun_core::ptr::ThisPtr::new(bun_core::heap::into_raw(Box::new(init))) }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -552,7 +552,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn do_connect(&self) -> crate::Result<()> {
         // Keep `self` alive across the re-entrant connect path.
         // SAFETY: `self` is live for this call and outlives the sockets below.
-        let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
+        let this = unsafe { bun_core::ptr::ThisPtr::new(self.as_ctx_ptr()) };
         let _guard = this.ref_guard();
 
         let vm = self.get_handlers().vm;
@@ -879,7 +879,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `&mut self` across that call is aliasing UB and lets LLVM cache those
     /// fields and dead-store the re-entrant write. `ThisPtr` derefs yield a
     /// short-lived shared borrow per access; none span `callback.call`.
-    pub fn on_writable(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
+    pub fn on_writable(this: bun_core::ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -968,7 +968,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub fn on_timeout(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
+    pub fn on_timeout(this: bun_core::ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -1063,7 +1063,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// lookup itself failed; 0 for a connect failure past name resolution
     /// (then `errno` carries the connect error).
     pub fn handle_connect_error(
-        this: bun_ptr::ThisPtr<Self>,
+        this: bun_core::ptr::ThisPtr<Self>,
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
@@ -1250,7 +1250,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as
     /// `handle_connect_error`.
     pub fn on_connect_error(
-        this: bun_ptr::ThisPtr<Self>,
+        this: bun_core::ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
         errno: c_int,
     ) -> JsResult<()> {
@@ -1372,7 +1372,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `resolve_promise`/`callback.call` re-enter JS which can mutate this
     /// socket via `m_ptr`.
-    pub fn on_open(this: bun_ptr::ThisPtr<Self>, socket: SocketHandler<SSL>) {
+    pub fn on_open(this: bun_core::ptr::ThisPtr<Self>, socket: SocketHandler<SSL>) {
         let this_ptr = this.as_ptr();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -1592,7 +1592,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub fn on_end(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
+    pub fn on_end(this: bun_core::ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -1640,7 +1640,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_handshake(
-        this: bun_ptr::ThisPtr<Self>,
+        this: bun_core::ptr::ThisPtr<Self>,
         s: SocketHandler<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
@@ -1872,7 +1872,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// unwound, so the JS handler may safely destroy the socket.
     ///
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) -> JsResult<()> {
+    pub fn on_session(this: bun_core::ptr::ThisPtr<Self>, session: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
             return Ok(());
@@ -1919,7 +1919,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub fn on_keylog(this: bun_ptr::ThisPtr<Self>, line: &[u8]) -> JsResult<()> {
+    pub fn on_keylog(this: bun_core::ptr::ThisPtr<Self>, line: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
             return Ok(());
@@ -1967,7 +1967,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_close(
-        this: bun_ptr::ThisPtr<Self>,
+        this: bun_core::ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
         err: c_int,
         reason: Option<*mut c_void>,
@@ -2064,7 +2064,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    pub fn on_data(this: bun_ptr::ThisPtr<Self>, s: SocketHandler<SSL>, data: &[u8]) {
+    pub fn on_data(this: bun_core::ptr::ThisPtr<Self>, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -2507,7 +2507,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let args = callframe.arguments_undef::<2>();
         // `write_or_end_buffered` reaches `internal_flush`, which re-enters JS.
         // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(this.as_ctx_ptr()) };
+        let _keepalive = unsafe { bun_core::ptr::ScopedRef::new(this.as_ctx_ptr()) };
         let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -3119,7 +3119,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(this.as_ctx_ptr()) };
+        let _keepalive = unsafe { bun_core::ptr::ScopedRef::new(this.as_ctx_ptr()) };
         let result = match this.write_or_end::<true>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -3479,8 +3479,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut initial_flags = Flags::initial(reject_unauthorized);
         initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
-        let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
-            ref_count: bun_ptr::RefCount::init(),
+        let tls: bun_core::ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
+            ref_count: bun_core::ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(SocketHandler::<true>::DETACHED),
             // Ownership of the +1 `SSL_CTX` ref transfers here; the
@@ -3571,7 +3571,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // including the `?` early-returns below.
         // SAFETY: `this` owns the outstanding ref this guard consumes; the JS
         // wrapper's own +1 keeps the allocation alive across the whole call.
-        let _this_deref = unsafe { bun_ptr::ScopedRef::adopt(this.as_ctx_ptr()) };
+        let _this_deref = unsafe { bun_core::ptr::ScopedRef::adopt(this.as_ctx_ptr()) };
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
@@ -3585,7 +3585,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // *Handlers, writes bypass SSL. Dispatch reaches it via the
         // `ssl_raw_tap` ciphertext hook, never via the ext slot.
         let raw = TLSSocket::new(TLSSocket {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             handlers: JsCell::new(raw_handlers),
             socket: Cell::new(SocketHandler::<true>::from(new_raw.as_ptr())),
             owned_ssl_ctx: Cell::new(None),
@@ -4501,7 +4501,7 @@ pub fn js_upgrade_duplex_to_tls(
             Flags::DEFERS_SERVER_IDENTITY
         };
     let tls = TLSSocket::new(TLSSocket {
-        ref_count: bun_ptr::RefCount::init(),
+        ref_count: bun_core::ptr::RefCount::init(),
         handlers: JsCell::new(Some(handlers)),
         socket: Cell::new(SocketHandler::<true>::DETACHED),
         owned_ssl_ctx: Cell::new(None),
@@ -4583,43 +4583,43 @@ pub fn js_upgrade_duplex_to_tls(
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_open: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open()
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_data: |c: *mut (), d| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d)
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_handshake: |c: *mut (), ok, err| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_close: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close()
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_end: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end()
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_writable: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable()
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_error: |c: *mut (), e| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e)
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_timeout: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout()
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_session: |c: *mut (), s| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_session(s)
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_session(s)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_keylog: |c: *mut (), l| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_keylog(l)
+                    bun_core::ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_keylog(l)
                 },
                 ctx: duplex_context.cast::<()>(),
             },

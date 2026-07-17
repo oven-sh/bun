@@ -49,7 +49,7 @@ impl Default for RuntimeTranspilerCache {
 // `Jsc` arm. Cold path: at most twice per parse; callee does file I/O.
 // `parser_options` is `*const ()` because `parser::Options` would be a forward
 // edge here; the jsc impl casts it back.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
         fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
         fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);

@@ -7,13 +7,13 @@ use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
-use bun_collections::StringArrayHashMap;
+use bun_core::collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
-use bun_paths::MAX_PATH_BYTES;
+use bun_core::paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
@@ -901,7 +901,7 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stderr(&mut self) -> *mut c_void {
-        bun_analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
         if self.stderr_store.is_none() {
             let fd = Fd::from_uv(2);
             let mode: Mode = match syscall::fstat(fd) {
@@ -920,7 +920,7 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stdout(&mut self) -> *mut c_void {
-        bun_analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
         if self.stdout_store.is_none() {
             let fd = Fd::from_uv(1);
             let mode: Mode = match syscall::fstat(fd) {
@@ -939,7 +939,7 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stdin(&mut self) -> *mut c_void {
-        bun_analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
         if self.stdin_store.is_none() {
             let fd = Fd::from_uv(0);
             let mode: Mode = match syscall::fstat(fd) {

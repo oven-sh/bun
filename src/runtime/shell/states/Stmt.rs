@@ -7,7 +7,7 @@ use crate::shell::yield_::Yield;
 
 pub struct Stmt {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Stmt>,
+    pub node: bun_core::ptr::BackRef<ast::Stmt>,
     pub idx: usize,
     pub last_exit_code: Option<ExitCode>,
     pub currently_executing: Option<NodeId>,
@@ -29,7 +29,7 @@ impl Stmt {
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
+            node: unsafe { bun_core::ptr::BackRef::from_raw(node as *mut ast::Stmt) },
             idx: 0,
             last_exit_code: None,
             currently_executing: None,

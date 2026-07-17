@@ -1,13 +1,13 @@
-use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
+use bun_core::alloc_impl::ArenaVecExt as _;
+use bun_core::collections::VecExt;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
 use crate::Error;
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_core;
 use bun_core::strings;
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 use crate::parser::options;
 use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
@@ -33,7 +33,7 @@ pub type TypeScriptImportScanner<'a> = P<'a, true, true>;
 pub type TSXImportScanner<'a> = P<'a, true, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
-type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
+type BumpVec<'bump, T> = bun_core::alloc_impl::ArenaVec<'bump, T>;
 
 /// Stack-local in-place `P` constructor. `P` is ~5 KiB; the previous
 /// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
@@ -2187,7 +2187,7 @@ impl<'a> Parser<'a> {
             if !rc_stmts.is_empty() {
                 let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
                 let mut import_record_indices: js_ast::PartImportRecordIndices =
-                    bun_alloc::AstAlloc::vec();
+                    bun_core::alloc_impl::AstAlloc::vec();
                 for stmt in &rc_stmts {
                     match &stmt.data {
                         js_ast::StmtData::SImport(import) => {
@@ -2209,7 +2209,7 @@ impl<'a> Parser<'a> {
                                         alias_loc: item.alias_loc,
                                         namespace_ref: import.namespace_ref,
                                         import_record_index: import.import_record_index,
-                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        local_parts_with_uses: bun_core::alloc_impl::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },

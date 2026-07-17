@@ -2,7 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
-use bun_paths::strings;
+use bun_core::paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,7 +19,7 @@ use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
-use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_core::paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
@@ -179,7 +179,7 @@ type BlobSizeType = u64;
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
-/// Backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
+/// Backed by `bun_core::ptr::ExternalShared<AbortSignal>` (alias re-exported
 /// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
 use bun_jsc::AbortSignalRef;
 
@@ -329,8 +329,8 @@ impl core::ops::DerefMut for UvFsReq {
 
 /// Strip the NT object-path prefix — forwards to `bun_core::paths`.
 #[inline]
-fn without_nt_prefix<T: bun_paths::string_paths::Ch>(path: &[T]) -> &[T] {
-    bun_paths::string_paths::without_nt_prefix(path)
+fn without_nt_prefix<T: bun_core::paths::string_paths::Ch>(path: &[T]) -> &[T] {
+    bun_core::paths::string_paths::without_nt_prefix(path)
 }
 
 /// Empty `OSPathChar` literal.
@@ -626,7 +626,7 @@ mod _async_tasks {
                 // SAFETY: caller keeps `path` alive until completion
                 let path = unsafe { &*this.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    path: PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_unchecked(
                         path, false,
                     )),
                     recursive: true,
@@ -677,7 +677,7 @@ mod _async_tasks {
         pub promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
-        pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        pub global_object: bun_core::ptr::BackRef<JSGlobalObject>,
         pub req: uv::fs_t,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -714,7 +714,7 @@ mod _async_tasks {
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
                 // `R`; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
-                global_object: bun_ptr::BackRef::new(global_object),
+                global_object: bun_core::ptr::BackRef::new(global_object),
                 req: bun_core::ffi::zeroed(),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -942,7 +942,7 @@ mod _async_tasks {
             // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
             scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            let this: &mut Self = unsafe { bun_core::ptr::callback_ctx::<Self>((*req).data) };
             let mut node_fs = NodeFS::default();
             // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
@@ -963,7 +963,7 @@ mod _async_tasks {
             // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
             scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            let this: &mut Self = unsafe { bun_core::ptr::callback_ctx::<Self>((*req).data) };
             let mut node_fs = NodeFS::default();
             // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
             // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
@@ -1254,7 +1254,7 @@ mod _async_tasks {
         pub promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
-        pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        pub global_object: bun_core::ptr::BackRef<JSGlobalObject>,
         pub task: WorkPoolTask,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -1298,7 +1298,7 @@ mod _async_tasks {
                 // the JS thread. `Maybe<R>` is `Result<R, sys::Error>` and may be
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
-                global_object: bun_ptr::BackRef::new(global_object),
+                global_object: bun_core::ptr::BackRef::new(global_object),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1440,7 +1440,7 @@ mod _async_tasks {
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
-        pub shelltask: Option<bun_ptr::ParentRef<ShellCpTask>>,
+        pub shelltask: Option<bun_core::ptr::ParentRef<ShellCpTask>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -1453,7 +1453,7 @@ mod _async_tasks {
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
         /// original write provenance for `on_subtask_done`'s `&mut` promotion.
-        pub cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
+        pub cp_task: bun_core::ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
         /// the two NUL-terminated views are reconstructed via `src()` / `dest()`.
@@ -1479,7 +1479,7 @@ mod _async_tasks {
             WorkPool::schedule_new(CpSingleTask {
                 // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
                 // preserves the mutable provenance for `on_subtask_done`.
-                cp_task: bun_ptr::ParentRef::from(
+                cp_task: bun_core::ptr::ParentRef::from(
                     core::ptr::NonNull::new(parent).expect("cp parent"),
                 ),
                 path_buf,
@@ -1614,7 +1614,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                shelltask: core::ptr::NonNull::new(shelltask).map(bun_core::ptr::ParentRef::from),
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1647,7 +1647,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                shelltask: core::ptr::NonNull::new(shelltask).map(bun_core::ptr::ParentRef::from),
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -2190,7 +2190,7 @@ mod _async_tasks {
         pub promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
-        pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        pub global_object: bun_core::ptr::BackRef<JSGlobalObject>,
         pub task: WorkPoolTask,
         pub r#ref: KeepAlive,
         pub tracker: AsyncTaskTracker,
@@ -2276,7 +2276,7 @@ mod _async_tasks {
     }
 
     pub(super) struct ReaddirSubtask {
-        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
+        pub readdir_task: bun_core::ptr::ParentRef<AsyncReaddirRecursiveTask>,
         /// Heap-owned, NUL-terminated (`[basename.., 0]`); freed on drop.
         pub basename: Box<[u8]>,
         pub task: WorkPoolTask,
@@ -2351,7 +2351,7 @@ mod _async_tasks {
                 // address) and outlives every subtask via the `subtask_count`
                 // refcount it just bumped. Write provenance from `&mut self`.
                 readdir_task: unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
+                    bun_core::ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
                 },
                 basename: basename_owned,
                 task: WorkPoolTask::default(),
@@ -2385,7 +2385,7 @@ mod _async_tasks {
                 promise: JSPromiseStrong::init(global_object),
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
-                global_object: bun_ptr::BackRef::new(global_object),
+                global_object: bun_core::ptr::BackRef::new(global_object),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2476,7 +2476,7 @@ mod _async_tasks {
             let root_path_z = {
                 // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
                 // `create()` and not reallocated for the task's lifetime.
-                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+                let bytes: &'static [u8] = unsafe { bun_core::ptr::detach_lifetime(&this.root_path[..]) };
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
             this.perform_work(root_path_z, &mut buf, true);
@@ -4937,7 +4937,7 @@ impl NodeFS {
                 // debug-build hot path (byte-by-byte `extend_with`). Use
                 // `expand_to_capacity` instead — the slab is write-only,
                 // `Syscall::read` fills it from the kernel.
-                use bun_collections::vec_ext::VecExt as _;
+                use bun_core::collections::vec_ext::VecExt as _;
                 if buf_to_free.try_reserve_exact(clamped_size).is_err() {
                     break 'maybe_allocate_large_temp_buf;
                 }
@@ -5933,7 +5933,7 @@ impl NodeFS {
 
         // iterate backwards until creating the directory works successfully
         while i > 0 {
-            if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
+            if bun_core::paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
                 // SAFETY: `working_mem[..i]` is initialized from `path` above and
                 // `working_mem[i]` was just set to NUL; the slice is in-bounds.
@@ -6016,7 +6016,7 @@ impl NodeFS {
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while i < len {
-            if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
+            if bun_core::paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
                 // SAFETY: `working_mem[..i]` is initialized from `path` and
                 // `working_mem[i]` was just set to NUL; the slice is in-bounds.
@@ -6654,7 +6654,7 @@ impl NodeFS {
             let path = &async_task.root_path;
             // SAFETY: `async_task.root_path`'s backing storage is fixed at
             // `create()` and outlives every `enqueue` call below.
-            unsafe { bun_ptr::detach_lifetime(&path[..path.len() - 1]) }
+            unsafe { bun_core::ptr::detach_lifetime(&path[..path.len() - 1]) }
         };
         #[cfg(not(windows))]
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
@@ -7229,7 +7229,7 @@ impl NodeFS {
         // comptime-sized stack array; Rust cannot size a stack array on
         // `flavor`, so heap is forced, but the slab stays uninitialised: it
         // is write-only, `Syscall::read` hands it straight to the kernel).
-        use bun_collections::vec_ext::VecExt as _;
+        use bun_core::collections::vec_ext::VecExt as _;
         let mut async_stack_buffer: Vec<u8> = Vec::new();
         if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
             // SAFETY: `u8` has no validity invariant; the buffer is handed
@@ -7266,7 +7266,7 @@ impl NodeFS {
             return match args.encoding {
                 Encoding::Buffer => {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
-                        if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
+                        if let Some(vm) = self.vm.map(bun_core::ptr::BackRef::from) {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
                             // `self.vm` is the live owning `VirtualMachine`
@@ -9259,7 +9259,7 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                        path: PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_unchecked(
                             &bytes[..len],
                             false,
                         )),
@@ -9747,7 +9747,7 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            path: PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_unchecked(
                 path_bytes, false,
             )),
             recursive: true,

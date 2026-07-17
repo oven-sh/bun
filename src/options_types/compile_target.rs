@@ -10,8 +10,8 @@ use std::io::Write as _;
 use bun_core::env::{ARCHITECTURE_NAMES, Architecture, OPERATING_SYSTEM_NAMES, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
-use bun_semver::{SlicedString, Version};
+use bun_core::paths::{self as path, PathBuffer};
+use bun_core::semver::{SlicedString, Version};
 use bun_sys::Fd;
 
 /// Used for `bun build --compile`
@@ -176,7 +176,7 @@ impl CompileTarget {
                 if e.kind() == std::io::ErrorKind::WriteZero {
                     return Err(crate::Error::BufferTooSmall);
                 }
-                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
+                Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))
             }
         }
     }

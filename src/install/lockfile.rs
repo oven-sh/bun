@@ -5,14 +5,14 @@ use core::fmt;
 use std::io::Write as _;
 
 use crate::Error as BunError;
-use bun_alloc::AllocError;
-use bun_collections::{
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
     HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -21,7 +21,7 @@ use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_perf::system_timer::Timer;
 use bun_resolver::fs::{self as Fs, FileSystem};
-use bun_semver::{self as Semver, ExternalString, String as SemverString};
+use bun_core::semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
 
@@ -87,8 +87,8 @@ use self::package::PackageColumns as _;
 // Local aliases for module-level types.
 type DependencyVersion = dependency::Version;
 type ResolutionTag = resolution::Tag;
-type SemverStringBuf<'a> = bun_semver::semver_string::Buf<'a>;
-type SemverStringBuilder = bun_semver::semver_string::Builder;
+type SemverStringBuf<'a> = bun_core::semver::semver_string::Buf<'a>;
+type SemverStringBuilder = bun_core::semver::semver_string::Builder;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Type aliases / collection types
@@ -116,7 +116,7 @@ pub(crate) type VersionHashMap =
 pub(crate) type PatchedDependenciesMap =
     ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContextU64>;
 
-pub(crate) type StringPool = bun_semver::string::StringPool;
+pub(crate) type StringPool = bun_core::semver::string::StringPool;
 
 pub(crate) type MetaHash = [u8; 32]; // Sha512T256.digest_length
 pub(crate) const ZERO_HASH: MetaHash = [0u8; 32];
@@ -1250,7 +1250,7 @@ impl Lockfile {
             // (ptr, len) and let `UpdateRequest::version_buf()` reborrow at
             // each read site.
             let string_buf = new.buffers.string_bytes.as_slice();
-            let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
+            let string_buf_ptr = bun_core::ptr::RawSlice::new(string_buf);
             let slice = new.packages.slice();
 
             // updates might be applied to the root package.json or one
@@ -1486,7 +1486,7 @@ impl Lockfile {
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
-        let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
+        let lockfile_ref = bun_core::ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
@@ -1562,7 +1562,7 @@ impl Lockfile {
         // for the read-only `options` projection so it goes through safe
         // `ParentRef::Deref`.
         let manager_ptr: *mut PackageManager = manager;
-        let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+        let mgr_ref = bun_core::ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
         );
         let mut pkgs = self.packages.slice();
@@ -1721,7 +1721,7 @@ impl<'a> Printer<'a> {
         // `lockfile_path` (printed in the NotFound arm).
         let mut path_in_buf2 = false;
 
-        if !bun_paths::is_absolute(path) {
+        if !bun_core::paths::is_absolute(path) {
             // `bun_sys::getcwd` returns the length written into the
             // caller-owned buffer.
             let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
@@ -1750,7 +1750,7 @@ impl<'a> Printer<'a> {
         }
 
         if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
-            let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
+            let dir = bun_core::paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
             // NUL-terminate into the buffer that does NOT back `lockfile_path`
             // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
             // after the join, so it is free for reuse here.
@@ -1813,7 +1813,7 @@ impl<'a> Printer<'a> {
         let writer = Output::writer_buffered();
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
+            Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError)) => bun_core::out_of_memory(),
             Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
@@ -2075,7 +2075,7 @@ impl Lockfile {
     }
 
     #[inline]
-    pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
+    pub fn str<'a, T: bun_core::semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
         slicable.slice(self.buffers.string_bytes.as_slice())
     }
 
@@ -2093,10 +2093,10 @@ impl Lockfile {
     /// live. The returned slice must not outlive the
     /// `Lockfile`.
     #[inline]
-    pub fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
+    pub fn str_detached<'a, T: bun_core::semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
         // SAFETY: see doc comment — same invariant every prior call site
-        // already relied on via `bun_ptr::detach_lifetime`.
-        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
+        // already relied on via `bun_core::ptr::detach_lifetime`.
+        unsafe { bun_core::ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
     }
 
     /// Construct an empty Lockfile value in place.
@@ -2596,9 +2596,9 @@ macro_rules! string_builder {
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
 /// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// `bun_core::semver::semver_string`; re-exported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+pub use bun_core::semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -2752,13 +2752,13 @@ impl<'a> StringBuilder<'a> {
 // `lockfile::StringBuilder` into each so `Package` can pass `&mut builder`
 // straight through.
 
-impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
+impl<'a> bun_core::semver::StringBuilder for StringBuilder<'a> {
     #[inline]
     fn count(&mut self, slice_: &[u8]) {
         StringBuilder::count(self, slice_)
     }
     #[inline]
-    fn append<T: bun_semver::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
+    fn append<T: bun_core::semver::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
         StringBuilder::append::<T>(self, slice_)
     }
 }
@@ -2766,7 +2766,7 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
 // `crate::dependency::StringBuilderLike` impl lives in `dependency.rs` next to
 // the trait definition (it needs `string_bytes()` access to the lockfile
 // buffers). `bin_real::StringBuilder` is now a re-export of
-// `bun_semver::StringBuilder`, so the impl above covers it; `package::scripts`
+// `bun_core::semver::StringBuilder`, so the impl above covers it; `package::scripts`
 // takes `&mut StringBuilder<'_>` concretely, so no adapter trait is needed
 // there either.
 
@@ -2777,7 +2777,7 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
 pub mod package_index {
     use super::*;
 
-    // `bun_collections::HashMap` hard-codes an 80% max load factor.
+    // `bun_core::collections::HashMap` hard-codes an 80% max load factor.
     pub type Map = BunHashMap<PackageNameHash, Entry, IdentityContext<PackageNameHash>>;
 
     #[repr(u8)]
@@ -2856,7 +2856,7 @@ pub(crate) struct PathToId {
     pub pkg_id: PackageID,
     /// Borrows a `Box<[u8]>` parked in `tree_paths` for the duration of
     /// `Lockfile::eql` — `RawSlice` carries the outlives-holder invariant.
-    pub tree_path: bun_ptr::RawSlice<u8>,
+    pub tree_path: bun_core::ptr::RawSlice<u8>,
 }
 
 impl<'a> EqlSorter<'a> {
@@ -2906,7 +2906,7 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
+            let tree_path_ptr = bun_core::ptr::RawSlice::new(&tree_path[..]);
             tree_paths.push(tree_path);
             for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
                 if l_dep_id == invalid_dependency_id {
@@ -2934,7 +2934,7 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
+            let tree_path_ptr = bun_core::ptr::RawSlice::new(&tree_path[..]);
             tree_paths.push(tree_path);
             for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {
                 if r_dep_id == invalid_dependency_id {
@@ -3268,7 +3268,7 @@ pub mod default_trusted_dependencies {
     use super::{
         DEFAULT_TRUSTED_DEPENDENCIES_LIST, MAX_DEFAULT_TRUSTED_DEPENDENCIES, SemverStringBuilder,
     };
-    use bun_collections::static_hash_map::{
+    use bun_core::collections::static_hash_map::{
         Entry, HashContext, HashMapMixin, StaticHashMap, static_slots,
     };
     use std::sync::LazyLock;

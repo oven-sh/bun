@@ -206,8 +206,8 @@ impl Default for Pragma {
 }
 
 impl Pragma {
-    pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Uses `bun_wyhash::Wyhash` (the algorithm behind `bun.hash`) — distinct
+    pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_core::wyhash::Wyhash) {
+        // Uses `bun_core::wyhash::Wyhash` (the algorithm behind `bun.hash`) — distinct
         // from `Wyhash11`, which would yield a different cache key.
         for factory in self.factory.iter() {
             hasher.update(factory);

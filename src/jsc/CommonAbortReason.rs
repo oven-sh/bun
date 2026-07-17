@@ -4,7 +4,7 @@ use crate::{JSGlobalObject, JSValue};
 // without pulling in `bun_jsc`). Re-export so existing `jsc::CommonAbortReason`
 // paths keep resolving; `to_js()` stays here as an extension trait because it
 // names `JSGlobalObject` / `JSValue`.
-pub use bun_http_types::FetchRedirect::CommonAbortReason;
+pub use bun_core::http_types::FetchRedirect::CommonAbortReason;
 
 pub trait CommonAbortReasonExt {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;

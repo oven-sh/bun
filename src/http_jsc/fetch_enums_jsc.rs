@@ -7,9 +7,9 @@
 //! itself — orphan rules require the impl in either the trait crate or the
 //! type crate, and `bun_http_types` is jsc-free.
 
-use bun_http_types::FetchCacheMode::FetchCacheMode;
-use bun_http_types::FetchRedirect::FetchRedirect;
-use bun_http_types::FetchRequestMode::FetchRequestMode;
+use bun_core::http_types::FetchCacheMode::FetchCacheMode;
+use bun_core::http_types::FetchRedirect::FetchRedirect;
+use bun_core::http_types::FetchRequestMode::FetchRequestMode;
 use bun_jsc::{JSGlobalObject, JSValue};
 
 unsafe extern "C" {

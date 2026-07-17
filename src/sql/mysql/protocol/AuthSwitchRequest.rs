@@ -44,10 +44,10 @@ impl AuthSwitchRequest {
         if let Some(zero) = strings::index_of_char(remaining_slice, 0) {
             let zero = zero as usize;
             // EOF String
-            self.plugin_name = Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[0..zero]));
+            self.plugin_name = Data::Temporary(bun_core::ptr::RawSlice::new(&remaining_slice[0..zero]));
             // End Of The Packet String
             self.plugin_data =
-                Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[zero + 1..]));
+                Data::Temporary(bun_core::ptr::RawSlice::new(&remaining_slice[zero + 1..]));
             return Ok(());
         }
         Err(crate::Error::InvalidAuthSwitchRequest)

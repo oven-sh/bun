@@ -92,7 +92,7 @@ pub struct WebWorker {
     // `BackRef` (not `&'a VirtualMachine`) because the struct is FFI-owned and
     // crosses threads; the backref invariant (parent outlives child via
     // `parent_poll_ref`) is documented above.
-    parent: bun_ptr::BackRef<VirtualMachine>,
+    parent: bun_core::ptr::BackRef<VirtualMachine>,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -166,7 +166,7 @@ pub struct WebWorker {
     // the VM's allocator IS this arena (load-bearing).
     // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
     // so the single-owner-thread invariant `JsCell` documents is upheld.
-    arena: JsCell<Option<bun_alloc::Arena>>,
+    arena: JsCell<Option<bun_core::alloc_impl::Arena>>,
     /// Heap-owned cloned env (Map + Loader) for the worker VM. The worker
     /// `Arena` (`bumpalo::Bump`) does not run `Drop` (so the inner
     /// `HashTable` would leak), and `clone_with_allocator()` does not route
@@ -360,7 +360,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
         while let Some(nn) = NonNull::new(it) {
             // Worker valid while registered (removed only in shutdown());
             // MUTEX held — `ParentRef` invariant (pointee outlives borrow) holds.
-            let w = bun_ptr::ParentRef::from(nn);
+            let w = bun_core::ptr::ParentRef::from(nn);
             // live_workers::MUTEX held; list links written only under it.
             it = w.live_next.get();
             if w.requested_terminate.swap(true, Ordering::Release) {
@@ -546,7 +546,7 @@ impl WebWorker {
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
             // `parent` is the calling thread's live VM; non-null by FFI contract.
-            parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
+            parent: bun_core::ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -579,7 +579,7 @@ impl WebWorker {
         // shared reborrows below; the raw `worker` is still used for
         // `register`/`destroy`/the FFI return value.
         let worker_ref =
-            bun_ptr::ParentRef::from(NonNull::new(worker).expect("heap::into_raw is non-null"));
+            bun_core::ptr::ParentRef::from(NonNull::new(worker).expect("heap::into_raw is non-null"));
 
         // Keep the parent's event loop alive until the close task releases this.
         // If the user passed `{ ref: false }` we skip — they've opted out of the
@@ -663,7 +663,7 @@ impl WebWorker {
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
         // IS `this.parent`'s loop.
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        let this = bun_core::ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         // A nested worker (parent is itself a worker) must keep the parent-loop
         // keepalive even on `.unref()`: the child holds a non-owning `BackRef` to
         // the parent VM and worker parents aren't joined on exit.
@@ -693,7 +693,7 @@ impl WebWorker {
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // Only atomic / lock-guarded fields are touched cross-thread; never
         // `&mut WebWorker`.
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        let this = bun_core::ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         if this.set_requested_terminate() {
             return;
         }
@@ -727,7 +727,7 @@ impl WebWorker {
     pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // `this` is a valid heap allocation owned by C++ — `ParentRef` invariant
         // holds; parent-thread only.
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        let this = bun_core::ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
@@ -735,7 +735,7 @@ impl WebWorker {
     /// (`parent_poll_ref` keeps the parent loop alive until the close task
     /// runs).
     #[inline]
-    pub fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
+    pub fn parent_vm(&self) -> bun_core::ptr::BackRef<VirtualMachine> {
         self.parent
     }
 
@@ -768,7 +768,7 @@ impl WebWorker {
     // be aliased-&mut UB. Worker-thread-only mutable fields are wrapped in
     // `Cell` / `UnsafeCell` instead.
     fn thread_main(&self) {
-        bun_analytics::features::workers_spawned.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::workers_spawned.fetch_add(1, Ordering::Relaxed);
 
         if !self.name.is_empty() {
             bun_core::output::Source::configure_named_thread(self.name.as_zstr());
@@ -878,7 +878,7 @@ impl WebWorker {
         }
 
         // worker-thread only field; no other thread reads `arena`.
-        self.arena.set(Some(bun_alloc::Arena::new()));
+        self.arena.set(Some(bun_core::alloc_impl::Arena::new()));
 
         // Proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage. We need a consistent snapshot of
@@ -1225,7 +1225,7 @@ impl WebWorker {
     fn shutdown(&self) {
         jsc::mark_binding();
         self.set_status(Status::Terminated);
-        bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
 
         // Snapshot everything we'll need after `this` may be freed (step 4).
@@ -1639,15 +1639,15 @@ unsafe fn resolve_entry_point_specifier<'s>(
         //
         if str.starts_with(b"./") || str.starts_with(b"../") {
             'try_from_extension: {
-                let mut pathbuf = bun_paths::path_buffer_pool::get();
+                let mut pathbuf = bun_core::paths::path_buffer_pool::get();
                 let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+                let base = bun_core::paths::resolve_path::join_abs_string_buf::<bun_core::paths::platform::Loose>(
                     base_path,
                     &mut pathbuf[..],
                     &[str],
                 );
                 let base_len = base.len();
-                let extname_len = bun_paths::extension(base).len();
+                let extname_len = bun_core::paths::extension(base).len();
                 // `extname` cannot be held as a sub-slice of `pathbuf` while
                 // writing into `pathbuf` — compare
                 // by re-slicing after dropping the mutable borrow.

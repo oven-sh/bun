@@ -3,8 +3,9 @@
 //! `decode_escape_sequences` (single-line mode), preserving its lenient
 //! semantics exactly.
 
-use bun_alloc::ArenaVec;
+use bun_core::alloc_impl::ArenaVec;
 use bun_core::fmt::hex_digit_value_u32;
+#[allow(unused_imports)]
 use bun_core::strings::{self, CodePoint};
 
 pub(crate) fn decode_js_escape_sequences<'a>(

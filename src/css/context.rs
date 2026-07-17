@@ -5,8 +5,8 @@ use css::css_rules::media::MediaRule;
 use css::css_properties::custom::UnparsedProperty;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
-use bun_alloc::{Arena as Bump, ArenaPtr};
-use bun_collections::ArrayHashMap;
+use bun_core::alloc_impl::{Arena as Bump, ArenaPtr};
+use bun_core::collections::ArrayHashMap;
 
 pub struct SupportsEntry {
     pub condition: css::SupportsCondition,
@@ -106,7 +106,7 @@ impl<'a> PropertyHandlerContext<'a> {
     fn bump_static(&self) -> &'static Bump {
         // SAFETY: the arena outlives every rule built from it; `'static` is the
         // crate-wide `'bump`-erasure placeholder documented on this fn.
-        unsafe { bun_collections::detach_ref(self.arena) }
+        unsafe { bun_core::collections::detach_ref(self.arena) }
     }
 
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
@@ -114,7 +114,7 @@ impl<'a> PropertyHandlerContext<'a> {
     #[inline]
     fn clone_decls(&self, list: &[css::Property]) -> css::DeclarationList<'static> {
         let bump: &'static Bump = self.bump_static();
-        bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
+        bun_core::alloc_impl::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
     pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
@@ -304,7 +304,7 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub fn add_unparsed_fallbacks(
         &mut self,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         unparsed: &mut UnparsedProperty,
     ) {
         if self.context != DeclarationContext::StyleRule

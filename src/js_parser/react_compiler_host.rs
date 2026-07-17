@@ -5,7 +5,7 @@
 //! single `maybe_compile_*` call, then dropped — it owns no state of its own.
 
 use bun_ast as js_ast;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 use crate::JSXImport;
 use crate::p::P;
@@ -36,7 +36,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }
-    fn arena(&self) -> &bun_alloc::Arena {
+    fn arena(&self) -> &bun_core::alloc_impl::Arena {
         self.p.arena
     }
 

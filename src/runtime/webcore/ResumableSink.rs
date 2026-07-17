@@ -4,12 +4,12 @@
 //! Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
 //! Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::cell::Cell;
 
 use bun_core::String as BunString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
-use bun_output::{declare_scope, scoped_log};
+use bun_core::{declare_scope, scoped_log};
 
 use crate::node::{ErrorCode, StringOrBuffer};
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -62,7 +62,7 @@ pub enum Status {
 // `ResumableFetchSink__ZigStructSize` deterministic and silences the
 // "unspecified layout" half of `improper_ctypes` at the extern block.
 #[repr(C)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     pub ref_count: Cell<u32>,
     js_this: JsRef,
@@ -72,7 +72,7 @@ pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     /// `m_ctx` payload of a JSC heap cell — it crosses the FFI boundary
     /// (`${T}__create`/`${T}__fromJS`) and outlives any Rust borrow scope. The
     /// global outlives every JS object it allocates (back-reference invariant).
-    global_this: bun_ptr::BackRef<JSGlobalObject>,
+    global_this: bun_core::ptr::BackRef<JSGlobalObject>,
     context: *mut Context,
     high_water_mark: i64,
     status: Status,
@@ -156,7 +156,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             ref_count: Cell::new(ref_count),
             js_this: JsRef::empty(),
             stream: crate::webcore::readable_stream::Strong::default(),
-            global_this: bun_ptr::BackRef::new(global_this),
+            global_this: bun_core::ptr::BackRef::new(global_this),
             context,
             high_water_mark: 16384,
             status: Status::Started,
@@ -551,7 +551,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     #[inline]
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+        unsafe { <Self as bun_core::ptr::CellRefCounted>::deref(this) }
     }
 }
 

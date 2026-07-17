@@ -9,11 +9,11 @@
 //!
 //! Reference: https://spec.json5.org/
 
-use bun_alloc::Arena as Bump;
-use bun_collections::VecExt;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::collections::VecExt;
 use bun_core::StackCheck;
 // `is_identifier_start/_part` landed in `bun_core::lexer`; route through there.
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::{E, Expr, G};
 use bun_ast::{Loc, Log, Source};
 use bun_core::lexer as identifier;
@@ -135,7 +135,7 @@ bun_core::impl_tag_error!(AddToLogError);
 impl From<AddToLogError> for crate::Error {
     fn from(e: AddToLogError) -> Self {
         match e {
-            AddToLogError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            AddToLogError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             AddToLogError::StackOverflow => crate::Error::StackOverflow,
         }
     }
@@ -208,7 +208,7 @@ bun_core::impl_tag_error!(ExternalError);
 impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
-            ExternalError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ExternalError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
             ExternalError::SyntaxError => crate::Error::SyntaxError,
             ExternalError::StackOverflow => crate::Error::StackOverflow,
         }

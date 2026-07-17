@@ -4,8 +4,8 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
-use bun_collections::LinearFifo;
-use bun_collections::linear_fifo::DynamicBuffer;
+use bun_core::collections::LinearFifo;
+use bun_core::collections::linear_fifo::DynamicBuffer;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
@@ -51,7 +51,7 @@ impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
 }
 
-bun_output::declare_scope!(napi, visible);
+bun_core::declare_scope!(napi, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // NapiEnv
@@ -98,14 +98,14 @@ impl NapiEnv {
     /// These wrappers exist for convenience and so we can set a breakpoint in lldb
     pub fn invalid_arg(&self) -> napi_status {
         if cfg!(debug_assertions) {
-            bun_output::scoped_log!(napi, "invalid arg");
+            bun_core::scoped_log!(napi, "invalid arg");
         }
         Self::set_last_error(Some(self), NapiStatus::invalid_arg)
     }
 
     pub fn generic_failure(&self) -> napi_status {
         if cfg!(debug_assertions) {
-            bun_output::scoped_log!(napi, "generic failure");
+            bun_core::scoped_log!(napi, "generic failure");
         }
         Self::set_last_error(Some(self), NapiStatus::generic_failure)
     }
@@ -146,7 +146,7 @@ impl NapiEnv {
 
 // SAFETY: NapiEnv refcount is managed externally by C++ via NapiEnv__ref/NapiEnv__deref;
 // the pointee remains valid while the count is > 0.
-unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
+unsafe impl bun_core::ptr::ExternalSharedDescriptor for NapiEnv {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a valid C++-owned napi_env.
         unsafe { NapiEnv__ref(this) }
@@ -157,7 +157,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
     }
 }
 
-pub(super) type NapiEnvRef = bun_ptr::ExternalShared<NapiEnv>;
+pub(super) type NapiEnvRef = bun_core::ptr::ExternalShared<NapiEnv>;
 
 #[cold]
 fn env_is_null() -> napi_status {
@@ -499,7 +499,7 @@ pub(super) extern "C" fn napi_get_undefined(
     env_: napi_env,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_undefined");
+    bun_core::scoped_log!(napi, "napi_get_undefined");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -509,7 +509,7 @@ pub(super) extern "C" fn napi_get_undefined(
 
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_null");
+    bun_core::scoped_log!(napi, "napi_get_null");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -527,7 +527,7 @@ pub(super) extern "C" fn napi_get_boolean(
     value: bool,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_boolean");
+    bun_core::scoped_log!(napi, "napi_get_boolean");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -540,7 +540,7 @@ pub(super) extern "C" fn napi_create_array(
     env_: napi_env,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_array");
+    bun_core::scoped_log!(napi, "napi_create_array");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -558,7 +558,7 @@ pub(super) extern "C" fn napi_create_array_with_length(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_array_with_length");
+    bun_core::scoped_log!(napi, "napi_create_array_with_length");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -593,7 +593,7 @@ pub(super) extern "C" fn napi_create_int32(
     value: i32,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_int32");
+    bun_core::scoped_log!(napi, "napi_create_int32");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -607,7 +607,7 @@ pub(super) extern "C" fn napi_create_uint32(
     value: u32,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_uint32");
+    bun_core::scoped_log!(napi, "napi_create_uint32");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -621,7 +621,7 @@ pub(super) extern "C" fn napi_create_int64(
     value: i64,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_int64");
+    bun_core::scoped_log!(napi, "napi_create_int64");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -659,7 +659,7 @@ pub(super) extern "C" fn napi_create_string_latin1(
         }
     };
 
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         napi,
         "napi_create_string_latin1: {}",
         bstr::BStr::new(slice)
@@ -715,7 +715,7 @@ pub(super) extern "C" fn napi_create_string_utf8(
         }
     };
 
-    bun_output::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
+    bun_core::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
 
     let global_object = env.to_js();
     let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
@@ -758,7 +758,7 @@ pub(super) extern "C" fn napi_create_string_utf16(
     };
 
     if cfg!(debug_assertions) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             napi,
             "napi_create_string_utf16: {} {}",
             slice.len(),
@@ -893,7 +893,7 @@ pub(super) extern "C" fn napi_get_prototype(
     object_: napi_value,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_prototype");
+    bun_core::scoped_log!(napi, "napi_get_prototype");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
     let object = object_.get();
@@ -961,7 +961,7 @@ pub(super) extern "C" fn napi_is_array(
     value_: napi_value,
     result_: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_is_array");
+    bun_core::scoped_log!(napi, "napi_is_array");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -979,7 +979,7 @@ pub(super) extern "C" fn napi_get_array_length(
     value_: napi_value,
     result_: *mut u32,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_array_length");
+    bun_core::scoped_log!(napi, "napi_get_array_length");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -1005,7 +1005,7 @@ pub(super) extern "C" fn napi_strict_equals(
     rhs_: napi_value,
     result_: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_strict_equals");
+    bun_core::scoped_log!(napi, "napi_strict_equals");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
     let (lhs, rhs) = (lhs_.get(), rhs_.get());
@@ -1124,7 +1124,7 @@ pub(super) extern "C" fn napi_open_handle_scope(
     env_: napi_env,
     result_: *mut napi_handle_scope,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_open_handle_scope");
+    bun_core::scoped_log!(napi, "napi_open_handle_scope");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -1137,7 +1137,7 @@ pub(super) extern "C" fn napi_close_handle_scope(
     env_: napi_env,
     handle_scope: napi_handle_scope,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_close_handle_scope");
+    bun_core::scoped_log!(napi, "napi_close_handle_scope");
     let env = get_env!(env_);
     env.check_gc();
     if !handle_scope.is_null() {
@@ -1154,7 +1154,7 @@ pub(super) extern "C" fn napi_async_init(
     _async_resource_name: napi_value,
     async_ctx: *mut *mut c_void,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_async_init");
+    bun_core::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
     // SAFETY: async_ctx is a valid out-pointer per N-API contract. We store the
     // original `*mut NapiEnv` (preserving write provenance) rather than deriving
@@ -1169,7 +1169,7 @@ pub(super) extern "C" fn napi_async_destroy(
     env_: napi_env,
     _async_ctx: *mut c_void,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_async_destroy");
+    bun_core::scoped_log!(napi, "napi_async_destroy");
     let env = get_env!(env_);
     env.ok()
 }
@@ -1185,7 +1185,7 @@ pub(super) extern "C" fn napi_make_callback(
     args: *const napi_value,
     maybe_result: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_make_callback");
+    bun_core::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
     if func.is_empty_or_undefined_or_null()
@@ -1231,7 +1231,7 @@ pub(super) extern "C" fn napi_open_escapable_handle_scope(
     env_: napi_env,
     result_: *mut napi_escapable_handle_scope,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_open_escapable_handle_scope");
+    bun_core::scoped_log!(napi, "napi_open_escapable_handle_scope");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -1244,7 +1244,7 @@ pub(super) extern "C" fn napi_close_escapable_handle_scope(
     env_: napi_env,
     scope: napi_escapable_handle_scope,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_close_escapable_handle_scope");
+    bun_core::scoped_log!(napi, "napi_close_escapable_handle_scope");
     let env = get_env!(env_);
     env.check_gc();
     if !scope.is_null() {
@@ -1260,7 +1260,7 @@ pub(super) extern "C" fn napi_escape_handle(
     escapee: napi_value,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_escape_handle");
+    bun_core::scoped_log!(napi, "napi_escape_handle");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -1297,7 +1297,7 @@ pub(super) extern "C" fn napi_open_callback_scope(
     _context: *mut c_void,
     _result: *mut c_void,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_open_callback_scope");
+    bun_core::scoped_log!(napi, "napi_open_callback_scope");
     NapiStatus::ok as napi_status
 }
 
@@ -1306,7 +1306,7 @@ pub(super) extern "C" fn napi_close_callback_scope(
     _env: napi_env,
     _scope: *mut c_void,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_close_callback_scope");
+    bun_core::scoped_log!(napi, "napi_close_callback_scope");
     NapiStatus::ok as napi_status
 }
 
@@ -1335,7 +1335,7 @@ pub(super) extern "C" fn napi_is_error(
     value_: napi_value,
     result: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_is_error");
+    bun_core::scoped_log!(napi, "napi_is_error");
     let env = get_env!(env_);
     env.check_gc();
     let value = value_.get();
@@ -1361,7 +1361,7 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     value_: napi_value,
     result_: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_is_arraybuffer");
+    bun_core::scoped_log!(napi, "napi_is_arraybuffer");
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
@@ -1406,7 +1406,7 @@ pub(super) extern "C" fn napi_get_arraybuffer_info(
     data: *mut *mut u8,
     byte_length: *mut usize,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
+    bun_core::scoped_log!(napi, "napi_get_arraybuffer_info");
     let env = get_env!(env_);
     env.check_gc();
     let arraybuffer = arraybuffer_.get();
@@ -1440,7 +1440,7 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     maybe_arraybuffer: *mut napi_value,
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_typedarray_info");
+    bun_core::scoped_log!(napi, "napi_get_typedarray_info");
     let env = get_env!(env_);
     env.check_gc();
     let typedarray = typedarray_.get();
@@ -1495,7 +1495,7 @@ pub(super) extern "C" fn napi_is_dataview(
     value_: napi_value,
     result_: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_is_dataview");
+    bun_core::scoped_log!(napi, "napi_is_dataview");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -1516,7 +1516,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
     maybe_arraybuffer: *mut napi_value,
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_dataview_info");
+    bun_core::scoped_log!(napi, "napi_get_dataview_info");
     let env = get_env!(env_);
     env.check_gc();
     let dataview = dataview_.get();
@@ -1542,7 +1542,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
 
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_version");
+    bun_core::scoped_log!(napi, "napi_get_version");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     // The result is supposed to be the highest NAPI version Bun supports, rather than the version reported by a NAPI module.
@@ -1557,7 +1557,7 @@ pub(super) extern "C" fn napi_create_promise(
     deferred_: *mut napi_deferred,
     promise_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_promise");
+    bun_core::scoped_log!(napi, "napi_create_promise");
     let env = preamble!(env_);
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
@@ -1576,7 +1576,7 @@ pub(super) extern "C" fn napi_resolve_deferred(
     deferred: napi_deferred,
     resolution_: napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_resolve_deferred");
+    bun_core::scoped_log!(napi, "napi_resolve_deferred");
     let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
@@ -1595,7 +1595,7 @@ pub(super) extern "C" fn napi_reject_deferred(
     deferred: napi_deferred,
     rejection_: napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_reject_deferred");
+    bun_core::scoped_log!(napi, "napi_reject_deferred");
     let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
@@ -1613,7 +1613,7 @@ pub(super) extern "C" fn napi_is_promise(
     value_: napi_value,
     is_promise_: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_is_promise");
+    bun_core::scoped_log!(napi, "napi_is_promise");
     let env = get_env!(env_);
     env.check_gc();
     let value = value_.get();
@@ -1646,7 +1646,7 @@ pub(super) extern "C" fn napi_create_date(
     time: f64,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_date");
+    bun_core::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
     result.set(
@@ -1662,7 +1662,7 @@ pub(super) extern "C" fn napi_is_date(
     value_: napi_value,
     is_date_: *mut bool,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_is_date");
+    bun_core::scoped_log!(napi, "napi_is_date");
     let env = get_env!(env_);
     env.check_gc();
     let is_date = get_out!(env, is_date_);
@@ -1765,7 +1765,7 @@ pub struct napi_async_work {
     pub task: WorkPoolTask,
     pub concurrent_task: ConcurrentTask,
     // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
-    pub event_loop: bun_ptr::BackRef<EventLoop>,
+    pub event_loop: bun_core::ptr::BackRef<EventLoop>,
     pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
     pub env: NapiEnvRef,
     pub execute: napi_async_execute_callback,
@@ -1800,7 +1800,7 @@ impl napi_async_work {
             // SAFETY: bun_vm() never null for a Bun-owned global.
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
             // stable address) and outlives every napi_async_work.
-            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            event_loop: unsafe { bun_core::ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1997,7 +1997,7 @@ pub(super) extern "C" fn napi_fatal_error(
     message_ptr: *const u8,
     message_len_: usize,
 ) -> ! {
-    bun_output::scoped_log!(napi, "napi_fatal_error");
+    bun_core::scoped_log!(napi, "napi_fatal_error");
     napi_internal_suppress_crash_on_abort_if_desired();
     let mut message = napi_span(message_ptr, message_len_);
     if message.is_empty() {
@@ -2041,7 +2041,7 @@ pub(super) extern "C" fn napi_create_buffer_copy(
     result_data: *mut *mut c_void,
     result_: *mut napi_value,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
+    bun_core::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
     let env = preamble!(env_);
     let result = get_out!(env, result_);
     let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
@@ -2080,7 +2080,7 @@ pub(super) extern "C" fn napi_get_buffer_info(
     data: *mut *mut u8,
     length: *mut usize,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_buffer_info");
+    bun_core::scoped_log!(napi, "napi_get_buffer_info");
     let env = get_env!(env_);
     let value = value_.get();
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
@@ -2169,7 +2169,7 @@ pub(super) extern "C" fn napi_create_async_work(
     data: *mut c_void,
     result_: *mut *mut napi_async_work,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_async_work");
+    bun_core::scoped_log!(napi, "napi_create_async_work");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1245
@@ -2185,7 +2185,7 @@ pub(super) extern "C" fn napi_delete_async_work(
     env_: napi_env,
     work_: *mut napi_async_work,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_delete_async_work");
+    bun_core::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
@@ -2203,7 +2203,7 @@ pub(super) extern "C" fn napi_queue_async_work(
     env_: napi_env,
     work_: *mut napi_async_work,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_queue_async_work");
+    bun_core::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
@@ -2221,7 +2221,7 @@ pub(super) extern "C" fn napi_cancel_async_work(
     env_: napi_env,
     work_: *mut napi_async_work,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_cancel_async_work");
+    bun_core::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
@@ -2242,7 +2242,7 @@ pub(super) extern "C" fn napi_get_node_version(
     env_: napi_env,
     version_: *mut *const napi_node_version,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_node_version");
+    bun_core::scoped_log!(napi, "napi_get_node_version");
     let env = get_env!(env_);
     let version = get_out!(env, version_);
     *version = &raw const NAPI_NODE_VERSION_GLOBAL;
@@ -2259,7 +2259,7 @@ pub(super) extern "C" fn napi_get_uv_event_loop(
     env_: napi_env,
     loop_: *mut napi_event_loop,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
+    bun_core::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
     #[cfg(windows)]
@@ -2455,7 +2455,7 @@ pub struct ThreadSafeFunction {
     // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
     // owning env is torn down: the loop lives inside a VirtualMachine that a
     // worker's shutdown frees, while addon threads outlive it.
-    pub event_loop: Option<bun_ptr::BackRef<EventLoop>>,
+    pub event_loop: Option<bun_core::ptr::BackRef<EventLoop>>,
     pub tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -3091,7 +3091,7 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
     call_js_cb: Option<napi_threadsafe_function_call_js>,
     result_: *mut napi_threadsafe_function,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_threadsafe_function");
+    bun_core::scoped_log!(napi, "napi_create_threadsafe_function");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let func = func_.get();
@@ -3124,7 +3124,7 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
-        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) }),
+        event_loop: Some(unsafe { bun_core::ptr::BackRef::from_raw(vm.event_loop()) }),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -3175,7 +3175,7 @@ pub(super) extern "C" fn napi_get_threadsafe_function_context(
     func: napi_threadsafe_function,
     result: *mut *mut c_void,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_threadsafe_function_context");
+    bun_core::scoped_log!(napi, "napi_get_threadsafe_function_context");
     // SAFETY: func and result are non-null per N-API contract.
     unsafe { *result = (*func).ctx };
     NapiStatus::ok as napi_status
@@ -3187,7 +3187,7 @@ pub(super) extern "C" fn napi_call_threadsafe_function(
     data: *mut c_void,
     is_blocking: napi_threadsafe_function_call_mode,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_call_threadsafe_function");
+    bun_core::scoped_log!(napi, "napi_call_threadsafe_function");
     // SAFETY: func is non-null per N-API contract, and the caller may not use it
     // afterwards if this reports napi_closing — that consumes the caller's
     // thread reference, which can free it.
@@ -3198,7 +3198,7 @@ pub(super) extern "C" fn napi_call_threadsafe_function(
 pub(super) extern "C" fn napi_acquire_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
+    bun_core::scoped_log!(napi, "napi_acquire_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
     unsafe { &mut *func }.acquire()
 }
@@ -3208,7 +3208,7 @@ pub(super) extern "C" fn napi_release_threadsafe_function(
     func: napi_threadsafe_function,
     mode: napi_threadsafe_function_release_mode,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_release_threadsafe_function");
+    bun_core::scoped_log!(napi, "napi_release_threadsafe_function");
     // SAFETY: func is non-null per N-API contract, and the caller may not use
     // it afterwards — this call can free it.
     unsafe { ThreadSafeFunction::release(func, mode) }
@@ -3219,7 +3219,7 @@ pub(super) extern "C" fn napi_unref_threadsafe_function(
     env_: napi_env,
     func: napi_threadsafe_function,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
+    bun_core::scoped_log!(napi, "napi_unref_threadsafe_function");
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
@@ -3235,7 +3235,7 @@ pub(super) extern "C" fn napi_ref_threadsafe_function(
     env_: napi_env,
     func: napi_threadsafe_function,
 ) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
+    bun_core::scoped_log!(napi, "napi_ref_threadsafe_function");
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };

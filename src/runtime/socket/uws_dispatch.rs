@@ -193,8 +193,8 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     type TLSSocket = super::NewSocket<true>;
     // The ext slot for `BunSocketTls` always holds a live `TLSSocket`, stamped
     // at construction.
-    let tls: bun_ptr::ThisPtr<TLSSocket> =
-        s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
+    let tls: bun_core::ptr::ThisPtr<TLSSocket> =
+        s_ref.ext::<Option<bun_core::ptr::ThisPtr<TLSSocket>>>().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
         // grab the raw `*mut` without consuming the ref so the +1 stays put.
@@ -212,7 +212,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // aliasing `&mut` exists.
         unsafe {
             TLSSocket::on_data(
-                bun_ptr::ThisPtr::new(raw),
+                bun_core::ptr::ThisPtr::new(raw),
                 NewSocketHandler::<true>::from(s),
                 slice,
             )
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u
         return;
     }
     type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+    let Some(tls) = *s_ref.ext::<Option<bun_core::ptr::ThisPtr<TLSSocket>>>() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8
         return;
     }
     type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+    let Some(tls) = *s_ref.ext::<Option<bun_core::ptr::ThisPtr<TLSSocket>>>() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;

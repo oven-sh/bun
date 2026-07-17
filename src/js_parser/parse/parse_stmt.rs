@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
@@ -343,7 +343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.expect(T::TOpenBrace)?;
-            let mut cases = bun_alloc::ArenaVec::<js_ast::Case>::new_in(p.arena);
+            let mut cases = bun_core::alloc_impl::ArenaVec::<js_ast::Case>::new_in(p.arena);
             let mut found_default = false;
             while p.lexer.token != T::TCloseBrace {
                 let mut body = StmtList::new_in(p.arena);
@@ -1939,10 +1939,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // of the declared bindings. That "export var" statement will later
                 // cause identifiers to be transformed into property accesses.
                 if opts.is_namespace_scope && opts.is_export {
-                    let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
+                    let mut decls: G::DeclList = bun_core::alloc_impl::AstAlloc::vec();
                     match &stmt.data {
                         js_ast::StmtData::SLocal(local) => {
-                            let mut _decls = bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
+                            let mut _decls = bun_core::alloc_impl::ArenaVec::<G::Decl>::with_capacity_in(
                                 local.decls.len_u32() as usize,
                                 p.arena,
                             );

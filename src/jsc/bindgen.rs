@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use crate::{self as jsc, JSValue, Strong};
 use bun_core::{WTFString, WTFStringImplStruct};
-use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
+use bun_core::ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 
 // `BindgenArray::convert_from_extern` reuses C++-allocated buffers by adopting
 // them into `Vec<ZigType>` even when `align_of::<ZigType>() != align_of::<ExternType>()`.
@@ -220,7 +220,7 @@ pub union ExternUnion2<T0, T1> {
 pub struct BindgenArray<Child>(PhantomData<Child>);
 
 impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
-    type ZigType = bun_collections::ArrayListDefault<Child::ZigType>;
+    type ZigType = bun_core::collections::ArrayListDefault<Child::ZigType>;
     type ExternType = ExternArrayList<Child::ExternType>;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
@@ -242,7 +242,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         let unmanaged: Vec<Child::ExternType> =
             unsafe { Vec::from_raw_parts(data, length, capacity) };
 
-        if !bun_alloc::USE_MIMALLOC {
+        if !bun_core::alloc_impl::USE_MIMALLOC {
             // Don't reuse memory in this case; it would be freed by the wrong allocator.
         } else if size_of::<Child::ZigType>() == size_of::<Child::ExternType>()
             && align_of::<Child::ZigType>() == align_of::<Child::ExternType>()
@@ -261,7 +261,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 unsafe { Vec::from_raw_parts(ptr.cast::<Child::ZigType>(), len, cap) };
             return Self::ZigType::from_unmanaged(reused);
         } else if size_of::<Child::ZigType>() <= size_of::<Child::ExternType>()
-            && align_of::<Child::ZigType>() <= bun_alloc::mimalloc::MI_MAX_ALIGN_SIZE
+            && align_of::<Child::ZigType>() <= bun_core::alloc_impl::mimalloc::MI_MAX_ALIGN_SIZE
         {
             // We can reuse the allocation, but we still need to convert the elements.
             //
@@ -319,7 +319,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                     // `USE_MIMALLOC` guard above gates entry to this path); shrinking
                     // with `mi_realloc` preserves the prefix bytes.
                     storage_ptr = bun_core::handle_oom(unsafe {
-                        bun_alloc::realloc_raw(storage_ptr, new_alloc_size)
+                        bun_core::alloc_impl::realloc_raw(storage_ptr, new_alloc_size)
                     });
                 }
                 new_capacity
@@ -329,7 +329,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             // SAFETY: `storage_ptr` is aligned to ≥ `MI_MAX_ALIGN_SIZE` ≥
             // `align_of::<ZigType>()`; the first `length` slots were just written
             // with valid `ZigType` values; the block is mimalloc-owned and the
-            // global allocator is mimalloc (the `if !bun_alloc::USE_MIMALLOC`
+            // global allocator is mimalloc (the `if !bun_core::alloc_impl::USE_MIMALLOC`
             // guard above gates entry to this path), so `Vec`'s eventual dealloc
             // — even with `ZigType`'s layout — routes to `mi_free`, which
             // ignores layout.
@@ -350,7 +350,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             }));
         }
         // SAFETY: `data` is the live `mi_malloc`'d block from `ExternVectorTraits::convertToExtern`.
-        unsafe { bun_alloc::mimalloc::mi_free(data.cast()) };
+        unsafe { bun_core::alloc_impl::mimalloc::mi_free(data.cast()) };
         result
     }
 }

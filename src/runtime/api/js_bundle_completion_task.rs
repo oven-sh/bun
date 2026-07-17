@@ -12,7 +12,7 @@ use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_bundler::bundle_v2::{
     BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
@@ -29,10 +29,10 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
-use bun_paths::{self as paths, PathBuffer, SEP};
-use bun_ptr::BackRef;
-use bun_ptr::RefCount;
+use bun_core::paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
+use bun_core::paths::{self as paths, PathBuffer, SEP};
+use bun_core::ptr::BackRef;
+use bun_core::ptr::RefCount;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
     to_executable,
@@ -51,7 +51,7 @@ use crate::node::types::{
 use crate::server::html_bundle;
 
 /// See module doc for the layering rationale.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
 pub struct JSBundleCompletionTask {
     // NOTE: this should arguably be a thread-safe refcount, but it is the plain
@@ -495,7 +495,7 @@ impl JSBundleCompletionTask {
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_ptr::cow_slice::CowSlice::init_unchecked(write_path, false),
+                            bun_core::ptr::cow_slice::CowSlice::init_unchecked(write_path, false),
                         )),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(
@@ -544,7 +544,7 @@ impl JSBundleCompletionTask {
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
-        let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
+        let _drop_ref = unsafe { bun_core::ptr::ScopedRef::<Self>::adopt(ctx) };
 
         let vm = this.global_this.bun_vm_ptr();
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
@@ -637,7 +637,7 @@ impl JSBundleCompletionTask {
                 // once outside the loop so the per-file `&mut` doesn't overlap
                 // `&this.config`.
                 let outdir_is_abs = !this.config.outdir.is_empty()
-                    && bun_paths::is_absolute(&this.config.outdir.list);
+                    && bun_core::paths::is_absolute(&this.config.outdir.list);
                 let outdir = this.config.outdir.list.clone();
                 let dir = this.config.dir.list.clone();
                 // SAFETY: `FileSystem::instance()` is the process-lifetime singleton

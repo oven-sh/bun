@@ -15,7 +15,7 @@ pub struct Script {
     /// The arena outlives every state node (it's dropped only when the
     /// interpreter is finalized), so the BackRef invariant holds. Stored
     /// lifetime-erased to keep `Node` lifetime-free.
-    pub node: bun_ptr::BackRef<ast::Script>,
+    pub node: bun_core::ptr::BackRef<ast::Script>,
     pub io: IO,
     pub state: ScriptState,
 }
@@ -45,7 +45,7 @@ impl Script {
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
+            node: unsafe { bun_core::ptr::BackRef::from_raw(node as *mut ast::Script) },
             io,
             state: ScriptState::default(),
         }));

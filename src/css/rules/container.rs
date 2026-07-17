@@ -18,7 +18,7 @@ impl ContainerName {
 
 impl ContainerName {
     #[inline]
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -101,7 +101,7 @@ pub enum StyleQuery {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF: could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
+        // PERF: could use bun_core::alloc_impl::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<StyleQuery>,
     },
 }
@@ -177,7 +177,7 @@ impl QueryCondition for StyleQuery {
 }
 
 impl StyleQuery {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // `Operator` is `Copy`; `Property` routes through `dc::property` until
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
@@ -204,7 +204,7 @@ pub enum ContainerCondition {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF: could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
+        // PERF: could use bun_core::alloc_impl::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.
@@ -295,7 +295,7 @@ impl QueryCondition for ContainerCondition {
 }
 
 impl ContainerCondition {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
         // faithful — see note there); `Operator` is `Copy`.
         match self {
@@ -361,7 +361,7 @@ impl<R> ContainerRule<R> {
 }
 
 impl<R> ContainerRule<R> {
-    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

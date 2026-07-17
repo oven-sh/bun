@@ -1,7 +1,7 @@
 //! A builtin command runs inside a `Cmd` state node. The builtin stores the
 //! `NodeId` of its owning Cmd and every method takes `&Interpreter`.
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::ffi::c_char;
 use std::sync::Arc;
 

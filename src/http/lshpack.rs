@@ -150,8 +150,8 @@ impl HpackHandle {
         // `lshpack_wrapper_init` is `safe fn`: its only precondition is non-null
         // alloc/free callbacks, which the bare (non-Option) fn-ptr types enforce.
         let ptr = lshpack_wrapper_init(
-            bun_alloc::mimalloc::mi_malloc,
-            bun_alloc::mimalloc::mi_free,
+            bun_core::alloc_impl::mimalloc::mi_malloc,
+            bun_core::alloc_impl::mimalloc::mi_free,
             max_capacity as usize,
         );
         let Some(ptr) = core::ptr::NonNull::new(ptr) else {

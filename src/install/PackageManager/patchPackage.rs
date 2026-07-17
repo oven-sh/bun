@@ -4,9 +4,9 @@ use std::io::Write as _;
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
-use bun_paths::platform;
-use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, Platform, SEP};
+use bun_core::paths::platform;
+use bun_core::paths::resolve_path;
+use bun_core::paths::{PathBuffer, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bun_fs::FileSystem;
@@ -28,7 +28,7 @@ use crate::{
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
-    bun_semver::semver_string::Builder::string_hash(s)
+    bun_core::semver::semver_string::Builder::string_hash(s)
 }
 
 #[derive(Default)]
@@ -124,7 +124,7 @@ pub fn do_patch_commit(
     // Attempt to open the existing node_modules folder
     let root_node_modules: Dir = match sys::openat_os_path(
         Fd::cwd(),
-        bun_paths::os_path_literal!("node_modules"),
+        bun_core::os_path_literal!("node_modules"),
         sys::O::DIRECTORY | sys::O::RDONLY,
         0o755,
     ) {
@@ -333,7 +333,7 @@ pub fn do_patch_commit(
             ]);
         };
 
-        let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
+        let random_tempdir = match bun_core::paths::fs::FileSystem::tmpname(
             b"node_modules_tmp",
             &mut buf2[..],
             bun_core::fast_random(),
@@ -381,7 +381,7 @@ pub fn do_patch_commit(
             break 'has_nested_node_modules true;
         };
 
-        let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
+        let patch_tag_tmpname = match bun_core::paths::fs::FileSystem::tmpname(
             b"patch_tmp",
             &mut buf3[..],
             bun_core::fast_random(),
@@ -573,7 +573,7 @@ pub fn do_patch_commit(
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+        bun_core::paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());
@@ -1048,7 +1048,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     #[cfg(not(windows))]
     let native: &[u8] = module_folder;
 
-    let mut p = bun_paths::Path::<u8>::from(native).unwrap();
+    let mut p = bun_core::paths::Path::<u8>::from(native).unwrap();
     let mut components: usize = 1;
     for &c in native {
         if c == SEP {
@@ -1142,25 +1142,25 @@ fn overwrite_package_in_node_modules_folder(
     // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
     // is required so `/` is normalized to `\` on Windows — the inputs
     // here arrive posix-normalized and are later passed to Win32 APIs.
-    let dest_subpath = bun_paths::Path::<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::Kind::ANY },
-        { bun_paths::path_options::PathSeparators::AUTO },
+    let dest_subpath = bun_core::paths::Path::<
+        bun_core::paths::OSPathChar,
+        { bun_core::paths::path_options::Kind::ANY },
+        { bun_core::paths::path_options::PathSeparators::AUTO },
     >::from(node_modules_folder_path)
     .unwrap();
 
-    let src_path: bun_paths::AbsPath<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::PathSeparators::AUTO },
+    let src_path: bun_core::paths::AbsPath<
+        bun_core::paths::OSPathChar,
+        { bun_core::paths::path_options::PathSeparators::AUTO },
     > = 'src_path: {
         #[cfg(windows)]
         {
-            let mut path_buf = bun_paths::WPathBuffer::uninit();
+            let mut path_buf = bun_core::paths::WPathBuffer::uninit();
             let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
 
-            let mut sp = bun_paths::AbsPath::<
-                bun_paths::OSPathChar,
-                { bun_paths::path_options::PathSeparators::AUTO },
+            let mut sp = bun_core::paths::AbsPath::<
+                bun_core::paths::OSPathChar,
+                { bun_core::paths::path_options::PathSeparators::AUTO },
             >::from(&*abs_path)
             .unwrap();
             sp.append(cache_dir_subpath)?;
@@ -1171,7 +1171,7 @@ fn overwrite_package_in_node_modules_folder(
         // unused if not windows
         #[cfg(not(windows))]
         {
-            break 'src_path bun_paths::AbsPath::init();
+            break 'src_path bun_core::paths::AbsPath::init();
         }
     };
 
@@ -1183,10 +1183,10 @@ fn overwrite_package_in_node_modules_folder(
         },
     )?;
 
-    let ignore_directories: &[&bun_paths::OSPathSlice] = &[
-        bun_paths::os_path_literal!("node_modules"),
-        bun_paths::os_path_literal!(".git"),
-        bun_paths::os_path_literal!("CMakeFiles"),
+    let ignore_directories: &[&bun_core::paths::OSPathSlice] = &[
+        bun_core::os_path_literal!("node_modules"),
+        bun_core::os_path_literal!(".git"),
+        bun_core::os_path_literal!("CMakeFiles"),
     ];
 
     let mut copier: FileCopier = FileCopier::init(

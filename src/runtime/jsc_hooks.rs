@@ -89,7 +89,7 @@ pub struct RuntimeState {
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
     /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
-    pub transpiler_arena: Box<bun_alloc::Arena>,
+    pub transpiler_arena: Box<bun_core::alloc_impl::Arena>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
@@ -110,7 +110,7 @@ pub enum IsolationHandle {
     Server(crate::server::AnyServer),
 }
 
-pub type IsolationHandles = bun_collections::ArrayHashMap<IsolationHandle, ()>;
+pub type IsolationHandles = bun_core::collections::ArrayHashMap<IsolationHandle, ()>;
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
@@ -337,7 +337,7 @@ unsafe fn init_runtime_state(
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
-        transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
+        transpiler_arena: Box::new(bun_core::alloc_impl::Arena::borrowing_default()),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -404,7 +404,7 @@ unsafe fn init_runtime_state(
         // inner `Box<Arena>` payload is heap-stable and outlives the
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
-        let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
+        let arena: &'static bun_core::alloc_impl::Arena = unsafe { &*(*state).transpiler_arena };
         // Forward `opts.env_loader` so the VM
         // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
         // `NODE_ENV=test` into it after init).
@@ -1263,7 +1263,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
+        sync_error_buf: bun_core::paths::PathBuffer::uninit(),
         vm: vm_field,
     }))
     .cast::<c_void>()
@@ -1641,7 +1641,7 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
             // Live until it unregisters in `close()` (JS thread, us) — a
             // registered entry implies `close()` has not run, and `deinit`
             // cannot fire before `close()` drops the wrapper's Strong ref.
-            IsolationHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
+            IsolationHandle::StatWatcher(w) => bun_core::ptr::ParentRef::from(w).close(),
             IsolationHandle::Server(mut s) => s.stop(true),
         }
     }
@@ -2133,15 +2133,15 @@ fn transpile_source_code_inner(
             // ParseError / AsyncModule paths (which hand the arena to the
             // async queue or leak it intentionally for the caller to inspect).
             // SAFETY: per fn contract.
-            let arena: Box<bun_alloc::Arena> =
+            let arena: Box<bun_core::alloc_impl::Arena> =
                 unsafe { (*jsc_vm).module_loader.transpile_source_code_arena.take() }
-                    .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+                    .unwrap_or_else(|| Box::new(bun_core::alloc_impl::Arena::new()));
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
-            let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
+            let arena_ptr: *const bun_core::alloc_impl::Arena = &raw const *arena;
             // Captured before `arena` moves into `arena_guard` (the Box
             // interior is address-stable across the move).
-            let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();
+            let arena_heap: *mut bun_core::alloc_impl::mimalloc::Heap = arena.heap_ptr();
             let give_back_arena = true;
             // Note: a scopeguard so `?`-early-returns still run the cleanup.
             let mut arena_guard = scopeguard::guard(
@@ -2226,7 +2226,7 @@ fn transpile_source_code_inner(
             // inline chunk, not the arena, so the pending-imports path must
             // consume this scope via `take_state()` and ship the box with the
             // arena.
-            let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
+            let ast_alloc_scope = bun_core::alloc_impl::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
             // ── Watcher fd / package_json lookup ────────────────────────────
             let mut fd: Option<bun_sys::Fd> = None;
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
@@ -2402,10 +2402,10 @@ fn transpile_source_code_inner(
                             core::slice::from_raw_parts(specifier.as_ptr(), specifier.len())
                         };
                         let fallback_path =
-                            bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
+                            bun_core::paths::fs::Path::init_with_namespace(spec_static, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
-                            contents: bun_ptr::Cow::Borrowed(code),
+                            contents: bun_core::ptr::Cow::Borrowed(code),
                             ..Default::default()
                         };
                         virtual_source = Some(&fallback_source);
@@ -2436,7 +2436,7 @@ fn transpile_source_code_inner(
                         .unwrap_or(false)
                     && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
 
-                // `ParseOptions::path` is `bun_paths::fs::Path<'static>`
+                // `ParseOptions::path` is `bun_core::paths::fs::Path<'static>`
                 // (the `'static`-slice flavour used by `bun_ast::Source`), but
                 // `path` here is `bun_resolver::fs::Path<'_>`. The two structs
                 // are field-identical (they could be collapsed into one type).
@@ -2457,7 +2457,7 @@ fn transpile_source_code_inner(
                 // so reuse them directly. The intern is a
                 // workaround for the async-module queue path only.
                 let parse_path = if disable_transpilying {
-                    bun_paths::fs::Path {
+                    bun_core::paths::fs::Path {
                         pretty: path.pretty,
                         text: path.text,
                         namespace: path.namespace,
@@ -2485,7 +2485,7 @@ fn transpile_source_code_inner(
                     } else {
                         intern_transpile_path(path.namespace)
                     };
-                    bun_paths::fs::Path {
+                    bun_core::paths::fs::Path {
                         pretty,
                         text,
                         namespace,
@@ -2755,7 +2755,7 @@ fn transpile_source_code_inner(
 
                 // Empty .cjs/.cts: synthetic `(function(){})`.
                 if parse_result.empty && matches!(loader, L::Js | L::Ts) {
-                    let ext = bun_paths::extension(source.path.text);
+                    let ext = bun_core::paths::extension(source.path.text);
                     if ext == b".cjs" || ext == b".cts" {
                         return Ok(OwnedResolvedSource::from(ResolvedSource {
                             source_code: bun_core::String::static_(b"(function(){})"),
@@ -3115,7 +3115,7 @@ fn transpile_source_code_inner(
                                 // `PackageJsonTypeModule` (mirrors the cache-hit
                                 // branch above).
                                 let dir = path.name().dir;
-                                if !path.is_file() || !bun_paths::is_absolute(dir) {
+                                if !path.is_file() || !bun_core::paths::is_absolute(dir) {
                                     return None;
                                 }
                                 // SAFETY: per fn contract — `transpiler.resolver`
@@ -3334,7 +3334,7 @@ fn transpile_source_code_inner(
                 if !unsafe { &*jsc_vm }.is_watcher_enabled() {
                     break 'auto_watch;
                 }
-                if !bun_paths::is_absolute(path.text)
+                if !bun_core::paths::is_absolute(path.text)
                     || bun_core::strings::contains(path.text, b"node_modules")
                 {
                     break 'auto_watch;
@@ -3342,11 +3342,11 @@ fn transpile_source_code_inner(
                 // kqueue watchers need a file descriptor to receive event
                 // notifications on it; inotify/win32 watch by path.
                 let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_core::paths::path_buffer_pool::get();
                     if path.text.len() >= buf.len() {
                         break 'auto_watch;
                     }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
+                    let z = bun_core::paths::resolve_path::z(path.text, &mut buf);
                     match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
                         Ok(fd) => fd,
                         Err(_) => break 'auto_watch,
@@ -3411,7 +3411,7 @@ fn transpile_source_code_inner(
                     origin,
                     b"",
                     &mut buf,
-                    bun_paths::Platform::Loose,
+                    bun_core::paths::Platform::Loose,
                 );
                 bun_jsc::bun_string_jsc::create_utf8_for_js(global, buf.as_bytes())
                     .map_err(|_| crate::Error::JSError)?
@@ -3453,7 +3453,7 @@ fn maybe_watch_file(
         return;
     }
     if is_node_override
-        || !bun_paths::is_absolute(path.text)
+        || !bun_core::paths::is_absolute(path.text)
         || bun_core::strings::contains(path.text, b"node_modules")
     {
         return;
@@ -3533,9 +3533,9 @@ fn get_hardcoded_module(
     hardcoded: HardcodedModule,
 ) -> Option<OwnedResolvedSource> {
     // The analytics-side set stores `&'static str` names
-    // (cycle break — see `bun_analytics::features::BUILTIN_MODULES`), so feed
+    // (cycle break — see `bun_core::analytics::features::BUILTIN_MODULES`), so feed
     // it the `strum::IntoStaticStr` tag name.
-    bun_analytics::features::insert_builtin_module(<&'static str>::from(hardcoded));
+    bun_core::analytics::features::insert_builtin_module(<&'static str>::from(hardcoded));
 
     match hardcoded {
         HardcodedModule::BunMain => {
@@ -3927,10 +3927,10 @@ unsafe fn get_loader_and_virtual_source<'a>(
         const STDIN: &[u8] = b"[stdin]";
         let is_eval = specifier.len() > EVAL.len()
             && specifier.ends_with(EVAL)
-            && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - EVAL.len() - 1]);
+            && bun_core::paths::resolve_path::is_sep_any(specifier[specifier.len() - EVAL.len() - 1]);
         let is_stdin = specifier.len() > STDIN.len()
             && specifier.ends_with(STDIN)
-            && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
+            && bun_core::paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
             // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
             // outlives the synchronous transpile this borrow feeds into.
@@ -3989,8 +3989,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // Note: `bun_ast::Source::path` is the
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
-                        path: bun_paths::fs::Path::init(path_text),
-                        contents: bun_ptr::Cow::Borrowed(contents),
+                        path: bun_core::paths::fs::Path::init(path_text),
+                        contents: bun_core::ptr::Cow::Borrowed(contents),
                         ..Default::default()
                     });
                     virtual_source = virtual_source_to_use.as_ref();
@@ -4015,7 +4015,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
+    let package_json = if is_js_like && bun_core::paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
@@ -4047,8 +4047,8 @@ thread_local! {
     /// `&'static [u8]` keys point into the `FilenameStore` BSS singleton, so
     /// the set itself owns nothing beyond its bucket array.
     static TRANSPILE_PATH_INTERN: core::cell::RefCell<
-        bun_collections::HashMap<&'static [u8], ()>,
-    > = core::cell::RefCell::new(bun_collections::HashMap::new());
+        bun_core::collections::HashMap<&'static [u8], ()>,
+    > = core::cell::RefCell::new(bun_core::collections::HashMap::new());
 }
 
 /// Intern `value` into the process-lifetime `FilenameStore`, returning a
@@ -4057,7 +4057,7 @@ thread_local! {
 /// copy each time.
 ///
 /// Note: the
-/// `bun_paths::fs::Path<'static><'static>` shape forces a re-intern on
+/// `bun_core::paths::fs::Path<'static><'static>` shape forces a re-intern on
 /// every call. `BSSStringList::append` does not dedupe, so a `require()`
 /// loop that busts `require.cache` (test/cli/run/require-cache.test.ts —
 /// "files transpiled and loaded don't leak file paths") leaked one path-len
@@ -4617,7 +4617,7 @@ unsafe fn transpile_virtual_module(
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
             unsafe { *ret = ErrorableResolvedSource::ok(resolved.into_ffi()) };
-            bun_analytics::features::virtual_modules
+            bun_core::analytics::features::virtual_modules
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             true
         }
@@ -4696,9 +4696,9 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let file_name: &[u8] = file.name;
     let file_contents: &[u8] = file.contents.as_bytes();
 
-    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
+    let mut tmpname_buf = bun_core::paths::path_buffer_pool::get();
     let tmpfilename =
-        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name)).ok()?;
+        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_core::wyhash::hash(file_name)).ok()?;
 
     // SAFETY: `FileSystem::instance()` returns the process-global singleton
     // pointer (initialized at startup).
@@ -4711,7 +4711,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         let _ = bun_sys::close(tmpfile_fd);
     }
 
-    let mut scratch = bun_paths::path_buffer_pool::get();
+    let mut scratch = bun_core::paths::path_buffer_pool::get();
     if bun_sys::write_file_with_path_buffer(
         &mut scratch,
         &bun_sys::WriteFileArgs {
@@ -4732,7 +4732,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // `join_abs_string_buf` writes into
     // `out_buf` and returns a slice pointing into it; capture the length so
     // the caller knows how many bytes are live.
-    let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+    let result = bun_core::paths::resolve_path::join_abs_string_buf::<bun_core::paths::platform::Auto>(
         Fs::RealFS::tmpdir_path(),
         out_buf,
         &[tmpfilename.as_bytes()],
@@ -4761,7 +4761,7 @@ unsafe fn resolve_embedded_node_file_hook(
     let input_path = input_path_utf8.slice();
     let _ = vm;
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let mut path_buf = bun_core::paths::path_buffer_pool::get();
     let Some(len) = resolve_embedded_file_to_buf(input_path, b"node", &mut path_buf[..]) else {
         return false;
     };
@@ -4845,7 +4845,7 @@ unsafe fn _resolve<'a>(
     // `Runtime.Runtime.Imports.alt_name` == `Runtime.Runtime.Imports.Name`
     // == `"bun:wrap"` (see js_parser/runtime.rs:644-645); both consts are the
     // bare specifier so a direct equality on `basename(specifier)` is correct.
-    if bun_paths::basename(specifier) == b"bun:wrap" {
+    if bun_core::paths::basename(specifier) == b"bun:wrap" {
         *ret_path = b"bun:wrap";
         return Ok(());
     }
@@ -4930,7 +4930,7 @@ unsafe fn _resolve<'a>(
 
     // This cache-bust is disabled when the filesystem is not being used to
     // resolve.
-    let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+    let mut retry_on_not_found = bun_core::paths::is_absolute(source_to_use);
     let result: bun_resolver::Result = loop {
         // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver; this
         // is the only `&mut` borrow live for this call (the JS thread is
@@ -4953,18 +4953,18 @@ unsafe fn _resolve<'a>(
 
                 // Bust the dir cache for the candidate
                 // parent directory and retry once.
-                let mut buf = bun_paths::path_buffer_pool::get();
+                let mut buf = bun_core::paths::path_buffer_pool::get();
                 let buster_name: &[u8] = 'name: {
-                    if bun_paths::is_absolute(normalized_specifier) {
+                    if bun_core::paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_core::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
                                 return Err(crate::Error::ModuleNotFound);
                             }
                             // Normalized without trailing slash.
-                            break 'name bun_paths::string_paths::normalize_slashes_only(
+                            break 'name bun_core::paths::string_paths::normalize_slashes_only(
                                 &mut buf[..],
                                 dir,
-                                bun_paths::SEP,
+                                bun_core::paths::SEP,
                             );
                         }
                     }
@@ -4976,8 +4976,8 @@ unsafe fn _resolve<'a>(
                     }
 
                     let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
-                    break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
+                    break 'name bun_core::paths::resolve_path::join_abs_string_buf_z::<
+                        bun_core::paths::platform::Auto,
                     >(top_level_dir, &mut buf[..], &parts)
                     .as_bytes();
                 };
@@ -4986,7 +4986,7 @@ unsafe fn _resolve<'a>(
                 // SAFETY: see above.
                 if unsafe {
                     (*vm).transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
+                        bun_core::paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     )
                 } {
                     continue;
@@ -5018,7 +5018,7 @@ unsafe fn _resolve<'a>(
     // outlive the program.
     // SAFETY: `result_path.text` borrows the resolver's `'static` interned
     // string store; detaching the borrow lifetime is sound (see Note).
-    *ret_path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+    *ret_path = unsafe { bun_core::ptr::detach_lifetime(result_path.text) };
     Ok(())
 }
 
@@ -5055,7 +5055,7 @@ unsafe fn resolve_hook(
 
     // Overlong specifier guard. `MAX_PATH_BYTES * 1.5`, truncated:
     // integer `* 3 / 2` is exact for the powers-of-two MAX_PATH_BYTES values.
-    const MAX_SPECIFIER_LEN: usize = bun_paths::MAX_PATH_BYTES * 3 / 2;
+    const MAX_SPECIFIER_LEN: usize = bun_core::paths::MAX_PATH_BYTES * 3 / 2;
     if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
@@ -5069,7 +5069,7 @@ unsafe fn resolve_hook(
         let printed = ResolveMessage::fmt(
             specifier_utf8.slice(),
             source_utf8.slice(),
-            bun_jsc::CrateError::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+            bun_jsc::CrateError::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG),
             import_kind,
         );
         let msg = bun_ast::Msg {
@@ -5355,8 +5355,8 @@ pub(crate) fn __bun_stdio_blob_store_new(
             mode,
             ..Default::default()
         }),
-        mime_type: bun_http_types::MimeType::NONE,
-        ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
+        mime_type: bun_core::http_types::MimeType::NONE,
+        ref_count: bun_core::ptr::ThreadSafeRefCount::init_exact_refs(2),
         is_all_ascii: None,
     });
     bun_core::heap::into_raw(store).cast()

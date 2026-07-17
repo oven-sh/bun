@@ -3,7 +3,7 @@
 //! only the JS-materialization lives here.
 
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::{StackCheck, String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 

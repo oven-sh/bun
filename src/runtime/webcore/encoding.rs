@@ -7,7 +7,7 @@ use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_simdutf_sys::simdutf as bun_simdutf;
+use bun_core::simdutf_sys::simdutf as bun_simdutf;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
@@ -347,22 +347,22 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
         // appears inconsistent with Node.js.
         Encoding::Base64url => {
             // input dropped at end of scope
-            let out_len = bun_base64::url_safe_encode_len(&input);
+            let out_len = bun_core::base64::url_safe_encode_len(&input);
             let (out, chars) = BunString::create_uninitialized_latin1(out_len);
             if !out.is_dead() {
-                let _ = bun_base64::encode_url_safe(chars, &input);
+                let _ = bun_core::base64::encode_url_safe(chars, &input);
             }
             out
         }
 
         Encoding::Base64 => {
             // input dropped at end of scope
-            let to_len = bun_base64::encode_len(&input);
+            let to_len = bun_core::base64::encode_len(&input);
             let (str, chars) = BunString::create_uninitialized_latin1(to_len);
             if str.is_dead() {
                 return str;
             }
-            let wrote = bun_base64::encode(chars, &input);
+            let wrote = bun_core::base64::encode(chars, &input);
             debug_assert_eq!(wrote, to_len);
             str
         }
@@ -465,9 +465,9 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     const EXTERNAL_MIN_LEN: usize = 32 * 1024;
 
     let to_len = if url_safe {
-        bun_base64::url_safe_encode_len(input)
+        bun_core::base64::url_safe_encode_len(input)
     } else {
-        bun_base64::encode_len(input)
+        bun_core::base64::encode_len(input)
     };
 
     if to_len < EXTERNAL_MIN_LEN {
@@ -476,9 +476,9 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
             return str;
         }
         let wrote = if url_safe {
-            bun_base64::encode_url_safe(chars, input)
+            bun_core::base64::encode_url_safe(chars, input)
         } else {
-            bun_base64::encode(chars, input)
+            bun_core::base64::encode(chars, input)
         };
         debug_assert_eq!(wrote, to_len);
         return str;
@@ -493,9 +493,9 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     let wrote = unsafe {
         bun_core::vec::fill_spare(&mut to, 0, |spare| {
             let wrote = if url_safe {
-                bun_base64::encode_url_safe(&mut spare[..to_len], input)
+                bun_core::base64::encode_url_safe(&mut spare[..to_len], input)
             } else {
-                bun_base64::encode(&mut spare[..to_len], input)
+                bun_core::base64::encode(&mut spare[..to_len], input)
             };
             (wrote, wrote)
         })
@@ -601,7 +601,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
 
         Encoding::Base64 | Encoding::Base64url => {
             let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
-            Ok(bun_base64::decode_lenient(
+            Ok(bun_core::base64::decode_lenient(
                 to_slice,
                 input_slice,
                 is_urlsafe,
@@ -631,7 +631,7 @@ pub(crate) unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: u
 
         Encoding::Hex => len / 2,
 
-        Encoding::Base64 | Encoding::Base64url => bun_base64::decode_len(input_slice),
+        Encoding::Base64 | Encoding::Base64url => bun_core::base64::decode_len(input_slice),
         // else => return &[_]u8{};
     }
 }
@@ -842,7 +842,7 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
             }
 
             let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
-            let outlen = bun_base64::decode_lenient_len(slice.len());
+            let outlen = bun_core::base64::decode_lenient_len(slice.len());
             // Decode into uninitialized spare capacity: the decoder only ever
             // writes to the destination, and only the `wrote` bytes it
             // initialized are committed below. This buffer becomes the
@@ -851,7 +851,7 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
             let mut to: Vec<u8> = Vec::new();
             // SAFETY: the returned spare bytes are write-only until committed.
             let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
-            let wrote = bun_base64::decode_lenient(&mut dest[..outlen], slice, is_urlsafe);
+            let wrote = bun_core::base64::decode_lenient(&mut dest[..outlen], slice, is_urlsafe);
             if wrote == 0 {
                 return Vec::new();
             }

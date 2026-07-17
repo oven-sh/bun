@@ -4,11 +4,11 @@ use std::sync::OnceLock;
 use bstr::BStr;
 
 use crate::Error;
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_core::strings;
 use bun_core::{self, Output};
-use bun_paths::{self as Path, PathBuffer};
-use bun_semver::string::Buf as StringBuf;
+use bun_core::paths::{self as Path, PathBuffer};
+use bun_core::semver::string::Buf as StringBuf;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
@@ -122,8 +122,8 @@ impl SloppyGlobalGitConfig {
         };
 
         let mut config_file_path_buf = PathBuffer::uninit();
-        let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
-            bun_paths::platform::Auto,
+        let config_file_path = bun_core::paths::resolve_path::join_abs_string_buf_z::<
+            bun_core::paths::platform::Auto,
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
@@ -678,7 +678,7 @@ impl RepositoryExt for Repository {
     ) -> Result<bun_sys::Dir, Error> {
         // `cache_dir` is a borrowed view of the manager's cache directory fd;
         // we never own/close it — only the freshly-opened repo `Dir` is owned.
-        bun_analytics::features::git_dependencies
+        bun_core::analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Per-field accessor — retags only `folder_name_buf`, leaving any live
         // shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument
@@ -694,7 +694,7 @@ impl RepositoryExt for Repository {
                 "{}.git\0",
                 bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             let written = total - cursor.len() - 1;
             bun_core::ZStr::from_buf(&folder_name_buf[..], written)
         };
@@ -774,7 +774,7 @@ impl RepositoryExt for Repository {
                 "{}.git",
                 bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             let written = total - cursor.len();
             &folder_name_buf[..written]
         };
@@ -834,7 +834,7 @@ impl RepositoryExt for Repository {
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
         // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
-        bun_analytics::features::git_dependencies
+        bun_core::analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if !is_safe_resolved_tag(resolved) {
@@ -864,7 +864,7 @@ impl RepositoryExt for Repository {
         {
             Ok(d) => d,
             Err(not_found) => 'brk: {
-                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                if not_found != crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                     return Err(not_found);
                 }
 

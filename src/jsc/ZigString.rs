@@ -64,7 +64,7 @@ pub(crate) fn static_(s: &'static [u8]) -> ZigString {
 pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
     if len > BunString::max_length() {
         // SAFETY: caller contract — `ptr` came from the default (global) allocator.
-        unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
+        unsafe { bun_core::alloc_impl::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
         // Propagation of the throw is intentionally swallowed.
         let _ = global
             .err(
@@ -98,13 +98,13 @@ pub(crate) unsafe extern "C" fn ZigString__free(
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
-    if bun_alloc::USE_MIMALLOC {
+    if bun_core::alloc_impl::USE_MIMALLOC {
         // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+        debug_assert!(unsafe { bun_core::alloc_impl::mimalloc::mi_is_in_heap_region(ptr.cast()) });
     }
     let _ = len;
     // SAFETY: ptr was allocated by the default allocator.
-    unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<c_void>()) };
+    unsafe { bun_core::alloc_impl::default_alloc::free(ptr.cast_mut().cast::<c_void>()) };
 }
 
 /// # Safety
@@ -118,13 +118,13 @@ pub(crate) unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize
         .as_ptr()
         .cast_mut()
         .cast::<c_void>();
-    if bun_alloc::USE_MIMALLOC {
+    if bun_core::alloc_impl::USE_MIMALLOC {
         // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+        debug_assert!(unsafe { bun_core::alloc_impl::mimalloc::mi_is_in_heap_region(ptr.cast()) });
     }
     // we must untag the string pointer
     // SAFETY: untagged ptr was allocated by the default allocator.
-    unsafe { bun_alloc::default_alloc::free(untagged) };
+    unsafe { bun_core::alloc_impl::default_alloc::free(untagged) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

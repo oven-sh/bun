@@ -208,7 +208,7 @@ pub fn init_client() -> *mut boring::SSL {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    bun_alloc::mimalloc::mi_malloc(size)
+    bun_core::alloc_impl::mimalloc::mi_malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd
@@ -220,16 +220,16 @@ pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
     unsafe {
-        let len = bun_alloc::usable_size(ptr.cast());
+        let len = bun_core::alloc_impl::usable_size(ptr.cast());
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
-        bun_alloc::mimalloc::mi_free(ptr);
+        bun_core::alloc_impl::mimalloc::mi_free(ptr);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     // ptr was returned by mi_malloc (or is null, which usable_size handles).
-    bun_alloc::usable_size(ptr.cast())
+    bun_core::alloc_impl::usable_size(ptr.cast())
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;

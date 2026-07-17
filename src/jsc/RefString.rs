@@ -17,7 +17,7 @@ pub(crate) type Hash = u32;
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
 // max-load-percentage has no direct knob on the Rust side.
 pub type Map =
-    bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
+    bun_core::collections::HashMap<Hash, *mut RefString, bun_core::collections::IdentityContext<Hash>>;
 
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
@@ -44,7 +44,7 @@ impl RefString {
     }
 
     pub fn compute_hash(input: &[u8]) -> u32 {
-        bun_hash::XxHash32::hash(0, input)
+        bun_core::hash::XxHash32::hash(0, input)
     }
 
     pub fn slice(&self) -> &[u8] {

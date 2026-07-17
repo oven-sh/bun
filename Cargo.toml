@@ -27,7 +27,6 @@ members = [
   "src/watcher",
   "src/cares_sys",
   "src/clap",
-  "src/clap_macros",
   "src/crash_handler",
   "src/csrf",
   "src/css_jsc",
@@ -57,7 +56,6 @@ members = [
   "src/sha_hmac",
   "src/sys_jsc",
   "src/zlib_sys",
-  "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
   "src/perf",
@@ -65,7 +63,6 @@ members = [
   "src/sourcemap_jsc",
   "src/windows_sys",
   "src/jsc",
-  "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
   "src/brotli_sys",
@@ -78,7 +75,6 @@ members = [
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
-  "src/bun_core_macros",
   "src/macros",
   "src/bun_output_tags",
   "src/patch_jsc",
@@ -348,7 +344,6 @@ itoa = "1"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
-bun_analytics = { path = "src/bun_core", package = "bun_core" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
@@ -362,7 +357,6 @@ bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
-bun_paths = { path = "src/bun_core", package = "bun_core" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
 bun_semver = { path = "src/semver" }
@@ -374,7 +368,6 @@ bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
-bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
@@ -404,17 +397,14 @@ bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
-bun_dispatch = { path = "src/dispatch" }
 bun_macros = { path = "src/macros" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
-bun_url = { path = "src/bun_core", package = "bun_core" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
-bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
@@ -427,7 +417,6 @@ bun_wyhash = { path = "src/wyhash" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
-bun_core_macros = { path = "src/bun_core_macros" }
 bun_output_tags = { path = "src/bun_output_tags" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }

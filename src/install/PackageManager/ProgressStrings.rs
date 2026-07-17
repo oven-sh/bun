@@ -127,7 +127,7 @@ impl PackageManager {
                 self.progress_name_buf[..name.len()].copy_from_slice(name);
                 name.len()
             };
-            node.name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
+            node.name = bun_core::ptr::detach_lifetime(&self.progress_name_buf[..len]);
         }
     }
 

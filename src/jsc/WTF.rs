@@ -12,6 +12,6 @@ pub const MAX_ECMASCRIPT_TIME: f64 = 8.64e15;
 
 // Canonical lives in `bun_http_types` so http code can call it without a
 // bun_jsc dep; re-exported here.
-pub use bun_http_types::ETag::wtf::write_http_date;
+pub use bun_core::http_types::ETag::wtf::write_http_date;
 
 pub use crate::string_builder::StringBuilder;

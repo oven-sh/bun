@@ -6,11 +6,11 @@ use bun_core::FeatureFlags;
 use bun_core::{MutableString, ZigStringSlice};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
-use bun_url::{PercentEncoding, URL};
+use bun_core::url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_http_types::Encoding::Encoding;
-use bun_picohttp as picohttp;
+use bun_core::http_types::Encoding::Encoding;
+use bun_core::picohttp as picohttp;
 
 use crate::headers::{self, Headers};
 use crate::{
@@ -156,9 +156,9 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         username.into_vec()
     };
 
-    let size = bun_base64::encode_len_from_size(auth.len());
+    let size = bun_core::base64::encode_len_from_size(auth.len());
     let mut buf = vec![0u8; size + b"Basic ".len()];
-    let encoded_len = bun_base64::encode(&mut buf[b"Basic ".len()..], &auth);
+    let encoded_len = bun_core::base64::encode(&mut buf[b"Basic ".len()..], &auth);
     buf[..b"Basic ".len()].copy_from_slice(b"Basic ");
     buf.truncate(b"Basic ".len() + encoded_len);
     Some(buf)
@@ -695,7 +695,7 @@ impl<'a> AsyncHTTP<'a> {
         // so by the time `read_item` returns the callback has finished and no
         // other reference remains. `read_item` takes `&self` (channel internals
         // are interior-mutable), so a `ParentRef` shared deref is sufficient.
-        let result = bun_ptr::ParentRef::from(ctx).read_item();
+        let result = bun_core::ptr::ParentRef::from(ctx).read_item();
         // SAFETY: see above — sole owner, callback completed.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
@@ -957,14 +957,14 @@ pub type HTTPCallbackPair = (*mut AsyncHTTP<'static>, HTTPClientResult<'static>)
 
 pub type HTTPChannel = bun_threading::Channel<
     *mut HTTPCallbackPair,
-    bun_collections::linear_fifo::StaticBuffer<*mut HTTPCallbackPair, 1000>,
+    bun_core::collections::linear_fifo::StaticBuffer<*mut HTTPCallbackPair, 1000>,
 >;
 
 pub struct HTTPChannelContext<'a> {
     pub http: AsyncHTTP<'a>,
     // BACKREF: set once by the owner before scheduling; the channel outlives
     // every callback dispatched through it.
-    pub channel: Option<bun_ptr::BackRef<HTTPChannel>>,
+    pub channel: Option<bun_core::ptr::BackRef<HTTPChannel>>,
 }
 
 impl HTTPChannelContext<'_> {

@@ -8,7 +8,7 @@
 use core::fmt;
 use core::hash::{Hash, Hasher};
 
-use bun_alloc::{AstAlloc, AstVec};
+use bun_core::alloc_impl::{AstAlloc, AstVec};
 use bun_ast::{E, StoreRef, expr};
 use bun_core::{BStr, strings};
 

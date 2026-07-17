@@ -15,9 +15,9 @@ pub enum Error {
     #[error("ParseErrorAlreadyLogged")]
     ParseErrorAlreadyLogged,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
@@ -46,10 +46,10 @@ impl Error {
         match self {
             Self::Alloc(a) => bun_core::Error::Alloc(a),
             Self::Core(e) => e,
-            Self::Sys(bun_errno::SystemErrno::ENOENT) => bun_core::Error::FileNotFound,
-            Self::Sys(bun_errno::SystemErrno::EACCES) => bun_core::Error::AccessDenied,
-            Self::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => bun_core::Error::NameTooLong,
-            Self::Sys(bun_errno::SystemErrno::ENOSPC) => bun_core::Error::NoSpaceLeft,
+            Self::Sys(bun_core::errno::SystemErrno::ENOENT) => bun_core::Error::FileNotFound,
+            Self::Sys(bun_core::errno::SystemErrno::EACCES) => bun_core::Error::AccessDenied,
+            Self::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG) => bun_core::Error::NameTooLong,
+            Self::Sys(bun_core::errno::SystemErrno::ENOSPC) => bun_core::Error::NoSpaceLeft,
             _ => bun_core::Error::Unexpected,
         }
     }

@@ -26,7 +26,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-bun_output::declare_scope!(Listener, visible);
+bun_core::declare_scope!(Listener, visible);
 
 /// The callbacks and lifecycle bookkeeping shared by a listener and every
 /// socket it accepts, or by one `Bun.connect` socket and its reconnects.
@@ -193,7 +193,7 @@ impl Handlers {
     }
 
     pub fn mark_active(&self) {
-        bun_output::scoped_log!(Listener, "markActive");
+        bun_core::scoped_log!(Listener, "markActive");
         self.active_connections
             .set(self.active_connections.get() + 1);
     }
@@ -250,7 +250,7 @@ impl Handlers {
     /// its own `Rc` so a later dispatch sees no handlers rather than a stale
     /// callback table. Freeing is the `Rc`'s job, not this function's.
     pub fn mark_inactive(&self) -> bool {
-        bun_output::scoped_log!(Listener, "markInactive");
+        bun_core::scoped_log!(Listener, "markInactive");
         let remaining = self.active_connections.get() - 1;
         self.active_connections.set(remaining);
         if remaining != 0 {
@@ -556,7 +556,7 @@ impl SocketConfig {
             }
             result.port = Some(match generated.port {
                 Some(p) => p,
-                None => match bun_url::URL::parse(slice).get_port() {
+                None => match bun_core::url::URL::parse(slice).get_port() {
                     Some(p) => p,
                     None => {
                         return Err(

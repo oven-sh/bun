@@ -17,7 +17,7 @@ use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
 };
 use ::bstr::BStr;
-use bun_collections::HashMap;
+use bun_core::collections::HashMap;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
@@ -28,24 +28,24 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
     JsResult, Node, StringJsc as _, Strong, StrongOptional, VirtualMachine, host_fn,
 };
-use bun_paths as paths;
-use bun_ptr::RefPtr;
+use bun_core::paths as paths;
+use bun_core::ptr::RefPtr;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
-use bun_url::URL;
+use bun_core::url::URL;
 use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 
-bun_output::declare_scope!(Server, visible);
-bun_output::declare_scope!(RequestContext, visible);
+bun_core::declare_scope!(Server, visible);
+bun_core::declare_scope!(RequestContext, visible);
 
 macro_rules! httplog {
-    ($($arg:tt)*) => { bun_output::scoped_log!(Server, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(Server, $($arg)*) };
 }
 macro_rules! ctx_log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(RequestContext, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(RequestContext, $($arg)*) };
 }
 
 use bun_jsc::bun_string_jsc;
@@ -224,7 +224,7 @@ where
     fn set_request_weakref(&mut self, req: *mut Request) {
         // SAFETY: `req` is a freshly-boxed Request (live for the request
         // duration) still carrying its `heap::into_raw` provenance.
-        self.request_weakref = unsafe { bun_ptr::WeakPtr::<Request>::init_ref(req) };
+        self.request_weakref = unsafe { bun_core::ptr::WeakPtr::<Request>::init_ref(req) };
     }
     #[inline]
     fn clear_req(&mut self) {
@@ -412,8 +412,8 @@ pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 // `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
-    use bun_analytics::generate_header::generate_platform;
-    use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
+    use bun_core::analytics::generate_header::generate_platform;
+    use bun_core::analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
     use bun_ast::Loc;
     use bun_ast::e::EString;
     use bun_ast::{E, Expr, G};
@@ -467,7 +467,7 @@ pub mod BunInfo {
         };
 
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
-        let platform_props = bun_alloc::AstAlloc::vec_from_iter([
+        let platform_props = bun_core::alloc_impl::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
             prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
             prop(b"version", str_expr(info.platform.version)),
@@ -481,7 +481,7 @@ pub mod BunInfo {
             Loc::EMPTY,
         );
 
-        let root_props = bun_alloc::AstAlloc::vec_from_iter([
+        let root_props = bun_core::alloc_impl::AstAlloc::vec_from_iter([
             prop(b"bun_version", str_expr(info.bun_version)),
             prop(b"platform", platform_expr),
         ]);
@@ -581,7 +581,7 @@ impl AnyRoute {
         }
 
         let mut methods =
-            bun_http_types::Method::Optional::Method(bun_http_types::Method::Set::empty());
+            bun_core::http_types::Method::Optional::Method(bun_core::http_types::Method::Set::empty());
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 
@@ -643,8 +643,8 @@ impl AnyRoute {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.
-                    let mut buf = bun_paths::PathBuffer::default();
-                    let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
+                    let mut buf = bun_core::paths::PathBuffer::default();
+                    let zpath = bun_core::paths::resolve_path::z(store_path, &mut buf);
                     match sys::exists_at_type(sys::Fd::cwd(), zpath) {
                         Ok(sys::ExistsAtType::Directory) => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -693,7 +693,7 @@ impl AnyRoute {
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        use bun_collections::zig_hash_map::MapEntry as StdEntry;
+        use bun_core::collections::zig_hash_map::MapEntry as StdEntry;
         if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
             let entry = init_ctx
                 .dedupe_html_bundle_map
@@ -837,7 +837,7 @@ pub struct ServePlugins {
 }
 
 // Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
+// Maps to bun_core::ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
 
 pub enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
@@ -946,7 +946,7 @@ impl ServePlugins {
                             // bump its intrusive refcount before storing so it outlives the
                             // pending state. Write provenance is preserved for the later
                             // `&mut *route` in handle_on_resolve/handle_on_reject.
-                            unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
+                            unsafe { bun_core::ptr::RefCount::<html_bundle::Route>::ref_(route) };
                             html_bundle_routes.push(route);
                         }
                         ServePluginsCallback::DevServer(server) => {
@@ -980,8 +980,8 @@ impl ServePlugins {
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
-        let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
-            bun_paths::resolve_path::platform::Auto,
+        let bunfig_folder: &[u8] = bun_core::paths::resolve_path::dirname::<
+            bun_core::paths::resolve_path::platform::Auto,
         >(bunfig_path);
 
         // NOTE: the keep-alive ref/deref pair
@@ -1091,11 +1091,11 @@ impl ServePlugins {
             // for this call). R-2: `on_plugins_resolved` takes `&self`.
             let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
             bun_core::handle_oom(
-                bun_ptr::BackRef::from(route_nn)
+                bun_core::ptr::BackRef::from(route_nn)
                     .on_plugins_resolved(Some(NonNull::from(plugin_ref))),
             );
             // SAFETY: paired with the `ref_` taken when the route was pushed.
-            unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
+            unsafe { bun_core::ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
@@ -1127,9 +1127,9 @@ impl ServePlugins {
             // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
             // for this call). R-2: `on_plugins_rejected` takes `&self`.
             let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
-            bun_core::handle_oom(bun_ptr::BackRef::from(route_nn).on_plugins_rejected());
+            bun_core::handle_oom(bun_core::ptr::BackRef::from(route_nn).on_plugins_rejected());
             // SAFETY: route was ref'd when stored; pair with that ref
-            unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
+            unsafe { bun_core::ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
@@ -2205,7 +2205,7 @@ where
                 if let Some(old_ws) = self.config.websocket.as_ref() {
                     old_ws.unprotect();
                 }
-                ws.global_object = bun_ptr::BackRef::new(global);
+                ws.global_object = bun_core::ptr::BackRef::new(global);
                 self.config.websocket = Some(ws);
             } else {
                 // Not adopting it: release the protections taken in
@@ -2816,7 +2816,7 @@ where
         let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx>(
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             match user_route.route.method {
                 server_config::RouteMethod::Any => None,
@@ -2901,7 +2901,7 @@ where
         let Some(prepared) = self.prepare_js_request_context_for::<Ctx>(
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
         ) else {
@@ -2963,7 +2963,7 @@ where
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
-                        break 'brk bun_http_types::parse_content_length(content_length);
+                        break 'brk bun_core::http_types::parse_content_length(content_length);
                     }
                     0
                 };
@@ -3187,7 +3187,7 @@ where
         // BACKREF: `UserRoute.server` is set at construction from the owning
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
         // vec); non-null by invariant.
-        let server_ref = bun_ptr::BackRef::from(
+        let server_ref = bun_core::ptr::BackRef::from(
             NonNull::new(this.server.cast_mut()).expect("UserRoute.server set at construction"),
         );
         let server_ptr = server_ref.as_ptr();
@@ -3200,7 +3200,7 @@ where
             server_ptr,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             method,
         ) else {
@@ -3293,7 +3293,7 @@ where
             self_ptr,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            Some(bun_core::ptr::BackRef::new(&should_deinit_context)),
             None,
         );
         // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
@@ -3330,7 +3330,7 @@ where
         // the weak handle and the deferred `detach_request` both alias it.
         let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
         // SAFETY: freshly leaked, so it carries the allocation's provenance.
-        ctx.request_weakref = unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) };
+        ctx.request_weakref = unsafe { bun_core::ptr::WeakPtr::<Request>::init_ref(request_object_ptr) };
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();

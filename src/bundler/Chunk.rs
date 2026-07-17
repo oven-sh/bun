@@ -3,10 +3,10 @@ use core::cell::UnsafeCell;
 use core::fmt;
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Ref, Stmt};
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_core::collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::{FeatureFlags, Output};
 // Note: `bun.ast.Index` is mirrored as both `crate::Index`
 // (`bun_ast::Index`) and `bun_ast::Index` via a
@@ -438,7 +438,7 @@ pub struct CodeResult {
 // caller's `Option<&DynAlloc>` plumbing; the actual
 // allocation goes through `alloc_buf` (global mimalloc) regardless. Real
 // arena threading (page_allocator vs default_allocator) lands when
-// `bun_alloc::Allocator` is a stable trait object.
+// `bun_core::alloc_impl::Allocator` is a stable trait object.
 type DynAlloc = ();
 
 /// Until `DynAlloc` is a real trait object, route
@@ -657,12 +657,12 @@ impl IntermediateOutput {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
-        // `bun_alloc::alloc_slice` surfaces are tracked upstream.
+        // `bun_core::alloc_impl::alloc_slice` surfaces are tracked upstream.
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
-        let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        let mut relative_platform_buf = bun_core::paths::path_buffer_pool::get();
+        let mut file_path_buf = bun_core::paths::path_buffer_pool::get();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -682,8 +682,8 @@ impl IntermediateOutput {
                 }
 
                 let mut count: usize = 0;
-                let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
-                    bun_paths::platform::Posix,
+                let mut from_chunk_dir = bun_core::paths::resolve_path::dirname::<
+                    bun_core::paths::platform::Posix,
                 >(&chunk.final_rel_path);
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
@@ -779,8 +779,8 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
-                                        bun_paths::platform::Posix,
+                                    bun_core::paths::resolve_path::relative_platform_buf::<
+                                        bun_core::paths::platform::Posix,
                                         false,
                                     >(
                                         &mut relative_platform_buf[..], from_chunk_dir, file_path
@@ -952,7 +952,7 @@ impl IntermediateOutput {
                                 let n = file_path.len();
                                 let dst = &mut file_path_buf[..n];
                                 dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+                                bun_core::paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
                                 dst
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
@@ -960,8 +960,8 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
-                                        bun_paths::platform::Posix,
+                                    bun_core::paths::resolve_path::relative_platform_buf::<
+                                        bun_core::paths::platform::Posix,
                                         false,
                                     >(
                                         &mut relative_platform_buf[..], from_chunk_dir, file_path
@@ -1086,7 +1086,7 @@ impl IntermediateOutput {
 pub(crate) struct OutputPiece {
     /// Borrows `OutputPieces::_buffer`; `RawSlice` invariant (backing outlives
     /// holder) is upheld by `OutputPieces` keeping the box alongside `pieces`.
-    data: bun_ptr::RawSlice<u8>,
+    data: bun_core::ptr::RawSlice<u8>,
     pub query: Query,
 }
 
@@ -1097,7 +1097,7 @@ impl OutputPiece {
 
     pub(crate) fn init(data_slice: &[u8], query: Query) -> OutputPiece {
         OutputPiece {
-            data: bun_ptr::RawSlice::new(data_slice),
+            data: bun_core::ptr::RawSlice::new(data_slice),
             query,
         }
     }
@@ -1376,7 +1376,7 @@ pub enum CssImportOrderKind {
 // arm is a shallow free and `to_owned` deep-clones element-wise.
 pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
-    Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
+    Borrowed(bun_core::ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),
 }
 
@@ -1400,7 +1400,7 @@ impl Layers {
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
     pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::from(p))
+        Layers::Borrowed(bun_core::ptr::BackRef::from(p))
     }
 
     /// Drop owned (arena-backed, so no-op) and

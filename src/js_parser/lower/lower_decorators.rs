@@ -1,9 +1,9 @@
 #![allow(clippy::too_many_arguments, clippy::needless_late_init)]
 //! Lowering for TC39 standard ES decorators.
 
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
-use bun_collections::{HashMap, VecExt};
+use bun_core::collections::{HashMap, VecExt};
 
 use crate::lexer as js_lexer;
 use crate::p::P;
@@ -11,7 +11,7 @@ use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, is_eval_or_arguments};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
-type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
+type BumpVec<'a, T> = bun_core::alloc_impl::ArenaVec<'a, T>;
 
 // Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
@@ -75,14 +75,14 @@ fn prop_copy(p: &Property) -> Property {
         kind: p.kind,
         flags: p.flags,
         class_static_block: p.class_static_block,
-        ts_decorators: bun_alloc::AstAlloc::vec(),
+        ts_decorators: bun_core::alloc_impl::AstAlloc::vec(),
         key: p.key,
         value: p.value,
         // SAFETY: this duplicates ownership of any heap allocation inside
         // `Metadata` (`MDot` owns a global-heap `Vec<Ref>`), but the source
         // `Property` is an arena-resident AST node whose `Drop` never runs
         // (AST stores are bulk-freed without dropping — see the
-        // `bun_alloc::ast_alloc` module docs), so at most one of the two
+        // `bun_core::alloc_impl::ast_alloc` module docs), so at most one of the two
         // copies ever reaches drop glue; no double free.
         ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
     }
@@ -243,7 +243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::New {
                 target,
-                args: bun_alloc::AstAlloc::vec(),
+                args: bun_core::alloc_impl::AstAlloc::vec(),
                 close_parens_loc: l,
                 ..Default::default()
             },
@@ -264,7 +264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::New {
                 target,
-                args: bun_alloc::AstAlloc::vec(),
+                args: bun_core::alloc_impl::AstAlloc::vec(),
                 close_parens_loc: l,
                 ..Default::default()
             },
@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             l,
         );
         let stmts = bump.alloc_slice_copy(&[stmt]);
-        let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
+        let stmts_list = bun_core::alloc_impl::AstVec::<Stmt>::from_arena_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock {
             loc: l,
             stmts: stmts_list,
@@ -401,7 +401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(n) = n {
             // bumpalo Vec<u8> doesn't impl io::Write; format into a
             // bump String and copy the bytes.
-            let s = bun_alloc::arena_format!(in self.arena, "{}", n);
+            let s = bun_core::arena_format!(in self.arena, "{}", n);
             v.extend_from_slice(s.as_bytes());
         }
         v.into_bump_slice()
@@ -1168,7 +1168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
         // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
         let mut class_decorators: ExprNodeList =
-            bun_alloc::AstAlloc::take(&mut class.ts_decorators);
+            bun_core::alloc_impl::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -1205,7 +1205,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Move ownership into the AST node — `class_decorators` is not read
             // again on this branch (Phase-5's else-arm only runs when
             // `class_dec_ref` is `None`, i.e. `class_decorators_len == 0`).
-            let items = bun_alloc::AstAlloc::take(&mut class_decorators);
+            let items = bun_core::alloc_impl::AstAlloc::take(&mut class_decorators);
             let arr = p.new_expr(
                 E::Array {
                     items,
@@ -2059,7 +2059,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `class_dec_ref` is `None` ⇒ `class_decorators_len == 0`, so
                 // this is an empty list. Still `take` (not `ptr::read`) so the
                 // local can never own a second copy of a live buffer.
-                let items = bun_alloc::AstAlloc::take(&mut class_decorators);
+                let items = bun_core::alloc_impl::AstAlloc::take(&mut class_decorators);
                 p.new_expr(
                     E::Array {
                         items,
@@ -2139,7 +2139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             suffix_exprs.push(p.new_expr(
                                 E::Call {
                                     target: iife_body,
-                                    args: bun_alloc::AstAlloc::vec(),
+                                    args: bun_core::alloc_impl::AstAlloc::vec(),
                                     ..Default::default()
                                 },
                                 loc,

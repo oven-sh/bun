@@ -46,13 +46,13 @@ impl Signals {
     /// `NonNull::from(&store.<field>)` in `Store::to` (or an equivalent
     /// caller-side `NonNull::from(&signal_store.<field>)`); the BACKREF
     /// invariant — the `Store` outlives every `Signals` derived from it — is
-    /// exactly the [`bun_ptr::BackRef`] contract, so the safe `From<NonNull>`
+    /// exactly the [`bun_core::ptr::BackRef`] contract, so the safe `From<NonNull>`
     /// + `Deref` path applies. `AtomicBool` is `Sync` interior-mutable, so a
     /// shared `&` (via `BackRef::Deref`) suffices for both load and store.
     ///
-    /// [`BackRef`]: bun_ptr::BackRef
+    /// [`BackRef`]: bun_core::ptr::BackRef
     #[inline]
-    fn slot(&self, field: Field) -> Option<bun_ptr::BackRef<AtomicBool>> {
+    fn slot(&self, field: Field) -> Option<bun_core::ptr::BackRef<AtomicBool>> {
         let ptr: NonNull<AtomicBool> = match field {
             Field::HeaderProgress => self.header_progress,
             Field::ResponseBodyStreaming => self.response_body_streaming,
@@ -60,7 +60,7 @@ impl Signals {
             Field::CertErrors => self.cert_errors,
             Field::Upgraded => self.upgraded,
         }?;
-        Some(bun_ptr::BackRef::from(ptr))
+        Some(bun_core::ptr::BackRef::from(ptr))
     }
 
     pub fn get(self, field: Field) -> bool {
@@ -78,7 +78,7 @@ impl Signals {
     #[inline]
     pub fn is_receive_paused(self) -> bool {
         self.body_receive_mode
-            .map(bun_ptr::BackRef::from)
+            .map(bun_core::ptr::BackRef::from)
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 }

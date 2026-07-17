@@ -1,6 +1,6 @@
-use bun_collections::{DynamicBitSet, HashMap};
+use bun_core::collections::{DynamicBitSet, HashMap};
 use bun_io::Write;
-use bun_semver as semver;
+use bun_core::semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
@@ -529,7 +529,7 @@ where
                     package_name: name,
                     // Never read on the .map/.file/.named_file paths this arm covers.
                     destination_node_modules: Fd::INVALID,
-                    buf: bun_paths::PathBuffer::uninit(),
+                    buf: bun_core::paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
                 };

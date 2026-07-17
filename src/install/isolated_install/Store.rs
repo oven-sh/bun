@@ -4,16 +4,16 @@ use core::marker::PhantomData;
 
 use bstr::BStr;
 
-use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, MultiArrayList};
-use bun_semver::String as SemverString;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::{ArrayHashMap, MultiArrayList};
+use bun_core::semver::String as SemverString;
 
 use crate::lockfile::{Lockfile, package};
 use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID};
 
 pub use super::installer::Installer;
 
-bun_output::declare_scope!(Store, visible);
+bun_core::declare_scope!(Store, visible);
 
 #[derive(Copy, Clone)]
 pub struct Ids {
@@ -307,7 +307,7 @@ pub mod entry {
         pub scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
     }
 
-    bun_collections::multi_array_columns! {
+    bun_core::multi_array_columns! {
         pub trait EntryColumns for Entry {
             node_id: super::node::Id,
             dependencies: Dependencies,
@@ -386,7 +386,7 @@ pub mod entry {
                         write!(
                             f,
                             "{}",
-                            BStr::new(bun_paths::basename(
+                            BStr::new(bun_core::paths::basename(
                                 crate::bun_fs::FileSystem::instance().top_level_dir()
                             ))
                         )?;
@@ -584,7 +584,7 @@ pub mod node {
         pub nodes: Vec<Id>,
     }
 
-    bun_collections::multi_array_columns! {
+    bun_core::multi_array_columns! {
         pub trait NodeColumns for Node {
             dep_id: DependencyID,
             pkg_id: PackageID,
@@ -666,7 +666,7 @@ pub mod node {
                 deps[self.dep_id as usize].version.literal.slice(string_buf)
             };
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Store,
                 "node({})\n  deps: {}@{}\n  res: {}@{}\n",
                 id.get(),

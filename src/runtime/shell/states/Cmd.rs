@@ -15,11 +15,11 @@ use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 pub struct Cmd {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Cmd>,
+    pub node: bun_core::ptr::BackRef<ast::Cmd>,
     pub io: IO,
     pub state: CmdState,
     pub args: Vec<Vec<u8>>,
@@ -56,7 +56,7 @@ pub enum Exec {
 impl Cmd {
     /// Borrow the AST node this `Cmd` was built from.
     ///
-    /// `node` is a [`BackRef`](bun_ptr::BackRef) into the parsed-script arena,
+    /// `node` is a [`BackRef`](bun_core::ptr::BackRef) into the parsed-script arena,
     /// which is owned by the `Interpreter` and outlives every `Cmd` slot (the
     /// arena is dropped only in `Interpreter::deinit`).
     #[inline]
@@ -208,7 +208,7 @@ impl Cmd {
     ) -> NodeId {
         interp.alloc_node(Node::Cmd(Cmd {
             base: Base::new(StateKind::Cmd, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             state: CmdState::Idle,
             args: Vec::new(),
@@ -474,7 +474,7 @@ impl Cmd {
         // for each short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
 
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_core::alloc_impl::Arena::new();
         let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
         // Cache the raw `*mut ShellExecEnv` and deref it directly so the
         // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
@@ -488,7 +488,7 @@ impl Cmd {
 
         // Resolve argv[0] via PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let mut path_buf = bun_core::paths::path_buffer_pool::get();
             match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
@@ -618,7 +618,7 @@ impl Cmd {
         let cmd_parent = crate::shell::subproc::CmdHandle {
             // SAFETY: `interp_ptr` is the live owning Interpreter (from
             // `&mut Interpreter` above); single-threaded, write provenance.
-            interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
+            interp: unsafe { bun_core::ptr::ParentRef::from_raw_mut(interp_ptr) },
             id: this,
         };
 

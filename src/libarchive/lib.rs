@@ -8,14 +8,14 @@
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
-use bun_paths::PathBuffer;
-use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
+use bun_core::paths::PathBuffer;
+use bun_core::paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 
 pub mod error;
 pub use error::{Error, Result};
@@ -1323,7 +1323,7 @@ impl Drop for BufferReadStream {
 fn is_symlink_target_safe(
     symlink_path: &[u8],
     link_target: &ZStr,
-    symlink_join_buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
+    symlink_join_buf: &mut Option<bun_core::paths::path_buffer_pool::Guard>,
 ) -> bool {
     // Absolute symlink targets are never safe - they could point anywhere
     let link_target_bytes = link_target.as_bytes();
@@ -1345,10 +1345,10 @@ fn is_symlink_target_safe(
     }
 
     // Get the directory containing the symlink
-    let symlink_dir = bun_paths::dirname_simple(symlink_path);
+    let symlink_dir = bun_core::paths::dirname_simple(symlink_path);
 
     let join_buf: &mut PathBuffer =
-        symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
+        symlink_join_buf.get_or_insert_with(bun_core::paths::path_buffer_pool::get);
 
     // Normalize symlink_dir/link_target as a relative path. An absolute fake
     // root cannot be used here: POSIX normalization clamps excess `..` at `/`,
@@ -1367,8 +1367,8 @@ fn is_symlink_target_safe(
     join_buf[written..written + link_target_bytes.len()].copy_from_slice(link_target_bytes);
     written += link_target_bytes.len();
 
-    let mut norm_buf = bun_paths::path_buffer_pool::get();
-    let resolved = bun_paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
+    let mut norm_buf = bun_core::paths::path_buffer_pool::get();
+    let resolved = bun_core::paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
         &join_buf[..written],
         &mut norm_buf[..],
         b'/',
@@ -1428,14 +1428,14 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     };
     // tar entry paths are dir-relative (no drive/UNC/`\??\`) so `init` never
     // returns BadPathName here.
-    let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
-    bun_paths::make_path_with(it, |prefix| {
+    let it = bun_core::paths::ComponentIterator::init(sub_path, bun_core::paths::PathFormat::Windows)?;
+    bun_core::paths::make_path_with(it, |prefix| {
         match open_dir_at_windows(dir_fd, prefix, opts) {
             Ok(fd) => {
                 fd.close();
-                Ok(bun_paths::MakePathStep::Created)
+                Ok(bun_core::paths::MakePathStep::Created)
             }
-            Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
+            Err(e) if e.get_errno() == E::ENOENT => Ok(bun_core::paths::MakePathStep::NotFound(e.into())),
             Err(e) => Err(e.into()),
         }
     })
@@ -1458,7 +1458,7 @@ pub mod archiver {
 
     #[derive(Default, Clone, Copy)]
     pub struct U64Context;
-    impl bun_collections::array_hash_map::ArrayHashContext<u64> for U64Context {
+    impl bun_core::collections::array_hash_map::ArrayHashContext<u64> for U64Context {
         #[inline]
         fn hash(&self, k: &u64) -> u32 {
             *k as u32 // @truncate
@@ -1468,7 +1468,7 @@ pub mod archiver {
             a == b
         }
     }
-    impl bun_collections::array_hash_map::ArrayHashAdapter<u64, u64> for U64Context {
+    impl bun_core::collections::array_hash_map::ArrayHashAdapter<u64, u64> for U64Context {
         #[inline]
         fn hash(&self, k: &u64) -> u32 {
             *k as u32 // @truncate
@@ -1561,7 +1561,7 @@ impl Archiver {
             let cwd = Fd::cwd();
 
             // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
-            if bun_paths::is_absolute(root) {
+            if bun_core::paths::is_absolute(root) {
                 let Ok(d) = bun_sys::open_dir_absolute(root) else {
                     return Ok(());
                 };
@@ -1630,7 +1630,7 @@ impl Archiver {
                     // pathname = sliceTo(remaining[..len :0], 0)
                     let pathname = slice_to_nul(remaining);
                     let dirname =
-                        strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
+                        strings::trim(bun_core::paths::dirname_simple(pathname), SEP_STR.as_bytes());
 
                     // SAFETY: entry valid
                     let size: usize =
@@ -1698,7 +1698,7 @@ impl Archiver {
         let mut ctx = ctx;
 
         #[cfg(unix)]
-        let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
+        let mut symlink_join_buf: Option<bun_core::paths::path_buffer_pool::Guard> = None;
 
         #[cfg(unix)]
         let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
@@ -1818,9 +1818,9 @@ impl Archiver {
                         continue;
                     }
 
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
+                    let normalized = bun_core::paths::resolve_path::normalize_buf_t::<
                         OSPathChar,
-                        bun_paths::platform::Auto,
+                        bun_core::paths::platform::Auto,
                     >(pathname, &mut normalized_buf[..]);
                     let normalized_len = normalized.len();
                     normalized_buf[normalized_len] = 0;
@@ -1838,7 +1838,7 @@ impl Archiver {
                     // so `normalizeBufT` cannot produce an absolute output.
                     #[cfg(windows)]
                     {
-                        if bun_paths::is_absolute_windows_t::<u16>(path) {
+                        if bun_core::paths::is_absolute_windows_t::<u16>(path) {
                             continue 'loop_;
                         }
                     }
@@ -1936,7 +1936,7 @@ impl Archiver {
                                             bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                             _ => {}
                                         }
-                                        let dirname = bun_paths::dirname_simple(path_slice);
+                                        let dirname = bun_core::paths::dirname_simple(path_slice);
                                         if dirname.is_empty() {
                                             return Err(err.into());
                                         }
@@ -1981,7 +1981,7 @@ impl Archiver {
                                     Ok(()) => {}
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname_simple(path_slice);
+                                            let dirname = bun_core::paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
                                                 return Err(err.into());
                                             }
@@ -2040,7 +2040,7 @@ impl Archiver {
                                             // `Dirname::dirname` strips
                                             // trailing separators.
                                             let Some(dirname) =
-                                                bun_paths::Dirname::dirname(path_slice)
+                                                bun_core::paths::Dirname::dirname(path_slice)
                                             else {
                                                 return Err(e.into());
                                             };
@@ -2064,7 +2064,7 @@ impl Archiver {
                                         bun_sys::E::EACCES
                                         | bun_sys::E::EPERM
                                         | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname_simple(path_slice);
+                                            let dirname = bun_core::paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
                                                 return Err(err.into());
                                             }
@@ -2245,7 +2245,7 @@ impl Archiver {
             let cwd = Fd::cwd();
             let _ = cwd.make_path_u8(root);
 
-            if bun_paths::is_absolute(root) {
+            if bun_core::paths::is_absolute(root) {
                 break 'brk bun_sys::open_dir_absolute(root)?;
             } else {
                 break 'brk bun_sys::open_dir_at(cwd, root)?;

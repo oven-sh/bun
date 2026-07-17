@@ -1,9 +1,9 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::ByteVecExt;
+use bun_core::collections::ByteVecExt;
 use bun_core::OOM;
-use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
+use bun_core::ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -284,7 +284,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub handle: PollOrFd,
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
-    pub parent: Option<bun_ptr::ParentRef<Parent>>,
+    pub parent: Option<bun_core::ptr::ParentRef<Parent>>,
     pub is_done: bool,
     pub pollable: bool,
     pub closed_without_reporting: bool,
@@ -333,7 +333,7 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
 
 // SAFETY: writer is an intrusive field of `Parent`; `Parent::on_write`
 // re-entry writes `is_done`/`handle` but never frees it; single JS thread.
-unsafe impl<Parent: PosixBufferedWriterParent> bun_ptr::LaunderedSelf
+unsafe impl<Parent: PosixBufferedWriterParent> bun_core::ptr::LaunderedSelf
     for PosixBufferedWriter<Parent>
 {
 }
@@ -346,7 +346,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     #[inline]
     fn parent(&self) -> *mut Parent {
         self.parent
-            .map_or(core::ptr::null_mut(), bun_ptr::ParentRef::as_mut_ptr)
+            .map_or(core::ptr::null_mut(), bun_core::ptr::ParentRef::as_mut_ptr)
     }
 
     /// Single nonnull-asref dispatch for the set-once `parent` backref.
@@ -533,7 +533,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         // Reject null up front: every dispatch path past this point assumes
         // `self.parent` is set (see the type-invariant doc on `parent_event_loop`).
-        self.parent = Some(bun_ptr::ParentRef::from(
+        self.parent = Some(bun_core::ptr::ParentRef::from(
             core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
         ));
         // reshaped for borrowck — capture *mut Self before borrowing field.
@@ -677,7 +677,7 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
 }
 
 // SAFETY: see `PosixBufferedWriter`'s `LaunderedSelf` impl — identical shape.
-unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
+unsafe impl<Parent: PosixStreamingWriterParent> bun_core::ptr::LaunderedSelf
     for PosixStreamingWriter<Parent>
 {
 }
@@ -1491,7 +1491,7 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 // JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, kept
 // alive across the callback by the parent ref taken in `write()` (derefed via
 // the callback-end scopeguards); single JS thread.
-unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf
+unsafe impl<Parent: WindowsBufferedWriterParent> bun_core::ptr::LaunderedSelf
     for WindowsBufferedWriter<Parent>
 {
 }
@@ -2018,7 +2018,7 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
 
 #[cfg(windows)]
 // SAFETY: see `WindowsBufferedWriter`'s `LaunderedSelf` impl — identical shape.
-unsafe impl<Parent: WindowsStreamingWriterParent> bun_ptr::LaunderedSelf
+unsafe impl<Parent: WindowsStreamingWriterParent> bun_core::ptr::LaunderedSelf
     for WindowsStreamingWriter<Parent>
 {
 }

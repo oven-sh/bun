@@ -1,13 +1,13 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_ptr::detach_lifetime;
+use bun_core::ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
-use bun_paths::{self as Path, PathBuffer};
-use bun_semver::{self as Semver, String as SemverString};
+use bun_core::paths::{self as Path, PathBuffer};
+use bun_core::semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
 
@@ -360,7 +360,7 @@ pub unsafe fn enqueue_parse_npm_package(
     // `Task<'static>` slot lifetime.
     let task_value = unsafe {
         Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
+            package_manager: Some(bun_core::ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
             >(this))),
             log: bun_ast::Log::init(),
@@ -615,7 +615,7 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
 /// `task` must be a non-null `heap::alloc`'d `PatchTask` whose ownership is
 /// being transferred to the patch-task fifo.
 pub unsafe fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
         task as usize,
@@ -634,7 +634,7 @@ pub unsafe fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask
 /// `task` must be a non-null `heap::alloc`'d `PatchTask` whose ownership is
 /// being transferred to the patch-task fifo.
 pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
         task as usize,
@@ -722,7 +722,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 || !dependency.version.npm().is_alias)
         {
             if let Some(new) = this.lockfile.overrides.get(name_hash) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
                     bstr::BStr::new(this.lockfile.str(&dependency.version.literal)),
@@ -983,7 +983,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         }
 
                         if cfg!(debug_assertions) {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 PackageManager,
                                 "enqueueDependency({}, {}, {}, {}) = {}",
                                 id,
@@ -1016,7 +1016,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         }
 
                         if cfg!(debug_assertions) {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 PackageManager,
                                 "enqueueDependency({}, {}, {}, {}) = task {}",
                                 id,
@@ -1109,7 +1109,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 // call below doesn't conflict. `loaded_manifest`
                                                 // is owned by this stack frame and not touched
                                                 // until the call returns.
-                                                let manifest_ref = bun_ptr::BackRef::new(
+                                                let manifest_ref = bun_core::ptr::BackRef::new(
                                                     loaded_manifest.as_ref().unwrap(),
                                                 );
                                                 if let Some(new_resolve_result) =
@@ -1228,7 +1228,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             };
 
             if cfg!(debug_assertions) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     PackageManager,
                     "enqueueDependency({}, {}, {}, {}) = {}",
                     id,
@@ -1327,7 +1327,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let task_id = Task::Id::for_tarball(&url);
 
             if cfg!(debug_assertions) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     PackageManager,
                     "enqueueDependency({}, {}, {}, {}) = {}",
                     id,
@@ -1437,7 +1437,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 if cfg!(debug_assertions) {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         PackageManager,
                         "enqueueDependency({}, {}, {}, {}) = {}",
                         id,
@@ -1527,7 +1527,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let task_id = Task::Id::for_tarball(url);
 
             if cfg!(debug_assertions) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     PackageManager,
                     "enqueueDependency({}, {}, {}, {}) = {}",
                     id,
@@ -1634,7 +1634,7 @@ fn init_extract_task(
     // `Task<'static>` slot lifetime.
     let task_value = unsafe {
         Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
+            package_manager: Some(bun_core::ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
             >(this))),
             log: bun_ast::Log::init(),
@@ -1718,7 +1718,7 @@ fn enqueue_git_clone(
         // `this.preallocated_resolve_tasks` and never outlives the manager.
         // Safe `From<NonNull>` construction preserves the `&mut`-derived write
         // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
+        package_manager: Some(bun_core::ptr::ParentRef::from(core::ptr::NonNull::from(
             &mut *this,
         ))),
         log: bun_ast::Log::init(),
@@ -1795,7 +1795,7 @@ pub fn enqueue_git_checkout(
     // SAFETY: `this` is a live `&mut PackageManager`.
     let task_value = unsafe {
         Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
+            package_manager: Some(bun_core::ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
             >(this))),
             log: bun_ast::Log::init(),
@@ -1902,7 +1902,7 @@ fn enqueue_local_tarball(
         // `this.preallocated_resolve_tasks` and never outlives the manager.
         // Safe `From<NonNull>` construction preserves the `&mut`-derived write
         // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
+        package_manager: Some(bun_core::ptr::ParentRef::from(core::ptr::NonNull::from(
             &mut *this,
         ))),
         log: bun_ast::Log::init(),
@@ -1910,7 +1910,7 @@ fn enqueue_local_tarball(
         request: crate::package_manager_task::Request {
             local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
                 tarball: ExtractTarball {
-                    package_manager: bun_ptr::BackRef::new(this),
+                    package_manager: bun_core::ptr::BackRef::new(this),
                     name: StringOrTinyString::init_append_if_needed(
                         name,
                         &mut crate::network_task::filename_store_appender(),
@@ -2389,7 +2389,7 @@ fn get_or_put_resolved_package(
             // borrow `*this`.
             let name_str = this.lockfile.str_detached(&name);
 
-            let scope = bun_ptr::BackRef::new(
+            let scope = bun_core::ptr::BackRef::new(
                 // SAFETY: `this_ptr` is the live exclusive `this` borrow; `options`
                 // is read-only here and disjoint from the `manifests` mutation below.
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
@@ -2540,8 +2540,8 @@ fn get_or_put_resolved_package(
             // reshaped for borrowck — `manifest`/`find_result`
             // borrow `this.manifests`; detach via `BackRef` so the `&mut *this`
             // call can proceed (`this.manifests` is not mutated by the callee).
-            let manifest_ref: bun_ptr::BackRef<Npm::PackageManifest> =
-                bun_ptr::BackRef::new(manifest);
+            let manifest_ref: bun_core::ptr::BackRef<Npm::PackageManifest> =
+                bun_core::ptr::BackRef::new(manifest);
             get_or_put_resolved_package_with_find_result(
                 // SAFETY: see `this_ptr` note above.
                 unsafe { &mut *this_ptr },
@@ -2571,7 +2571,7 @@ fn get_or_put_resolved_package(
                     // lockfile string buffer before any other mutation.
                     let folder_path = this.lockfile.str_detached(&folder);
                     let mut buf2 = PathBuffer::uninit();
-                    let folder_path_abs = if bun_paths::is_absolute(folder_path) {
+                    let folder_path_abs = if bun_core::paths::is_absolute(folder_path) {
                         folder_path
                     } else {
                         Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
@@ -2683,7 +2683,7 @@ fn get_or_put_resolved_package(
             // lockfile string buffer before any other mutation.
             let workspace_path = this.lockfile.str_detached(&workspace_path_raw);
             let mut buf2 = PathBuffer::uninit();
-            let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
+            let workspace_path_u8 = if bun_core::paths::is_absolute(workspace_path) {
                 workspace_path
             } else {
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(

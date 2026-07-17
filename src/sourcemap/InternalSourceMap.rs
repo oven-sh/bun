@@ -88,7 +88,7 @@ use core::mem::size_of;
 use core::ptr;
 
 use crate::Ordinal;
-use bun_collections::VecExt as _;
+use bun_core::collections::VecExt as _;
 use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;

@@ -6,7 +6,7 @@ pub use error::{Error, Result};
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
-use bun_collections::VecExt as _;
+use bun_core::collections::VecExt as _;
 
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
@@ -300,7 +300,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 }
                 ReturnCode::MemError => {
                     self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                    return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                 }
                 ReturnCode::BufError => {
                     // BufError with avail_in == 0 means we need more input data
@@ -351,13 +351,13 @@ bun_core::impl_tag_error!(ZlibError);
 // `ZlibCompressorArrayList`. Intentionally
 // `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
 // heap-breakdown variant used by `ZlibReaderArrayList`).
-pub(crate) use bun_alloc::c_thunks::{
+pub(crate) use bun_core::alloc_impl::c_thunks::{
     mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc,
 };
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
-    bun_alloc::c_thunks_for_zone!("zlib");
+    bun_core::c_thunks_for_zone!("zlib");
     pub(crate) use calloc_items as alloc;
 }
 

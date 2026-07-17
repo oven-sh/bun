@@ -1,5 +1,5 @@
 use crate::node::BlobOrStringOrBuffer as JSArgument;
-use bun_collections::VecExt as _;
+use bun_core::collections::VecExt as _;
 use bun_core::OwnedString;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
@@ -85,7 +85,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 ///    host functions.
 #[inline]
 fn send_err_to_js(global: &JSGlobalObject, message: &str, err: &crate::Error) -> JsResult<JSValue> {
-    use bun_valkey::valkey_protocol::RedisError;
+    use bun_core::valkey::valkey_protocol::RedisError;
     let redis_err = err.name().parse().unwrap_or(RedisError::ConnectionClosed);
     Ok(protocol::valkey_error_to_js(global, message, redis_err))
 }

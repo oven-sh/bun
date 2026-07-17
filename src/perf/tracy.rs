@@ -625,8 +625,8 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
 
                 if let Some(path) = env_var::BUN_TRACY_PATH.get() {
                     // Copy into a NUL-terminated PathBuffer.
-                    let mut buf = bun_paths::PathBuffer::uninit();
-                    let zpath = bun_paths::resolve_path::z(path, &mut buf);
+                    let mut buf = bun_core::paths::PathBuffer::uninit();
+                    let zpath = bun_core::paths::resolve_path::z(path, &mut buf);
                     if let Some(handle) = bun_sys::dlopen(zpath, rtld) {
                         HANDLE.store(handle, Ordering::Release);
                         break 'get;

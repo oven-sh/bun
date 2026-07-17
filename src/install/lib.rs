@@ -10,10 +10,10 @@
 // lifecycle_script_runner.rs).
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
-// `bun_output::declare_scope!` / `scoped_log!` — the macros live at
+// `bun_core::declare_scope!` / `scoped_log!` — the macros live at
 // `bun_core` crate root (#[macro_export]); alias the crate so the
-// `bun_output::` path resolves.
-extern crate bun_analytics as analytics;
+// `bun_core::` path resolves.
+use bun_core::analytics;
 extern crate bun_core as bun_output;
 
 /// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
@@ -287,8 +287,8 @@ pub use resolution::Resolution;
 // local PnpmMatcher.rs duplicate (4-arg `from_expr`, dead) was deleted.
 pub use bun_install_types::NodeLinker::PnpmMatcher;
 
-pub use bun_collections::identity_context::ArrayIdentityContext;
-pub use bun_collections::identity_context::IdentityContext;
+pub use bun_core::collections::identity_context::ArrayIdentityContext;
+pub use bun_core::collections::identity_context::IdentityContext;
 
 pub use external::ExternalPackageNameHashList;
 pub use external::ExternalSlice;
@@ -395,7 +395,7 @@ pub struct PackageJSON {
 
 #[derive(Default)]
 pub struct PackageJSONDependencyMap {
-    pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
+    pub map: bun_core::collections::ArrayHashMap<bun_core::semver::String, Dependency>,
     // Erased borrow of the package.json source contents (mirrors
     // `bun_resolver::package_json::DependencyMap::source_buf`, which is
     // likewise `'static`-erased); kept alive by the originating
@@ -439,7 +439,7 @@ pub mod ShellCompletions {
     impl Shell {
         pub fn from_env(shell: &[u8]) -> Shell {
             use bun_core::strings;
-            let basename = bun_paths::basename(shell);
+            let basename = bun_core::paths::basename(shell);
             if strings::eql_comptime(basename, b"bash") {
                 Shell::Bash
             } else if strings::eql_comptime(basename, b"zsh") {
@@ -508,7 +508,7 @@ impl RunCommand {
     };
 
     fn find_shell_impl<'a>(
-        buf: &'a mut bun_paths::PathBuffer,
+        buf: &'a mut bun_core::paths::PathBuffer,
         path: &[u8],
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
@@ -561,7 +561,7 @@ impl RunCommand {
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
         ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::PathBuffer::uninit();
+            let mut scratch = bun_core::paths::PathBuffer::uninit();
             let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
@@ -698,7 +698,7 @@ impl RunCommand {
                             // would make every `--bun` child of the SECOND
                             // binary silently exec the FIRST. Verify the target
                             // before reusing; replace it once if stale.
-                            let mut buf = bun_paths::PathBuffer::uninit();
+                            let mut buf = bun_core::paths::PathBuffer::uninit();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())
                                 .unwrap_or(false);
@@ -713,15 +713,15 @@ impl RunCommand {
                 }
             }
 
-            if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
-                path.push(bun_paths::DELIMITER);
+            if !path.is_empty() && *path.last().unwrap() != bun_core::paths::DELIMITER {
+                path.push(bun_core::paths::DELIMITER);
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
-            path.push(bun_paths::DELIMITER);
+            path.push(bun_core::paths::DELIMITER);
             Ok(())
         }
 
@@ -730,7 +730,7 @@ impl RunCommand {
             use bun_core::strings;
             use bun_sys::windows as win;
 
-            let mut target_path_buffer = bun_paths::WPathBuffer::default();
+            let mut target_path_buffer = bun_core::paths::WPathBuffer::default();
             let prefix: &[u16] = strings::w!("\\??\\");
 
             // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
@@ -823,15 +823,15 @@ impl RunCommand {
                 }
             }
 
-            if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
-                path.push(bun_paths::DELIMITER);
+            if !path.is_empty() && *path.last().unwrap() != bun_core::paths::DELIMITER {
+                path.push(bun_core::paths::DELIMITER);
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
-            path.push(bun_paths::DELIMITER);
+            path.push(bun_core::paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())
         }
@@ -840,18 +840,18 @@ impl RunCommand {
 
 /// Process-lifetime arena for the install-tier `Transpiler` constructed in
 /// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
-/// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
+/// `runtime/cli/run_command.rs` — `bun_core::alloc_impl::Arena` is `!Sync`, so guard a
 /// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
 /// `Box::leak`).
-fn install_runner_arena() -> &'static bun_alloc::Arena {
+fn install_runner_arena() -> &'static bun_core::alloc_impl::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
     // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
     // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
+    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_core::alloc_impl::Arena>> =
         bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
     ONCE.call_once(|| {
         // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
+        unsafe { (*ARENA.get()).write(bun_core::alloc_impl::Arena::new()) };
     });
     // SAFETY: initialized exactly once above. `configure_env_for_run` is only
     // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
@@ -1024,7 +1024,7 @@ pub(crate) fn initialize_store() {
 /// That adds up in multi-threaded scenarios.
 /// ASTMemoryAllocator uses a smaller fixed buffer allocator
 pub(crate) fn initialize_mini_store() {
-    use bun_alloc::Arena;
+    use bun_core::alloc_impl::Arena;
 
     struct MiniStore {
         heap: Arena,

@@ -325,7 +325,7 @@ impl JSPromise {
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
             // SAFETY: `this` is `&mut Wrapper<F>` passed below.
-            let this = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(this) };
+            let this = unsafe { bun_core::ptr::callback_ctx::<Wrapper<F>>(this) };
             // `g` is a live JSGlobalObject; safe ZST-handle deref (panics on null).
             let g = JSGlobalObject::opaque_ref(g);
             let f = this.f.take().unwrap();

@@ -3,7 +3,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
 
 use bun_core::ZStr;
-use bun_http_types::Method::Method;
+use bun_core::http_types::Method::Method;
 
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::uws_ws;

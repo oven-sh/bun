@@ -47,7 +47,7 @@ pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoop
 // a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /
 // `jsc::VirtualMachine` directly. Owner is an erased `*mut jsc::EventLoop`;
 // `bun_jsc::event_loop` provides the `Jsc` arm.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub JsEventLoop[Jsc] {
         fn iteration_number() -> u64;
         fn file_polls() -> *mut bun_io::file_poll::Store;

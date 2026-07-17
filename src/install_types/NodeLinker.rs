@@ -44,12 +44,12 @@ pub mod npm {
 
         /// `bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_url))`
         /// — i.e. hash of `b"https://registry.npmjs.org"` (no trailing `/`).
-        // Computed on use because `bun_wyhash::Wyhash11::hash` is not a
+        // Computed on use because `bun_core::wyhash::Wyhash11::hash` is not a
         // `const fn` (only `Wyhash::hash_const` — a different algorithm —
         // exists). Cheap and cold; not worth a cached static.
         #[inline]
         pub fn default_url_hash() -> u64 {
-            use bun_wyhash::Wyhash11;
+            use bun_core::wyhash::Wyhash11;
             // strings.withoutTrailingSlash strips exactly one trailing '/'.
             Wyhash11::hash(
                 0,
@@ -75,7 +75,7 @@ pub mod npm {
 
 use core::ptr::NonNull;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 use bun_core::{String as BunString, strings};
@@ -168,7 +168,7 @@ impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
     // (`EString`/`EArray` via `StoreRef<E::*>`). The arena-taking
     // `E::String::slice` / `Expr::as_string_cloned` signatures get a local
-    // `bun_alloc::Arena` (PORTING.md §Allocators: AST=bumpalo) used only for
+    // `bun_core::alloc_impl::Arena` (PORTING.md §Allocators: AST=bumpalo) used only for
     // transient UTF-16→UTF-8 transcoding inside `slice`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,

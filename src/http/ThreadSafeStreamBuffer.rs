@@ -3,12 +3,12 @@ use core::ffi::c_void;
 use bun_io::StreamBuffer;
 use bun_threading::Mutex;
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_core::ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {
     pub buffer: StreamBuffer,
     pub mutex: Mutex,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
-    pub ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
+    pub ref_count: bun_core::ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
     /// callback will be called passing the context for the http callback
     /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
     pub callback: Option<Callback>,
@@ -25,7 +25,7 @@ impl Callback {
             // SAFETY: fn(*mut T) and fn(*mut c_void) have identical ABI;
             // `context` is only ever passed back to this callback, which
             // knows its real type.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
+            callback: unsafe { bun_core::ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
             context: context.cast::<c_void>(),
         }
     }
@@ -41,7 +41,7 @@ impl Default for ThreadSafeStreamBuffer {
             buffer: StreamBuffer::default(),
             mutex: Mutex::default(),
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
-            ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
+            ref_count: bun_core::ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
         }
     }
@@ -72,12 +72,12 @@ impl ThreadSafeStreamBuffer {
 
     pub fn ref_(this: core::ptr::NonNull<Self>) {
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this.as_ptr()) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::ref_(this.as_ptr()) };
     }
 
     pub fn deref(this: core::ptr::NonNull<Self>) {
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
+        unsafe { bun_core::ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
     }
 
     pub fn acquire(&mut self) -> &mut StreamBuffer {

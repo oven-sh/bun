@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
@@ -606,7 +606,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let symbols = SymbolMap::init_list(Default::default());
             let mut printer = css::Printer::new(
                 &arena,
-                bun_alloc::ArenaVec::<u8>::new_in(&arena),
+                bun_core::alloc_impl::ArenaVec::<u8>::new_in(&arena),
                 &mut dest,
                 &css::PrinterOptions::default(),
                 None,

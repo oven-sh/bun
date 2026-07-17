@@ -1,8 +1,8 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 
 use crate::StoreRef;
 use crate::b::B;
@@ -140,7 +140,7 @@ pub struct ToExprWrapper {
     /// `P<'a>` and outlives every `ToExprWrapper` (which is stored on `P` and
     /// only used during the visit pass). `None` only for the pre-wire
     /// `dangling()` placeholder; niche-packed so layout matches `*const Arena`.
-    arena: Option<bun_ptr::BackRef<Arena>>,
+    arena: Option<bun_core::ptr::BackRef<Arena>>,
     wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
 }
 
@@ -162,7 +162,7 @@ impl ToExprWrapper {
     #[inline]
     pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
         Self {
-            arena: Some(bun_ptr::BackRef::new(arena)),
+            arena: Some(bun_core::ptr::BackRef::new(arena)),
             wrap,
         }
     }
@@ -222,7 +222,7 @@ impl Binding {
                 let bump = wrapper.arena();
                 let items = b.items();
                 let len = items.len();
-                let mut exprs = bun_alloc::ArenaVec::with_capacity_in(len, bump);
+                let mut exprs = bun_core::alloc_impl::ArenaVec::with_capacity_in(len, bump);
                 let mut i: usize = 0;
                 while i < len {
                     let item = &items[i];
@@ -250,7 +250,7 @@ impl Binding {
                 let b = b.get();
                 let bump = wrapper.arena();
                 let props_in = b.properties();
-                let mut properties = bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
+                let mut properties = bun_core::alloc_impl::ArenaVec::with_capacity_in(props_in.len(), bump);
                 for item in props_in.iter() {
                     properties.push(G::Property {
                         flags: item.flags,

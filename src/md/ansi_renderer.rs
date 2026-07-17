@@ -4,7 +4,7 @@
 
 use std::io::Write as _;
 
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::output::ansi_b;
 
 use bun_core::strings;
@@ -302,9 +302,9 @@ impl<'a> AnsiRenderer<'a> {
         r
     }
 
-    pub fn to_owned_slice(&mut self) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    pub fn to_owned_slice(&mut self) -> Result<Box<[u8]>, bun_core::alloc_impl::AllocError> {
         if self.out.oom {
-            return Err(bun_alloc::AllocError);
+            return Err(bun_core::alloc_impl::AllocError);
         }
         Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
     }
@@ -2619,14 +2619,14 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     }
 
     // Percent-decode the path so file:///foo/bar%20baz works.
-    let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
+    let decoded = bun_core::url::PercentEncoding::decode_alloc(path).ok()?;
 
     // Resolve to an absolute path. bun.path.joinAbsString returns a
     // slice in a threadlocal buffer — dupe it before leaving this fn.
     // Prefer the markdown file's directory when provided; otherwise fall
     // back to cwd so `Bun.markdown.ansi()` callers without a source path
     // still work.
-    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+    let mut cwd_buf = bun_core::paths::PathBuffer::uninit();
     let base: &[u8] = if let Some(d) = base_dir {
         d
     } else {
@@ -2636,15 +2636,15 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
         }
     };
     let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
+        bun_core::paths::resolve_path::join_abs_string::<bun_core::paths::platform::Auto>(base, &[&decoded]);
     let abs = Box::<[u8]>::from(joined);
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
     // for any entry, including directories — and emitKittyImageFile sets
     // q=2 so the terminal silently drops directory paths without falling
     // through to alt text.
-    let mut zbuf = bun_paths::PathBuffer::uninit();
-    let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
+    let mut zbuf = bun_core::paths::PathBuffer::uninit();
+    let abs_z = bun_core::paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
         Ok(s) => {
             if !bun_sys::S::ISREG(s.st_mode as _) {

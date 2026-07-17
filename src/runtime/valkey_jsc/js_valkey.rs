@@ -12,7 +12,7 @@ use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
     JsRef, JsResult,
 };
-use bun_ptr::{AsCtxPtr, BackRef};
+use bun_core::ptr::{AsCtxPtr, BackRef};
 use bun_uws as uws;
 
 use super::protocol_jsc;
@@ -20,7 +20,7 @@ use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
 use bun_jsc::url::URL;
-use bun_valkey::valkey_protocol as protocol;
+use bun_core::valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
 // Widened to `JsResult<T>` to match `valkey.rs`; can be narrowed once
@@ -72,7 +72,7 @@ fn deref_guard(
     scopeguard::guard(this, drop_fn as fn(*const JSValkeyClient))
 }
 
-bun_output::define_scoped_log!(debug, RedisJS, visible);
+bun_core::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
 
@@ -381,7 +381,7 @@ pub struct JSValkeyClient {
 
     pub timer: JsCell<Timer::EventLoopTimer>,
     pub reconnect_timer: JsCell<Timer::EventLoopTimer>,
-    pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
+    pub ref_count: bun_core::ptr::RefCount<JSValkeyClient>,
 }
 
 bun_event_loop::impl_timer_owner!(JSValkeyClient;
@@ -393,9 +393,9 @@ bun_event_loop::impl_timer_owner!(JSValkeyClient;
 // live in that generated module.
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
-impl bun_ptr::RefCounted for JSValkeyClient {
+impl bun_core::ptr::RefCounted for JSValkeyClient {
     type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_core::ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` is live.
         unsafe { &raw mut (*this).ref_count }
     }
@@ -409,7 +409,7 @@ impl JSValkeyClient {
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `self` is live; intrusive count is interior-mutable.
-        unsafe { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
+        unsafe { bun_core::ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     /// Decrement the intrusive refcount; on zero runs [`deinit`](Self::deinit)
     /// which frees the heap allocation. After this returns `this` may dangle.
@@ -426,7 +426,7 @@ impl JSValkeyClient {
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
-        unsafe { bun_ptr::RefCount::deref(this) };
+        unsafe { bun_core::ptr::RefCount::deref(this) };
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -553,7 +553,7 @@ impl JSValkeyClient {
         // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
         // `BackRef` liveness invariant holds; `Deref` encapsulates the single
         // `NonNull::as_ref` site.
-        let parsed_url = bun_ptr::BackRef::from(parsed_url);
+        let parsed_url = bun_core::ptr::BackRef::from(parsed_url);
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();
@@ -693,7 +693,7 @@ impl JSValkeyClient {
 
         // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
         Ok(JSValkeyClient::new(JSValkeyClient {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
@@ -779,7 +779,7 @@ impl JSValkeyClient {
     pub fn clone_without_connecting(
         &self,
         global_object: &JSGlobalObject,
-    ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
+    ) -> Result<*mut JSValkeyClient, bun_core::alloc_impl::AllocError> {
         let global_object = GlobalRef::from(global_object);
         let vm: &'static VirtualMachine = global_object.bun_vm();
 
@@ -803,7 +803,7 @@ impl JSValkeyClient {
         };
 
         Ok(JSValkeyClient::new(JSValkeyClient {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,

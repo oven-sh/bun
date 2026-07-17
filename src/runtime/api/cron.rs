@@ -25,8 +25,8 @@ use bun_jsc::{
     JSValue, JsCell, JsRef, JsResult,
 };
 #[cfg(not(target_os = "macos"))]
-use bun_paths::PathBuffer;
-use bun_paths::{self as path};
+use bun_core::paths::PathBuffer;
+use bun_core::paths::{self as path};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
@@ -1405,7 +1405,7 @@ impl Drop for CronRemoveJob {
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 #[bun_jsc::JsClass(no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::destroy_impl)]
 pub struct CronJob {
     // bun.ptr.RefCount(...) intrusive — keep raw count for IntrusiveRc compat.
@@ -1449,7 +1449,7 @@ pub enum ClearMode {
 }
 
 /// RAII owner for one intrusive refcount on a [`CronJob`].
-type CronJobDerefOnDrop = bun_ptr::ScopedRef<CronJob>;
+type CronJobDerefOnDrop = bun_core::ptr::ScopedRef<CronJob>;
 
 impl CronJob {
     /// `CellRefCounted::destroy` target (refcount hit zero).
@@ -1628,7 +1628,7 @@ impl CronJob {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+        bun_core::ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -2425,15 +2425,15 @@ fn resolve_path(
 }
 
 #[cfg(any(target_os = "macos", windows))]
-fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
+fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_core::alloc_impl::AllocError> {
     let mut v = Vec::new();
-    v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
+    v.write_fmt(args).map_err(|_| bun_core::alloc_impl::AllocError)?;
     Ok(ZString::from_vec(v))
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 #[cfg(not(target_os = "macos"))]
-fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
+fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_core::alloc_impl::AllocError> {
     let mut name_buf = PathBuffer::uninit();
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
@@ -2443,7 +2443,7 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
         name_buf.0.as_mut_slice(),
         bun_core::fast_random(),
     )
-    .map_err(|_| bun_alloc::AllocError)?;
+    .map_err(|_| bun_core::alloc_impl::AllocError)?;
     let joined = path::resolve_path::join_abs_string::<path::platform::Auto>(
         RealFS::platform_temp_dir(),
         &[name.as_bytes()],
@@ -2488,7 +2488,7 @@ pub fn filter_crontab(
     content: &[u8],
     title: &[u8],
     result: &mut Vec<u8>,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     let mut marker = Vec::new();
     let _ = write!(&mut marker, "# bun-cron: {}", bstr::BStr::new(title));
     let mut skip_next = false;
@@ -2510,7 +2510,7 @@ pub fn filter_crontab(
 }
 
 /// XML-escape a string for safe embedding in plist XML.
-pub fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
+pub fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_core::alloc_impl::AllocError> {
     let mut needs_escape = false;
     for &c in input {
         if c == b'&' || c == b'<' || c == b'>' || c == b'"' || c == b'\'' {

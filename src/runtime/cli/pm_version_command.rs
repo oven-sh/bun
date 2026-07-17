@@ -8,7 +8,7 @@ use crate::api::bun::process::sync::{
 };
 use crate::cli::command;
 use crate::cli::run_command::RunCommand;
-use bun_alloc::{AllocError, Arena};
+use bun_core::alloc_impl::{AllocError, Arena};
 use bun_ast::ExprData;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
@@ -16,8 +16,8 @@ use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
-use bun_semver as Semver;
+use bun_core::paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
+use bun_core::semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
 

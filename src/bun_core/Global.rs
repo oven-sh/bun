@@ -639,7 +639,7 @@ unsafe extern "C" {
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) -> ! {
     IS_EXITING.store(true, Ordering::Relaxed);
-    // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
+    // MOVE_DOWN: bun_core::analytics::features → bun_core (move-in pass).
     crate::features::EXITED.fetch_add(1, Ordering::Relaxed);
 
     // If we are crashing, allow the crash handler to finish it's work.

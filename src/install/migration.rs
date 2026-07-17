@@ -1,11 +1,12 @@
 use crate::Error;
 use bun_ast::{E, ExprData};
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_core::collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, zstr};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
-use bun_semver::query::token::Wildcard;
-use bun_semver::{self as Semver, SlicedString, String as SemverString};
+#[allow(unused_imports)]
+use bun_core::paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_core::semver::query::token::Wildcard;
+use bun_core::semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
 use crate::bin::{self, Bin};
@@ -30,10 +31,10 @@ use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
 use crate::yarn;
 
-bun_output::declare_scope!(migrate, visible);
+bun_core::declare_scope!(migrate, visible);
 
 macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(migrate, $($args)*) };
+    ($($args:tt)*) => { bun_core::scoped_log!(migrate, $($args)*) };
 }
 
 pub fn detect_and_load_other_lockfile<'a>(
@@ -614,7 +615,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         // Construct the string buf with explicit disjoint field borrows so the
         // borrow checker permits concurrent access to `this.buffers.extern_strings`
         // (used in the multi-entry `bin` map branch below).
-        let mut sb = bun_semver::semver_string::Buf {
+        let mut sb = bun_core::semver::semver_string::Buf {
             bytes: &mut this.buffers.string_bytes,
             pool: &mut this.string_pool,
         };

@@ -6,7 +6,7 @@
 //! back-edge into the schema crate).
 
 use crate::Range;
-use bun_paths::fs::Path;
+use bun_core::paths::fs::Path;
 
 // Re-exported here (canonical at crate root) so callers that path through
 // `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
@@ -14,7 +14,7 @@ pub use crate::{ImportKind, Index, Loader};
 
 pub struct ImportRecord {
     pub range: Range,
-    // TODO: lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
+    // TODO: lifetime — `bun_core::paths::fs::Path<'a>` borrows resolver-owned
     // strings. Uses 'static (PORTING.md: no struct lifetime params).
     pub path: Path<'static>,
     pub kind: ImportKind,
@@ -103,7 +103,7 @@ bitflags::bitflags! {
     }
 }
 
-pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
+pub type List<'a> = bun_core::alloc_impl::ArenaVec<'a, ImportRecord>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

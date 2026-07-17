@@ -12,15 +12,15 @@ use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
-use bun_paths::PathBuffer;
+use bun_core::paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
-bun_output::declare_scope!(WindowsNamedPipeContext, visible);
+bun_core::declare_scope!(WindowsNamedPipeContext, visible);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = schedule_deinit)]
 pub struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
@@ -44,7 +44,7 @@ pub struct WindowsNamedPipeContext {
 
 // Intrusive refcount: when count hits zero, calls `schedule_deinit` (NOT immediate free).
 // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]` above.
-pub type RefCount = bun_ptr::IntrusiveRc<WindowsNamedPipeContext>;
+pub type RefCount = bun_core::ptr::IntrusiveRc<WindowsNamedPipeContext>;
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
@@ -73,8 +73,8 @@ pub enum EventState {
 /// `Copy` so matching by value avoids `&self.socket` aliasing `&mut self.named_pipe`.
 #[derive(Copy, Clone)]
 pub enum SocketType {
-    Tls(bun_ptr::ThisPtr<TLSSocket>),
-    Tcp(bun_ptr::ThisPtr<TCPSocket>),
+    Tls(bun_core::ptr::ThisPtr<TLSSocket>),
+    Tcp(bun_core::ptr::ThisPtr<TCPSocket>),
     None,
 }
 
@@ -338,7 +338,7 @@ impl WindowsNamedPipeContext {
             // `rc_ref` projects `ref_count` via raw place — `(*p).ref_()` would
             // autoref `&Self` over the whole struct, but `WindowsNamedPipe::r#ref`
             // holds `&mut (*this).named_pipe` across this callback.
-            ref_ctx: |p| unsafe { <Self as bun_ptr::AnyRefCounted>::rc_ref(p.cast::<Self>()) },
+            ref_ctx: |p| unsafe { <Self as bun_core::ptr::AnyRefCounted>::rc_ref(p.cast::<Self>()) },
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the allocation is live for the call (see `ref_ctx`).
             deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
             on_open: |p| Self::on_open(p.cast::<Self>()),
@@ -468,7 +468,7 @@ impl WindowsNamedPipeContext {
 
 impl Drop for WindowsNamedPipeContext {
     fn drop(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
+        bun_core::scoped_log!(WindowsNamedPipeContext, "deinit");
         // Deref the wrapped socket, then let `named_pipe` drop.
         match_socket!(
             core::mem::replace(&mut self.socket, SocketType::None),

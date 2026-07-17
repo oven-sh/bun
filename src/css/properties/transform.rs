@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;

@@ -15,7 +15,7 @@ use crate::shell::{ExitCode, ShellErr};
 
 pub struct Pipeline {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Pipeline>,
+    pub node: bun_core::ptr::BackRef<ast::Pipeline>,
     pub io: IO,
     pub exited_count: u32,
     pub cmds: Option<Box<[CmdOrResult]>>,
@@ -51,7 +51,7 @@ impl Pipeline {
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
             base: Base::new(StateKind::Pipeline, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             exited_count: 0,
             cmds: None,

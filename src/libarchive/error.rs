@@ -3,13 +3,13 @@ pub enum Error {
     #[error("Fail")]
     Fail,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
+    Paths(#[from] bun_core::paths::Error),
 }
 
 impl Error {

@@ -2,13 +2,13 @@ use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_core::paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
-use bun_url::URL;
+use bun_core::url::URL;
 use bun_which::which;
 
 use bun_core::analytics;
@@ -192,7 +192,7 @@ impl<'a> Loader<'a> {
 
     pub fn get_node_path<'b>(
         &mut self,
-        fs: &bun_paths::fs::FileSystem,
+        fs: &bun_core::paths::fs::FileSystem,
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
@@ -446,7 +446,7 @@ impl<'a> Loader<'a> {
         false
     }
 
-    pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
+    pub fn load_ccache_path(&mut self, fs: &bun_core::paths::fs::FileSystem) {
         if DID_LOAD_CCACHE_PATH.load(Ordering::Relaxed) {
             return;
         }
@@ -454,7 +454,7 @@ impl<'a> Loader<'a> {
         let _ = self.load_ccache_path_impl(fs);
     }
 
-    fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
+    fn load_ccache_path_impl(&mut self, fs: &bun_core::paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
         let mut buf = PathBuffer::uninit();
@@ -498,7 +498,7 @@ impl<'a> Loader<'a> {
     /// only when no node could be discovered and no override was supplied.
     pub fn load_node_js_config(
         &mut self,
-        fs: &bun_paths::fs::FileSystem,
+        fs: &bun_core::paths::fs::FileSystem,
         override_node: &[u8],
     ) -> crate::Result<bool> {
         let mut buf = PathBuffer::uninit();
@@ -1330,9 +1330,9 @@ pub struct HashTableValue {
 // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
 // some strings collide.
 #[cfg(not(windows))]
-pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
+pub type HashTable = bun_core::collections::StringArrayHashMap<HashTableValue>;
 #[cfg(windows)]
-pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
+pub type HashTable = bun_core::collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
 
 pub struct Map {
     pub map: HashTable,

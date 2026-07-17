@@ -41,9 +41,9 @@ pub enum Error {
     #[error("JSError")]
     Js(bun_core::JsError),
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
@@ -59,7 +59,7 @@ pub enum Error {
     #[error(transparent)]
     Sourcemap(#[from] bun_sourcemap::Error),
     #[error(transparent)]
-    Url(#[from] bun_url::Error),
+    Url(#[from] bun_core::url::Error),
     #[error(transparent)]
     OptionsTypes(#[from] bun_options_types::Error),
     #[error(transparent)]
@@ -94,7 +94,7 @@ impl From<crate::linker_context_mod::LinkError> for Error {
     fn from(e: crate::linker_context_mod::LinkError) -> Self {
         use crate::linker_context_mod::LinkError;
         match e {
-            LinkError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            LinkError::OutOfMemory => Self::Alloc(bun_core::alloc_impl::AllocError),
             LinkError::BuildFailed | LinkError::ImportResolutionFailed => Self::BuildFailed,
         }
     }

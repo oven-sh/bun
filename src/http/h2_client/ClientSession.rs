@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_core::collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
 
 use super::stream::{State as StreamState, Stream};
@@ -31,7 +31,7 @@ type u31 = u32;
 #[allow(non_camel_case_types)]
 type u24 = u32;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Ref holders: the socket-ext tag while the session is the ActiveSocket
     /// (1), the context's active_h2_sessions registry while listed (1), and
@@ -121,7 +121,7 @@ pub struct ClientSession {
 }
 
 /// RAII guard alias — bumps on construction, derefs on Drop.
-type SessionRefGuard = bun_ptr::ScopedRef<ClientSession>;
+type SessionRefGuard = bun_core::ptr::ScopedRef<ClientSession>;
 
 /// Upgrade a `*mut Stream` from `self.streams` to `&mut Stream`.
 ///
@@ -136,14 +136,14 @@ pub(super) fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
     unsafe { &mut *ptr }
 }
 
-/// Shared variant of [`stream_mut`]. Returns a [`bun_ptr::ParentRef`] so the
+/// Shared variant of [`stream_mut`]. Returns a [`bun_core::ptr::ParentRef`] so the
 /// shared deref goes through the safe `Deref` impl instead of an open-coded
 /// raw-ptr reborrow; same INVARIANT as [`stream_mut`] (heap-boxed, owned by
 /// `streams`, HTTP-thread-only) ⇒ the stream outlives the handle. Mirrors
 /// [`crate::http_context::HTTPContext::h2_session_ref`].
 #[inline(always)]
-pub(super) fn stream_ref(ptr: *const Stream) -> bun_ptr::ParentRef<Stream> {
-    bun_ptr::ParentRef::from(NonNull::new(ptr.cast_mut()).expect("streams entry is non-null"))
+pub(super) fn stream_ref(ptr: *const Stream) -> bun_core::ptr::ParentRef<Stream> {
+    bun_core::ptr::ParentRef::from(NonNull::new(ptr.cast_mut()).expect("streams entry is non-null"))
 }
 
 /// Upgrade a `*mut HTTPClient` from `pending_attach` to `&mut HTTPClient`.
@@ -657,11 +657,11 @@ impl ClientSession {
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
-        // Captured as `bun_ptr::RawSlice` (encapsulated outlives-holder
+        // Captured as `bun_core::ptr::RawSlice` (encapsulated outlives-holder
         // invariant) so the loop can borrow `self.socket` while still
         // subslicing `write_buffer`. The buffer is not reallocated until
         // `wrote()` after the loop.
-        let pending = bun_ptr::RawSlice::new(self.write_buffer.slice());
+        let pending = bun_core::ptr::RawSlice::new(self.write_buffer.slice());
         if pending.is_empty() {
             return Ok(false);
         }
@@ -701,10 +701,10 @@ impl ClientSession {
         } else {
             self.read_buffer.extend_from_slice(incoming);
             // `parse_frames` takes `&mut self` plus a view into
-            // `self.read_buffer`, so capture the view as `bun_ptr::RawSlice`:
+            // `self.read_buffer`, so capture the view as `bun_core::ptr::RawSlice`:
             // read_buffer is not reallocated during parse_frames (only
             // consumed), so the outlives-holder invariant holds for the call.
-            let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
+            let buf = bun_core::ptr::RawSlice::new(self.read_buffer.as_slice());
             let consumed = dispatch::parse_frames(self, buf.slice());
             self.read_buffer.drain_front(consumed);
         }
@@ -801,7 +801,7 @@ impl ClientSession {
         self.read_buffer.extend_from_slice(incoming);
         // See on_data note — `RawSlice` carries the outlives-holder invariant
         // (read_buffer is not reallocated during parse_frames).
-        let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
+        let buf = bun_core::ptr::RawSlice::new(self.read_buffer.as_slice());
         let consumed = dispatch::parse_frames(self, buf.slice());
         let tail = self.read_buffer.len() - consumed;
         if tail > 0 && consumed > 0 {

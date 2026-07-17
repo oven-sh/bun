@@ -542,7 +542,7 @@ impl HTMLRewriter {
 
 // ───────────────────────── BufferOutputSink ──────────────────────────────
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct BufferOutputSink {
     // Intrusive RefCount; *Self is the `SinkRef` carried inside `rewriter`.
     ref_count: Cell<u32>,
@@ -600,7 +600,7 @@ impl BufferOutputSink {
             tmp_sync_error: None,
         }));
         // SAFETY: `sink` is the `heap::into_raw` allocation above; refcount >= 1.
-        let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
+        let _sink_guard = unsafe { bun_core::ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // Note: do not hold a long-lived `&mut *sink` here — the same
         // allocation is also written through the raw pointer by the lol-html
         // output-sink callback during `bufferer.run()` and by `deref(sink)`
@@ -809,7 +809,7 @@ impl BufferOutputSink {
     ) {
         // SAFETY: `sink` was ref'd in `init()` before scheduling this callback;
         // refcount > 0 so the allocation is live. `adopt` consumes that +1 on Drop.
-        let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
+        let _g = unsafe { bun_core::ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // Note: do not materialise `&mut *sink` here — the rewriter
         // write/end calls below re-enter `SinkRef::handle_chunk`
         // through the stored raw pointer, which forms
@@ -1485,7 +1485,7 @@ fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsRes
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1543,7 +1543,7 @@ impl TextChunk {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 }
 
@@ -1552,7 +1552,7 @@ impl_wrapper_like!(TextChunk, RawTextChunk);
 // ──────────────────────────── DocType ────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1564,7 +1564,7 @@ impl DocType {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 
     pub fn init(doctype: *mut RawDoctype) -> *mut DocType {
@@ -1622,7 +1622,7 @@ impl_wrapper_like!(DocType, RawDoctype);
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1645,7 +1645,7 @@ impl DocEnd {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 }
 
@@ -1654,7 +1654,7 @@ impl_wrapper_like!(DocEnd, RawDocumentEnd);
 // ──────────────────────────── Comment ────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1722,7 +1722,7 @@ impl Comment {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 }
 
@@ -1731,7 +1731,7 @@ impl_wrapper_like!(Comment, RawComment);
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1768,7 +1768,7 @@ impl EndTag {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 
     lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
@@ -1819,7 +1819,7 @@ impl_wrapper_like!(EndTag, RawEndTag);
 type RawAttributeIterator = core::slice::Iter<'static, lol_html::html_content::Attribute<'static>>;
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = AttributeIterator::destroy_on_zero)]
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
@@ -1910,7 +1910,7 @@ impl AttributeIterator {
 // ──────────────────────────── Element ────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Element::destroy_on_zero)]
 pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
@@ -1953,7 +1953,7 @@ impl Element {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 
     /// Detach every `AttributeIterator` we handed to JS. Called when the

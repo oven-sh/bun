@@ -159,7 +159,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 // Handle OOM gracefully here (error → 500); use try_reserve so
                 // allocation failure surfaces as an error instead of an abort.
                 if body.try_reserve(chunk.len()).is_err() {
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                    return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                 }
                 body.extend_from_slice(chunk);
                 // SAFETY: wrap is the original heap-allocated pointer; the &mut to
@@ -186,7 +186,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             // (error → 500); use try_reserve so allocation failure surfaces as an
             // error instead of an abort.
             if body.try_reserve(chunk.len()).is_err() {
-                return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
             }
             body.extend_from_slice(chunk);
             Ok(())

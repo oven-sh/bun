@@ -38,7 +38,7 @@ impl UnknownAtRule {
         }
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         use crate::generics::DeepClone as _;
         // `name` is an arena-owned slice → identity copy; `TokenList`
         // carries `#[derive(DeepClone)]`.

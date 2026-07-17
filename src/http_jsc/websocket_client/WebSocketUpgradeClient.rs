@@ -25,7 +25,7 @@ use core::ptr;
 use std::io::Write as _;
 
 use bun_boringssl as boringssl;
-use bun_collections::StringSet;
+use bun_core::collections::StringSet;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
 use bun_core::{FeatureFlags, ZBox};
@@ -33,8 +33,8 @@ use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
-use bun_picohttp as picohttp;
-use bun_ptr::ThisPtr;
+use bun_core::picohttp as picohttp;
+use bun_core::ptr::ThisPtr;
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
 
 use super::cpp_websocket::CppWebSocket;
@@ -113,7 +113,7 @@ impl Drop for SslCtxOwned {
 /// Intrusive single-thread
 /// refcount; `ref_count` field below, `ref()`/`deref()` inherent methods, `deinit`
 /// runs when count hits 0.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct HTTPClient<const SSL: bool> {
     ref_count: Cell<u32>,
@@ -483,7 +483,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         unsafe { Self::deref(client) };
                         return None;
                     }
-                    bun_analytics::features::web_socket
+                    bun_core::analytics::features::web_socket
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                     if SSL {
@@ -534,7 +534,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     unsafe { Self::deref(client) };
                     return None;
                 }
-                bun_analytics::features::web_socket
+                bun_core::analytics::features::web_socket
                     .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                 if SSL {
@@ -862,7 +862,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // Ref the tunnel to keep it alive during this call
                     // (in case the WebSocket client closes during processing)
                     // SAFETY: `p` holds a live ref on `tunnel`.
-                    let _g = unsafe { bun_ptr::ScopedRef::new(tp) };
+                    let _g = unsafe { bun_core::ptr::ScopedRef::new(tp) };
                     // SAFETY: ref guard above keeps the tunnel live.
                     unsafe { WebSocketProxyTunnel::receive(tp, data) };
                 }
@@ -1899,7 +1899,7 @@ fn build_connect_request(
 
     // Custom proxy headers
     if let Some(hdrs) = proxy_headers {
-        use bun_http_types::ETag::HeaderEntryColumns;
+        use bun_core::http_types::ETag::HeaderEntryColumns;
         let slice = hdrs.entries.slice();
         let names = slice.items_name();
         let values = slice.items_value();
@@ -1947,7 +1947,7 @@ fn build_request_body(
     // `perMessageDeflate: false`). When true, send the default extension
     // offer `permessage-deflate; client_max_window_bits`.
     offer_permessage_deflate: bool,
-) -> Result<BuildRequestResult, bun_alloc::AllocError> {
+) -> Result<BuildRequestResult, bun_core::alloc_impl::AllocError> {
     // Check for user overrides
     let mut user_host: Option<&[u8]> = None;
     let mut user_key: Option<&[u8]> = None;
@@ -1973,7 +1973,7 @@ fn build_request_body(
     }
 
     // Validate and use user key, or generate a new one
-    use bun_base64::zig_base64::STANDARD as B64_STD;
+    use bun_core::base64::zig_base64::STANDARD as B64_STD;
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
@@ -2131,7 +2131,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     let mut hash = [0u8; SHA1::DIGEST];
     hasher.r#final(&mut hash);
     let mut result = [0u8; 28];
-    let _ = bun_base64::encode(&mut result, &hash);
+    let _ = bun_core::base64::encode(&mut result, &hash);
     result
 }
 

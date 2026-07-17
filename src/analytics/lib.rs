@@ -7,6 +7,8 @@ use bun_core::semver as semver;
 
 use crate::analytics::schema::analytics;
 
+pub use bun_core::Global::features as Features;
+
 #[cfg(target_os = "macos")]
 use bun_core::slice_to_nul;
 

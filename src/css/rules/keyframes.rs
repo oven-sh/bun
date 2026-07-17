@@ -24,7 +24,7 @@ pub enum KeyframesName {
 }
 
 // A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
-pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
+pub type KeyframesNameHashMap<V> = bun_core::collections::ArrayHashMap<KeyframesName, V>;
 
 impl Hash for KeyframesName {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -92,7 +92,7 @@ impl KeyframesName {
 }
 
 impl KeyframesName {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // `Custom(&'static [u8])` is an arena-owned slice → identity copy.
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
@@ -164,7 +164,7 @@ impl KeyframeSelector {
 }
 
 impl KeyframeSelector {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             Self::Percentage(p) => Self::Percentage(*p),
             Self::From => Self::From,
@@ -217,7 +217,7 @@ impl Keyframe {
 }
 
 impl Keyframe {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -301,7 +301,7 @@ impl KeyframesRule {
 }
 
 impl KeyframesRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),

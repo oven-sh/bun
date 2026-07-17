@@ -36,7 +36,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
 
-bun_output::declare_scope!(Terminal, hidden);
+bun_core::declare_scope!(Terminal, hidden);
 
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
@@ -91,7 +91,7 @@ pub mod js {
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::IntrusiveRc<Terminal>`.
+// `bun.ptr.RefCount` is intrusive single-thread → `bun_core::ptr::IntrusiveRc<Terminal>`.
 // Never `Rc`/`Arc` here: `*mut Terminal` crosses FFI as the `.classes.ts` m_ctx
 // payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
 // marks CreateResult.terminal as SHARED, but the RefCount→IntrusiveRc rule wins;
@@ -108,10 +108,10 @@ pub mod js {
 // BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 #[ref_count(destroy = deinit_and_destroy)]
 pub struct Terminal {
-    ref_count: bun_ptr::RefCount<Terminal>,
+    ref_count: bun_core::ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
     /// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
@@ -146,7 +146,7 @@ pub struct Terminal {
     // Terminal is a heap-allocated `.classes.ts` m_ctx payload and cannot
     // carry a lifetime param, so the global is stored as a `BackRef` rather
     // than `&JSGlobalObject`; deref via `self.global()`.
-    global_this: bun_ptr::BackRef<JSGlobalObject>,
+    global_this: bun_core::ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
     writer: JsCell<IOWriter>,
@@ -314,7 +314,7 @@ impl Drop for Options {
 pub(crate) struct CreateResult {
     // Intrusive single-thread refcount that crosses FFI as `*mut Terminal`; see
     // ref_count comment on `Terminal` for why this is not `Arc`.
-    pub terminal: bun_ptr::IntrusiveRc<Terminal>,
+    pub terminal: bun_core::ptr::IntrusiveRc<Terminal>,
     pub js_value: JSValue,
 }
 
@@ -406,7 +406,7 @@ impl Terminal {
         // refcount mixin only reads/writes the `ref_count` field via shared
         // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
         // materialized).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
+        unsafe { bun_core::ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
     }
 
     pub(crate) fn deref_(&self) {
@@ -415,7 +415,7 @@ impl Terminal {
         // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
         // Callers must treat `self` as potentially-freed on return (always
         // tail-position in this file).
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
+        unsafe { bun_core::ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
     /// Internal initialization - shared by constructor and createFromSpawn
@@ -443,7 +443,7 @@ impl Terminal {
         // Heap-allocate the Terminal; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
             read_fd: Cell::new(pty_result.read_fd),
             write_fd: Cell::new(pty_result.write_fd),
@@ -464,7 +464,7 @@ impl Terminal {
             event_loop_handle: EventLoopHandle::init(
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
-            global_this: bun_ptr::BackRef::new(global_object),
+            global_this: bun_core::ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
             this_value: JsCell::new(JsRef::empty()),
@@ -574,7 +574,7 @@ impl Terminal {
         Ok(CreateResult {
             // SAFETY: `parent_ptr` is the heap-allocated allocation above with
             // ref_count >= 1; IntrusiveRc::from_raw adopts one existing ref.
-            terminal: unsafe { bun_ptr::IntrusiveRc::from_raw(parent_ptr) },
+            terminal: unsafe { bun_core::ptr::IntrusiveRc::from_raw(parent_ptr) },
             js_value: this_value,
         })
     }
@@ -604,7 +604,7 @@ impl Terminal {
             Ok(result) => {
                 // Hand the intrusive ref to the JS wrapper as m_ctx; finalize()
                 // releases it via deref_().
-                Ok(bun_ptr::IntrusiveRc::into_raw(result.terminal))
+                Ok(bun_core::ptr::IntrusiveRc::into_raw(result.terminal))
             }
             Err(err) => {
                 drop(options);
@@ -1719,7 +1719,7 @@ impl Terminal {
 
     // IOWriter callbacks
     fn on_writer_close(&self) {
-        bun_output::scoped_log!(Terminal, "onWriterClose");
+        bun_core::scoped_log!(Terminal, "onWriterClose");
         if !self.flags.get().contains(Flags::WRITER_DONE) {
             self.update_flags(|f| f.insert(Flags::WRITER_DONE));
             // Release writer's ref
@@ -1728,7 +1728,7 @@ impl Terminal {
     }
 
     fn on_writer_ready(&self) {
-        bun_output::scoped_log!(Terminal, "onWriterReady");
+        bun_core::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return;
@@ -1745,7 +1745,7 @@ impl Terminal {
     }
 
     fn on_writer_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
+        bun_core::scoped_log!(Terminal, "onWriterError: {:?}", err);
         // On write error, close the terminal to prevent further operations
         // This handles cases like broken pipe when the child process exits
         if !self.flags.get().contains(Flags::CLOSED) {
@@ -1754,7 +1754,7 @@ impl Terminal {
     }
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
+        bun_core::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         let _ = amount;
         // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
         // buffered→drained transition here instead. Windows fires the drain
@@ -1769,13 +1769,13 @@ impl Terminal {
 
     // IOReader callbacks
     pub(crate) fn on_reader_done(&self) {
-        bun_output::scoped_log!(Terminal, "onReaderDone");
+        bun_core::scoped_log!(Terminal, "onReaderDone");
         // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
         self.on_reader_finished(0);
     }
 
     pub(crate) fn on_reader_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
+        bun_core::scoped_log!(Terminal, "onReaderError: {:?}", err);
         // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
         self.on_reader_finished(1);
     }
@@ -1836,7 +1836,7 @@ impl Terminal {
     // Returns true to continue reading, false to pause
     pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
-        bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
+        bun_core::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
         if self.flags.get().contains(Flags::FINALIZED) {
             return true;
@@ -1861,7 +1861,7 @@ impl Terminal {
         // the process — log and `return true` to keep reading instead.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Terminal,
                 "onReadChunk: dupe failed (OOM), dropping {} bytes",
                 chunk.len()
@@ -1898,9 +1898,9 @@ impl Terminal {
 
     /// Finalize - called by GC when object is collected
     pub(crate) fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(Terminal, "finalize");
+        bun_core::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        bun_ptr::finalize_js_box(self, |this| {
+        bun_core::ptr::finalize_js_box(self, |this| {
             this.this_value.with_mut(|v| v.finalize());
             this.update_flags(|f| f.insert(Flags::FINALIZED));
             this.close_internal();
@@ -1916,7 +1916,7 @@ impl Terminal {
 /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
 /// whose generated trait `destructor` upholds the sole-owner contract.
 fn deinit_and_destroy(this: *mut Terminal) {
-    bun_output::scoped_log!(Terminal, "deinit");
+    bun_core::scoped_log!(Terminal, "deinit");
     // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
     // R-2: deref as shared — `close_internal` takes `&self` and all field
     // mutation routes through `Cell`/`JsCell`.
@@ -1995,7 +1995,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_core::libuv_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
         unsafe { (*this).event_loop_handle.uv_loop() }
     }
@@ -2003,12 +2003,12 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
         // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT
         // form &Terminal here: this is called from inside writer methods while
         // a &mut self.writer borrow is live (Stacked-Borrows aliasing).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+        unsafe { bun_core::ptr::RefCount::<Terminal>::ref_(this) };
     }
     unsafe fn deref(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount drop via raw pointer; may free
         // `this`. See ref_ for aliasing rationale.
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
+        unsafe { bun_core::ptr::RefCount::<Terminal>::deref(this) };
     }
 }
 

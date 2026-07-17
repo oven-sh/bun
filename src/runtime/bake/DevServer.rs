@@ -16,22 +16,22 @@ use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
 use std::time::Instant;
 
-use bun_alloc::{AllocError, Arena};
+use bun_core::alloc_impl::{AllocError, Arena};
 use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
-use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
+use bun_core::collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
 use bun_jsc::StringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 #[cfg(feature = "bake_debugging_features")]
-use bun_paths::MAX_PATH_BYTES;
-use bun_paths::{self as paths, PathBuffer};
+use bun_core::paths::MAX_PATH_BYTES;
+use bun_core::paths::{self as paths, PathBuffer};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
-use bun_wyhash::{Wyhash, hash};
+use bun_core::wyhash::{Wyhash, hash};
 
 use crate::api::server::StaticRoute;
 use crate::api::{AnyServer, SavedRequest};
@@ -43,7 +43,7 @@ use crate::webcore::{Request as WebRequest, Response};
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
-use bun_safety::ThreadLock;
+use bun_core::safety::ThreadLock;
 use bun_watcher::Watcher;
 
 pub(super) use crate::bake::dev_server::DirectoryWatchStore;
@@ -94,7 +94,7 @@ impl DevServer {
     }
 
     /// Recover `&VirtualMachine` from the JSC_BORROW `vm` back-reference.
-    /// Safe `Deref` via [`BackRef`](bun_ptr::BackRef): vm is valid for
+    /// Safe `Deref` via [`BackRef`](bun_core::ptr::BackRef): vm is valid for
     /// DevServer's entire lifetime.
     #[inline]
     pub(crate) fn vm(&self) -> &VirtualMachine {
@@ -160,13 +160,13 @@ pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
 pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
-bun_output::declare_scope!(DevServer, visible);
-bun_output::declare_scope!(IncrementalGraph, visible);
-bun_output::declare_scope!(SourceMapStore, visible);
+bun_core::declare_scope!(DevServer, visible);
+bun_core::declare_scope!(IncrementalGraph, visible);
+bun_core::declare_scope!(SourceMapStore, visible);
 
-bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
-bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
-bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
+bun_core::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
+bun_core::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
+bun_core::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use map_log;
 
 pub struct Options<'a> {
@@ -255,10 +255,10 @@ pub struct CurrentBundle {
     pub bv2: Box<BundleV2<'static>>,
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
-    pub heap: Box<bun_alloc::MimallocArena>,
+    pub heap: Box<bun_core::alloc_impl::MimallocArena>,
     /// Backs the small `AstVec`s built during bundle setup
     /// (`start_async_bundle`'s AST scope); dropped with the bundle.
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    pub ast_alloc_state: Option<Box<bun_core::alloc_impl::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -316,12 +316,12 @@ pub struct DevServer {
     pub configuration_hash_key: [u8; 16],
     /// The virtual machine (global object) to execute code in.
     /// JSC_BORROW (LIFETIMES.tsv): passed in via `Options.vm`; deinit no-op.
-    /// [`BackRef`](bun_ptr::BackRef) (not `&'a`) so `DevServer` is not
+    /// [`BackRef`](bun_core::ptr::BackRef) (not `&'a`) so `DevServer` is not
     /// lifetime-generic — it is `Box`-owned by `ServerInstance` which outlives
     /// the VM anyway. The back-reference invariant (pointee outlives holder)
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub vm: bun_core::ptr::BackRef<VirtualMachine>,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -339,12 +339,12 @@ pub struct DevServer {
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.
-    pub barrel_files_with_deferrals: bun_collections::StringArrayHashMap<()>,
+    pub barrel_files_with_deferrals: bun_core::collections::StringArrayHashMap<()>,
     /// Accumulated barrel export requests across all builds. Maps barrel file
     /// path → set of export names that have been requested. This ensures that
     /// when a barrel is re-parsed in an incremental build, exports requested
     /// by non-stale files (from previous builds) are still kept.
-    pub barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
+    pub barrel_needed_exports: bun_core::collections::StringArrayHashMap<StringHashMap<()>>,
     /// State populated during bundling and hot updates. Often cleared
     pub incremental_result: IncrementalResult,
     /// Quickly retrieve a framework route's index from its entry point file. These
@@ -545,7 +545,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
-        w!(vm, bun_ptr::BackRef::new(options.vm));
+        w!(vm, bun_core::ptr::BackRef::new(options.vm));
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
@@ -700,7 +700,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // box. Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let arena: &'static Arena = unsafe { bun_core::ptr::detach_lifetime_ref(options.arena) };
     let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
         Vec::with_capacity(4);
     // SAFETY: `p` points into the boxed `MaybeUninit<DevServer>`; the fields
@@ -1260,8 +1260,8 @@ impl DevServer {
     /// returns the default `StdAllocator`. Kept for the few call sites
     /// that still want a `StdAllocator` handle.
     #[inline]
-    pub fn allocator(&self) -> bun_alloc::StdAllocator {
-        bun_alloc::StdAllocator::default()
+    pub fn allocator(&self) -> bun_core::alloc_impl::StdAllocator {
+        bun_core::alloc_impl::StdAllocator::default()
     }
 }
 
@@ -1579,7 +1579,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
     // route; uWS guarantees they are non-null in handler callbacks.
-    let dev = unsafe { bun_ptr::callback_ctx::<DevServer>(ud) };
+    let dev = unsafe { bun_core::ptr::callback_ctx::<DevServer>(ud) };
     // SAFETY: see above; uWS passes a non-null `Request*` valid for the callback.
     let req = unsafe { &mut *req.cast::<Request>() };
     let resp = if SSL {
@@ -2853,7 +2853,7 @@ impl DevServer {
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
                 unsafe {
                     (*route_bundle).data.html_mut().cached_response =
-                        ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from)
+                        ::core::ptr::NonNull::new(route_ptr).map(bun_core::ptr::BackRef::from)
                 };
                 break 'generate route_ptr;
             }
@@ -3055,7 +3055,7 @@ impl DevServer {
                     },
                 );
                 route_bundle.client_bundle =
-                    ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from);
+                    ::core::ptr::NonNull::new(route_ptr).map(bun_core::ptr::BackRef::from);
                 break 'generate route_ptr;
             }
         };
@@ -3093,10 +3093,10 @@ pub mod deferred_request {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     pub const MAX_PREALLOCATED: usize = 16;
 
-    pub type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
-    pub type Node = bun_collections::pool::Node<DeferredRequest>;
+    pub type List = bun_core::collections::pool::SinglyLinkedList<DeferredRequest>;
+    pub type Node = bun_core::collections::pool::Node<DeferredRequest>;
 
-    bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
+    bun_core::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
     pub(super) use debug_log_dr;
 
     /// Sometimes we will call `await bundleNewRoute()` and this will either
@@ -3164,7 +3164,7 @@ impl DeferredRequest {
 
     fn on_abort_wrapper(this: *mut c_void) {
         // SAFETY: this is &mut DeferredRequest registered in defer_request
-        let self_ = unsafe { bun_ptr::callback_ctx::<DeferredRequest>(this) };
+        let self_ = unsafe { bun_core::ptr::callback_ctx::<DeferredRequest>(this) };
         if !self_.is_alive() {
             return;
         }
@@ -3286,7 +3286,7 @@ impl DevServer {
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
-        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
+        let heap: Box<bun_core::alloc_impl::MimallocArena> = Box::new(bun_core::alloc_impl::MimallocArena::new());
         // Borrows `heap`, so AST nodes built during bundle setup
         // live exactly as long as the bundle. The arena-allocated allocator
         // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
@@ -3322,7 +3322,7 @@ impl DevServer {
         // SAFETY: `heap` is `Box`-allocated above and moved into
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
+        let heap_ptr: *const bun_core::alloc_impl::Arena = &raw const *heap;
         // Note: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -4644,7 +4644,7 @@ pub(super) fn finalize_bundle(
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
                     // Matches the bundler's `ContentHasher` hash (XxHash64).
-                    let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
+                    let mut source_map_hash = bun_core::hash::XxHash64Streaming::new(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();
                     for part in &dev.client_graph.current_chunk_parts {
@@ -4795,7 +4795,7 @@ pub(super) fn finalize_bundle(
 
     if dev.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
-            let clear_terminal = !bun_output::scope_is_visible!(DevServer)
+            let clear_terminal = !bun_core::scope_is_visible!(DevServer)
                 && !dev
                     .vm()
                     .env_loader()
@@ -5293,7 +5293,7 @@ impl DevServer {
             match ensure_route_is_bundled(self, rbi, &mut ctx) {
                 Ok(()) => {}
                 Err(jsc::JsError::OutOfMemory) => {
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                    return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
                 }
                 Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
                     self.vm().global().report_active_exception_as_unhandled(e);
@@ -5391,7 +5391,7 @@ impl DevServer {
                     // Bump the intrusive refcount; matched by
                     // `RouteBundle::deinit`'s deref of `html_bundle`.
                     // SAFETY: `html` is a live IntrusiveRc-managed allocation.
-                    unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
+                    unsafe { bun_core::ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
                         html_bundle: html,
                         bundled_file: incremental_graph_index,
@@ -5442,12 +5442,12 @@ impl DevServer {
 
         let failures_start_buf_pos = buf.len();
 
-        let len = bun_base64::encode_len(&all_failures);
+        let len = bun_core::base64::encode_len(&all_failures);
         // Zero-extend then encode in place; `encode_len` is an upper bound so
         // truncate to the actual encoded length afterward. Avoids the
         // `spare_capacity_mut` + `set_len` unsafe dance for a one-shot path.
         buf.resize(failures_start_buf_pos + len, 0);
-        let written = bun_base64::encode(&mut buf[failures_start_buf_pos..], &all_failures);
+        let written = bun_core::base64::encode(&mut buf[failures_start_buf_pos..], &all_failures);
         buf.truncate(failures_start_buf_pos + written);
 
         // Re-use the encoded buffer to avoid encoding failures more times than neccecary.
@@ -5564,7 +5564,7 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 
 impl DevServer {
     fn print_memory_line(&self) {
-        if !bun_output::scope_is_visible!(DevServer) {
+        if !bun_core::scope_is_visible!(DevServer) {
             return;
         }
         bun_core::pretty_errorln!(
@@ -6339,12 +6339,12 @@ impl DevServer {
         // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
         // on); capture the length, drop the shared borrow, then re-slice
         // mutably to convert separators in place.
-        let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Auto,
+        let rel_len = bun_core::paths::resolve_path::relative_platform_buf::<
+            bun_core::paths::resolve_path::platform::Auto,
             true,
         >(&mut relative_path_buf[..], &self.root, path)
         .len();
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+        bun_core::paths::resolve_path::platform_to_posix_in_place::<u8>(
             &mut relative_path_buf[..rel_len],
         );
         &relative_path_buf[..rel_len]
@@ -6424,10 +6424,10 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> crate::Result<()> {
     let mut payload: Vec<u8> = Vec::with_capacity(4096);
     dev.write_visualizer_message(&mut payload)?;
 
-    // bun_base64::encode_len_from_size(4096) == ((4096 + 2) / 3) * 4 == 5464
+    // bun_core::base64::encode_len_from_size(4096) == ((4096 + 2) / 3) * 4 == 5464
     let mut buf = [0u8; 5464];
     for chunk in payload.chunks(4096) {
-        let n = bun_base64::encode(&mut buf, chunk);
+        let n = bun_core::base64::encode(&mut buf, chunk);
         file.write_all(&buf[..n])?;
     }
 
@@ -6463,7 +6463,7 @@ impl RouteIndexAndRecurseFlag {
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub struct EntryPointList {
-    pub set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
+    pub set: bun_core::collections::StringArrayHashMap<entry_point_list::Flags>,
 }
 
 pub mod entry_point_list {

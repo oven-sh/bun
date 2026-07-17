@@ -11,7 +11,7 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_core::paths::{PathBuffer, resolve_path};
 use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
@@ -117,7 +117,7 @@ impl BuildCommand {
         // Note: `Transpiler::init` now takes an arena. Process-lifetime —
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
-        let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let arena: &'static bun_core::alloc_impl::Arena = crate::cli::cli_arena();
         // Note: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
         // borrows the transpiler for its full lifetime — dropck then rejects a
         // stack local because the borrow would still be live in its destructor.
@@ -284,7 +284,7 @@ impl BuildCommand {
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
-                    outfile = bun_paths::basename(&first_entry_point);
+                    outfile = bun_core::paths::basename(&first_entry_point);
                 }
 
                 this_transpiler.options.supports_multiple_outputs =
@@ -316,21 +316,21 @@ impl BuildCommand {
                 this_transpiler.options.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
-                    outfile = bun_paths::basename(&first_entry_point);
-                    let ext = bun_paths::extension(outfile);
+                    outfile = bun_core::paths::basename(&first_entry_point);
+                    let ext = bun_core::paths::extension(outfile);
                     if !ext.is_empty() {
                         outfile = &outfile[0..outfile.len() - ext.len()];
                     }
 
                     if outfile == b"index" {
-                        outfile = bun_paths::basename(
+                        outfile = bun_core::paths::basename(
                             bun_core::dirname(&first_entry_point).unwrap_or(b"index"),
                         );
                         was_renamed_from_index = outfile != b"index";
                     }
 
                     if outfile == b"bun" {
-                        outfile = bun_paths::basename(
+                        outfile = bun_core::paths::basename(
                             bun_core::dirname(&first_entry_point).unwrap_or(b"bun"),
                         );
                     }
@@ -609,7 +609,7 @@ impl BuildCommand {
                 write!(
                     &mut entry_naming,
                     "./{}",
-                    bstr::BStr::new(bun_paths::basename(outfile))
+                    bstr::BStr::new(bun_core::paths::basename(outfile))
                 )
                 .expect("unreachable");
                 this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
@@ -758,12 +758,12 @@ impl BuildCommand {
                         if f.output_kind == options::OutputKind::EntryPoint
                             && f.side.unwrap_or(options::Side::Server) == options::Side::Server
                         {
-                            f.dest_path = bun_paths::basename(outfile).into();
+                            f.dest_path = bun_core::paths::basename(outfile).into();
                             break;
                         }
                     }
                 } else {
-                    output_files[0].dest_path = bun_paths::basename(outfile).into();
+                    output_files[0].dest_path = bun_core::paths::basename(outfile).into();
                 }
             }
 
@@ -930,9 +930,9 @@ impl BuildCommand {
                             // otherwise fall back to {outfile}.map
                             let mut map_basename_owned: Vec<u8>;
                             let map_basename: &[u8] = if !f.dest_path.is_empty() {
-                                bun_paths::basename(&f.dest_path)
+                                bun_core::paths::basename(&f.dest_path)
                             } else {
-                                let exe_base = bun_paths::basename(outfile);
+                                let exe_base = bun_core::paths::basename(outfile);
                                 map_basename_owned = Vec::new();
                                 if compile_target.os == OperatingSystem::Windows
                                     && !strings::has_suffix_comptime(exe_base, b".exe")
@@ -1054,7 +1054,7 @@ impl BuildCommand {
                     continue;
                 }
 
-                debug_assert!(!bun_paths::is_absolute(&f.dest_path));
+                debug_assert!(!bun_core::paths::is_absolute(&f.dest_path));
 
                 let rel_path = strings::trim_prefix(&f.dest_path, b"./");
 

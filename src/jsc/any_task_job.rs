@@ -48,7 +48,7 @@ pub trait AnyTaskJobCtx: Sized {
 /// `run_from_js` (or on `init` failure). `ctx` is `pub` so callers can read
 /// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
-    vm: bun_ptr::BackRef<VirtualMachine>,
+    vm: bun_core::ptr::BackRef<VirtualMachine>,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -72,7 +72,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
-        let vm = bun_ptr::BackRef::new(global.bun_vm());
+        let vm = bun_core::ptr::BackRef::new(global.bun_vm());
         let job = bun_core::heap::into_raw(Box::new(Self {
             vm,
             task: WorkPoolTask {

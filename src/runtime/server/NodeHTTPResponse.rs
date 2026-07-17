@@ -5,12 +5,12 @@ use core::ptr;
 use bitflags::bitflags;
 use bstr::BStr;
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::scoped_log;
 use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
+use bun_core::ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -324,12 +324,12 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
 ///
 /// The packed repr is bits 0..49 = ptr,
-/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
+/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_core::ptr::tagged_pointer`).
 /// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
 /// to `AnyServerTag` here.
 #[inline]
 fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPointer::from(packed);
+    let repr = bun_core::ptr::TaggedPointer::from(packed);
     let tag = match repr.data() {
         1024 => AnyServerTag::HTTPServer,
         1023 => AnyServerTag::HTTPSServer,
@@ -1025,7 +1025,7 @@ impl NodeHTTPResponse {
         // BACKREF: same keep-alive pattern as cork() — either phase can reach
         // JS (string coercions, drain callbacks), which could drop the last
         // reference to this response mid-call.
-        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
+        let this = bun_core::ptr::BackRef::from(ptr::NonNull::from(self));
         this.ref_();
 
         let raw_response = this.raw_response.get();
@@ -2252,7 +2252,7 @@ impl NodeHTTPResponse {
         // barrier on the node:http hot path (`cork` runs on every `res.end()`)
         // that forced `self` to memory and blocked inlining/regalloc of the
         // cork prologue.
-        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
+        let this = bun_core::ptr::BackRef::from(ptr::NonNull::from(self));
         // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.
         this.ref_();
@@ -2291,7 +2291,7 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 
     /// Called by intrusive RefCount when count reaches zero.
@@ -2335,12 +2335,12 @@ impl NodeHTTPResponse {
     }
 }
 
-// `AnyRefCounted` bridge so `bun_ptr::finalize_js_box*` / `RefPtr` accept this
+// `AnyRefCounted` bridge so `bun_core::ptr::finalize_js_box*` / `RefPtr` accept this
 // type. Hand-written (not `#[derive(CellRefCounted)]`) because the existing
 // `&self`-receiver `deref()` above is called from ~10 sites that route through
 // `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
 // is a separate sweep.
-impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
+impl bun_core::ptr::AnyRefCounted for NodeHTTPResponse {
     type DestructorCtx = ();
     #[inline]
     unsafe fn rc_ref(this: *mut Self) {
@@ -2366,8 +2366,8 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     }
     #[cfg(debug_assertions)]
     #[inline]
-    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-        bun_ptr::ref_count::noop_debug_data()
+    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_core::ptr::ref_count::DebugDataOps {
+        bun_core::ptr::ref_count::noop_debug_data()
     }
 }
 
@@ -2422,7 +2422,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
                     "content-length: {}",
                     BStr::new(content_length)
                 );
-                break 'brk bun_http_types::parse_content_length(content_length);
+                break 'brk bun_core::http_types::parse_content_length(content_length);
             }
             break 'brk 0;
         };

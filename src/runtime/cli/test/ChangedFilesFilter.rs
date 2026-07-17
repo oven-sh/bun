@@ -15,10 +15,10 @@ use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
-use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
+use bun_core::collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
@@ -30,9 +30,10 @@ use bun_jsc as jsc;
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
-use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
-use bun_ptr::Interned;
+use bun_core::paths::SEP;
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer, platform, resolve_path};
+use bun_core::ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
@@ -345,7 +346,7 @@ pub(crate) fn init_watch_trigger() {
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
             // wyhash of a time^pid seed; only used to make a unique temp
             // trigger-file name.
-            let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
+            let rand: u64 = bun_core::wyhash::hash(&seed.to_ne_bytes());
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {

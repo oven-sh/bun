@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
@@ -519,7 +519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
                             // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.
-                            let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
+                            let stmt_list = bun_core::alloc_impl::AstVec::<Stmt>::from_slice(stmts.as_slice());
                             let block = p.arena.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,
                                 loc,

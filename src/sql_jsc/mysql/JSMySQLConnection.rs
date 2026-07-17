@@ -11,7 +11,7 @@ use crate::shared::CachedStructure;
 use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -46,7 +46,7 @@ bun_core::declare_scope!(MySQLConnection, visible);
 // `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
 // (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
 // offsets.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLConnection {
     // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
@@ -434,7 +434,7 @@ impl JSMySQLConnection {
 
     pub fn finalize(self: Box<Self>) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        bun_ptr::finalize_js_box(self, |this| this.js_value.with_mut(|r| r.finalize()));
+        bun_core::ptr::finalize_js_box(self, |this| this.js_value.with_mut(|r| r.finalize()));
     }
 
     fn update_reference_type(&self) {

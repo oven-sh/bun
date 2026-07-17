@@ -2,8 +2,8 @@
 use core::cell::Cell;
 use core::fmt;
 
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVec as BumpVec;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVec as BumpVec;
 use bun_ast::ImportRecord;
 
 use crate::css_parser as css;
@@ -462,8 +462,8 @@ impl<'a> Printer<'a> {
     ///
     /// NOTE: Same constraints as `write_str`, the `str` param is assumed to not
     /// contain any newline characters
-    pub fn write_all(&mut self, str_: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        self.write_str(str_).map_err(|_| bun_alloc::AllocError)
+    pub fn write_all(&mut self, str_: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
+        self.write_str(str_).map_err(|_| bun_core::alloc_impl::AllocError)
     }
 }
 
@@ -739,8 +739,8 @@ impl<'a> Printer<'a> {
         self.serialize_name(&ident_v[2..])
     }
 
-    pub fn write_byte(&mut self, char_: u8) -> Result<(), bun_alloc::AllocError> {
-        self.write_char(char_).map_err(|_| bun_alloc::AllocError)
+    pub fn write_byte(&mut self, char_: u8) -> Result<(), bun_core::alloc_impl::AllocError> {
+        self.write_char(char_).map_err(|_| bun_core::alloc_impl::AllocError)
     }
 
     /// Write a single character to the underlying destination.

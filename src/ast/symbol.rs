@@ -31,7 +31,7 @@ pub struct Symbol {
     /// same spill heap as the rest of the per-file AST and is reclaimed on
     /// reset (`Symbol` is held in `ArenaVec<'a, Symbol>`; `Drop` is not
     /// guaranteed to run).
-    pub namespace_alias: Option<bun_alloc::AstBox<G::NamespaceAlias>>,
+    pub namespace_alias: Option<bun_core::alloc_impl::AstBox<G::NamespaceAlias>>,
 
     /// Used by the parser for single pass parsing.
     ///
@@ -207,7 +207,7 @@ symbol_flag_accessors! {
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
 }
 
-const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
+const _: () = assert!(core::mem::size_of::<Option<bun_core::alloc_impl::AstBox<G::NamespaceAlias>>>() == 8);
 const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
@@ -406,7 +406,7 @@ pub struct Use {
     pub count_estimate: u32,
 }
 
-pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
+pub type List<'a> = bun_core::alloc_impl::ArenaVec<'a, Symbol>;
 /// `Map.symbols_for_source` storage. Decoupled from [`List`] (which is
 /// arena-backed): the linker clones every per-source symbol table here so it
 /// can mutate them independently of the parsed `BundledAst.symbols`, and those

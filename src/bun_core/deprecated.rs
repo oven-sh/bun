@@ -21,10 +21,10 @@ pub struct BufferedReader<const BUFFER_SIZE: usize, R> {
 //
 // DEDUP(D050): the Rust port of `SinglyLinkedList` / `SinglyLinkedNode` was
 // removed — the canonical implementation lives at
-// `bun_collections::pool::{SinglyLinkedList, Node}`. The two had diverged
+// `bun_core::collections::pool::{SinglyLinkedList, Node}`. The two had diverged
 // (`data: T` vs `data: MaybeUninit<T>`, `*mut`-null vs `Option<*mut>` returns)
 // and this copy had zero callers outside its own unit test. New consumers
-// should depend on `bun_collections::pool` directly.
+// should depend on `bun_core::collections::pool` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // DoublyLinkedList

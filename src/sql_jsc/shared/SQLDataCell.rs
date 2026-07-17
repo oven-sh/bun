@@ -2,7 +2,7 @@ use core::ptr;
 use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
 use bun_sql::shared::{ColumnIdentifier, Data};

@@ -176,15 +176,15 @@ pub mod layout_asserts {
     }
 
     // ── leaf POD shared by both formats ──────────────────────────────────
-    pin!(bun_semver::String, size = 8, align = 1); // [8]u8
-    pin!(bun_semver::ExternalString, size = 16, align = 8); // String + u64
+    pin!(bun_core::semver::String, size = 8, align = 1); // [8]u8
+    pin!(bun_core::semver::ExternalString, size = 16, align = 8); // String + u64
     pin!(crate::ExternalSlice<u8>, size = 8, align = 4); // u32 off + u32 len
     pin!(crate::ExternalStringMap, size = 16, align = 4);
     pin!(crate::integrity::Integrity, size = 65, align = 1); // u8 tag + [64]u8
     pin!(crate::repository::Repository, size = 40, align = 1); // 5 × String
     pin!(crate::bin::Value, size = 16, align = 4); // union: [String;2] | ExternalSlice
     pin!(crate::bin::Bin, size = 20, align = 4);
-    pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
+    pin!(bun_core::semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
 
     // ── bun.lockb package-table columns (Package.Serializer) ─────────────
     // Iterated in declaration order by `MultiArrayList::Slice::column_bytes_mut`;

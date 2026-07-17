@@ -2,7 +2,7 @@ use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
@@ -109,7 +109,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
-        let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
+        let mut items = bun_core::alloc_impl::ArenaVec::<ClauseItem>::new_in(p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // this variable should not exist if we're not in a typescript file
@@ -284,7 +284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
-        let mut items = bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
+        let mut items = bun_core::alloc_impl::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut first_non_identifier_loc = bun_ast::Loc { start: 0 };

@@ -13,7 +13,7 @@ use crate::shell::yield_::Yield;
 
 pub struct Async {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Expr>,
+    pub node: bun_core::ptr::BackRef<ast::Expr>,
     pub io: IO,
     pub state: AsyncState,
     pub event_loop: EventLoopHandle,
@@ -48,7 +48,7 @@ impl Async {
         let evtloop = interp.event_loop;
         let id = interp.alloc_node(Node::Async(Async {
             base: Base::new(StateKind::Async, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             state: AsyncState::Idle,
             event_loop: evtloop,

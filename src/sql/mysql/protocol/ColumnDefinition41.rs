@@ -146,7 +146,7 @@ impl ColumnDefinition41 {
             ColumnIdentifier::Name(existing) if existing.slice() == self.name.slice());
         let mut changed = false;
         if !unchanged {
-            let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
+            let name_view = Data::Temporary(bun_core::ptr::RawSlice::new(self.name.slice()));
             let rebuilt =
                 ColumnIdentifier::init(name_view).map_err(|_| AnyMySQLError::OutOfMemory)?;
             changed = match (&self.name_or_index, &rebuilt) {

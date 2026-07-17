@@ -9,7 +9,7 @@
 //! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 
 pub(crate) struct QuantizeResult {
     /// `[colors][4]u8` RGBA palette.

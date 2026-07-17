@@ -3,7 +3,7 @@ use core::ffi::{c_uint, c_void};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, VM};
-use bun_collections::IntegerBitSet;
+use bun_core::collections::IntegerBitSet;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
 
@@ -293,10 +293,10 @@ pub struct ArgumentsSlice<'a> {
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// `bun_alloc::Arena` is a `MimallocArena`
+    /// `bun_core::alloc_impl::Arena` is a `MimallocArena`
     /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
     /// caller actually needs scratch storage (currently none do).
-    pub arena: Option<bun_alloc::Arena>,
+    pub arena: Option<bun_core::alloc_impl::Arena>,
     pub all: &'a [JSValue],
     pub threw: bool,
     pub protected: IntegerBitSet<32>,
@@ -312,8 +312,8 @@ impl<'a> ArgumentsSlice<'a> {
 
     /// Lazily create the scratch arena.
     #[inline]
-    pub fn arena(&mut self) -> &bun_alloc::Arena {
-        self.arena.get_or_insert_with(bun_alloc::Arena::new)
+    pub fn arena(&mut self) -> &bun_core::alloc_impl::Arena {
+        self.arena.get_or_insert_with(bun_core::alloc_impl::Arena::new)
     }
 
     pub fn unprotect(&mut self) {

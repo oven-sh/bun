@@ -238,7 +238,7 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub credentials: bun_core::ptr::IntrusiveRc<S3Credentials>,
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
@@ -247,7 +247,7 @@ pub struct S3Client {
 
 impl Drop for S3Client {
     fn drop(&mut self) {
-        // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
+        // `IntrusiveRc<T>` is `bun_core::ptr::RefPtr<T>`, which has no `Drop` impl
         // of its own (only `ScopedRef<T>` does), so the +1 taken by
         // `aws_options.credentials.dupe()` in `constructor` must be released
         // explicitly.

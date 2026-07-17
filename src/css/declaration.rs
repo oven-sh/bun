@@ -1,6 +1,6 @@
 use crate::css_parser as css;
-use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::ArenaVecExt as _;
 pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
@@ -22,7 +22,7 @@ use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
 // const GridHandler = css.css_properties.g
 
-pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
+pub type DeclarationList<'bump> = bun_core::alloc_impl::ArenaVec<'bump, css::Property>;
 
 /// A CSS declaration block.
 ///
@@ -50,7 +50,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
         let mut printer = css::Printer::new(
             &bump,
-            bun_alloc::ArenaVec::<u8>::new_in(&bump),
+            bun_core::alloc_impl::ArenaVec::<u8>::new_in(&bump),
             &mut arraylist,
             &css::PrinterOptions::default(),
             None,
@@ -226,7 +226,7 @@ impl DeclarationBlock<'static> {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see note above), not a real static borrow.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+        let bump: &'static Bump = unsafe { bun_core::ptr::detach_lifetime_ref(input.arena()) };
         let mut important_declarations = DeclarationList::new_in(bump);
         let mut declarations = DeclarationList::new_in(bump);
         let mut decl_parser = PropertyDeclarationParser {
@@ -258,7 +258,7 @@ impl DeclarationBlock<'static> {
 // ─── hash / eql / deep_clone ──────────────────────────────────────────────
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash_property_ids(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         use std::hash::Hash;
         for decl in self.declarations.iter() {
             decl.property_id().hash(hasher);
@@ -287,13 +287,13 @@ impl<'bump> DeclarationBlock<'bump> {
 
     pub fn deep_clone(&self, bump: &'bump Bump) -> Self {
         Self {
-            important_declarations: bun_alloc::vec_from_iter_in(
+            important_declarations: bun_core::alloc_impl::vec_from_iter_in(
                 self.important_declarations
                     .iter()
                     .map(|p| p.deep_clone(bump)),
                 bump,
             ),
-            declarations: bun_alloc::vec_from_iter_in(
+            declarations: bun_core::alloc_impl::vec_from_iter_in(
                 self.declarations.iter().map(|p| p.deep_clone(bump)),
                 bump,
             ),

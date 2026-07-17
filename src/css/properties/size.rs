@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
 use crate as css;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use css::PrintErr;
 use css::Printer;
@@ -16,7 +16,7 @@ use css::DeclarationList;
 use css::PropertyHandlerContext;
 use css::VendorPrefix;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BoxSizing {

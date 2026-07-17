@@ -1,8 +1,8 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
-use bun_analytics as analytics;
-use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_core::analytics as analytics;
+use bun_core::collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
@@ -35,10 +35,10 @@ pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 
 /// `bun.http.MimeType` lives in `bun_http_types` (lower tier), not `bun_http`.
 mod bun_http {
-    pub(super) use bun_http_types::MimeType::MimeType;
+    pub(super) use bun_core::http_types::MimeType::MimeType;
 }
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
-pub use bun_collections::StringSet;
+pub use bun_core::collections::StringSet;
 
 /// TYPE_ONLY moved to top of module so
 /// `entry_points.rs` (and the inline `options` mod) can resolve it before the
@@ -73,7 +73,7 @@ pub fn validate_path(
     // buffer which is then boxed.
     let _ = path_kind;
     let out =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
+        bun_core::paths::resolve_path::join_abs_string::<bun_core::paths::platform::Auto>(cwd, &[rel_path]);
     if out.is_empty() {
         log.add_error_fmt(
             None,
@@ -185,7 +185,7 @@ pub fn init_external_modules(
                 prefix: Box::from(&external[0..i]),
                 suffix: Box::from(&external[i + 1..]),
             });
-        } else if bun_paths::is_package_path(external) {
+        } else if bun_core::paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
             let normalized = validate_path(log, fs, cwd, external, b"external path");
@@ -356,11 +356,11 @@ pub use bun_options_types::LOADER_API_NAMES;
 
 /// Bundler-only `Loader` methods. Extension trait per PORTING.md crate-tier
 /// rule — the canonical `Loader` lives in `bun_options_types` (lower tier) and
-/// cannot depend on `bun_http_types::MimeType`. Re-exported through
+/// cannot depend on `bun_core::http_types::MimeType`. Re-exported through
 /// `bun_bundler::options` so `use bun_bundler::options::LoaderExt;` makes
 /// `.to_mime_type()` etc. available on the single canonical type.
 pub trait LoaderExt: Copy {
-    fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType;
+    fn to_mime_type(self, paths: &[&[u8]]) -> bun_core::http_types::MimeType::MimeType;
     fn from_mime_type(mime_type: bun_http::MimeType) -> Loader;
 
     // `pub type Map` hoisted to module-level `LoaderEnumMap`.
@@ -395,7 +395,7 @@ pub trait LoaderExt: Copy {
     // import.
 
     fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
-        let ext = bun_paths::extension(filename);
+        let ext = bun_core::paths::extension(filename);
         if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {
             return None;
         }
@@ -405,8 +405,8 @@ pub trait LoaderExt: Copy {
 }
 
 impl LoaderExt for Loader {
-    fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
-        use bun_http_types::MimeType;
+    fn to_mime_type(self, paths: &[&[u8]]) -> bun_core::http_types::MimeType::MimeType {
+        use bun_core::http_types::MimeType;
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
             Loader::Css => MimeType::CSS,
@@ -417,7 +417,7 @@ impl LoaderExt for Loader {
             Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
                 for path in paths {
-                    let mut extname = bun_paths::extension(path);
+                    let mut extname = bun_core::paths::extension(path);
                     if strings::starts_with_char(extname, b'.') {
                         extname = &extname[1..];
                     }
@@ -448,7 +448,7 @@ impl LoaderExt for Loader {
             Loader::Jsonc
         } else if mime_type.value.starts_with(b"application/json") {
             Loader::Json
-        } else if mime_type.category == bun_http_types::MimeType::Category::Text {
+        } else if mime_type.category == bun_core::http_types::MimeType::Category::Text {
             Loader::Text
         } else {
             // Be maximally permissive.
@@ -583,7 +583,7 @@ pub fn get_loader_and_virtual_source<'a>(
                 // returned to the caller.
                 let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(bun_ast::Source {
-                    path: bun_paths::fs::Path::init(static_text),
+                    path: bun_core::paths::fs::Path::init(static_text),
                     contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
                     ..Default::default()
                 });
@@ -609,7 +609,7 @@ pub fn get_loader_and_virtual_source<'a>(
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
-    let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
+    let package_json: Option<&PackageJSON> = if is_js_like && bun_core::paths::is_absolute(dir) {
         jsc_vm
             .read_dir_info_package_json(dir)
             // SAFETY: the vtable returns a pointer into the resolver's DirInfo
@@ -772,7 +772,7 @@ impl ESMConditions {
         defaults: &[&[u8]],
         allow_addons: bool,
         conditions: &[&[u8]],
-    ) -> Result<ESMConditions, bun_alloc::AllocError> {
+    ) -> Result<ESMConditions, bun_core::alloc_impl::AllocError> {
         let mut default_condition_amp = ConditionsMap::default();
 
         let mut import_condition_map = ConditionsMap::default();
@@ -823,7 +823,7 @@ impl ESMConditions {
         })
     }
 
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
+    pub fn clone(&self) -> Result<ESMConditions, bun_core::alloc_impl::AllocError> {
         let default = self.default.clone()?;
         let import = self.import.clone()?;
         let require = self.require.clone()?;
@@ -837,7 +837,7 @@ impl ESMConditions {
         })
     }
 
-    pub fn append_slice(&mut self, conditions: &[&[u8]]) -> Result<(), bun_alloc::AllocError> {
+    pub fn append_slice(&mut self, conditions: &[&[u8]]) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.default.reserve(conditions.len());
         self.import.reserve(conditions.len());
         self.require.reserve(conditions.len());
@@ -852,7 +852,7 @@ impl ESMConditions {
         Ok(())
     }
 
-    pub fn append(&mut self, condition: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub fn append(&mut self, condition: &[u8]) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.default.insert(condition, ());
         self.import.insert(condition, ());
         self.require.insert(condition, ());
@@ -899,7 +899,7 @@ pub fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
-    bump: &bun_alloc::Arena,
+    bump: &bun_core::alloc_impl::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
@@ -1103,7 +1103,7 @@ impl Default for ResolveFileExtensionsGroup {
 pub fn loaders_from_transform_options(
     loaders: Option<&api::LoaderMap>,
     target: Target,
-) -> Result<StringArrayHashMap<Loader>, bun_alloc::AllocError> {
+) -> Result<StringArrayHashMap<Loader>, bun_core::alloc_impl::AllocError> {
     // Borrow the caller's `LoaderMap` (a `Vec<u8>` + `Vec<Box<[u8]>>`); this fn
     // only reads from it, so there's no need to clone it on every call.
     let empty = api::LoaderMap::default();
@@ -1263,9 +1263,9 @@ pub struct BundleOptions<'a> {
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
-    // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
+    // `bun_core::url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
-    pub origin: bun_url::OwnedURL,
+    pub origin: bun_core::url::OwnedURL,
     pub output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
@@ -1653,7 +1653,7 @@ impl<'a> BundleOptions<'a> {
 
     pub fn load_defines(
         &mut self,
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
@@ -1776,7 +1776,7 @@ impl<'a> BundleOptions<'a> {
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
             inject: None,
-            origin: bun_url::OwnedURL::from_href(Box::default()),
+            origin: bun_core::url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
             node_modules_bundle_url: Cow::Borrowed(b""),
@@ -1872,7 +1872,7 @@ impl<'a> BundleOptions<'a> {
         if let Some(origin) = &transform.origin {
             // ownership — `URL<'_>` borrows its input; `OwnedURL` owns the href and
             // callers borrow via `.url()`.
-            opts.origin = bun_url::OwnedURL::from_href(origin.clone());
+            opts.origin = bun_core::url::OwnedURL::from_href(origin.clone());
         }
 
         if let Some(jsx_opts) = &transform.jsx {
@@ -1981,7 +1981,7 @@ impl<'a> BundleOptions<'a> {
             let handle = open_output_dir(&opts.output_dir)?;
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_core::paths::PathBuffer::uninit();
             let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
@@ -2058,7 +2058,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_core::paths::PathBuffer::uninit();
             let len = output_dir.len().min(buf.0.len() - 1);
             buf.0[..len].copy_from_slice(&output_dir[..len]);
             buf.0[len] = 0;
@@ -2093,7 +2093,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
 /// does not surface this type; local mirror keeps
 /// `TransformOptions.entry_point` self-contained.
 pub struct EntryPointFile {
-    pub path: bun_paths::fs::Path<'static>,
+    pub path: bun_core::paths::fs::Path<'static>,
     pub contents: Box<[u8]>,
 }
 
@@ -2125,7 +2125,7 @@ impl TransformOptions {
         debug_assert!(!entry_point_name.is_empty());
 
         let entry_point = EntryPointFile {
-            path: bun_paths::fs::Path::init(entry_point_name),
+            path: bun_core::paths::fs::Path::init(entry_point_name),
             contents: Box::from(code),
         };
 
@@ -2263,14 +2263,14 @@ impl Env {
         }
     }
 
-    pub fn ensure_total_capacity(&mut self, capacity: u64) -> Result<(), bun_alloc::AllocError> {
+    pub fn ensure_total_capacity(&mut self, capacity: u64) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.defaults.ensure_total_capacity(capacity as usize)
     }
 
     pub fn set_defaults_map(
         &mut self,
         defaults: &api::StringMap,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.defaults.shrink_retaining_capacity(0);
 
         if defaults.keys.is_empty() {
@@ -2289,7 +2289,7 @@ impl Env {
     }
 
     // For reading from API
-    pub fn set_from_api(&mut self, config: &api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
+    pub fn set_from_api(&mut self, config: &api::EnvConfig) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
 
         if let Some(defaults) = &config.defaults {
@@ -2313,7 +2313,7 @@ impl Env {
     pub fn set_from_loaded(
         &mut self,
         config: api::LoadedEnvConfig,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         self.behavior = match config.dotenv {
             api::DotEnvBehavior::prefix => api::DotEnvBehavior::prefix,
             api::DotEnvBehavior::load_all => api::DotEnvBehavior::load_all,
@@ -2343,7 +2343,7 @@ impl Env {
         &mut self,
         key: &[u8],
         value: &[u8],
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let slice = self.defaults.slice();
         for _key in slice.items::<"key", Box<[u8]>>().iter() {
             if key == &**_key {
@@ -2408,16 +2408,16 @@ impl EntryPoint {
     }
 
     fn normalized_path(&self, toplevel_path: &[u8]) -> Result<Box<[u8]>, crate::Error> {
-        debug_assert!(bun_paths::is_absolute(&self.path));
+        debug_assert!(bun_core::paths::is_absolute(&self.path));
         let mut str: &[u8] = &self.path;
         if let Some(top) = strings::index_of(str, toplevel_path) {
             str = &str[top + toplevel_path.len()..];
         }
 
         // if it *was* a node_module path, we don't do any allocation, we just keep it as a package path
-        if let Some(node_module_i) = strings::index_of(str, bun_paths::NODE_MODULES_TRAILING) {
+        if let Some(node_module_i) = strings::index_of(str, bun_core::paths::NODE_MODULES_TRAILING) {
             Ok(Box::from(
-                &str[node_module_i + bun_paths::NODE_MODULES_TRAILING.len()..],
+                &str[node_module_i + bun_core::paths::NODE_MODULES_TRAILING.len()..],
             ))
             // otherwise, we allocate a new string and copy the path into it with a leading "./"
         } else {

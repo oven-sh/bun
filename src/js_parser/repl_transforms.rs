@@ -5,9 +5,9 @@
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
 
-use bun_alloc::Arena as Bump;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::VecExt;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_core::collections::VecExt;
 
 use bun_ast as js_ast;
 use bun_ast::flags;
@@ -25,7 +25,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         // Skip transform if there's a top-level return (indicates module pattern)
         if self.has_top_level_return {
             return Ok(());
@@ -73,7 +73,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         all_stmts: &[Stmt],
         bump: &'bump Bump,
         is_async: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         if all_stmts.is_empty() {
             return Ok(());
         }
@@ -486,7 +486,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let iife = self.new_expr(
             E::Call {
                 target: arrow,
-                args: bun_alloc::AstAlloc::vec(),
+                args: bun_core::alloc_impl::AstAlloc::vec(),
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -530,7 +530,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         inner_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
         loc: bun_ast::Loc,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         // Store the module in the namespace ref: var __ns = await import('mod')
         hoisted_stmts.push(self.s(
             S::Local {
@@ -666,7 +666,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         &mut self,
         binding: Binding,
         decls: &mut BumpVec<'bump, G::Decl>,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         match binding.data {
             B::B::BIdentifier(ident) => {
                 decls.push(G::Decl {

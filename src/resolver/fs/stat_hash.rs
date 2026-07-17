@@ -1,5 +1,5 @@
-use bun_hash::XxHash64Streaming as XxHash64;
-use bun_http_types::ETag::wtf;
+use bun_core::hash::XxHash64Streaming as XxHash64;
+use bun_core::http_types::ETag::wtf;
 use bun_sys::{S, Stat, Timespec};
 
 #[derive(Default)]

@@ -1,9 +1,9 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
@@ -13,12 +13,13 @@ use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
-use bun_paths::{self, PathBuffer, SEP_STR};
+#[allow(unused_imports)]
+use bun_core::paths::{self, PathBuffer, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
-use bun_url::URL;
+use bun_core::url::URL;
 use bun_which::which;
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 
 use crate::api::bun::process::Status;
 use crate::api::bun::process::sync as spawn_sync;
@@ -945,7 +946,7 @@ impl UpgradeCommand {
                                 .get()
                                 .unwrap_or(b"C:\\Windows");
                             let hardcoded_system_powershell =
-                                bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
+                                bun_core::paths::join_abs_string_buf_z::<bun_core::paths::platform::Windows>(
                                     system_root,
                                     &mut buf2[..],
                                     &[
@@ -1136,7 +1137,7 @@ impl UpgradeCommand {
                 *buf_ptr.add(destination_executable.len()) = 0;
             }
 
-            let target_filename_ = bun_paths::basename(destination_executable);
+            let target_filename_ = bun_core::paths::basename(destination_executable);
             // SAFETY: buf[destination_executable.len()] == 0 written above; the
             // view is derived from `buf_ptr` so later disjoint writes through
             // `buf_ptr` (at `target_dir_len`, outside this range) don't pop it.
@@ -1466,9 +1467,9 @@ pub mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::WPathBuffer::uninit();
+            let mut buf = bun_core::paths::WPathBuffer::uninit();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let mut wtmp = bun_core::paths::WPathBuffer::uninit();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),

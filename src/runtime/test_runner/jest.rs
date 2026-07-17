@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_core::collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -244,7 +244,7 @@ impl<'a> TestRunner<'a> {
         // TODO: this is wrong. you can't put a hash as the key in a hashmap.
         let entry = self
             .index
-            .get_or_put(bun_wyhash::hash(file_path) as u32)
+            .get_or_put(bun_core::wyhash::hash(file_path) as u32)
             .expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {
@@ -306,7 +306,7 @@ impl Default for File {
 pub(crate) type FileList = MultiArrayList<File>;
 pub(crate) type FileId = u32;
 
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub trait FileColumns for File {
         source: bun_ast::Source,
         log: bun_ast::Log,
@@ -503,7 +503,7 @@ pub mod Jest {
             let str = arguments[0].to_slice(global_object)?;
             let slice = str.slice();
 
-            if !bun_paths::is_absolute(slice) {
+            if !bun_core::paths::is_absolute(slice) {
                 return Err(global_object.throw(format_args!(
                     "Bun.jest() expects an absolute file path, got '{}'",
                     bstr::BStr::new(slice)

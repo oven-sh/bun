@@ -37,7 +37,7 @@ impl<R> StyleRule<R> {
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
         // Wyhash seeded with 0 — same algorithm as bun.hash
-        let mut hasher = bun_wyhash::Wyhash::init(0);
+        let mut hasher = bun_core::wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
         // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
         // property-id tag bytes.
@@ -501,7 +501,7 @@ impl<R> StyleRule<R> {
 
 // ─── deep_clone ───────────────────────────────────────────────────────────
 impl<R> StyleRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_core::alloc_impl::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

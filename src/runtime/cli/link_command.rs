@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{AbsPath, PathBuffer};
+use bun_core::paths::{AbsPath, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -169,7 +169,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             #[cfg(windows)]
             {
                 use bun_core::ZStr;
-                use bun_paths::{platform, resolve_path};
+                use bun_core::paths::{platform, resolve_path};
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
                 let mut link_path_buf = PathBuffer::uninit();

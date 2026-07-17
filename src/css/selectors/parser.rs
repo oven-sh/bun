@@ -3,7 +3,7 @@
 
 use core::fmt;
 
-use bun_alloc::{Arena as Bump, ArenaPtr};
+use bun_core::alloc_impl::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
@@ -12,7 +12,7 @@ use bun_css::{
     CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList,
     Token, TokenList,
 };
-use bun_wyhash::Wyhash;
+use bun_core::wyhash::Wyhash;
 
 use super::impl_;
 
@@ -25,7 +25,7 @@ type CResult<T> = css::Result<T>;
 
 // Arena lifetimes: this module uses `Vec`/`Box` and a `Str`
 // alias for source-borrowed byte slices until the crate-wide `'bump` re-threading
-// (`bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators
+// (`bun_core::alloc_impl::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators
 // (AST crates)) lands.
 //
 // NOTE: `Str` is `&'static [u8]` here (not `crate::Str = *const [u8]`) to match

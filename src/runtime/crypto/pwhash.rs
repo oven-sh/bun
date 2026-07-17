@@ -165,7 +165,7 @@ pub mod argon2 {
 
         // Error `NoSpaceLeft` if the encoded hash overflows the caller buffer.
         if bytes.len() > out.len() {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+            return Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC));
         }
         out[..bytes.len()].copy_from_slice(bytes);
         Ok(&out[..bytes.len()])
@@ -307,7 +307,7 @@ pub mod bcrypt {
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
         if out.len() < HASH_LENGTH {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+            return Err(crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC));
         }
         // Bun only ever requests `.crypt`. A `.phc` request would need the
         // `$bcrypt$…` PHC serializer, which the Rust `bcrypt` crate does not
@@ -409,7 +409,7 @@ pub mod bcrypt {
 
         // salt / hash — standard no-pad base64.
         let (salt_b64, hash_b64) = rest.split_once('$').ok_or_else(invalid)?;
-        let decoder = &bun_base64::zig_base64::STANDARD_NO_PAD.decoder;
+        let decoder = &bun_core::base64::zig_base64::STANDARD_NO_PAD.decoder;
 
         let mut salt = [0u8; SALT_LENGTH];
         if decoder

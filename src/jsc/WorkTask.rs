@@ -5,7 +5,7 @@ use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
 use crate::event_loop::EventLoop;
-use bun_ptr::BackRef;
+use bun_core::ptr::BackRef;
 
 /// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
 /// Unlike ConcurrentPromiseTask which automatically resolves a Promise, WorkTask provides more flexibility

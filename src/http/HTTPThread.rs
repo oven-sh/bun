@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::{self, Output};
 
 use bun_threading::{Mutex, UnboundedQueue};
@@ -157,7 +157,7 @@ impl HttpThread {
             uws_loop: core::ptr::null_mut(),
             http_context: NewHttpContext::<false> {
                 ref_count: Cell::new(1),
-                pending_sockets: bun_collections::HiveArray::init(),
+                pending_sockets: bun_core::collections::HiveArray::init(),
                 group: uws::SocketGroup::default(),
                 secure: None,
                 active_h2_sessions: Vec::new(),
@@ -165,7 +165,7 @@ impl HttpThread {
             },
             https_context: NewHttpContext::<true> {
                 ref_count: Cell::new(1),
-                pending_sockets: bun_collections::HiveArray::init(),
+                pending_sockets: bun_core::collections::HiveArray::init(),
                 group: uws::SocketGroup::default(),
                 secure: None,
                 active_h2_sessions: Vec::new(),
@@ -479,11 +479,11 @@ impl HttpThread {
             self.ensure_https_context_init();
         }
         // Note: borrowck — `slice()` borrows `client`; capture into a
-        // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
+        // `bun_core::ptr::RawSlice` (encapsulated outlives-holder invariant) so the
         // borrow of `client` ends before we hand `&mut client` to
         // `connect_socket`. Backing storage is `client.unix_socket_path`, which
         // `connect_socket` does not touch.
-        let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
+        let unix_path = bun_core::ptr::RawSlice::new(client.unix_socket_path.slice());
         if !unix_path.is_empty() {
             return self
                 .context::<IS_SSL>()
@@ -523,7 +523,7 @@ impl HttpThread {
                 // Cache miss - create new SSL context
                 let custom_context = bun_core::heap::release(Box::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
-                    pending_sockets: bun_collections::HiveArray::init(),
+                    pending_sockets: bun_core::collections::HiveArray::init(),
                     group: uws::SocketGroup::default(),
                     secure: None,
                     active_h2_sessions: Vec::new(),
@@ -911,7 +911,7 @@ impl HttpThread {
                 // AsyncHttp is heap-owned by the caller and alive until its
                 // completion callback; while parked in `deferred_tasks` no other
                 // borrow exists, so a transient `ParentRef` shared deref is sound.
-                let aborted = bun_ptr::ParentRef::from(http)
+                let aborted = bun_core::ptr::ParentRef::from(http)
                     .client
                     .signals
                     .get(crate::signals::Field::Aborted);
@@ -934,7 +934,7 @@ impl HttpThread {
             // AsyncHttp is heap-owned by the caller and alive until its
             // completion callback; the MPSC pop hands sole access to this
             // thread, so a transient `ParentRef` shared deref is sound.
-            let aborted = bun_ptr::ParentRef::from(http)
+            let aborted = bun_core::ptr::ParentRef::from(http)
                 .client
                 .signals
                 .get(crate::signals::Field::Aborted);
@@ -1112,7 +1112,7 @@ impl HttpThread {
         // never holds a long-lived `&mut HttpThread` across the points these
         // touch (both fields are designed for cross-thread shared access).
         let this = unsafe {
-            bun_ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
+            bun_core::ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
         };
         {
             let mut batch_ = batch;
@@ -1281,7 +1281,7 @@ mod _event_loop_draft {
         // `init_global` returns the heap-allocated thread-local singleton (never
         // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
         // a stable field via `&self`, so a `ParentRef` shared deref suffices.
-        let uws_loop = bun_ptr::ParentRef::from(
+        let uws_loop = bun_core::ptr::ParentRef::from(
             NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
         )
         .loop_ptr();
@@ -1431,7 +1431,7 @@ pub fn shutdown_for_exit() {
     // materialised — `process_events(&mut self)` is live on the HTTP thread,
     // so a `&mut` here would alias. Same shape as `schedule()` above.
     let thread = unsafe {
-        bun_ptr::ParentRef::<HttpThread>::from_raw(
+        bun_core::ptr::ParentRef::<HttpThread>::from_raw(
             (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),
         )
     };

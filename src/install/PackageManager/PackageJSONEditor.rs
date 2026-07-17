@@ -1,10 +1,10 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use std::io::Write as _;
 
 use bun_ast as js_ast;
 use bun_ast::{E, Expr, G};
 use bun_core::strings;
-use bun_semver as semver;
+use bun_core::semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package::PackageColumns as _;
@@ -31,11 +31,11 @@ pub(crate) struct EditOptions {
 }
 
 #[inline]
-fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
+fn arena_str<'a>(arena: &'a bun_core::alloc_impl::Arena, bytes: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(bytes)
 }
 #[inline]
-fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
+fn arena_dup<'a>(arena: &'a bun_core::alloc_impl::Arena, bytes: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(bytes)
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn edit_patched_dependencies(
     package_json: &mut Expr,
     patch_key: &[u8],
     patchfile_path: &[u8],
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     let arena = &manager.ast_arena;
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
@@ -94,7 +94,7 @@ pub(crate) fn edit_patched_dependencies(
 pub fn edit_trusted_dependencies(
     package_json: &mut Expr,
     names_to_add: &mut [Box<[u8]>],
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     let mut len = names_to_add.len();
 
     let mut trusted_dependencies: &[Expr] = &[];
@@ -102,7 +102,7 @@ pub fn edit_trusted_dependencies(
         if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
             // this function; lifetime erased per the parser's `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
+            trusted_dependencies = unsafe { bun_core::ptr::detach_lifetime(arr.items.slice()) };
         }
     }
 
@@ -244,7 +244,7 @@ pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
     current_package_json: &mut Expr,
     options: EditOptions,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
@@ -538,7 +538,7 @@ pub(crate) fn edit(
     current_package_json: &mut Expr,
     dependency_list: &[u8],
     options: EditOptions,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
@@ -767,7 +767,7 @@ pub(crate) fn edit(
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
                 if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
-                    trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
+                    trusted_dependencies = unsafe { bun_core::ptr::detach_lifetime(arr.items.slice()) };
                 }
             }
         }
@@ -775,7 +775,7 @@ pub(crate) fn edit(
         let trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.len();
         let new_trusted_deps: js_ast::ExprNodeList = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
-                break 'brk bun_alloc::AstAlloc::vec();
+                break 'brk bun_core::alloc_impl::AstAlloc::vec();
             }
 
             let mut deps =
@@ -895,7 +895,7 @@ pub(crate) fn edit(
             Expr::allocate(
                 arena,
                 E::Object {
-                    properties: bun_alloc::AstAlloc::vec(),
+                    properties: bun_core::alloc_impl::AstAlloc::vec(),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,

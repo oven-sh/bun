@@ -1,12 +1,12 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
 use crate::node::{Encoding, StringOrBuffer};
-use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
+use bun_core::alloc_impl::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
@@ -29,7 +29,7 @@ use bun_jsc::{
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
-use bun_collections::ArrayHashMapExt;
+use bun_core::collections::ArrayHashMapExt;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_options_types::schema::api;
 
@@ -37,7 +37,7 @@ use bun_options_types::schema::api;
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
 #[bun_jsc::JsClass(name = "Transpiler")]
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 pub struct JSTranspiler {
     pub transpiler: JsCell<Transpiler::Transpiler<'static>>,
     /// Read-only after construction EXCEPT for `config.log`, which is the
@@ -51,10 +51,10 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
-    // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
+    // Intrusive refcount field for `bun_core::ptr::IntrusiveRc<JSTranspiler>`:
     // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
     // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
-    pub ref_count: bun_ptr::RefCount<JSTranspiler>,
+    pub ref_count: bun_core::ptr::RefCount<JSTranspiler>,
 }
 
 fn default_transform_options() -> api::TransformOptions {
@@ -666,7 +666,7 @@ pub(crate) struct TransformTask<'a> {
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     // `IntrusiveRc` (not `Arc`): JSTranspiler uses single-thread intrusive
     // `bun.ptr.RefCount` and crosses FFI as `m_ctx` (PORTING.md §Pointers).
-    pub js_instance: bun_ptr::IntrusiveRc<JSTranspiler>,
+    pub js_instance: bun_core::ptr::IntrusiveRc<JSTranspiler>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
     pub macro_map: MacroMap,
@@ -726,7 +726,7 @@ impl<'a> TransformTask<'a> {
             // `Cell<u32>`-backed count. `as_ctx_ptr`
             // yields `*mut Self` from `&Self` — signature-only; the only mutation
             // is to the `RefCount` field, which is interior-mutable.
-            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
+            js_instance: unsafe { bun_core::ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
         });
 
         // Re-point the linker's resolver backref into the heap-allocated copy.
@@ -774,7 +774,7 @@ impl<'a> TransformTask<'a> {
 
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let arena_ref: &'static Arena = unsafe { bun_core::ptr::detach_lifetime_ref(&arena) };
         let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
             name,
             self.input_code.slice(),
@@ -903,7 +903,7 @@ impl<'a> TransformTask<'a> {
 impl<'a> Drop for TransformTask<'a> {
     fn drop(&mut self) {
         // Release the +1 taken in `TransformTask::create`.
-        bun_ptr::RefPtr::deref(&self.js_instance);
+        bun_core::ptr::RefPtr::deref(&self.js_instance);
     }
 }
 
@@ -989,7 +989,7 @@ impl JSTranspiler {
         // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
         // the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena =
-            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
+            unsafe { bun_core::ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
 
         // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -1039,7 +1039,7 @@ impl JSTranspiler {
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
             log_level: bun_ast::Level::Err,
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
@@ -1099,7 +1099,7 @@ impl JSTranspiler {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 }
 
@@ -1349,7 +1349,7 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let arena_ref: &'static Arena = unsafe { bun_core::ptr::detach_lifetime_ref(&arena) };
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
             t.set_arena(arena_ref);
@@ -1545,7 +1545,7 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let arena_ref: &'static Arena = unsafe { bun_core::ptr::detach_lifetime_ref(&arena) };
         let (prev_arena, prev_macro_context) = self.transpiler.with_mut(|t| {
             let prev_arena = t.arena;
             // `take()` both reads the prior value AND nulls it.
@@ -1736,7 +1736,7 @@ impl JSTranspiler {
             let prev = t.arena;
             // SAFETY: `arena` outlives every use through `t` — `_restore` below
             // restores `prev_arena` before `arena` drops (reverse-decl order).
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(unsafe { bun_core::ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             prev
         });

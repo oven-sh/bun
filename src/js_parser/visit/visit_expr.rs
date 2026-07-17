@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -12,7 +12,7 @@ use crate::parser::{
     StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_ast as js_ast;
 use bun_ast::flags as Flags;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
@@ -426,7 +426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             &mut args,
                             p.new_expr(
                                 E::Object {
-                                    properties: bun_alloc::AstAlloc::take(&mut e_.properties),
+                                    properties: bun_core::alloc_impl::AstAlloc::take(&mut e_.properties),
                                     ..Default::default()
                                 },
                                 expr.loc,
@@ -585,7 +585,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key: Some(children_key),
                             value: Some(p.new_expr(
                                 E::Array {
-                                    items: bun_alloc::AstAlloc::take(&mut e_.children),
+                                    items: bun_core::alloc_impl::AstAlloc::take(&mut e_.children),
                                     is_single_line: children_single_line,
                                     ..Default::default()
                                 },
@@ -616,7 +616,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut args,
                         p.new_expr(
                             E::Object {
-                                properties: bun_alloc::AstAlloc::take(props),
+                                properties: bun_core::alloc_impl::AstAlloc::take(props),
                                 ..Default::default()
                             },
                             expr.loc,
@@ -2482,7 +2482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // bumpalo Vec cannot adopt an existing slice, so this copies.
         // PERF: profile if it shows up on a hot path (react-refresh only).
-        let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
+        let mut stmts_list = bun_core::alloc_impl::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()

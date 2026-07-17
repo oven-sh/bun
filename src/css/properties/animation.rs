@@ -40,7 +40,7 @@ pub struct Animation {
 }
 
 impl Animation {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Animation {
             name: self.name.deep_clone(bump),
             duration: self.duration,
@@ -301,7 +301,7 @@ impl AnimationName {
         }
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         match self {
             AnimationName::None => hasher.update(&0u32.to_ne_bytes()),
             AnimationName::Ident(i) => {
@@ -317,7 +317,7 @@ impl AnimationName {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         // All payloads are `Copy` (arena slice pointers); identity copy.
         match self {
             AnimationName::None => AnimationName::None,
@@ -562,7 +562,7 @@ impl AnimationTimeline {
         matches!(self, AnimationTimeline::Auto)
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             AnimationTimeline::Auto => AnimationTimeline::Auto,
             AnimationTimeline::None => AnimationTimeline::None,

@@ -9,27 +9,28 @@ use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
 use crate::run_command::RunCommand as Run;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_ast::ExprData;
 use bun_bundler::Transpiler;
-use bun_collections::BoundedArray;
+use bun_core::collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER, PathBuffer};
+#[allow(unused_imports)]
+use bun_core::paths::{self, DELIMITER, PathBuffer};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
 use bun_sys::{self, Fd, FdDirExt as _, O};
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
 
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::api::bun::process::sync as proc_sync;
 
-bun_output::declare_scope!(bunx, visible);
+bun_core::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
@@ -381,7 +382,7 @@ impl BunxCommand {
                 "{}",
                 format_args!(
                     "node_modules{sep}{pkg}{sep}package.json",
-                    sep = bun_paths::SEP as char,
+                    sep = bun_core::paths::SEP as char,
                     pkg = BStr::new(package_name),
                 ),
             )
@@ -409,7 +410,7 @@ impl BunxCommand {
                     cursor,
                     "{}{}package.json",
                     BStr::new(tempdir_name),
-                    bun_paths::SEP as char,
+                    bun_core::paths::SEP as char,
                 )
                 .expect("unreachable");
                 total - cursor.len()
@@ -477,7 +478,7 @@ impl BunxCommand {
                 cursor,
                 "{tmp}{sep}node_modules{sep}{pkg}{sep}package.json",
                 tmp = BStr::new(tempdir_name),
-                sep = bun_paths::SEP as char,
+                sep = bun_core::paths::SEP as char,
                 pkg = BStr::new(package_name),
             )
             .expect("unreachable");
@@ -659,7 +660,7 @@ impl BunxCommand {
         } else {
             update_request.name
         };
-        bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
+        bun_core::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
@@ -762,7 +763,7 @@ impl BunxCommand {
                     <&'static str>::from(update_request.version.tag),
                     hash(update_request.name).wrapping_add(hash(display_version)),
                 )
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
             } else {
                 write!(
                     &mut v,
@@ -770,11 +771,11 @@ impl BunxCommand {
                     BStr::new(&update_request.name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
             }
             break 'brk v;
         };
-        bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
+        bun_core::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
 
         // install_param -> used in command 'bun install {what}'
         // result_package_name -> used for path 'node_modules/{what}/package.json'
@@ -787,7 +788,7 @@ impl BunxCommand {
                     BStr::new(&update_request.name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                 (v, update_request.name)
             } else {
                 // When there is not a clear package name (URL/GitHub/etc), we force the package name
@@ -800,11 +801,11 @@ impl BunxCommand {
                     BStr::new(initial_bin_name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
                 (v, initial_bin_name)
             };
-        bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
+        bun_core::scoped_log!(
             bunx,
             "result_package_name: {}",
             BStr::new(result_package_name)
@@ -873,11 +874,11 @@ impl BunxCommand {
                 &mut v,
                 "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
                 tmp = BStr::new(temp_dir),
-                sep = bun_paths::SEP as char,
+                sep = bun_core::paths::SEP as char,
                 uid = uid,
                 pkg = BStr::new(&package_fmt),
             )
-            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            .map_err(|_| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
             if path_is_nonzero {
                 v.push(DELIMITER);
                 v.extend_from_slice(&path);
@@ -892,7 +893,7 @@ impl BunxCommand {
         let bunx_cache_dir: &[u8] =
             &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
 
-        bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
+        bun_core::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
@@ -907,7 +908,7 @@ impl BunxCommand {
                 cursor,
                 "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                 cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
+                sep = bun_core::paths::SEP as char,
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
@@ -940,7 +941,7 @@ impl BunxCommand {
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;
 
-        bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
+        bun_core::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {
             'try_run_existing: {
                 // Similar to "npx":
@@ -993,7 +994,7 @@ impl BunxCommand {
                         // path); fall through to a fresh install instead. See
                         // `is_trusted_cached_binary` for the full rationale.
                         if !Self::is_trusted_cached_binary(destination, uid) {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 bunx,
                                 "refusing untrusted cached binary: {}",
                                 BStr::new(out)
@@ -1055,7 +1056,7 @@ impl BunxCommand {
                         };
 
                         if is_stale {
-                            bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
+                            bun_core::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
                             if opts.no_install {
                                 bun_core::warn!(
@@ -1068,7 +1069,7 @@ impl BunxCommand {
                         }
                     }
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         bunx,
                         "running existing binary: {}",
                         BStr::new(destination.as_bytes())
@@ -1106,7 +1107,7 @@ impl BunxCommand {
                                         cursor,
                                         "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                                         cache = BStr::new(bunx_cache_dir),
-                                        sep = bun_paths::SEP as char,
+                                        sep = bun_core::paths::SEP as char,
                                         bin = BStr::new(&package_name_for_bin),
                                         exe = EXE_SUFFIX,
                                     )
@@ -1164,7 +1165,7 @@ impl BunxCommand {
                                     if strings::has_prefix(out, bunx_cache_dir)
                                         && !Self::is_trusted_cached_binary(destination, uid)
                                     {
-                                        bun_output::scoped_log!(
+                                        bun_core::scoped_log!(
                                             bunx,
                                             "refusing untrusted cached binary: {}",
                                             BStr::new(out)
@@ -1263,7 +1264,7 @@ impl BunxCommand {
 
         let argv_to_use = args.slice();
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             bunx,
             "installing package: {}",
             bun_core::fmt::fmt_slice(argv_to_use, " "),
@@ -1375,7 +1376,7 @@ impl BunxCommand {
                 cursor,
                 "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                 cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
+                sep = bun_core::paths::SEP as char,
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
@@ -1417,7 +1418,7 @@ impl BunxCommand {
                 )?;
                 // run_binary is noreturn
             } else {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     bunx,
                     "refusing untrusted cached binary: {}",
                     BStr::new(out)
@@ -1477,7 +1478,7 @@ impl BunxCommand {
                             )?;
                             // run_binary is noreturn
                         } else {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 bunx,
                                 "refusing untrusted cached binary: {}",
                                 BStr::new(out)

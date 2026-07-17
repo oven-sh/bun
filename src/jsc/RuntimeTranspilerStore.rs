@@ -6,21 +6,22 @@ use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_ast::Loader;
 use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
 use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
-use bun_collections::HiveArrayFallback;
+use bun_core::collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::posix_event_loop::get_vm_ctx;
 use bun_io::{AllocatorType, KeepAlive};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
-use bun_paths;
-use bun_ptr::BackRef;
+#[allow(unused_imports)]
+use bun_core::paths as bun_paths;
+use bun_core::ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
@@ -95,7 +96,7 @@ pub(crate) fn dump_source_string_failiable(
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 
-    let mut path_buf = bun_paths::PathBuffer::default();
+    let mut path_buf = bun_core::paths::PathBuffer::default();
 
     if holder.is_none() {
         let base_name: &[u8] = if cfg!(windows) {
@@ -115,16 +116,16 @@ pub(crate) fn dump_source_string_failiable(
     // process lifetime — borrow it for the duration of this dump.
     let dir = holder.as_ref().expect("just initialized above");
 
-    if let Some(dir_path) = bun_paths::dirname(specifier) {
+    if let Some(dir_path) = bun_core::paths::dirname(specifier) {
         let root_len = if cfg!(windows) {
-            bun_paths::resolve_path::windows_filesystem_root(dir_path).len()
+            bun_core::paths::resolve_path::windows_filesystem_root(dir_path).len()
         } else {
             b"/".len()
         };
         let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
 
-        let base = bun_paths::basename(specifier);
-        let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
+        let base = bun_core::paths::basename(specifier);
+        let base_z = bun_core::paths::resolve_path::z(base, &mut path_buf);
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
             bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
@@ -141,7 +142,7 @@ pub(crate) fn dump_source_string_failiable(
             let mut map_path = Vec::with_capacity(base.len() + b".map".len());
             map_path.extend_from_slice(base);
             map_path.extend_from_slice(b".map");
-            let map_path_z = bun_paths::resolve_path::z(&map_path, &mut path_buf);
+            let map_path_z = bun_core::paths::resolve_path::z(&map_path, &mut path_buf);
             let file = parent.create_file_z(
                 map_path_z,
                 bun_sys::CreateFlags {
@@ -177,8 +178,8 @@ pub(crate) fn dump_source_string_failiable(
             file.write_all(out.as_bytes())?;
         }
     } else {
-        let base = bun_paths::basename(specifier);
-        let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
+        let base = bun_core::paths::basename(specifier);
+        let base_z = bun_core::paths::resolve_path::z(base, &mut path_buf);
         let _ = File::write_file(dir.fd, base_z, written);
     }
 
@@ -252,7 +253,7 @@ impl RuntimeTranspilerStore {
             // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
             // intentionally left untouched (uninit is a valid value).
             addr_of_mut!((*out).store.hive.used)
-                .write(bun_collections::hive_array::HiveBitSet::init_empty());
+                .write(bun_core::collections::hive_array::HiveBitSet::init_empty());
             addr_of_mut!((*out).enabled).write(true);
             addr_of_mut!((*out).queue).write(Queue::new());
         }
@@ -316,8 +317,8 @@ impl RuntimeTranspilerStore {
         let owned_text: *mut [u8] = bun_core::heap::into_raw(Box::<[u8]>::from(path.text));
         // SAFETY: owned_text was just allocated via heap::alloc and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
-        // lifetime from raw-ptr deref coerces to `'static` for `bun_paths::fs::Path<'static>`.
-        let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
+        // lifetime from raw-ptr deref coerces to `'static` for `bun_core::paths::fs::Path<'static>`.
+        let owned_path = bun_core::paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
@@ -385,17 +386,17 @@ impl RuntimeTranspilerStore {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Note: bun.heap_breakdown.enabled gate on inline capacity — the Rust
-// `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments builds, so
+// `bun_core::alloc_impl::heap_breakdown` is a no-op outside macOS Instruments builds, so
 // the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    // Note: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
+    // Note: stored as the lower-tier `bun_core::paths::fs::Path<'static>` (the type
     // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
-    pub path: bun_paths::fs::Path<'static>,
+    pub path: bun_core::paths::fs::Path<'static>,
     /// RAII: `Drop` derefs the WTF refcount — torn down by
     /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
     pub non_threadsafe_input_specifier: OwnedString,
@@ -748,8 +749,8 @@ impl TranspilerJob {
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
+        let import_watcher: Option<bun_core::ptr::ParentRef<ImportWatcher>> =
+            unsafe { bun_core::ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
             // The watchlist *is* mutated cross-thread (the watcher thread's
             // `flush_evictions` closes fds and `swap_remove`s), so snapshot
@@ -886,7 +887,7 @@ impl TranspilerJob {
 
         if is_node_override {
             if let Some(code) = node_fallbacks::contents_from_path(specifier) {
-                let fallback_path = bun_paths::fs::Path::init_with_namespace(specifier, b"node");
+                let fallback_path = bun_core::paths::fs::Path::init_with_namespace(specifier, b"node");
                 let src = fallback_source.write(bun_ast::Source {
                     path: fallback_path,
                     contents: std::borrow::Cow::Borrowed(code),
@@ -914,7 +915,7 @@ impl TranspilerJob {
         else {
             if is_watcher_enabled && input_file_fd.is_valid() {
                 if !is_node_override
-                    && bun_paths::is_absolute(path.text)
+                    && bun_core::paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
                     should_close_input_file_fd.set(false);
@@ -940,7 +941,7 @@ impl TranspilerJob {
 
         if is_watcher_enabled && input_file_fd.is_valid() {
             if !is_node_override
-                && bun_paths::is_absolute(path.text)
+                && bun_core::paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
                 should_close_input_file_fd.set(false);
@@ -1066,7 +1067,7 @@ impl TranspilerJob {
 
             if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
                 import_record.path =
-                    bun_paths::fs::Path::init(&import_record.path.text[b"bun:".len()..]);
+                    bun_core::paths::fs::Path::init(&import_record.path.text[b"bun:".len()..]);
                 import_record.path.namespace = b"bun";
                 import_record
                     .flags

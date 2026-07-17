@@ -3,9 +3,10 @@ use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
 };
 use crate::node::validators::{validate_object, validate_string};
-use bun_collections::smallvec::SmallVec;
+use bun_core::collections::smallvec::SmallVec;
 use bun_core::{ZigString, ZigStringSlice, strings};
-use bun_paths::{self, MAX_PATH_BYTES, Platform};
+#[allow(unused_imports)]
+use bun_core::paths::{self, MAX_PATH_BYTES, Platform};
 use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
@@ -92,7 +93,7 @@ const PATH_MIN_WIDE: usize = 4096; // 4 KB
 
 /// Canonical path-unit trait — re-export so external callers that named
 /// `crate::node::path::PathChar` keep compiling.
-pub use bun_paths::PathChar;
+pub use bun_core::paths::PathChar;
 
 /// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
 /// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
@@ -225,7 +226,7 @@ impl<'a, T: PathCharCwd> PathParsed<'a, T> {
 
 pub(crate) const fn max_path_size<T: PathCharCwd>() -> usize {
     if T::IS_U16 {
-        bun_paths::PATH_MAX_WIDE
+        bun_core::paths::PATH_MAX_WIDE
     } else {
         MAX_PATH_BYTES
     }
@@ -234,10 +235,10 @@ pub(crate) const fn max_path_size<T: PathCharCwd>() -> usize {
 /// Upper bound of `max_path_size::<T>()` across both `T = u8` and `T = u16` on
 /// the current target. Used for sizing stack buffers where the `T`-dependent
 /// array length can't be expressed as a const-generic.
-const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE {
+const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_core::paths::PATH_MAX_WIDE {
     MAX_PATH_BYTES
 } else {
-    bun_paths::PATH_MAX_WIDE
+    bun_core::paths::PATH_MAX_WIDE
 };
 
 pub(crate) const fn path_size<T: PathCharCwd>() -> usize {
@@ -298,7 +299,7 @@ pub(crate) fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 #[cfg(windows)]
 #[inline]
 fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    bun_paths::string_paths::without_trailing_slash_windows_path(s)
+    bun_core::paths::string_paths::without_trailing_slash_windows_path(s)
 }
 #[cfg(not(windows))]
 #[inline]
@@ -307,7 +308,7 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
 }
 
 pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd = without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir());
+    let cached_cwd = without_trailing_slash(bun_core::paths::fs::FileSystem::instance().top_level_dir());
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
     Ok(&mut buf[0..cached_cwd.len()])
 }
@@ -315,7 +316,7 @@ pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
 pub(crate) fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     let result = strings::convert_utf8_to_utf16_in_buffer(
         buf,
-        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
+        without_trailing_slash(bun_core::paths::fs::FileSystem::instance().top_level_dir()),
     );
     Ok(result)
 }
@@ -970,10 +971,10 @@ pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     &path[_start_dot.._end]
 }
 
-pub use bun_paths::is_sep_posix_t;
+pub use bun_core::paths::is_sep_posix_t;
 // Node `path.win32.isPathSeparator` accepts BOTH `/` and `\` — semantically
 // `is_sep_any_t`, NOT `is_sep_win32_t` (which is `\`-only). Keep the Node name.
-pub use bun_paths::is_sep_any_t as is_sep_windows_t;
+pub use bun_core::paths::is_sep_any_t as is_sep_windows_t;
 
 /// `'A' <= byte <= 'Z' || 'a' <= byte <= 'z'`
 #[inline]
@@ -2983,7 +2984,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             #[cfg(windows)]
             {
-                let mut u16_buf = bun_paths::WPathBuffer::uninit();
+                let mut u16_buf = bun_core::paths::WPathBuffer::uninit();
                 // Storage for the `=X:` fast-path key. Declared here (not inside the
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
                 // 4 elements (not 3) so the wchar immediately following the 3-char

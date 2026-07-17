@@ -3,11 +3,11 @@
 use core::ffi::c_int;
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_core::String as BunString;
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
 // Hash is in-memory dedupe only — algorithm identity is not load-bearing.
-use bun_wyhash::Wyhash11 as Wyhash;
+use bun_core::wyhash::Wyhash11 as Wyhash;
 
 // `libc` does not expose winsock types/constants on Windows; route every
 // `libc::AF_*` / `addrinfo` / `sockaddr_*` reference through this shim so

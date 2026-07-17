@@ -213,7 +213,7 @@ impl Which {
     }
 
     fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut path_buf = bun_core::paths::path_buffer_pool::get();
         bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
     }
 }

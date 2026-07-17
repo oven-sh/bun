@@ -342,8 +342,8 @@ impl FetchHeaders {
     }
 }
 
-// Canonical enum lives in `bun_http_types::Method::HeaderName` (same 92
+// Canonical enum lives in `bun_core::http_types::Method::HeaderName` (same 92
 // `#[repr(u8)]` discriminants mirroring WebCore's `HTTPHeaderNames.in`). The
 // `WebCore__FetchHeaders__put` extern decl above and the `fast_*` methods take
 // it by value, so the re-export is ABI-transparent.
-pub use bun_http_types::Method::HeaderName as HTTPHeaderName;
+pub use bun_core::http_types::Method::HeaderName as HTTPHeaderName;

@@ -6,7 +6,7 @@ use crate::js_value::Protected;
 use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
-use bun_collections::{ByteVecExt, VecExt};
+use bun_core::collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, strings};
 use bun_event_loop::ManagedTask::ManagedTask;
@@ -56,7 +56,7 @@ pub struct InternalMsgHolder {
 
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, crate::StrongOptional>,
+    pub callbacks: bun_core::collections::ArrayHashMap<i32, crate::StrongOptional>,
     pub worker: crate::StrongOptional,
     pub cb: crate::StrongOptional,
     pub messages: Vec<crate::StrongOptional>,
@@ -66,7 +66,7 @@ impl Default for InternalMsgHolder {
     fn default() -> Self {
         Self {
             seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
+            callbacks: bun_core::collections::ArrayHashMap::default(),
             worker: crate::StrongOptional::empty(),
             cb: crate::StrongOptional::empty(),
             messages: Vec::new(),

@@ -252,7 +252,7 @@ impl Default for Local {
     fn default() -> Self {
         Self {
             kind: Kind::default(),
-            decls: bun_alloc::AstAlloc::vec(),
+            decls: bun_core::alloc_impl::AstAlloc::vec(),
             is_export: false,
             was_ts_import_equals: false,
             was_commonjs_export: false,

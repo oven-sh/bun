@@ -77,7 +77,7 @@ pub(crate) struct TerminalCreateResult {
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
     /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
-    pub terminal: bun_ptr::BackRef<Terminal>,
+    pub terminal: bun_core::ptr::BackRef<Terminal>,
     pub js_value: JSValue,
 }
 
@@ -121,7 +121,7 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwn
     ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
 }
 
-bun_output::declare_scope!(Subprocess, hidden);
+bun_core::declare_scope!(Subprocess, hidden);
 
 // Stdio is platform-dependent: process.rs defines `PosixStdio` / `WindowsStdio`
 // as siblings; alias the active one here so the body stays platform-neutral.
@@ -409,7 +409,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
-    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
+    let mut existing_terminal: Option<bun_core::ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
@@ -798,7 +798,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.
-                        let term = bun_ptr::BackRef::from(terminal);
+                        let term = bun_core::ptr::BackRef::from(terminal);
                         if term.is_closed() {
                             return Err(global_this
                                 .throw_invalid_arguments(format_args!("terminal is closed")));
@@ -833,7 +833,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     // in `Subprocess::finalize`); the scopeguard's
                                     // `abandon_from_spawn` path covers the error case.
                                     // `IntrusiveRc::into_raw` is never null (NonNull-backed).
-                                    terminal: bun_ptr::BackRef::from(
+                                    terminal: bun_core::ptr::BackRef::from(
                                         core::ptr::NonNull::new(created.terminal.into_raw())
                                             .expect("IntrusiveRc non-null"),
                                     ),
@@ -906,7 +906,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
+    bun_core::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
     // Owns the `K=V\0` storage when inheriting the parent env; the struct
     // lives until spawn returns.
@@ -1180,8 +1180,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
         Err(err)
-            if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
-                || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
+            if err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE)
+                || err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::ENFILE) =>
         {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
@@ -1197,7 +1197,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
+                if err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
                     sys::Errno::ENFILE
@@ -1206,7 +1206,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
+            systemerror.errno = if err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE) {
                 -UV_E::MFILE
             } else {
                 -UV_E::NFILE
@@ -1284,10 +1284,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // the struct once with its final field values, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
-        global_this: bun_ptr::BackRef::new(global_this),
+        global_this: bun_core::ptr::BackRef::new(global_this),
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw(process) },
+        process: unsafe { bun_core::ptr::BackRef::from_raw(process) },
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1304,7 +1304,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         stderr: JsCell::new(Readable::Ignore),
         // 1=JS (released in Subprocess::finalize), 2=Process exit handler
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
-        ref_count: bun_ptr::RefCount::init_exact_refs(2),
+        ref_count: bun_core::ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: JsCell::new(None),
         flags: Cell::new(if IS_SYNC {
@@ -1390,7 +1390,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             #[cfg(not(unix))]
             {
-                use bun_libuv_sys::UvHandle as _;
+                use bun_core::libuv_sys::UvHandle as _;
                 for r in [spawned_stdout, spawned_stderr] {
                     match r {
                         spawn::WindowsStdioResult::Buffer(pipe) => {
@@ -1555,7 +1555,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
             // neutralize the slot up front so `finalizeStreams` can't
             // double-close it (the Box would otherwise drop on reassignment).
-            let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
+            let ipc_pipe: *mut bun_core::libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
                 match core::mem::take(&mut pipes[idx]) {
                     spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
                     other => {
@@ -1818,7 +1818,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         subprocess.process_mut().wait(true);
-        bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
+        bun_core::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
@@ -2171,7 +2171,7 @@ pub(crate) fn append_envp_from_js(
             // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
             // outlives every read of `*path`), and `ZBox` is heap-backed so the
             // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
+            *path = unsafe { bun_core::ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
         }
 
         envp.push(line.as_ptr());

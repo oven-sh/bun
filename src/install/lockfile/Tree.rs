@@ -1,10 +1,11 @@
 use core::marker::ConstParamTy;
 
-use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
+#[allow(unused_imports)]
+use bun_core::paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
@@ -434,7 +435,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// split-borrow `resolutions` mutably without borrowck rejecting the
     /// overlap; reads go through [`Builder::lockfile()`] which never touches
     /// `buffers.resolutions`.
-    pub lockfile: bun_ptr::ParentRef<Lockfile>,
+    pub lockfile: bun_core::ptr::ParentRef<Lockfile>,
     // Unresolved optional peers that might resolve later. if they do we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
@@ -452,7 +453,7 @@ pub struct BuilderEntry {
     pub dependencies: DependencyIDList,
 }
 
-bun_collections::multi_array_columns! {
+bun_core::multi_array_columns! {
     pub(crate) trait BuilderEntryColumns for BuilderEntry {
         tree: Tree,
         dependencies: DependencyIDList,
@@ -625,10 +626,10 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let mut workspace_matched = workspace_filters.is_empty();
 
     for filter in workspace_filters {
-        // Separator is a const generic on `bun_paths::AbsPath`.
-        let mut filter_path = bun_paths::AbsPath::<
+        // Separator is a const generic on `bun_core::paths::AbsPath`.
+        let mut filter_path = bun_core::paths::AbsPath::<
             u8,
-            { bun_paths::path_options::PathSeparators::POSIX },
+            { bun_core::paths::path_options::PathSeparators::POSIX },
         >::init_top_level_dir();
         // filter_path drops at end of iteration.
 
@@ -1148,4 +1149,4 @@ pub struct FillItem {
 
 // Dynamic, heap-backed ring buffer.
 pub(crate) type TreeFiller =
-    bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
+    bun_core::collections::LinearFifo<FillItem, bun_core::collections::linear_fifo::DynamicBuffer<FillItem>>;

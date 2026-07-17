@@ -6,7 +6,7 @@ use bun_core::MutableString;
 // boundary.
 mod buffer_pool {
     use super::*;
-    use bun_collections::ObjectPoolType;
+    use bun_core::collections::ObjectPoolType;
 
     #[repr(transparent)]
     pub(super) struct PooledMutableString(pub MutableString);
@@ -21,7 +21,7 @@ mod buffer_pool {
     }
 
     // Not threadsafe ⇒ `global` storage mode.
-    bun_collections::object_pool!(pub BufferPool: PooledMutableString, global, 4);
+    bun_core::object_pool!(pub BufferPool: PooledMutableString, global, 4);
 
     pub fn get() -> *mut MutableString {
         // Callers hand-pair get/put: the pointer is

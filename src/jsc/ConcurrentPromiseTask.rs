@@ -6,7 +6,7 @@ use crate::event_loop::EventLoop;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsTerminated};
-use bun_ptr::BackRef;
+use bun_core::ptr::BackRef;
 
 /// The `Context` type parameter for [`ConcurrentPromiseTask`] must implement this trait:
 /// - `run(&mut self)` — performs the work on the thread pool

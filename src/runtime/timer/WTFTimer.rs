@@ -50,7 +50,7 @@ pub struct WTFTimer {
     // `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast to `*mut ()` at
     // each compare_exchange (the hook in `dispatch.rs` casts back to
     // `*mut WTFTimer`).
-    imminent: bun_ptr::BackRef<AtomicPtr<()>>,
+    imminent: bun_core::ptr::BackRef<AtomicPtr<()>>,
     repeat: bool,
     script_execution_context_id: ScriptExecutionContextIdentifier,
 }
@@ -81,7 +81,7 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
         // short-lived `&Self` per Deref so no `&WTFTimer` spans the
         // `All::wtf_disarm` raw write to `event_loop_timer`.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = unsafe { bun_core::ptr::ThisPtr::new(this) };
         // SAFETY: `vm` is the live VM that owns this timer's heap.
         unsafe {
             let state = crate::jsc_hooks::runtime_state_of(vm);
@@ -133,7 +133,7 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
         // short-lived `&Self` per Deref. Copy the `BackRef` out so the
         // subsequent `&AtomicPtr` borrow is detached from `*this`.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = unsafe { bun_core::ptr::ThisPtr::new(this) };
         let imminent_br = t.imminent;
         let imminent = imminent_br.get();
 
@@ -186,7 +186,7 @@ impl WTFTimer {
     pub unsafe fn cancel(this: *mut Self) {
         // SAFETY: per fn contract — `this` outlives this scope. `ThisPtr` vends
         // only fresh short-lived `&Self` per Deref.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = unsafe { bun_core::ptr::ThisPtr::new(this) };
 
         if t.script_execution_context_id.valid() {
             // Only clear imminent if this timer was the one that set it.
@@ -220,7 +220,7 @@ impl WTFTimer {
     pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, _vm: *mut VirtualMachine) {
         // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
         // short-lived `&Self` per Deref.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = unsafe { bun_core::ptr::ThisPtr::new(this) };
         // Only clear imminent if this timer was the one that set it.
         let self_opaque = this.cast::<()>();
         // `imminent` is a `BackRef` into the VM's event loop, which outlives
@@ -265,7 +265,7 @@ pub(crate) unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTim
         let el = &*vm_ref.event_loop();
         Box::new(WTFTimer {
             vm: NonNull::new_unchecked(vm),
-            imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
+            imminent: bun_core::ptr::BackRef::new(&el.imminent_gc_timer),
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec {
                     sec: i64::MAX,

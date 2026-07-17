@@ -69,7 +69,7 @@ impl DOMFormData {
     {
         extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
             // SAFETY: `c` is the `&mut F` passed below.
-            let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
+            let cb = unsafe { bun_core::ptr::callback_ctx::<F>(c) };
             // SAFETY: `str_` is a valid non-null *ZigString for the synchronous callback scope.
             cb(unsafe { *str_ });
         }
@@ -131,7 +131,7 @@ impl DOMFormData {
             F: FnMut(ZigString, FormDataEntry<'_, B>),
         {
             // SAFETY: ctx_ptr is the non-null `&mut F` passed below.
-            let ctx_ = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
+            let ctx_ = unsafe { bun_core::ptr::callback_ctx::<F>(ctx_ptr) };
             let value = if is_blob == 0 {
                 // SAFETY: when is_blob == 0, value_ptr points to a ZigString.
                 FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })

@@ -17,31 +17,31 @@ use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
 use bun_http_jsc::method_jsc::MethodJsc as _;
-use bun_http_types::FetchCacheMode::FetchCacheMode;
-use bun_http_types::FetchRedirect::FetchRedirect;
-use bun_http_types::FetchRequestMode::FetchRequestMode;
-use bun_http_types::Method::Method;
+use bun_core::http_types::FetchCacheMode::FetchCacheMode;
+use bun_core::http_types::FetchRedirect::FetchRedirect;
+use bun_core::http_types::FetchRequestMode::FetchRequestMode;
+use bun_core::http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
-use bun_ptr::weak_ptr::WeakPtrData;
+use bun_core::ptr::weak_ptr::WeakPtrData;
 use bun_uws as uws;
 use core::mem::ManuallyDrop;
 
-impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
+impl bun_core::ptr::weak_ptr::HasWeakPtrData for Request {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
         unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
-pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
+pub(crate) type WeakRef = bun_core::ptr::WeakPtr<Request>;
 
 // Hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
 // not yet wired for Request). Routes through the codegen'd
@@ -733,11 +733,11 @@ impl Request {
                 // returned `&[u8]` outlives the temporary.
                 // SAFETY: the bytes point into `self.headers`' WTF storage,
                 // which is held alive for the borrow `&self`.
-                return unsafe { bun_ptr::detach_lifetime(content_type.slice()) };
+                return unsafe { bun_core::ptr::detach_lifetime(content_type.slice()) };
             }
         }
 
-        // Upstream `bun_http_types::MimeType::{OTHER,TEXT}` are `const` items
+        // Upstream `bun_core::http_types::MimeType::{OTHER,TEXT}` are `const` items
         // (not `static`), so `&CONST.value` borrows a temporary `Cow` and cannot be
         // returned. Mirror their `init_comptime` byte literals here as `'static` slices.
         const MIME_OTHER_VALUE: &[u8] = b"application/octet-stream";
@@ -998,7 +998,7 @@ impl Request {
                         #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
-                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
+                        let href = bun_core::url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));
@@ -1034,7 +1034,7 @@ impl Request {
                         self.url.set(BunString::clone_utf8(&temp_url));
                     }
 
-                    let href = bun_url::href_from_string(&self.url.get());
+                    let href = bun_core::url::href_from_string(&self.url.get());
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
                         self.url.set(href);
@@ -1524,7 +1524,7 @@ impl Request {
             ))));
         }
 
-        let href = bun_url::href_from_string(&req.url.get());
+        let href = bun_core::url::href_from_string(&req.url.get());
         if href.is_empty() {
             if !global_this.has_exception() {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.

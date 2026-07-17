@@ -7,7 +7,7 @@ use crate::shell::yield_::Yield;
 
 pub struct Binary {
     pub base: Base,
-    pub node: bun_ptr::BackRef<ast::Binary>,
+    pub node: bun_core::ptr::BackRef<ast::Binary>,
     pub io: IO,
     /// Once `left` is done, this holds its exit code; `None` while running left.
     pub left: Option<ExitCode>,
@@ -25,7 +25,7 @@ impl Binary {
     ) -> NodeId {
         interp.alloc_node(Node::Binary(Binary {
             base: Base::new(StateKind::Binary, parent, shell),
-            node: bun_ptr::BackRef::new(node),
+            node: bun_core::ptr::BackRef::new(node),
             io,
             left: None,
             right: None,

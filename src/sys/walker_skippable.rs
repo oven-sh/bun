@@ -1,10 +1,10 @@
 use core::ops::Range;
 
 use crate::{self as sys, Fd, FdExt, dir_iterator};
-use bun_alloc::AllocError;
+use bun_core::alloc_impl::AllocError;
 use bun_core::slice_as_bytes;
-use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
-use bun_wyhash::Wyhash11;
+use bun_core::paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
+use bun_core::wyhash::Wyhash11;
 
 #[inline]
 fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {

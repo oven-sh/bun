@@ -33,7 +33,7 @@ impl PageSelector {
 }
 
 impl PageSelector {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // `name` is an arena-owned slice → identity copy; `PagePseudoClass` is `Copy`.
         Self {
             name: self.name,
@@ -98,7 +98,7 @@ impl PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             margin_box: self.margin_box,
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -182,7 +182,7 @@ impl PageRule {
 }
 
 impl PageRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -203,8 +203,8 @@ impl PageRule {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see declaration.rs `DeclarationBlock::parse`).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+        let bump: &'static bun_core::alloc_impl::Arena =
+            unsafe { &*std::ptr::from_ref::<bun_core::alloc_impl::Arena>(input.arena()) };
         let mut declarations = DeclarationBlock::new_in(bump);
         let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
         let mut rule_parser = PageRuleParser {
@@ -252,7 +252,7 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub(crate) fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         // `Copy` enum → identity.
         self
     }

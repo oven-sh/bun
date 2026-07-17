@@ -4,9 +4,9 @@
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
 //! in `bun_options_types`) is gone now that those are canonical in `bun_ast`.
 
-use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::array_hash_map::{AutoContext, StringContext};
-use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
+use bun_core::alloc_impl::{AstAlloc, AstVec};
+use bun_core::collections::array_hash_map::{AutoContext, StringContext};
+use bun_core::collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
 use crate::runtime;
 use crate::{
@@ -97,7 +97,7 @@ pub struct Ast<'a> {
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
 // so `Default` no longer applies; use `Ast::empty_in(arena)`.
 impl<'a> Ast<'a> {
-    pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
+    pub fn empty_in(arena: &'a bun_core::alloc_impl::MimallocArena) -> Self {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
@@ -171,7 +171,7 @@ pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
 
 impl<'a> Ast<'a> {
-    pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {
+    pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_core::alloc_impl::MimallocArena) -> Ast<'a> {
         let mut p = PartList::with_capacity_in(parts.len(), arena);
         p.extend(parts.into_vec());
         Ast {

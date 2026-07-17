@@ -4,7 +4,7 @@ pub enum Error {
     Unexpected,
 
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
 
     #[error(transparent)]
     Core(#[from] bun_core::Error),
@@ -13,7 +13,7 @@ pub enum Error {
     SpawnSys(#[from] bun_spawn_sys::Error),
 
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
 }
 
 impl Error {

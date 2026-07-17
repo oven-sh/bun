@@ -35,13 +35,13 @@ use bun_core::strings;
 #[cfg(windows)]
 use bun_jsc::GlobalRef;
 #[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
+use bun_core::libuv_sys::UvHandle as _;
 #[cfg(windows)]
-use bun_paths::PathBuffer;
+use bun_core::paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
-bun_output::define_scoped_log!(log, Listener, visible);
+bun_core::define_scoped_log!(log, Listener, visible);
 
 /// Runs `f` against this thread's `SSL_CTX` cache. Takes a callback rather than
 /// handing out a `&'static mut`, which two callers could hold at once.
@@ -549,11 +549,11 @@ impl Listener {
 
     pub fn on_name_pipe_created<const SSL: bool>(
         listener: &Listener,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+    ) -> bun_core::ptr::ThisPtr<NewSocket<SSL>> {
         debug_assert!(SSL == listener.ssl);
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
@@ -588,14 +588,14 @@ impl Listener {
     pub fn on_create<const SSL: bool>(
         listener: &Listener,
         socket: uws::NewSocketHandler<SSL>,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+    ) -> bun_core::ptr::ThisPtr<NewSocket<SSL>> {
         jsc::mark_binding!();
         log!("onCreate");
 
         debug_assert!(SSL == listener.ssl);
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
             socket: Cell::new(socket),
             protos: JsCell::new(listener.protos.clone()),
@@ -828,8 +828,8 @@ impl Listener {
         if path.is_empty() || path[0] == 0 {
             return;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let _ = bun_sys::unlink(bun_paths::resolve_path::z(path, &mut buf));
+        let mut buf = bun_core::paths::path_buffer_pool::get();
+        let _ = bun_sys::unlink(bun_core::paths::resolve_path::z(path, &mut buf));
     }
 
     fn deinit(this: *mut Self) {
@@ -1094,9 +1094,9 @@ impl Listener {
                 handlers.set_promise(global, promise_value);
 
                 if ssl_enabled {
-                    let tls: bun_ptr::ThisPtr<TLSSocket> = if let Some(prev_ptr) = prev_maybe_tls {
+                    let tls: bun_core::ptr::ThisPtr<TLSSocket> = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
-                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
+                        let prev = unsafe { bun_core::ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(global, Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1117,7 +1117,7 @@ impl Listener {
                         prev
                     } else {
                         TLSSocket::new(TLSSocket {
-                            ref_count: bun_ptr::RefCount::init(),
+                            ref_count: bun_core::ptr::RefCount::init(),
                             handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
@@ -1185,9 +1185,9 @@ impl Listener {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                     });
                 } else {
-                    let tcp: bun_ptr::ThisPtr<TCPSocket> = if let Some(prev_ptr) = prev_maybe_tcp {
+                    let tcp: bun_core::ptr::ThisPtr<TCPSocket> = if let Some(prev_ptr) = prev_maybe_tcp {
                         // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
-                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
+                        let prev = unsafe { bun_core::ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(global, Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1205,7 +1205,7 @@ impl Listener {
                         prev
                     } else {
                         TCPSocket::new(TCPSocket {
-                            ref_count: bun_ptr::RefCount::init(),
+                            ref_count: bun_core::ptr::RefCount::init(),
                             handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
                             connection: JsCell::new(Some(connection)),
@@ -1412,9 +1412,9 @@ fn connect_finish<const IS_SSL: bool>(
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
     let vm = handlers.vm;
-    let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
+    let socket: bun_core::ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>, owned by its JS wrapper.
-        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
+        let prev = unsafe { bun_core::ptr::ThisPtr::new(prev_ptr) };
         debug_assert!(prev.this_value.get().is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
@@ -1444,7 +1444,7 @@ fn connect_finish<const IS_SSL: bool>(
         prev
     } else {
         NewSocket::<IS_SSL>::new(NewSocket::<IS_SSL> {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_core::ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(uws::NewSocketHandler::<IS_SSL>::DETACHED),
             connection: JsCell::new(Some(connection)),
@@ -1594,7 +1594,7 @@ pub struct WindowsNamedPipeListeningContext {
     /// `close_pipe_and_deinit` before the listener is torn down). `BackRef`
     /// centralises the safe deref so call sites don't open-code a raw
     /// `NonNull::as_ref`.
-    pub listener: Option<bun_ptr::BackRef<Listener>>,
+    pub listener: Option<bun_core::ptr::BackRef<Listener>>,
     pub global_this: GlobalRef,
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
@@ -1692,7 +1692,7 @@ impl WindowsNamedPipeListeningContext {
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
-            listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
+            listener: NonNull::new(listener).map(bun_core::ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm(),
             ctx: None,
@@ -1812,7 +1812,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     }
     // SAFETY: see above — the listen socket keeps the `Listener` alive for the
     // duration of this synchronous handshake dispatch.
-    let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
+    let listener = unsafe { bun_core::ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
     if handlers.vm.is_shutting_down() {
         return core::ptr::null_mut();
@@ -1852,7 +1852,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         // TLSSocket wrapper.
         let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
         if s_ref.kind() == uws_sys::SocketKind::BunSocketTls {
-            match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
+            match *s_ref.ext::<Option<bun_core::ptr::ThisPtr<TLSSocket>>>() {
                 Some(tls) => tls.get_this_value(&global),
                 None => JSValue::UNDEFINED,
             }

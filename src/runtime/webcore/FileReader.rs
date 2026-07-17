@@ -1,12 +1,12 @@
 use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 #[cfg(unix)]
 use bun_io as aio;
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
+use bun_core::ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::blob;
@@ -44,7 +44,7 @@ pub struct FileReader {
     pub pending_value: JsCell<Strong>, // Strong.Optional
     // TODO(refactor): `&'static mut [u8]` forge — borrows a JS typed-array buffer
     // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
-    // does not honour. `bun_ptr::Interned` is read-only by construction so
+    // does not honour. `bun_core::ptr::Interned` is read-only by construction so
     // does NOT cover this; tracked under the sibling `static-widen-mut`
     // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
     pub pending_view: JsCell<&'static mut [u8]>,
@@ -103,8 +103,8 @@ pub enum ReadDuringJSOnPullResult {
     AmountRead(usize),
     /// Borrows the reader/JS buffer for the duration of one `on_pull` call
     /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
-    /// `bun_ptr::Interned` Population-B triage.
-    Temporary(bun_ptr::RawSlice<u8>),
+    /// `bun_core::ptr::Interned` Population-B triage.
+    Temporary(bun_core::ptr::RawSlice<u8>),
     UseBuffered(usize),
 }
 
@@ -150,7 +150,7 @@ impl Lazy {
             fd: Fd::INVALID,
             ..Default::default()
         };
-        let mut file_buf = bun_paths::PathBuffer::uninit();
+        let mut file_buf = bun_core::paths::PathBuffer::uninit();
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
@@ -192,7 +192,7 @@ impl Lazy {
             }
             PathOrFileDescriptor::Path(path) => {
                 match sys::open(
-                    bun_paths::resolve_path::z(path.slice(), &mut file_buf),
+                    bun_core::paths::resolve_path::z(path.slice(), &mut file_buf),
                     sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
                     0,
                 ) {
@@ -520,7 +520,7 @@ impl FileReader {
     /// no `&Source` is materialized so no aliasing with `&self`); callers
     /// then `Deref` the returned `BackRef` with no unsafe.
     #[inline]
-    fn parent_global(&self) -> bun_ptr::BackRef<jsc::JSGlobalObject> {
+    fn parent_global(&self) -> bun_core::ptr::BackRef<jsc::JSGlobalObject> {
         // SAFETY: see `parent()` — `self` is the `context` field of a live
         // heap-allocated `Source`. Reading the `Copy` `global_this` via
         // `(*ptr).field` is a raw-place read, not a `&Source` borrow.
@@ -647,7 +647,7 @@ impl FileReader {
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this
                         // variant; holder-lifetime, encoded as `RawSlice<u8>`.
-                        *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
+                        *riop = ReadDuringJSOnPullResult::Temporary(bun_core::ptr::RawSlice::new(buf));
                     } else if has_more && !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                         self.buffered.with_mut(|b| b.extend_from_slice(buf));
                         *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
@@ -751,7 +751,7 @@ impl FileReader {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
                         self.pending.with_mut(|p| {
-                            p.result = streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                            p.result = streams::Result::Temporary(bun_core::ptr::RawSlice::new(buf))
                         });
                     }
                     break 'pending !was_done;
@@ -760,9 +760,9 @@ impl FileReader {
                 if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                     self.pending.with_mut(|p| {
                         p.result = if self.reader().is_done() {
-                            streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
+                            streams::Result::TemporaryAndDone(bun_core::ptr::RawSlice::new(buf))
                         } else {
-                            streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
+                            streams::Result::Temporary(bun_core::ptr::RawSlice::new(buf))
                         }
                     });
                     break 'pending !was_done;

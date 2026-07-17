@@ -28,7 +28,7 @@ impl NamespaceRule {
         dest.write_char(b';')
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         // `CssString` is `*const [u8]` (arena-owned slice → identity copy);
         // `Ident::deep_clone` is the same identity copy.
         Self {

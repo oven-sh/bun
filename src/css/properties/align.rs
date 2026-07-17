@@ -6,7 +6,7 @@ use crate::prefixes::Feature;
 use crate::properties::{Property, PropertyId};
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
 use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use crate::css_properties::flex::{
     BoxAlign, BoxPack, FlexAlign, FlexItemAlign, FlexLinePack, FlexPack,

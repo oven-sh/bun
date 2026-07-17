@@ -1,13 +1,13 @@
 use core::cmp::Ordering;
 
 use crate::Error;
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::strings;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
 use bun_install::{PackageManager, PackageNameHash};
-use bun_output::{declare_scope, scoped_log};
-use bun_semver::String as SemverString;
-use bun_semver::string::Builder as SemverBuilder;
+use bun_core::{declare_scope, scoped_log};
+use bun_core::semver::String as SemverString;
+use bun_core::semver::string::Builder as SemverBuilder;
 
 use super::package::value_loc_of;
 use super::{StringBuilder, package::Package};
@@ -440,7 +440,7 @@ pub fn parse_override_value(
     // SAFETY: `string_bytes` was pre-reserved by `allocate()`; subsequent
     // `append` calls don't realloc, so a detached view is sound here while we
     // still need `&mut builder` for the next `append`.
-    let string_bytes = unsafe { bun_ptr::detach_lifetime(builder.string_bytes.as_slice()) };
+    let string_bytes = unsafe { bun_core::ptr::detach_lifetime(builder.string_bytes.as_slice()) };
     let literal_sliced = literal_string.sliced(string_bytes);
 
     let name_hash = SemverBuilder::string_hash(key);

@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
-use bun_ptr::RefPtr;
+use bun_core::ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;
@@ -38,8 +38,8 @@ impl<'a> Writable<'a> {
     /// i.e. the owner-outlives-holder `BackRef` invariant holds (single JS
     /// thread).
     #[inline]
-    pub(super) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_ptr::BackRef<FileSink> {
-        bun_ptr::BackRef::from(pipe)
+    pub(super) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_core::ptr::BackRef<FileSink> {
+        bun_core::ptr::BackRef::from(pipe)
     }
 
     /// Mutable counterpart to [`pipe_sink`](Self::pipe_sink).

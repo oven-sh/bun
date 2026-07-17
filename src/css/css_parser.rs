@@ -3,13 +3,13 @@
 //! This is an AST crate (see PORTING.md §Allocators): allocations are
 //! arena-backed, with `&'bump Bump` threaded where it matters.
 
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use core::fmt;
 
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast::Log;
-use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-use bun_collections::{ArrayHashMap, MapEntry, VecExt};
+use bun_core::collections::bit_set::{ArrayBitSet, num_masks_for};
+use bun_core::collections::{ArrayHashMap, MapEntry, VecExt};
 use bun_core::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -112,11 +112,11 @@ mod gated_shims {
         // the previous `*const [u8]` shim forced a `repr(Rust)` generic
         // type-pun (`ArrayHashMap<_, Box<[u8]>>` → `ArrayHashMap<_, *const [u8]>`)
         // whose layout equivalence the language does not guarantee.
-        pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+        pub type MangledProps = bun_core::collections::ArrayHashMap<Ref, Box<[u8]>>;
         /// `bun.fs.Path` — `ImportRecord.path` field type. The
-        /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_paths::fs`.
+        /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_core::paths::fs`.
         pub mod fs {
-            pub use bun_paths::fs::Path;
+            pub use bun_core::paths::fs::Path;
             #[inline]
             pub fn path_init(text: &'static [u8]) -> Path<'static> {
                 Path::init(text)
@@ -292,7 +292,7 @@ pub trait DefineShorthand: Sized {
 
 // Note: `DefineListShorthand` / `DefineRectShorthand` / `DefineSizeShorthand`
 // / `DeriveParse` / `DeriveToCss` are
-// proc-macros (`bun_css_derive::*`, re-exported below) plus the
+// proc-macros (`bun_macros::*`, re-exported below) plus the
 // `impl_rect_shorthand!` / `impl_size_shorthand!` macros in
 // `properties/margin_padding.rs`. The placeholder trait stubs that previously
 // mirrored their `parse`/`to_css` signatures were dead (zero impls/bounds) and
@@ -325,7 +325,7 @@ pub mod enum_property_util {
 
 // Derive macros for the helpers above. Re-exported here as well as
 // at crate root because some leaf modules alias `crate::css_parser as css`.
-pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
+pub use bun_macros::{DefineEnumProperty, Parse, ToCss};
 
 /// Keyword-enum CSS properties: case-insensitive parse from an ident plus a
 /// canonical string form.
@@ -353,7 +353,7 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
         *self
     }
 
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
+    fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash)
     where
         Self: Into<u32>,
     {
@@ -1100,7 +1100,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
         // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
+        let bump: &'static Bump = unsafe { bun_core::ptr::detach_lifetime_ref(self.arena) };
         NestedRuleParser {
             arena: self.arena,
             options: self.options,
@@ -1551,7 +1551,7 @@ mod rule_parsers {
             };
             // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
             // parser arena.
-            let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
+            let bump: &'static Bump = unsafe { bun_core::ptr::detach_lifetime_ref(self.arena) };
             let mut nested_parser = NestedRuleParser::<T> {
                 arena: self.arena,
                 options: self.options,
@@ -1636,7 +1636,7 @@ mod rule_parsers {
                         // Arena-backed: this StyleRule lands in arena AST; bulk-free won't run Drop.
                         selectors: SelectorList::from_selector(Selector::from_component_in(
                             Component::Nesting,
-                            bun_alloc::ArenaPtr::new(input.arena()),
+                            bun_core::alloc_impl::ArenaPtr::new(input.arena()),
                         )),
                         declarations,
                         vendor_prefix: VendorPrefix::default(),
@@ -2227,7 +2227,7 @@ mod rule_parsers {
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
             // arena outlives the parser (it owns all parsed allocations).
-            let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+            let arena: &Bump = unsafe { bun_core::ptr::detach_lifetime_ref(input.arena()) };
             let mut ctx = NestedComposesCtx {
                 state: this.composes_state,
                 arena,
@@ -2607,7 +2607,7 @@ mod stylesheet_impl {
             let project_root = options.project_root;
             let mut printer = Printer::new(
                 arena,
-                bun_alloc::ArenaVec::new_in(arena),
+                bun_core::alloc_impl::ArenaVec::new_in(arena),
                 writer,
                 options,
                 import_info,
@@ -3053,7 +3053,7 @@ mod stylesheet_impl {
             let mut dest: Vec<u8> = Vec::new();
             let mut printer = Printer::new(
                 arena,
-                bun_alloc::ArenaVec::new_in(arena),
+                bun_core::alloc_impl::ArenaVec::new_in(arena),
                 &mut dest,
                 options,
                 import_info,
@@ -4499,7 +4499,7 @@ const MAX_THREE_B: u32 = 0x10000;
 #[inline(always)]
 pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
     // SAFETY: caller upholds the invariant documented on this function above.
-    unsafe { bun_collections::detach_lifetime(s) }
+    unsafe { bun_core::collections::detach_lifetime(s) }
 }
 
 impl<'a> Tokenizer<'a> {
@@ -5660,7 +5660,7 @@ impl Token {
         generic::implement_eql(lhs, rhs)
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 
@@ -5925,7 +5925,7 @@ impl Num {
     pub fn eql(lhs: &Num, rhs: &Num) -> bool {
         generic::implement_eql(lhs, rhs)
     }
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 }
@@ -5934,21 +5934,21 @@ impl Dimension {
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
         generic::implement_eql(lhs, rhs)
     }
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 }
 
 pub enum CopyOnWriteStr<'a> {
     Borrowed(&'a [u8]),
-    Owned(bun_alloc::ArenaVec<'a, u8>),
+    Owned(bun_core::alloc_impl::ArenaVec<'a, u8>),
 }
 
 impl<'a> CopyOnWriteStr<'a> {
     pub fn append(&mut self, arena: &'a Bump, slice: &[u8]) {
         match self {
             CopyOnWriteStr::Borrowed(b) => {
-                let mut list = bun_alloc::ArenaVec::with_capacity_in(b.len() + slice.len(), arena);
+                let mut list = bun_core::alloc_impl::ArenaVec::with_capacity_in(b.len() + slice.len(), arena);
                 list.extend_from_slice(b);
                 list.extend_from_slice(slice);
                 *self = CopyOnWriteStr::Owned(list);
@@ -6506,7 +6506,7 @@ pub mod to_css {
         // PERF: think about how cheap this is to create
         let mut printer = Printer::new(
             arena,
-            bun_alloc::ArenaVec::new_in(arena),
+            bun_core::alloc_impl::ArenaVec::new_in(arena),
             &mut s,
             options,
             import_info,

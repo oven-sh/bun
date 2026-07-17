@@ -25,7 +25,7 @@
 //! State methods take `(&mut Interpreter, this: NodeId)` and look their
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
 use core::cell::Cell;
@@ -379,7 +379,7 @@ impl ShellArgs {
     /// the box must not move once `parse()` has filled `script_ast`.
     pub fn init() -> Box<ShellArgs> {
         Box::new(ShellArgs {
-            __arena: bun_alloc::Arena::new(),
+            __arena: bun_core::alloc_impl::Arena::new(),
             // Overwritten by `parse()` before `run()`. An empty stmt list is
             // a safe placeholder.
             script_ast: ast::Script { stmts: &[] },
@@ -387,7 +387,7 @@ impl ShellArgs {
     }
 
     #[inline]
-    pub fn arena(&self) -> &bun_alloc::Arena {
+    pub fn arena(&self) -> &bun_core::alloc_impl::Arena {
         &self.__arena
     }
 
@@ -438,7 +438,7 @@ impl Interpreter {
     /// so the caller can `combineErrors()` for diagnostics; on parse error
     /// `out_parse_err` is populated likewise.
     pub fn parse<'a>(
-        arena: &'a bun_alloc::Arena,
+        arena: &'a bun_core::alloc_impl::Arena,
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
         jsstrings_to_escape: &'a mut [bun_core::String],
@@ -524,7 +524,7 @@ impl Interpreter {
         // we've converted it to an owned `ShellErr`. Heap-pooled (not stack) —
         // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
         // JS-triggered paths that may already be deep on the stack.
-        let mut pathbuf = bun_paths::path_buffer_pool::get();
+        let mut pathbuf = bun_core::paths::path_buffer_pool::get();
         let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
             Ok(n) => n,
             Err(e) => return Err(ShellErr::new_sys(&e)),
@@ -667,7 +667,7 @@ impl Interpreter {
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
+        Self::init_and_run_impl(ctx, mini, bun_core::paths::basename(path), src, None, false)
     }
 
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
@@ -701,7 +701,7 @@ impl Interpreter {
         from_source: bool,
     ) -> crate::Result<ExitCode> {
         if from_source {
-            bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
+            bun_core::analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
 
         let mut shargs = ShellArgs::init();
@@ -709,7 +709,7 @@ impl Interpreter {
         // ── parse ──────────────────────────────────────────────────────────
         // `out_parser`/`out_lex_result` borrow `shargs.__arena`, so they're
         // scoped to a block that ends before `shargs.set_script_ast` below.
-        let arena_ptr: *const bun_alloc::Arena = shargs.arena();
+        let arena_ptr: *const bun_core::alloc_impl::Arena = shargs.arena();
         let script = {
             // SAFETY: `shargs` lives on this stack frame for the whole block;
             // arena is not moved/dropped while `out_parser`/`out_lex_result`
@@ -853,7 +853,7 @@ impl Interpreter {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
     /// `&self` → `*mut Self` for ctx slots. Kept inherent (NOT via the
-    /// `bun_ptr::AsCtxPtr` blanket trait) so `Box<Interpreter>` callers
+    /// `bun_core::ptr::AsCtxPtr` blanket trait) so `Box<Interpreter>` callers
     /// auto-deref to `&Interpreter` and get `*mut Interpreter`, not
     /// `*mut Box<Interpreter>`.
     #[inline]
@@ -1391,7 +1391,7 @@ impl Interpreter {
             self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
         }
 
-        // Note: free the parse arena eagerly. `bun_alloc::Arena` is
+        // Note: free the parse arena eagerly. `bun_core::alloc_impl::Arena` is
         // a `MimallocArena` (a full `mi_heap_t`): every shell parse pulls
         // several fresh 64 KiB pages, and with `MI_DEBUG=3` each page-init
         // runs `mi_assert_expensive(mi_mem_is_zero(page, 64 KiB))`. Under the
@@ -2014,7 +2014,7 @@ impl ShellExecEnv {
         // copy into a stack buffer before the `&mut self` call. Bounded by the
         // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
         // Use a `[4096]u8` buffer on every platform; do NOT use
-        // `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
+        // `bun_core::paths::PathBuffer` here — on Windows that is ~96 KiB of
         // zero-filled stack, and `change_cwd_impl` stacks another on top.
         let mut buf = [0u8; 4096];
         let prev = self.prev_cwd();
@@ -2035,10 +2035,10 @@ impl ShellExecEnv {
     /// Always writes `PWD` into `export_env`; `OLDPWD` is written only when
     /// `!in_init` (the very first cwd has no meaningful "previous").
     pub fn change_cwd_impl(&mut self, new_cwd_: &[u8], in_init: bool) -> bun_sys::Result<()> {
-        let is_abs = bun_paths::is_absolute(new_cwd_);
+        let is_abs = bun_core::paths::is_absolute(new_cwd_);
 
         // Bounds-check against a `[4096]u8` buffer on *every* platform. Do NOT
-        // use `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES
+        // use `bun_core::paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES
         // = 32767*3+1` ≈ 96 KiB of zero-filled stack per `cd`, and the
         // `>= buf.len()` check would change the ENAMETOOLONG bound.
         let mut buf = [0u8; 4096];
@@ -2066,7 +2066,7 @@ impl ShellExecEnv {
             // so the borrow on `buf` is released before stripping below.
             let mut n = {
                 let existing_cwd = self.cwd();
-                bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
+                bun_core::paths::resolve_path::join_z_buf::<bun_core::paths::platform::Auto>(
                     &mut buf[..],
                     &[existing_cwd, new_cwd_],
                 )
@@ -2175,7 +2175,7 @@ impl ShellExecEnv {
 
 pub struct ShellArgs {
     /// Arena owning the parsed AST nodes, tokens, and string pool.
-    pub __arena: bun_alloc::Arena,
+    pub __arena: bun_core::alloc_impl::Arena,
     /// Root AST node. State nodes hold `*const ast::*` into this arena.
     pub script_ast: ast::Script,
 }
@@ -2382,15 +2382,15 @@ pub fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
 fn shell_get_path<'a>(
     dirfd: Fd,
     to: &'a bun_core::ZStr,
-    buf: &'a mut bun_paths::PathBuffer,
+    buf: &'a mut bun_core::paths::PathBuffer,
 ) -> bun_sys::Result<&'a bun_core::ZStr> {
     if to.as_bytes() == b"/dev/null" {
         return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
     }
-    if bun_paths::Platform::Posix.is_absolute(to.as_bytes()) {
+    if bun_core::paths::Platform::Posix.is_absolute(to.as_bytes()) {
         let source_root_len = {
             let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-            bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
+            bun_core::paths::resolve_path::windows_filesystem_root(dirpath).len()
         };
         // `dirpath` already
         // occupies `buf[0..]` and the root is its prefix, so no copy is
@@ -2401,7 +2401,7 @@ fn shell_get_path<'a>(
         buf[end] = 0;
         return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
     }
-    if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
+    if bun_core::paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
     }
     // Relative: resolve dirfd → path, then join.
@@ -2411,8 +2411,8 @@ fn shell_get_path<'a>(
     let dirpath = bun_sys::get_fd_path(dirfd, buf)
         .map_err(|e| e.with_fd(dirfd))?
         .to_vec();
-    Ok(bun_paths::resolve_path::join_z_buf::<
-        bun_paths::platform::Auto,
+    Ok(bun_core::paths::resolve_path::join_z_buf::<
+        bun_core::paths::platform::Auto,
     >(&mut buf[..], &[&dirpath, to.as_bytes()]))
 }
 
@@ -2423,7 +2423,7 @@ fn shell_get_path<'a>(
 pub fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_core::paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path_, &mut buf)?;
         return bun_sys::stat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
@@ -2448,8 +2448,8 @@ pub fn shell_openat(
     {
         use bun_sys::FdExt;
         if flags & bun_sys::O::DIRECTORY != 0 {
-            if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
-                let mut buf = bun_paths::path_buffer_pool::get();
+            if bun_core::paths::Platform::Posix.is_absolute(path.as_bytes()) {
+                let mut buf = bun_core::paths::path_buffer_pool::get();
                 let p = shell_get_path(dir, path, &mut buf)?;
                 return bun_sys::open_dir_at_windows_a(
                     dir,
@@ -2478,7 +2478,7 @@ pub fn shell_openat(
             .map_err(|e| e.with_path(path.as_bytes()))?
             .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_core::paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;
         // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
         // routes through `sys_uv` and already yields a uv-owned fd.
@@ -3114,6 +3114,6 @@ pub fn create_shell_interpreter(
         });
         js_value
     };
-    bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
+    bun_core::analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }

@@ -15,10 +15,10 @@
 //!   - `u32`: Length of function name (0 for unavailable)
 //!   - `[n]u8`: Function name
 
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::ArrayHashMap;
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
+use bun_core::collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
 use bun_io::Write as _;
@@ -26,7 +26,7 @@ use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
 };
-use bun_paths::path_buffer_pool;
+use bun_core::paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
@@ -39,7 +39,7 @@ use bun_core::fmt::parse_hex_to_int;
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: bun_core::ptr::BackRef<DevServer>,
     // BodyReaderMixin is a generic helper that stores the buffered body and
     // dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
@@ -70,7 +70,7 @@ impl ErrorReportRequest {
             .expect("server bound")
             .on_pending_request();
         let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
-            dev: bun_ptr::BackRef::new_mut(dev),
+            dev: bun_core::ptr::BackRef::new_mut(dev),
             body: uws::BodyReaderMixin::init(),
         }));
         uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
@@ -158,7 +158,7 @@ impl ErrorReportRequest {
 
         const RUNTIME_NAME: &[u8] = b"Bun HMR Runtime";
 
-        let browser_url_origin = bun_url::origin_from_slice(browser_url).unwrap_or(browser_url);
+        let browser_url_origin = bun_core::url::origin_from_slice(browser_url).unwrap_or(browser_url);
 
         // All files that DevServer could provide a source map fit the pattern:
         // `/_bun/client/<label>-{u64}.js`
@@ -388,7 +388,7 @@ impl ErrorReportRequest {
             r,
             crate::webcore::blob::Any::from_array_list(out),
             InitFromBytesOptions {
-                mime_type: Some(&bun_http_types::MimeType::OTHER),
+                mime_type: Some(&bun_core::http_types::MimeType::OTHER),
                 server: dev.server,
                 ..Default::default()
             },
@@ -482,8 +482,8 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 
         // Decode JSON escapes straight to UTF-8.
         if has_extra_escapes {
-            let mut bytes: bun_alloc::ArenaVec<'a, u8> =
-                bun_alloc::ArenaVec::with_capacity_in(encoded_line.len(), arena);
+            let mut bytes: bun_core::alloc_impl::ArenaVec<'a, u8> =
+                bun_core::alloc_impl::ArenaVec::with_capacity_in(encoded_line.len(), arena);
             super::js_escape::decode_js_escape_sequences(encoded_line, &mut bytes)?;
             *decoded_line = bytes.into_bump_slice();
         } else {

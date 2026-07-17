@@ -81,7 +81,7 @@ impl FontFaceProperty {
         }
     }
 
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             FontFaceProperty::Source(v) => {
                 FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
@@ -104,7 +104,7 @@ impl FontFaceProperty {
 }
 
 impl FontStyle {
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             FontStyle::Normal => FontStyle::Normal,
             FontStyle::Italic => FontStyle::Italic,
@@ -443,7 +443,7 @@ impl FontFormat {
         }
     }
 
-    pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _arena: &bun_core::alloc_impl::Arena) -> Self {
         // `css.implementDeepClone` variant-walk. All payloads are
         // `Copy` / arena-slice idents → identity copy.
         match self {
@@ -504,7 +504,7 @@ impl Source {
         }
     }
 
-    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &bun_core::alloc_impl::Arena) -> Self {
         // `css.implementDeepClone` variant-walk, hand-expanded.
         match self {
             Source::Url(u) => Source::Url(u.deep_clone(arena)),
@@ -608,7 +608,7 @@ impl UrlSource {
         Ok(())
     }
 
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &bun_core::alloc_impl::Arena) -> Self {
         // `css.implementDeepClone` field-walk, hand-expanded.
         Self {
             url: self.url.deep_clone(arena),
@@ -654,7 +654,7 @@ impl FontFaceRule {
 }
 
 impl FontFaceRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
             loc: self.loc,

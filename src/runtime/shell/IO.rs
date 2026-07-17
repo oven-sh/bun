@@ -2,7 +2,7 @@
 //!
 //! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Arc`-refcounted.
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::fmt;
 
 use crate::api::bun_spawn::stdio::{Capture, Stdio};

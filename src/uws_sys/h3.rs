@@ -502,11 +502,11 @@ impl App {
         any     => Any,
     }
 
-    pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
+    pub fn method<UD, H>(&mut self, m: bun_core::http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
         H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        use bun_http_types::Method::Method as M;
+        use bun_core::http_types::Method::Method as M;
         match m {
             M::GET => self.get(p, ud, h),
             M::POST => self.post(p, ud, h),

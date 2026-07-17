@@ -1,13 +1,14 @@
 use crate::mal_prelude::*;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 use core::sync::atomic::AtomicUsize;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
+use bun_core::collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::strings;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_core::paths::{PathBuffer, resolve_path};
 use bun_sourcemap::SourceMapPieces;
-use bun_wyhash::{self, Wyhash};
+#[allow(unused_imports)]
+use bun_core::wyhash::{self, Wyhash};
 
 use crate::bun_css;
 use crate::bun_fs;
@@ -112,7 +113,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 // Build the byte key directly since
                 // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
-                let mut v = bun_alloc::ArenaVec::new_in(temp);
+                let mut v = bun_core::alloc_impl::ArenaVec::new_in(temp);
                 v.push((!has_html_chunk) as u8);
                 v.extend_from_slice(entry_bits.bytes(this.graph.entry_points.len()));
                 break 'brk v.into_bump_slice();
@@ -149,7 +150,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
             let hash_to_use = if !this.options.css_chunking {
-                bun_wyhash::hash(
+                bun_core::wyhash::hash(
                     temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len())),
                 )
             } else {
@@ -560,7 +561,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
         // the link step (BACKREF — same as `final_rel_path`). On any `?` error
         // before the transfer, `sorted_chunks` is dropped alongside the builder,
         // so no dangling slice escapes.
-        chunk.unique_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
+        chunk.unique_key = unsafe { bun_core::ptr::detach_lifetime_ref::<[u8]>(written) };
         if this.unique_key_prefix.is_empty() {
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }
@@ -648,7 +649,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                     bun_sys::O::PATH | bun_sys::O::DIRECTORY,
                     0,
                 ) else {
-                    break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
+                    break 'dir &*resolve_path::normalize_buf::<bun_core::paths::platform::Auto>(
                         dir_path,
                         &mut real_path_buf.0,
                     );

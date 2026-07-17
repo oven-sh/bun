@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+pub(crate) use crate as semver;
+
 // These are all extern so they can't be top-level structs.
 pub use crate::external_string::ExternalString;
 pub use crate::semver_string::String;

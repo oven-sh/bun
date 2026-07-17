@@ -13,7 +13,7 @@ use crate::values::angle::Angle;
 use crate::values::calc::Calc;
 use crate::values::number::CSSNumberFns;
 use crate::values::percentage::Percentage;
-use bun_alloc::Arena;
+use bun_core::alloc_impl::Arena;
 use bun_core::strings;
 
 // ───────────────────────── colorspace structs ────────────────────────────
@@ -871,13 +871,13 @@ impl CssColor {
         Some(result_color.into_css_color())
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub fn hash(&self, hasher: &mut bun_core::wyhash::Wyhash) {
         // Hash the discriminant + the active variant's f32 components explicitly;
         // never reinterpret a `repr(Rust)` enum as raw bytes (unspecified layout /
         // padding → UB and non-deterministic hashes).
         #[inline]
         fn hash_components(
-            hasher: &mut bun_wyhash::Wyhash,
+            hasher: &mut bun_core::wyhash::Wyhash,
             tag: u32,
             (a, b, c, alpha): (f32, f32, f32, f32),
         ) {

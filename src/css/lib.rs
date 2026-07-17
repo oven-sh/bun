@@ -138,7 +138,7 @@ pub use generics::{CssEql, DeepClone};
 // Keyword-enum / tagged-union derive macros. The `EnumProperty` *trait* is
 // re-exported above from `css_parser`; the *derive* of the same name lives in
 // the proc-macro crate.
-pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
+pub use bun_macros::{DefineEnumProperty, Parse, ToCss};
 // Serializer + dtoa helpers live in the parser hub but are referenced as
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};

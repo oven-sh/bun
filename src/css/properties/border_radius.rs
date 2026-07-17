@@ -9,7 +9,7 @@ use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::length::LengthPercentage;
 use crate::css_values::rect::Rect;
 use crate::css_values::size::Size2D;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
 // `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
@@ -28,7 +28,7 @@ pub struct BorderRadius {
 }
 
 impl BorderRadius {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         BorderRadius {
             top_left: self.top_left.deep_clone(bump),
             top_right: self.top_right.deep_clone(bump),

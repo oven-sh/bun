@@ -3,13 +3,13 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-/// Local helper: `bun_semver::String` → JS string. Mirrors
+/// Local helper: `bun_core::semver::String` → JS string. Mirrors
 /// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
 /// types, so its `JSGlobalObject`/`JSValue` are not the
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
 fn semver_string_to_js(
-    s: bun_semver::String,
+    s: bun_core::semver::String,
     buf: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -134,7 +134,7 @@ pub(crate) fn log_to_js(
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Log;
     use bun_install::dependency;
-    use bun_semver::SlicedString;
+    use bun_core::semver::SlicedString;
 
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();

@@ -4,7 +4,7 @@ use crate as css;
 use crate::css_properties::custom::EnvironmentVariable;
 use crate::css_values::ident::{DashedIdent, Ident};
 use crate::{Parser, PrintErr, Printer, Result};
-use bun_alloc::ArenaPtr;
+use bun_core::alloc_impl::ArenaPtr;
 
 pub use crate::Error;
 
@@ -1251,7 +1251,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
 impl MediaList {
     /// Element-wise clone of `media_queries`.
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         let mut media_queries =
             Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
@@ -1260,7 +1260,7 @@ impl MediaList {
 
     /// Alias for `deep_clone`.
     #[inline]
-    pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn clone_in(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         self.deep_clone(bump)
     }
 
@@ -1269,7 +1269,7 @@ impl MediaList {
     #[inline]
     pub fn clone_with_import_records(
         &self,
-        bump: &bun_alloc::Arena,
+        bump: &bun_core::alloc_impl::Arena,
         _import_records: &mut Vec<bun_ast::ImportRecord>,
     ) -> Self {
         self.deep_clone(bump)
@@ -1284,7 +1284,7 @@ impl MediaList {
 
 impl MediaQuery {
     /// Field-wise.
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         Self {
             qualifier: self.qualifier,
             media_type: self.media_type.deep_clone(bump),
@@ -1296,14 +1296,14 @@ impl MediaQuery {
 impl MediaType {
     /// `Custom` is an arena-owned slice (identity copy).
     #[inline]
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         *self
     }
 }
 
 impl MediaCondition {
     /// Variant-wise recursion.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         let alloc = ArenaPtr::new(bump);
         match self {
             MediaCondition::Feature(f) => {
@@ -1329,7 +1329,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// All payloads are `Copy` /
     /// arena-slice idents; `derive(Clone)` is the faithful deep clone.
     #[inline]
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         self.clone()
     }
 }
@@ -1337,7 +1337,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     /// Variant-wise; `name`/`operator` are
     /// value-copied, `MediaFeatureValue` recurses.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         match self {
             QueryFeature::Plain { name, value } => QueryFeature::Plain {
                 name: name.deep_clone(bump),
@@ -1374,7 +1374,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 
 impl MediaFeatureValue {
     /// Variant-wise.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_core::alloc_impl::Arena) -> Self {
         use MediaFeatureValue as V;
         match self {
             V::Length(l) => V::Length(l.clone()),

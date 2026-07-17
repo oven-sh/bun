@@ -18,7 +18,7 @@ pub use streaming::StreamingClap;
 // `parse_params!` below, which inject `$crate` so the expansion resolves `Param`/
 // `Help`/`Names`/`Values` regardless of how `bun_clap` is aliased at the call site.
 #[doc(hidden)]
-pub use bun_clap_macros::{__parse_param_impl, __parse_params_impl};
+pub use bun_macros::{__parse_param_impl, __parse_params_impl};
 
 /// Parse a single param spec string (e.g. `"-h, --help  Display this help"`)
 /// into a const `Param<Help>` literal at compile time.

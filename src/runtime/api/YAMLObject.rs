@@ -1,8 +1,8 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::ffi::c_void;
 
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashMap, StringHashMap};
+use bun_core::collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{

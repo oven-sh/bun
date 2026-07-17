@@ -1,17 +1,17 @@
 use core::cell::Cell;
 use core::ptr;
 
-use bun_alloc::Arena;
-use bun_alloc::ast_alloc::{self, AstAllocState};
+use bun_core::alloc_impl::Arena;
+use bun_core::alloc_impl::ast_alloc::{self, AstAllocState};
 
 use crate::expr;
 use crate::stmt;
 
-// `bun_alloc::Arena` (`MimallocArena`) has no inline stack buffer with heap
+// `bun_core::alloc_impl::Arena` (`MimallocArena`) has no inline stack buffer with heap
 // fallback; instead the owned arena is recycled
 // per thread via `ARENA_POOL` below so the per-module callers don't pay a fresh
 // `mi_heap_new` + first-segment page faults every file. (The `AstAlloc` side
-// *does* have an inline buffer now — see `bun_alloc::ast_alloc::AstAllocState`.)
+// *does* have an inline buffer now — see `bun_core::alloc_impl::ast_alloc::AstAllocState`.)
 
 // ── Thread-local arena pool ──────────────────────────────────────────────
 //
@@ -266,7 +266,7 @@ impl ASTMemoryAllocator {
 
     /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
     /// per-workspace-child re-entry). Thin delegate to
-    /// [`bun_alloc::Arena::reset_retain_with_limit`]; the cold init paths
+    /// [`bun_core::alloc_impl::Arena::reset_retain_with_limit`]; the cold init paths
     /// (`bundler::ThreadPool::Worker::init`, `BundleThread::generate_in_new_
     /// thread`) keep calling [`Self::reset`].
     pub fn reset_retain_with_limit(&mut self, limit: usize) {

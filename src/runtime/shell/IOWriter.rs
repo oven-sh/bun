@@ -12,7 +12,7 @@
 //! We also make `IOWriter` reference counted (via `Arc` in the Rust port),
 //! this simplifies management of the file descriptor.
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::cell::UnsafeCell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
@@ -232,7 +232,7 @@ struct State {
     /// Backref to the owning interpreter for async-poll callbacks (which must
     /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; `None`
     /// until then.
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Option<bun_core::ptr::ParentRef<Interpreter>>,
 }
 
 pub struct IOWriter {
@@ -331,7 +331,7 @@ impl IOWriter {
     #[inline]
     pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_core::ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]

@@ -1,6 +1,6 @@
 //! Throughput benchmark for the JSON parser on the `bench/json-corpus/fetch.sh` corpus.
 //! Run via `scripts/bench-json-rust.sh [criterion args]`.
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast as js_ast;
 use bun_parsers::json;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

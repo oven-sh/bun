@@ -4,15 +4,15 @@ use core::ffi::c_void;
 use core::ptr;
 use std::sync::Arc;
 
-use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
+use bun_core::collections::{HashMap, IdentityContext, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
-use bun_ptr::tagged_pointer::TagType;
+use bun_core::ptr::tagged_pointer::TagType;
 use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
-use bun_wyhash::hash;
+use bun_core::wyhash::hash;
 
 pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
@@ -89,12 +89,12 @@ impl SavedSourceMap {
 pub type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
-/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
+/// rules — `bun_core::impl_tagged_ptr_union!` would impl on a tuple of foreign
 /// types (all three members live in `bun_sourcemap`), which the coherence
 /// checker rejects from this crate. Tags are `1024 - i`.
 pub struct ValueTypes;
 
-impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
+impl bun_core::ptr::tagged_pointer::TypeList for ValueTypes {
     const LEN: usize = 3;
     const MIN_TAG: TagType = 1024 - 2;
     fn type_name_from_tag(tag: TagType) -> Option<&'static str> {
@@ -106,15 +106,15 @@ impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
         }
     }
 }
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
+impl bun_core::ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
     const NAME: &'static str = "ParsedSourceMap";
 }
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
+impl bun_core::ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
     const TAG: TagType = 1023;
     const NAME: &'static str = "AnySourceProvider";
 }
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
+impl bun_core::ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
     const TAG: TagType = 1022;
     const NAME: &'static str = "InternalSourceMap";
 }
@@ -307,7 +307,7 @@ impl SavedSourceMap {
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
-        use bun_collections::zig_hash_map::MapEntry as Entry;
+        use bun_core::collections::zig_hash_map::MapEntry as Entry;
 
         self.lock();
         // Note: reshaped for borrowck — explicit unlock paired manually.
@@ -315,7 +315,7 @@ impl SavedSourceMap {
         self.find_cache.invalidate_all();
         self.last_ism = None;
 
-        // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
+        // `bun_core::collections::HashMap` derefs to `std::collections::HashMap`, so
         // the std `entry()` API is used directly.
         match self.map_mut().entry(hash(path)) {
             Entry::Occupied(mut o) => {

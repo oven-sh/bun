@@ -9,7 +9,7 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::RunCommand;
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
@@ -52,7 +52,7 @@ struct ProcessInfo {
 // self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    state: bun_ptr::BackRef<State<'a>>,
+    state: bun_core::ptr::BackRef<State<'a>>,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
@@ -719,7 +719,7 @@ pub(crate) fn run_scripts_with_filter(
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
     // Find package.json at workspace root
-    let mut root_buf = bun_paths::PathBuffer::uninit();
+    let mut root_buf = bun_core::paths::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded
         // and no other `&mut Log` borrow is live for the duration of this call.
@@ -746,7 +746,7 @@ pub(crate) fn run_scripts_with_filter(
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while let Some(package_json_path) = package_json_iter.next()? {
         let dirpath =
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&package_json_path);
+            bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(&package_json_path);
         let path = strings::without_trailing_slash(dirpath);
 
         // When using --workspaces, skip the root package to prevent recursion
@@ -930,8 +930,8 @@ pub(crate) fn run_scripts_with_filter(
     // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
-    let state_ptr: bun_ptr::BackRef<State> =
-        unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
+    let state_ptr: bun_core::ptr::BackRef<State> =
+        unsafe { bun_core::ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
@@ -955,7 +955,7 @@ pub(crate) fn run_scripts_with_filter(
                 stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                     bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
                 ))),
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                cwd: bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(
                     &script.package_json_path,
                 )
                 .into(),

@@ -12,9 +12,9 @@ use bun_bundler::bundle_v2::BundleV2Result;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
 use bun_http::Headers;
-use bun_http_types::Method::Method;
+use bun_core::http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
+use bun_core::ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
@@ -32,7 +32,7 @@ use crate::webcore::AnyBlob;
 // `pub static HTMLBundle` doesn't leak alongside the `pub struct HTMLBundle`
 // re-export from `crate::server`.
 mod debug_scope {
-    bun_output::declare_scope!(HTMLBundle, hidden);
+    bun_core::declare_scope!(HTMLBundle, hidden);
 }
 use debug_scope::HTMLBundle as debug;
 
@@ -41,7 +41,7 @@ use debug_scope::HTMLBundle as debug;
 // hence the ref count alongside the JS wrapper.
 // `*mut HTMLBundle` is the m_ctx payload of a
 // `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
 pub struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
@@ -122,7 +122,7 @@ impl HTMLBundle {
 
     /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
     pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
+        bun_core::ptr::finalize_js_box_noop(self);
     }
 
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
@@ -144,12 +144,12 @@ pub(crate) type HTMLBundleRoute = Route;
 // (non-Copy). `*mut Route` is recovered from uws userdata and the
 // `JSBundleCompletionTask` backref while a prior `&Route` may still be on the
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
-#[derive(bun_ptr::RefCounted)]
+#[derive(bun_core::ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
     // FFI userdata — *Route is recovered from uws callback
     // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
-    // rule → `bun_ptr::RefPtr<HTMLBundle>` + `impl RefCounted`.
+    // rule → `bun_core::ptr::RefPtr<HTMLBundle>` + `impl RefCounted`.
     pub bundle: IntrusiveRc<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
@@ -173,7 +173,7 @@ pub struct Route {
 pub enum RouteMethod {
     #[default]
     Any,
-    Method(bun_http_types::Method::Set),
+    Method(bun_core::http_types::Method::Set),
 }
 
 pub enum State {
@@ -267,7 +267,7 @@ impl Route {
     fn on_any_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
         // SAFETY: `this` is a live IntrusiveRc-managed allocation; `ScopedRef`
         // bumps the count and derefs on every exit path.
-        let _keep_alive = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _keep_alive = unsafe { bun_core::ptr::ScopedRef::new(this) };
         // SAFETY: held alive by `_keep_alive`; single-threaded (uws JS-thread
         // callback). R-2: deref as shared (`&*`) — every method below takes
         // `&self`; mutation goes through `Cell`/`JsCell`.
@@ -318,7 +318,7 @@ impl Route {
             match route.state.get() {
                 State::Pending => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - pending",
                             bstr::BStr::new(req.url())
@@ -329,7 +329,7 @@ impl Route {
                 }
                 State::Building(_) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - building",
                             bstr::BStr::new(req.url())
@@ -365,7 +365,7 @@ impl Route {
                 }
                 State::Err(_log) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - err",
                             bstr::BStr::new(req.url())
@@ -376,7 +376,7 @@ impl Route {
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             debug,
                             "onRequest: {} - html",
                             bstr::BStr::new(req.url())
@@ -527,7 +527,7 @@ impl Route {
     }
 
     pub fn on_plugins_rejected(&self) -> Result<(), crate::Error> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             debug,
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
@@ -540,12 +540,12 @@ impl Route {
     pub fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
-        let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
+        let _drop_build_ref = unsafe { bun_core::ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
                 if bun_core::Environment::ENABLE_LOGS {
-                    bun_output::scoped_log!(debug, "onComplete: err - {}", err);
+                    bun_core::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
@@ -555,16 +555,16 @@ impl Route {
                         // `Log::print` accepts it via the `*mut io::Writer`
                         // `IntoLogWrite` adapter and dispatches on
                         // `enable_ansi_colors_stderr` internally.
-                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                        let writer: *mut bun_core::io::Writer = bun_core::error_writer_buffered();
                         let _ = log.print(writer);
-                        bun_output::flush();
+                        bun_core::flush();
                     }
                 }
                 self.state.set(State::Err(log));
             }
             BundleV2Result::Value(bundle) => {
                 if bun_core::Environment::ENABLE_LOGS {
-                    bun_output::scoped_log!(debug, "onComplete: success");
+                    bun_core::scoped_log!(debug, "onComplete: success");
                 }
                 // Find the HTML entry point and create static routes
                 let Some(server) = self.server.get() else {
@@ -579,18 +579,18 @@ impl Route {
                     let duration = now.saturating_sub(completion_task.started_at_ns);
                     let duration_f64 = duration as f64 / 1_000_000_000.0;
 
-                    bun_output::print_elapsed(duration_f64);
+                    bun_core::print_elapsed(duration_f64);
                     let mut byte_length: u64 = 0;
                     for output_file in output_files.iter() {
                         byte_length += output_file.size_without_sourcemap as u64;
                     }
 
-                    bun_output::pretty_errorln!(
+                    bun_core::pretty_errorln!(
                         " <green>bundle<r> {} <d>{:.2} KB<r>",
-                        bstr::BStr::new(bun_paths::basename(&self.bundle.path)),
+                        bstr::BStr::new(bun_core::paths::basename(&self.bundle.path)),
                         byte_length as f64 / 1000.0
                     );
-                    bun_output::flush();
+                    bun_core::flush();
                 }
 
                 // `AnyRoute::Static` carries
@@ -624,11 +624,11 @@ impl Route {
                     // Source maps don't carry a precomputed chunk hash; hash
                     // their bytes so every served file gets a unique ETag.
                     let hash = match output_files[i].hash {
-                        0 => bun_core::hash::xxhash64(0, blob.slice()),
+                        0 => bun_core::util::hash::xxhash64(0, blob.slice()),
                         h => h,
                     };
-                    let mut hashbuf: bun_http_types::ETag::FormatBuffer = [0; 40];
-                    headers.append(b"ETag", bun_http_types::ETag::format(hash, &mut hashbuf));
+                    let mut hashbuf: bun_core::http_types::ETag::FormatBuffer = [0; 40];
+                    headers.append(b"ETag", bun_core::http_types::ETag::format(hash, &mut hashbuf));
                     if !server.config().is_development() {
                         // Non-HTML outputs are served at content-hashed paths, so they
                         // can be cached forever. HTML must be revalidated each request.
@@ -829,7 +829,7 @@ impl PendingResponse {
         let route_ptr = this_ref.route;
         // SAFETY: this.route is a valid IntrusiveRc-managed allocation;
         // `ScopedRef` bumps the count and derefs on every exit path.
-        let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
+        let _keep_route = unsafe { bun_core::ptr::ScopedRef::new(route_ptr) };
 
         // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
         // shared (`&*`); `pending_responses` is `JsCell`-wrapped.

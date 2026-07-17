@@ -4,7 +4,7 @@ pub enum Error {
     InvalidBunfig,
 
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
 
     #[error(transparent)]
     Parse(#[from] bun_parsers::Error),

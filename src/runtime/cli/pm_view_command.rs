@@ -1,6 +1,6 @@
 use bstr::BStr;
-use bun_alloc::Arena as Bump;
-use bun_collections::VecExt;
+use bun_core::alloc_impl::Arena as Bump;
+use bun_core::collections::VecExt;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
@@ -12,9 +12,9 @@ use bun_install::npm::{self, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::PathBuffer;
-use bun_semver as Semver;
-use bun_url::URL; // bumpalo::Bump re-export
+use bun_core::paths::PathBuffer;
+use bun_core::semver as Semver;
+use bun_core::url::URL; // bumpalo::Bump re-export
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
@@ -66,7 +66,7 @@ pub(crate) fn view(
                 }
             }
 
-            break 'brk bun_paths::basename(bun_paths::fs::FileSystem::instance().top_level_dir());
+            break 'brk bun_core::paths::basename(bun_core::paths::fs::FileSystem::instance().top_level_dir());
         }
 
         break 'brk spec_;

@@ -1,6 +1,9 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
+#[allow(unused_imports)]
+pub(crate) use crate as errno;
+
 // Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
 // same-width all-ones sentinel (`-1` signed / `MAX` unsigned) and stash the
 // real errno in a thread-local. Only the

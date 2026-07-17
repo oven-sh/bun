@@ -29,7 +29,7 @@ use crate::{Argv, Envp};
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
 #[cfg(windows)]
-pub type PidT = bun_libuv_sys::uv_pid_t;
+pub type PidT = bun_core::libuv_sys::uv_pid_t;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
@@ -82,7 +82,7 @@ unsafe extern "system" {
 }
 
 #[cfg(windows)]
-pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
+pub fn uv_getrusage(process: &mut bun_core::libuv_sys::uv_process_t) -> WinRusage {
     use core::ffi::c_void;
     let mut usage_info = Rusage::default();
     let process_pid: *mut c_void = process.process_handle;
@@ -639,7 +639,7 @@ pub unsafe fn spawn_process_posix(
     argv: Argv,
     envp: Envp,
 ) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
-    bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
+    bun_core::analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop
 

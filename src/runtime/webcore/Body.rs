@@ -1,6 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -13,7 +13,7 @@ use crate::webcore::{
     ReadableStream, blob, streams,
 };
 use bun_core::Output;
-use bun_http_types::MimeType::MimeType;
+use bun_core::http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
@@ -539,14 +539,14 @@ pub enum Value {
     Null,
 }
 
-const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED {
+const POOL_SIZE: usize = if bun_core::alloc_impl::heap_breakdown::ENABLED {
     0
 } else {
     256
 };
-pub(crate) type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
-pub(crate) type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
-pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
+pub(crate) type HiveRef = bun_core::collections::HiveRef<Value, POOL_SIZE>;
+pub(crate) type HiveAllocator = bun_core::collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
+pub(crate) type BodyHiveHandle = bun_core::collections::HiveRefHandle<Value, POOL_SIZE>;
 
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
@@ -860,7 +860,7 @@ impl Value {
                     webcore::readable_stream::NewSource {
                         // `ByteStream::default()` is the post-setup state.
                         context: ByteStream::default(),
-                        global_this: Some(bun_ptr::BackRef::new(global_this)),
+                        global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                         ..Default::default()
                     },
                 );
@@ -1165,7 +1165,7 @@ impl Value {
                             }
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                            set_blob_content_type(blob, bun_core::http_types::MimeType::TEXT);
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -1436,7 +1436,7 @@ impl Value {
 
 /// Runs when a `HiveRef<Value>` slot is recycled
 /// (`HiveArray::Fallback::put` → `drop_in_place`; see
-/// `bun_collections::HiveRef::unref`). Without this impl `Request`/`Response`
+/// `bun_core::collections::HiveRef::unref`). Without this impl `Request`/`Response`
 /// GC finalization leaked `WTFStringImpl` refs / `Blob` stores /
 /// `InternalBlob` buffers (H3 elysia rss).
 ///
@@ -1518,7 +1518,7 @@ impl Value {
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(global_this)),
+                global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                 ..Default::default()
             },
         );
@@ -2191,7 +2191,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                set_blob_content_type(blob, bun_core::http_types::MimeType::TEXT);
             }
         }
         Ok(JSPromise::resolved_promise_value(
@@ -2251,7 +2251,7 @@ impl<'a> Drop for ValueBufferer<'a> {
             // Kept alive by `readable_stream_ref` while set — satisfies the
             // `BackRef` outlives-holder invariant. R-2: `unpipe_without_deref`
             // takes `&self` (interior-mutable).
-            bun_ptr::BackRef::from(byte_stream).unpipe_without_deref();
+            bun_core::ptr::BackRef::from(byte_stream).unpipe_without_deref();
         }
         self.readable_stream_ref.deinit();
 
@@ -2590,7 +2590,7 @@ impl<'a> ValueBufferer<'a> {
 
     fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
-        let sink = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        let sink = unsafe { bun_core::ptr::callback_ctx::<Self>(ctx) };
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");

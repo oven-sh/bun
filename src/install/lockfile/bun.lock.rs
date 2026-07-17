@@ -4,14 +4,14 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashMap, StringHashMap};
+use bun_core::collections::{HashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
-use bun_paths::PathBuffer;
-use bun_semver::semver_string::{
+use bun_core::paths::PathBuffer;
+use bun_core::semver::semver_string::{
     Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
 };
-use bun_semver::{self as Semver, ExternalString, String};
+use bun_core::semver::{self as Semver, ExternalString, String};
 
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
@@ -59,8 +59,8 @@ fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
 /// Both arg and existing keys
 /// resolve against the lockfile's string buffer.
 #[inline]
-fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext<'_> {
-    bun_semver::string::ArrayHashContext {
+fn string_array_hash_context(buf: &[u8]) -> bun_core::semver::string::ArrayHashContext<'_> {
+    bun_core::semver::string::ArrayHashContext {
         arg_buf: buf,
         existing_buf: buf,
     }
@@ -1491,7 +1491,7 @@ impl<T> PkgMap<T> {
     pub(crate) fn get_or_put(
         &mut self,
         name: &[u8],
-    ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
+    ) -> Result<bun_core::collections::string_hash_map::GetOrPutResult<'_, T>, bun_core::alloc_impl::AllocError>
     where
         T: Default,
     {
@@ -2774,7 +2774,7 @@ pub fn parse_into_binary_lockfile(
 
         // a package can list the same dependency in each dependnecy group, but only the first
         // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
+        let mut seen_deps: bun_core::collections::StringArrayHashMap<()> = Default::default();
 
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
@@ -3179,7 +3179,7 @@ fn dependency_resolution_failure(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     loc: bun_ast::Loc,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::alloc_impl::AllocError> {
     let behavior_str = if dep.behavior.contains(Behavior::DEV) {
         "dev"
     } else if dep.behavior.contains(Behavior::OPTIONAL) {

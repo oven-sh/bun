@@ -1,9 +1,9 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::cmp::Ordering;
 
-use bun_alloc::AllocError;
-use bun_collections::ArrayHashMap;
-use bun_collections::array_hash_map::ArrayHashAdapter;
+use bun_core::alloc_impl::AllocError;
+use bun_core::collections::ArrayHashMap;
+use bun_core::collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
 use bun_install::{Dependency, Lockfile, PackageManager};
@@ -14,10 +14,10 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // T2 type directly.
 use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
 use bun_ast::{Log, Source};
-use bun_semver::String;
-use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
+use bun_core::semver::String;
+use bun_core::semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
 
-// `Map` is keyed by `bun_semver::String` whose hash/eq depend on an external
+// `Map` is keyed by `bun_core::semver::String` whose hash/eq depend on an external
 // string buffer. The default `AutoContext` cannot satisfy `String: Hash`, so
 // every lookup/insert goes through the `*_adapted` methods with an explicit
 // `ArrayHashContext` carrying the `arg_buf`/`existing_buf` pair.
@@ -31,7 +31,7 @@ pub struct CatalogMap {
 
 /// Convenience constructor that reads the lockfile's string buffer for both
 /// arg & existing sides. Lives here
-/// (not on `bun_semver::String`) to avoid a `bun_semver → bun_install` back-edge.
+/// (not on `bun_core::semver::String`) to avoid a `bun_semver → bun_install` back-edge.
 #[inline]
 fn ctx(buf: &[u8]) -> ArrayHashContext<'_> {
     ArrayHashContext {

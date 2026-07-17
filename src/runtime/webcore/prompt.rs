@@ -1,7 +1,7 @@
 //! Implements prompt, alert, and confirm Web API
 
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_collections::VecExt as _;
+use bun_core::collections::VecExt as _;
 use bun_core::Output;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;

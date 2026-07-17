@@ -528,7 +528,7 @@ impl Drop for VerifyOp {
     fn drop(&mut self) {
         // bun.freeSensitive — volatile-zero then free; the job's Drop handles
         // `password`, this handles the op-specific `prev_hash`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
+        bun_core::alloc_impl::free_sensitive(core::mem::take(&mut self.prev_hash));
     }
 }
 impl PasswordOp for VerifyOp {
@@ -578,7 +578,7 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
         // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
         // the field's own Drop sees an empty slice afterwards. Any op-owned
         // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
+        bun_core::alloc_impl::free_sensitive(core::mem::take(&mut self.password));
     }
 }
 

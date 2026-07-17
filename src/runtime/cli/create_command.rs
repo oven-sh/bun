@@ -1,4 +1,4 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
@@ -13,13 +13,13 @@ use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
-use bun_paths::{OSPathSlice, PathBuffer};
+use bun_core::paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
 use bun_threading::Futex;
-use bun_url::URL;
+use bun_core::url::URL;
 use bun_which::which;
 use bun_zlib as Zlib;
 
@@ -147,12 +147,12 @@ impl ProgressBuf {
             let mut cursor: &mut [u8] = &mut buf[..];
             let cap = cursor.len();
             write!(&mut cursor, "{}", args)
-                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+                .map_err(|_| crate::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             let written = cap - cursor.len();
             // SAFETY: the slice points into a thread-local static buffer that
             // lives for the thread's lifetime; CLI usage prints/copies it before
             // the buffer is reused.
-            let out: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&buf[..written]) };
+            let out: &'static [u8] = unsafe { bun_core::ptr::detach_lifetime(&buf[..written]) };
             Ok(out)
         })
     }
@@ -286,7 +286,7 @@ impl CreateCommand {
         env_loader.load_process()?;
 
         let dirname: &[u8] = if positionals.len() == 1 {
-            bun_paths::basename(template)
+            bun_core::paths::basename(template)
         } else {
             positionals[1]
         };
@@ -294,8 +294,8 @@ impl CreateCommand {
         let destination =
             filesystem
                 .dirname_store
-                .append_slice(bun_paths::resolve_path::join_abs::<
-                    bun_paths::platform::Loose,
+                .append_slice(bun_core::paths::resolve_path::join_abs::<
+                    bun_core::paths::platform::Loose,
                 >(filesystem.top_level_dir, dirname))?;
 
         let mut progress = Progress {
@@ -477,7 +477,7 @@ impl CreateCommand {
                 let mut archive_context = archiver::Context {
                     pluckers,
                     all_files: Default::default(),
-                    overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
+                    overwrite_list: bun_core::collections::StringArrayHashMap::<()>::default(),
                 };
 
                 if !create_options.overwrite {
@@ -514,15 +514,15 @@ impl CreateCommand {
                         // Thank you create-react-app for this copy (and idea)
                         pretty_errorln!(
                             "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
-                            bstr::BStr::new(bun_paths::basename(destination)),
+                            bstr::BStr::new(bun_core::paths::basename(destination)),
                         );
                         for path in archive_context.overwrite_list.keys() {
-                            if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
+                            if strings::ends_with(path, bun_core::paths::SEP_STR.as_bytes()) {
                                 pretty_error!(
                                     "<r>  <blue>{}<r>",
                                     bstr::BStr::new(&path[0..path.len().max(1) - 1]),
                                 );
-                                pretty_errorln!("{}", bun_paths::SEP_STR);
+                                pretty_errorln!("{}", bun_core::paths::SEP_STR);
                             } else {
                                 pretty_errorln!("<r>  {}", bstr::BStr::new(path));
                             }
@@ -601,26 +601,26 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf: bun_core::paths::WPathBuffer = bun_core::paths::WPathBuffer::uninit();
                 #[cfg(windows)]
                 let dst_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(destination);
                 #[cfg(windows)]
                 {
                     strings::copy_u8_into_u16(&mut destination_buf, dst_without_trailing_slash);
-                    destination_buf[dst_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    destination_buf[dst_without_trailing_slash.len()] = bun_core::paths::SEP as u16;
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf: bun_core::paths::WPathBuffer =
+                    bun_core::paths::WPathBuffer::uninit();
                 #[cfg(windows)]
                 let src_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(abs_template_path);
                 #[cfg(windows)]
                 {
                     strings::copy_u8_into_u16(&mut template_path_buf, src_without_trailing_slash);
-                    template_path_buf[src_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    template_path_buf[src_without_trailing_slash.len()] = bun_core::paths::SEP as u16;
                 }
 
                 let destination_dir = destination_dir__;
@@ -777,7 +777,7 @@ impl CreateCommand {
                 // SAFETY: single-threaded CLI dispatch; no other borrow of the
                 // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
-                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+                let bump: &'static bun_core::alloc_impl::Arena = crate::cli::cli_arena();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, bump) {
                     Ok(e) => e,
                     Err(_) => {
@@ -807,7 +807,7 @@ impl CreateCommand {
 
                 if let Some(name_expr) = package_json_expr.as_property(b"name") {
                     if let Some(mut s) = name_expr.expr.data.e_string() {
-                        let basename = bun_paths::basename(destination);
+                        let basename = bun_core::paths::basename(destination);
                         // SAFETY: `destination` is interned in the process-global DirnameStore
                         // (`append_slice` returns `&'static [u8]`); re-erase the borrow lifetime
                         // to `'static` to match `EString.data: &'static [u8]`.
@@ -1563,12 +1563,12 @@ impl CreateCommand {
             bun_core::pretty!(
                 "\n<b><green>Success!<r> <b>{}<r> loaded into <b>{}<r>\n",
                 bstr::BStr::new(display_name),
-                bstr::BStr::new(bun_paths::basename(destination)),
+                bstr::BStr::new(bun_core::paths::basename(destination)),
             );
         } else {
             bun_core::pretty!(
                 "\n<b>Created <green>{}<r> project successfully\n",
-                bstr::BStr::new(bun_paths::basename(template)),
+                bstr::BStr::new(bun_core::paths::basename(template)),
             );
         }
 
@@ -1586,7 +1586,7 @@ impl CreateCommand {
         // `bun_resolver::fs::FileSystem` (the inline shim) has no `relative_to`; call
         // the resolver path helper directly with the singleton's `top_level_dir`.
         let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
+            bun_core::paths::resolve_path::relative(filesystem.top_level_dir, destination);
         let is_empty_destination = rel_destination.is_empty();
 
         if is_empty_destination {
@@ -1665,7 +1665,7 @@ impl CreateCommand {
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
                 let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                if bun_core::paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                     break 'outer;
                 }
 
@@ -1673,7 +1673,7 @@ impl CreateCommand {
                     bun_sys::exists_at_type(bun_sys::Fd::cwd(), outdir_path_)
                 {
                     if exists_at_type == bun_sys::ExistsAtType::File {
-                        let extension = bun_paths::extension(positional);
+                        let extension = bun_core::paths::extension(positional);
                         if let Some(tag) = ExampleTag::from_file_extension(extension) {
                             example_tag = tag;
                             break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
@@ -1689,7 +1689,7 @@ impl CreateCommand {
                 }
             }
 
-            if !bun_paths::is_absolute(positional) {
+            if !bun_core::paths::is_absolute(positional) {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                         let parts = [home_dir, positional];
@@ -1698,7 +1698,7 @@ impl CreateCommand {
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
                         let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                        if bun_core::paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
                         if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
@@ -1717,7 +1717,7 @@ impl CreateCommand {
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
                     let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                    if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                    if bun_core::paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                         break 'outer;
                     }
                     if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
@@ -1736,7 +1736,7 @@ impl CreateCommand {
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
                         let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                        if bun_core::paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
                         if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
@@ -1748,7 +1748,7 @@ impl CreateCommand {
                     }
                 }
 
-                if bun_paths::is_absolute(positional) {
+                if bun_core::paths::is_absolute(positional) {
                     example_tag = ExampleTag::LocalFolder;
                     break 'brk positional;
                 }
@@ -1829,9 +1829,9 @@ fn file_copier_copy(
     node_: &mut ProgressNode,
     progress_: &mut Progress,
     #[cfg(windows)] dst_base_len: usize,
-    #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
+    #[cfg(windows)] dst_buf: &mut bun_core::paths::WPathBuffer,
     #[cfg(windows)] src_base_len: usize,
-    #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
+    #[cfg(windows)] src_buf: &mut bun_core::paths::WPathBuffer,
 ) -> crate::Result<()> {
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
@@ -1876,7 +1876,7 @@ fn file_copier_copy(
                     if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
                         == bun_sys::windows::FALSE
                     {
-                        if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
+                        if let Some(entry_dirname) = bun_core::paths::Dirname::dirname_u16(entry.path) {
                             let _ =
                                 bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
                             // SAFETY: same NUL-terminated wide strings as above; retry after mkdir.
@@ -2187,7 +2187,7 @@ impl Example {
                                 }
 
                                 home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
-                                home_dir_buf[entry_name.len()] = bun_paths::SEP;
+                                home_dir_buf[entry_name.len()] = bun_core::paths::SEP;
                                 home_dir_buf[entry_name.len() + 1..][..b"package.json".len()]
                                     .copy_from_slice(b"package.json");
                                 home_dir_buf[entry_name.len() + 1 + b"package.json".len()] = 0;
@@ -2284,11 +2284,11 @@ impl Example {
                 )?;
                 headers_buf = crate::cli::cli_dupe(&buf);
                 header_entries.append(bun_http::headers::Entry {
-                    name: bun_http_types::ETag::StringPointer {
+                    name: bun_core::http_types::ETag::StringPointer {
                         offset: 0,
                         length: u32::try_from(b"Authorization".len()).expect("int cast"),
                     },
-                    value: bun_http_types::ETag::StringPointer {
+                    value: bun_core::http_types::ETag::StringPointer {
                         offset: u32::try_from(b"Authorization".len()).expect("int cast"),
                         length: u32::try_from(headers_buf.len() - b"Authorization".len())
                             .expect("int cast"),
@@ -2437,7 +2437,7 @@ impl Example {
         // SAFETY: single-threaded CLI dispatch; no other borrow of the
         // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let bump: &'static bun_core::alloc_impl::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
@@ -2593,7 +2593,7 @@ impl Example {
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // Use the process-lifetime CLI arena (examples slices borrow from it
         // and the CLI exits shortly after).
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let bump: &'static bun_core::alloc_impl::Arena = crate::cli::cli_arena();
         // SAFETY: single-threaded CLI dispatch; no other borrow of the
         // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };

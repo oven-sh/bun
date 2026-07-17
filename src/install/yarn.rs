@@ -1,9 +1,9 @@
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_collections::{HashMap, StringHashMap};
+use bun_core::collections::{HashMap, StringHashMap};
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -28,8 +28,8 @@ use crate::repository::Repository;
 use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use bun_core::strings;
-use bun_paths::PathBuffer;
-use bun_semver::{self as Semver, SlicedString, String as SemverString};
+use bun_core::paths::PathBuffer;
+use bun_core::semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
 
 // Entry/YarnLock borrow from the input `data: &[u8]` passed to `migrate_yarn_lockfile`;
@@ -739,7 +739,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        let json_bump = bun_alloc::Arena::new();
+        let json_bump = bun_core::alloc_impl::Arena::new();
         let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
             bun_json::JSONOptions {
                 json_warn_duplicate_keys: false,

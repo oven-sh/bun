@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use bun_sys::FdExt as _;
 
 use bun_core::String as BunString;
-use bun_http_types::Method::Method;
+use bun_core::http_types::Method::Method;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
@@ -99,7 +99,7 @@ impl AnyResponseExt for uws::AnyResponse {
 /// deinit until the JS callback returns" flag. The dispatching frame owns the
 /// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
 /// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
-pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
+pub type DeferDeinitFlag = bun_core::ptr::BackRef<core::cell::Cell<bool>>;
 
 pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
@@ -110,7 +110,7 @@ pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
 // the fallback heap path so the per-type malloc zones can attribute them.
-pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_core::alloc_impl::heap_breakdown::ENABLED {
     0
 } else {
     2048
@@ -120,7 +120,7 @@ pub type RequestContextStackAllocator<
     const SSL: bool,
     const DBG: bool,
     const H3: bool,
-> = bun_collections::hive_array::Fallback<
+> = bun_core::collections::hive_array::Fallback<
     RequestContext<ThisServer, SSL, DBG, H3>,
     REQUEST_CONTEXT_POOL_CAPACITY,
 >;
@@ -134,7 +134,7 @@ pub struct RequestContext<
     /// BACKREF to the embedding `Server` — the server owns this request
     /// context (allocated from its `HiveArray` pool) and outlives it, so the
     /// pointee is live for the holder's entire lifetime. `None` once detached.
-    pub server: Option<bun_ptr::BackRef<ThisServer>>,
+    pub server: Option<bun_core::ptr::BackRef<ThisServer>>,
     pub resp: Option<uws::AnyResponse>,
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
@@ -243,11 +243,11 @@ where
 // Everything below until the helper structs at the bottom is the request
 // state machine: render(), on_abort(), on_resolve(), do_render_*, sendfile,
 // stream handling, error handling.
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::Output;
-use bun_http_types as HTTP;
-use bun_http_types::MimeType::MimeType;
-use bun_paths::PathBuffer;
+use bun_core::http_types as HTTP;
+use bun_core::http_types::MimeType::MimeType;
+use bun_core::paths::PathBuffer;
 use std::io::Write as _;
 // Forward to the real module (now declared in `crate::api`). `take` is reshaped
 // from `Option<NonNull<T>>` to an unbounded exclusive borrow so call sites can invoke
@@ -348,7 +348,7 @@ mod shim {
         // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
         // `signal_release` drops both — satisfies the `BackRef` outlives-holder
         // invariant for the duration of this call.
-        bun_ptr::BackRef::from(s).aborted()
+        bun_core::ptr::BackRef::from(s).aborted()
     }
     #[inline]
     pub(super) fn signal_fire(
@@ -357,7 +357,7 @@ mod shim {
         r: jsc::CommonAbortReason,
     ) {
         // See `signal_aborted` — counted ref keeps pointee live.
-        bun_ptr::BackRef::from(s).signal(g, r)
+        bun_core::ptr::BackRef::from(s).signal(g, r)
     }
     /// Release BOTH refcounts the request holds on its AbortSignal.
     /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
@@ -368,7 +368,7 @@ mod shim {
         // See `signal_aborted`. Order: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
-        let signal = bun_ptr::BackRef::from(s);
+        let signal = bun_core::ptr::BackRef::from(s);
         signal.pending_activity_unref();
         signal.unref();
     }
@@ -411,7 +411,7 @@ mod shim {
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
         // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
-        bun_ptr::BackRef::from(s).unpipe_without_deref()
+        bun_core::ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
 use bun_options_types::schema::api as Api;
@@ -557,7 +557,7 @@ where
     /// at construction in `init()` from the `NewServer` that owns the request
     /// pool, never null while the `RequestContext` is live, and the server
     /// outlives every `RequestContext` it allocates. Centralises the
-    /// per-call-site backref deref behind the `bun_ptr::BackRef` field.
+    /// per-call-site backref deref behind the `bun_core::ptr::BackRef` field.
     ///
     /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
     /// server is not a sub-field of `RequestContext` (it owns the pool the
@@ -991,7 +991,7 @@ where
                 None => false,
             });
             ctx.defer_deinit_until_callback_completes =
-                Some(bun_ptr::BackRef::new(&should_deinit_context));
+                Some(bun_core::ptr::BackRef::new(&should_deinit_context));
             ctx.run_error_handler(value);
             ctx.defer_deinit_until_callback_completes = original_state;
             // we try to deinit inside runErrorHandler so we just return here and let it deinit
@@ -1051,7 +1051,7 @@ where
                 resp.write_status(b"200 OK");
                 ctx.flags.set_has_written_status(true);
 
-                resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
+                resp.write_header(b"content-type", &bun_core::http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
                 if ctx.method == Method::HEAD {
@@ -1064,7 +1064,7 @@ where
             const MISSING_CONTENT: &[u8] =
                 b"Welcome to Bun! To get started, return a Response object.";
             resp.write_status(b"200 OK");
-            resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
+            resp.write_header(b"content-type", &bun_core::http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
             if ctx.method == Method::HEAD {
@@ -1086,7 +1086,7 @@ where
             self.flags.set_has_written_status(true);
             if let Some(resp) = self.resp {
                 resp.write_status(b"500 Internal Server Error");
-                resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
+                resp.write_header(b"content-type", &bun_core::http_types::MimeType::HTML.value);
             }
         }
 
@@ -1344,7 +1344,7 @@ where
                 resp: Some(resp),
                 req: Some(req),
                 method: resolved_method,
-                server: NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from),
+                server: NonNull::new(server.cast_mut()).map(bun_core::ptr::BackRef::from),
                 defer_deinit_until_callback_completes: should_deinit_context,
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: request::WeakRef::EMPTY,
@@ -1594,7 +1594,7 @@ where
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
         // SAFETY: ctx is a *RequestContext registered with FileResponseStream
-        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        let this: &mut Self = unsafe { bun_core::ptr::callback_ctx::<Self>(ctx) };
         this.detach_response();
         this.end_request_streaming_and_drain();
         this.deref();
@@ -1659,7 +1659,7 @@ where
         // SAFETY: `this.blob`'s backing bytes are owned by the context and
         // outlive `send_writable_bytes_for_blob`; detaching the borrow lets
         // `&mut *this` reborrow disjoint fields below without aliasing.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.slice()) };
+        let bytes: &[u8] = unsafe { bun_core::ptr::detach_lifetime(this.blob.slice()) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
         true
@@ -1966,7 +1966,7 @@ where
             fd,
             auto_close,
             resp,
-            vm: bun_ptr::BackRef::new(server.vm()),
+            vm: bun_core::ptr::BackRef::new(server.vm()),
             file_type,
             pollable,
             offset: self.sendfile.offset as u64,
@@ -1988,7 +1988,7 @@ where
     pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` previously registered as `lock.task`.
-        Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
+        Self::do_render_with_body(unsafe { bun_core::ptr::callback_ctx::<Self>(this) }, value, None);
     }
 
     fn render_with_blob_from_body_value(&mut self) {
@@ -2021,7 +2021,7 @@ where
         let Some(ctx) = ctx else { return };
         // SAFETY: ctx is the *mut Self stashed in `sink.ctx` by do_render_stream;
         // the sink only fires this once before any concurrent borrow of `self`.
-        Self::handle_first_stream_write(unsafe { bun_ptr::callback_ctx::<Self>(ctx) });
+        Self::handle_first_stream_write(unsafe { bun_core::ptr::callback_ctx::<Self>(ctx) });
     }
 
     /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
@@ -2071,7 +2071,7 @@ where
                 buffer: Vec::<u8>::default(),
                 on_first_write: Some(Self::handle_first_stream_write_thunk),
                 ctx: Some(std::ptr::from_mut::<Self>(this).cast::<c_void>()),
-                global_this: Some(bun_ptr::BackRef::new(global_this)),
+                global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                 ..Default::default()
             },
         });
@@ -2465,7 +2465,7 @@ where
         this: *mut c_void,
     ) -> Result<(), jsc::JsTerminated> {
         // SAFETY: this is the *mut Self registered with stat().
-        Self::on_s3_size_resolved(result, unsafe { bun_ptr::callback_ctx::<Self>(this) });
+        Self::on_s3_size_resolved(result, unsafe { bun_core::ptr::callback_ctx::<Self>(this) });
         Ok(())
     }
 
@@ -3055,7 +3055,7 @@ where
                                 resp.write_status(b"500 Internal Server Error");
                                 resp.write_header(
                                     b"content-type",
-                                    &bun_http_types::MimeType::HTML.value,
+                                    &bun_core::http_types::MimeType::HTML.value,
                                 );
                             }
                         }
@@ -3230,7 +3230,7 @@ where
                             // ByteStream methods/fields are `&self`/interior-mutable.
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
-                            let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
+                            let byte_stream = bun_core::ptr::BackRef::from(byte_stream_nn);
                             debug_assert!(byte_stream.pipe.get().ctx.is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
@@ -3717,7 +3717,7 @@ where
             // do not insert the content type if it is the fallback value
             // we may not know the content-type when streaming
             && (!self.blob.is_detached()
-                || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
+                || content_type.value.as_ptr() != bun_core::http_types::MimeType::OTHER.value.as_ptr())
             && !content_type
                 .value
                 .iter()
@@ -3741,7 +3741,7 @@ where
         // 2. The content-disposition header is not present
         if !has_content_disposition && content_type.category.autoset_filename() {
             if let Some(filename) = self.blob.get_file_name() {
-                let basename = bun_paths::basename(filename);
+                let basename = bun_core::paths::basename(filename);
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
@@ -3835,7 +3835,7 @@ where
         // SAFETY: `self.blob`'s backing bytes are owned by the context and
         // outlive the `try_end`/`on_writable` calls below; detaching the
         // borrow lets `&mut *self` reborrow disjoint fields without aliasing.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
+        let bytes: &[u8] = unsafe { bun_core::ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
@@ -3980,14 +3980,14 @@ where
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the
             // caller for the duration of the synchronous `on_data` call.
-            let borrowed = bun_ptr::RawSlice::new(chunk);
+            let borrowed = bun_core::ptr::RawSlice::new(chunk);
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
                 // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
                 // heap `ByteStream` kept alive by `readable` for this call.
-                let bytes = bun_ptr::BackRef::from(
+                let bytes = bun_core::ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
                 // TODO: properly propagate exception upwards
@@ -4004,7 +4004,7 @@ where
                 };
                 // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
                 // heap `ByteStream` kept alive by `readable` for this call.
-                let bytes = bun_ptr::BackRef::from(
+                let bytes = bun_core::ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
                 // TODO: properly propagate exception upwards
@@ -4162,7 +4162,7 @@ where
     ) {
         // SAFETY: caller upholds the fn-level contract — `ptr` is the
         // `*mut RequestContext` registered as the body callback context.
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
+        let this = unsafe { bun_core::ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
@@ -4173,7 +4173,7 @@ where
     pub(crate) fn on_start_buffering_callback(this: *mut c_void) {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` registered as the body callback context.
-        unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
+        unsafe { bun_core::ptr::callback_ctx::<Self>(this) }.on_start_buffering();
     }
 
     /// # Safety
@@ -4183,7 +4183,7 @@ where
     ) -> WebCore::DrainResult {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` registered as the body callback context.
-        unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
+        unsafe { bun_core::ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 
     pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
@@ -4584,15 +4584,15 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
         }
 
         if !blob.content_type().is_empty() {
-            bun_http_types::MimeType::by_name(blob.content_type())
-        } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
+            bun_core::http_types::MimeType::by_name(blob.content_type())
+        } else if let Some(content) = bun_core::http_types::MimeType::sniff(blob.slice()) {
             content
         } else if blob.was_string() {
-            bun_http_types::MimeType::TEXT
+            bun_core::http_types::MimeType::TEXT
             // TODO: should we get the mime type off of the Blob.Store if it exists?
             // A little wary of doing this right now due to causing some breaking change
         } else {
-            bun_http_types::MimeType::OTHER
+            bun_core::http_types::MimeType::OTHER
         }
     };
 

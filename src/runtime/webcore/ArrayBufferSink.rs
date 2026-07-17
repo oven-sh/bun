@@ -1,6 +1,6 @@
 use crate::webcore::sink::{self, Sink};
 use crate::webcore::streams::{self, Signal};
-use bun_collections::{ByteVecExt, VecExt};
+use bun_core::collections::{ByteVecExt, VecExt};
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
@@ -94,7 +94,7 @@ impl ArrayBufferSink {
 
     pub fn init(
         next: Option<Sink<'static>>,
-    ) -> Result<Box<ArrayBufferSink>, bun_alloc::AllocError> {
+    ) -> Result<Box<ArrayBufferSink>, bun_core::alloc_impl::AllocError> {
         Ok(Box::new(ArrayBufferSink {
             bytes: Vec::<u8>::default(),
             done: false,

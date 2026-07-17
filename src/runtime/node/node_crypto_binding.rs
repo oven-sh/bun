@@ -4,7 +4,7 @@
 use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
-use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
+use bun_core::collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
     self as jsc, AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSValue,
     JsResult, StrongOptional,
@@ -1270,7 +1270,7 @@ mod _impl {
         }
         // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
         let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-            unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
+            unsafe { bun_core::ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
         // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
         // from BoringSSL's static tables.
         let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();

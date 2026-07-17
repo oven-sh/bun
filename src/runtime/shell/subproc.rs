@@ -14,14 +14,14 @@ use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink, ReadableStream, blob};
-use bun_alloc::Arena;
-use bun_collections::VecExt;
+use bun_core::alloc_impl::Arena;
+use bun_core::collections::VecExt;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer};
-use bun_ptr::RefPtr;
+use bun_core::ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::EnumSet;
 
@@ -191,7 +191,7 @@ impl Drop for FileSinkPtr {
     }
 }
 
-bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
+bun_core::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
 #[derive(Default)]
@@ -224,7 +224,7 @@ pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// each use site.
 #[derive(Clone, Copy)]
 pub struct CmdHandle {
-    pub interp: bun_ptr::ParentRef<Interpreter>,
+    pub interp: bun_core::ptr::ParentRef<Interpreter>,
     pub id: NodeId,
 }
 
@@ -241,20 +241,20 @@ impl CmdHandle {
     pub unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
         // SAFETY: per fn contract — `interp` constructed via `from_raw_mut`
         // (write provenance), single-threaded, no overlapping `&mut`.
-        // `&'static mut T` forge — `bun_ptr::Interned` is read-only by
+        // `&'static mut T` forge — `bun_core::ptr::Interned` is read-only by
         // construction so does NOT cover this; tracked under the sibling
         // `static-widen-mut` pattern. Routed through `detach_lifetime_mut` so
         // the widen is centralised in `bun_ptr` and grep-able. The `'static` is
         // a lie scoped to the (3) callers, all of which drop the borrow before
         // `free_node` recycles the slot.
-        unsafe { bun_ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
+        unsafe { bun_core::ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
     }
 }
 
 pub struct ShellSubprocess {
     pub cmd_parent: CmdHandle,
 
-    /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
+    /// Intrusively ref-counted process (`bun_core::ptr::ThreadSafeRefCount`).
     /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
     /// only implements `Deref`; the shell is single-threaded so raw mutable
     /// access is sound.
@@ -405,7 +405,7 @@ impl ShellSubprocess {
             (*process).close();
             // Release the intrusive ref taken by `to_process`. `*mut Process`
             // has no Drop, so this must be explicit.
-            bun_ptr::ThreadSafeRefCount::<Process>::deref(process);
+            bun_core::ptr::ThreadSafeRefCount::<Process>::deref(process);
         }
     }
 
@@ -1512,7 +1512,7 @@ impl<'a> EnvMapIter<'a> {
         self.map.count()
     }
 
-    pub fn next(&mut self) -> Result<Option<EnvMapIterEntry<'a>>, bun_alloc::AllocError> {
+    pub fn next(&mut self) -> Result<Option<EnvMapIterEntry<'a>>, bun_core::alloc_impl::AllocError> {
         let Some((key, value)) = self.iter.next() else {
             return Ok(None);
         };
@@ -1576,7 +1576,7 @@ impl<'a> SpawnArgs<'a> {
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
         self.override_env = true;
-        // Note: `bun_collections::array_hash_map::Iter` doesn't impl
+        // Note: `bun_core::collections::array_hash_map::Iter` doesn't impl
         // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
             .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));

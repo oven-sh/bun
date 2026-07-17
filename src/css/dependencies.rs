@@ -54,7 +54,7 @@ pub struct ImportDependency {
 
 impl ImportDependency {
     pub fn new<'bump>(
-        bump: &'bump bun_alloc::Arena,
+        bump: &'bump bun_core::alloc_impl::Arena,
         rule: &crate::css_rules::import::ImportRule,
         filename: &[u8],
         local_names: Option<&crate::LocalsResultsMap>,
@@ -148,7 +148,7 @@ pub struct UrlDependency {
 
 impl UrlDependency {
     pub fn new<'bump>(
-        bump: &'bump bun_alloc::Arena,
+        bump: &'bump bun_core::alloc_impl::Arena,
         url: &crate::values::url::Url,
         filename: &[u8],
         import_records: &[bun_ast::ImportRecord],

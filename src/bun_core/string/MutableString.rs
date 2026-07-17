@@ -31,7 +31,7 @@ pub struct MutableString {
     pub list: Vec<u8>,
 }
 
-// The `bun_collections::pool::ObjectPoolType` impl
+// The `bun_core::collections::pool::ObjectPoolType` impl
 // lives in `bun_collections` (trait owner) to avoid a `bun_core →
 // bun_collections` dep cycle now that `MutableString` is in `bun_core`.
 

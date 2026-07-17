@@ -4,13 +4,13 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_paths::{AutoAbsPath, EnvPath};
-use bun_semver::string::Builder as SemverStringBuilder;
+use bun_core::paths::resolve_path::{join_abs_string_z, platform};
+use bun_core::paths::{AutoAbsPath, EnvPath};
+use bun_core::semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 use bun_threading::Mutex;
 
@@ -287,7 +287,7 @@ impl PackageManager {
             bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
-                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
+                let this = bun_core::ptr::callback_ctx::<PackageManager>(ctx);
                 this.has_no_more_pending_lifecycle_scripts()
             });
         }
@@ -441,7 +441,7 @@ impl PackageManager {
             builder.append(b"node_modules/.bin");
             builder.apply()?;
 
-            parent = bun_paths::dirname(dir);
+            parent = bun_core::paths::dirname(dir);
         }
 
         path.append(original_path.as_slice())?;

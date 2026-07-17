@@ -1,5 +1,5 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
-use bun_collections::{OffsetByteList, StringHashMap, VecExt};
+use bun_core::collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
 use bun_sql::mysql::Capabilities;
@@ -734,9 +734,9 @@ impl MySQLConnection {
         self.set_status(ConnectionState::Authenticating);
 
         let encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
-            password: bun_ptr::RawSlice::new(&self.password),
-            public_key: bun_ptr::RawSlice::new(response.data.slice()),
-            nonce: bun_ptr::RawSlice::new(&self.auth_data),
+            password: bun_core::ptr::RawSlice::new(&self.password),
+            public_key: bun_core::ptr::RawSlice::new(response.data.slice()),
+            nonce: bun_core::ptr::RawSlice::new(&self.auth_data),
             sequence_id: self.sequence_id,
         };
         encrypted_password.write(self.writer())?;
@@ -1019,9 +1019,9 @@ impl MySQLConnection {
             capability_flags: self.capabilities,
             max_packet_size: 0, // 16777216,
             character_set: CharacterSet::default(),
-            username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
-            database: Data::Temporary(bun_ptr::RawSlice::new(&self.database)),
-            auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(
+            username: Data::Temporary(bun_core::ptr::RawSlice::new(&self.user)),
+            database: Data::Temporary(bun_core::ptr::RawSlice::new(&self.database)),
+            auth_plugin_name: Data::Temporary(bun_core::ptr::RawSlice::new(
                 if let Some(plugin) = self.auth_plugin {
                     match plugin {
                         AuthMethod::MysqlNativePassword => &b"mysql_native_password"[..],
@@ -1053,7 +1053,7 @@ impl MySQLConnection {
                 return Err(AnyMySQLError::MissingAuthData);
             }
 
-            response.auth_response = Data::Temporary(bun_ptr::RawSlice::new(plugin.scramble(
+            response.auth_response = Data::Temporary(bun_core::ptr::RawSlice::new(plugin.scramble(
                 &self.password,
                 &self.auth_data,
                 &mut scrambled_buf,
@@ -1075,7 +1075,7 @@ impl MySQLConnection {
 
         let mut scrambled_buf = [0u8; 32];
 
-        response.auth_response = Data::Temporary(bun_ptr::RawSlice::new(auth_method.scramble(
+        response.auth_response = Data::Temporary(bun_core::ptr::RawSlice::new(auth_method.scramble(
             &self.password,
             plugin_data,
             &mut scrambled_buf,
@@ -1701,7 +1701,7 @@ impl ReaderContext for Reader {
         }
 
         // reshaped for borrowck — capture detached slice before skip().
-        let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
+        let slice = bun_core::ptr::RawSlice::new(&remaining[0..count]);
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
     }
@@ -1709,7 +1709,7 @@ impl ReaderContext for Reader {
     fn read_z(self) -> Result<Data, AnyMySQLError> {
         let remaining = self.read_buffer().remaining();
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
-            let slice = bun_ptr::RawSlice::new(&remaining[0..zero as usize]);
+            let slice = bun_core::ptr::RawSlice::new(&remaining[0..zero as usize]);
             self.skip(isize::try_from(zero + 1).expect("int cast"));
             return Ok(Data::Temporary(slice));
         }
@@ -1727,6 +1727,6 @@ pub(crate) type PreparedStatementsMap = StringHashMap<*mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
 /// `JSMySQLConnection::get_statement_from_signature_name`.
 pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
-    bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
+    bun_core::collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection

@@ -21,7 +21,7 @@ use crate::resolution_real::Tag as ResolutionTag;
 use bun_ast::Log;
 use bun_core::strings;
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
-use bun_semver::{self as semver, String as SemverString};
+use bun_core::semver::{self as semver, String as SemverString};
 
 // Serialized padding bytes must be deterministic; the per-field
 // save path zeroes padding explicitly (see the note in `save` and the
@@ -146,12 +146,12 @@ impl PatchedDepExternal {
     }
 }
 
-/// Bridges `bun_semver::string::ArrayHashContext` (inherent `hash`/`eql`) to
-/// `bun_collections::ArrayHashAdapter` so `get_or_put_adapted` can use it.
+/// Bridges `bun_core::semver::string::ArrayHashContext` (inherent `hash`/`eql`) to
+/// `bun_core::collections::ArrayHashAdapter` so `get_or_put_adapted` can use it.
 /// Can't `impl` the foreign trait for the foreign type directly (orphan rule).
 struct StringCtxAdapter<'a, 'b>(&'b semver::string::ArrayHashContext<'a>);
 
-impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, SemverString>
+impl<'a, 'b> bun_core::collections::array_hash_map::ArrayHashAdapter<SemverString, SemverString>
     for StringCtxAdapter<'a, 'b>
 {
     #[inline]
@@ -191,13 +191,13 @@ pub fn save(
             match res.tag {
                 ResolutionTag::Folder => {
                     debug_assert!(
-                        strings::index_of_char(this.str(res.folder()), bun_paths::SEP_WINDOWS,)
+                        strings::index_of_char(this.str(res.folder()), bun_core::paths::SEP_WINDOWS,)
                             .is_none()
                     );
                 }
                 ResolutionTag::Symlink => {
                     debug_assert!(
-                        strings::index_of_char(this.str(res.symlink()), bun_paths::SEP_WINDOWS,)
+                        strings::index_of_char(this.str(res.symlink()), bun_core::paths::SEP_WINDOWS,)
                             .is_none()
                     );
                 }
@@ -205,14 +205,14 @@ pub fn save(
                     debug_assert!(
                         strings::index_of_char(
                             this.str(res.local_tarball()),
-                            bun_paths::SEP_WINDOWS,
+                            bun_core::paths::SEP_WINDOWS,
                         )
                         .is_none()
                     );
                 }
                 ResolutionTag::Workspace => {
                     debug_assert!(
-                        strings::index_of_char(this.str(res.workspace()), bun_paths::SEP_WINDOWS,)
+                        strings::index_of_char(this.str(res.workspace()), bun_core::paths::SEP_WINDOWS,)
                             .is_none()
                     );
                 }

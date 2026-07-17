@@ -517,9 +517,9 @@ pub(crate) fn on_data<Context: ReaderContext>(
 
 // `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
 // (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
+pub(crate) type Queue = bun_core::collections::linear_fifo::LinearFifo<
     *mut PostgresSQLQuery,
-    bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
+    bun_core::collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
 >;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};

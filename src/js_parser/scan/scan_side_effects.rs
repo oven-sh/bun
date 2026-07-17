@@ -1,10 +1,10 @@
 #![warn(unused_must_use)]
 use crate::p::P;
-use bun_alloc::Arena as Bump;
+use bun_core::alloc_impl::Arena as Bump;
 use bun_ast::e::CallUnwrap;
 use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

@@ -23,7 +23,7 @@ impl TailwindAtRule {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _: &bun_core::alloc_impl::Arena) -> Self {
         *self
     }
 }

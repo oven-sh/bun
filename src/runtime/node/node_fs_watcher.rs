@@ -19,14 +19,14 @@ use bun_jsc::{
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
-use bun_paths::resolve_path::{self as Path, platform};
+use bun_core::paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
 use crate::node::types::{Encoding, PathLikeExt};
 use crate::webcore::encoding as Encoder;
 
-bun_output::declare_scope!(fs_watch, hidden);
+bun_core::declare_scope!(fs_watch, hidden);
 
 #[cfg(not(windows))]
 use super::path_watcher;
@@ -136,7 +136,7 @@ pub struct FSWatchTaskPosix {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
     /// embedded as `current_task` before the boxed `FSWatcher` address is
     /// known); patched to `Some` immediately after.
-    ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
+    ctx: Option<bun_core::ptr::ParentRef<FSWatcher>>,
     count: u8,
 
     entries: [MaybeUninit<Entry>; 8],
@@ -355,7 +355,7 @@ unsafe extern "C" {
 
 pub struct FSWatchTaskWindows {
     event: Event,
-    ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
+    ctx: Option<bun_core::ptr::ParentRef<FSWatcher>>,
 }
 
 impl Taskable for FSWatchTaskWindows {
@@ -578,7 +578,7 @@ impl FSWatcher {
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             // SAFETY: `this` is the live owning `&FSWatcher` (BACKREF) recovered
             // from the registered userdata; outlives every task it enqueues.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
+            ctx: Some(unsafe { bun_core::ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
             event,
         }));
         // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
@@ -773,7 +773,7 @@ impl FSWatcher {
                 // safely abort next tick
                 this_ref.current_task.set(FSWatchTask {
                     // SAFETY: `this` is the live boxed FSWatcher; write provenance.
-                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
+                    ctx: Some(unsafe { bun_core::ptr::ParentRef::from_raw_mut(this) }),
                     ..Default::default()
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
@@ -996,7 +996,7 @@ impl FSWatcher {
                     // incrementing; bump the counter directly so the `unrefTask()` below is
                     // balanced and the count stays > 0 while the close event is emitted.
                     self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
-                    bun_output::scoped_log!(fs_watch, "emit('close')");
+                    bun_core::scoped_log!(fs_watch, "emit('close')");
                     emit_js::<{ EventType::Close }>(
                         listener,
                         &self.global_this,
@@ -1076,7 +1076,7 @@ impl FSWatcher {
     }
 
     pub fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
-        let mut joined_buf = bun_paths::path_buffer_pool::get();
+        let mut joined_buf = bun_core::paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
             if strings::starts_with(s, b"file://") {
@@ -1137,7 +1137,7 @@ impl FSWatcher {
         // R-2: deref as shared; mutation goes through `JsCell`.
         let ctx_ref = unsafe { &*ctx };
         // SAFETY: `ctx` is the heap-stable Box address; write provenance.
-        let parent = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) };
+        let parent = unsafe { bun_core::ptr::ParentRef::from_raw_mut(ctx) };
         ctx_ref.current_task.with_mut(|t| t.ctx = Some(parent));
 
         ctx_ref

@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_io::FilePoll;
-use bun_ptr::BackRef;
+use bun_core::ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;

@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 
@@ -8,7 +8,7 @@ use crate::webcore::Pipe;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{blob, readable_stream};
 
-bun_output::declare_scope!(ByteStream, visible);
+bun_core::declare_scope!(ByteStream, visible);
 
 /// R-2 (`sharedThis`): every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
@@ -173,7 +173,7 @@ impl ByteStream {
             // payload drops implicitly at the `return` below — no explicit `drop` needed.
             self.has_received_last_chunk.set(stream.is_done());
 
-            bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
+            bun_core::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
             return Ok(());
         }
@@ -201,7 +201,7 @@ impl ByteStream {
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
-                bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
+                bun_core::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
                 let global = self.parent_const().global_this();
                 // R-2: move the action out of the cell *before* calling
@@ -227,7 +227,7 @@ impl ByteStream {
                 let mut action = self.buffer_action.replace(None).unwrap();
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         ByteStream,
                         "ByteStream.onData done and action.fulfill()"
                     );
@@ -237,7 +237,7 @@ impl ByteStream {
                 }
                 if self.buffer.get().capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             ByteStream,
                             "ByteStream.onData owned_and_done and action.fulfill()"
                         );
@@ -251,7 +251,7 @@ impl ByteStream {
                     }
                 }
 
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     ByteStream,
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
@@ -335,7 +335,7 @@ impl ByteStream {
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
             }
 
-            bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
+            bun_core::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
             self.signal_drained();
 
@@ -348,7 +348,7 @@ impl ByteStream {
             return Ok(());
         }
 
-        bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
+        bun_core::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
@@ -359,7 +359,7 @@ impl ByteStream {
         &self,
         stream: streams::Result,
         offset: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         if self.buffer.get().capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {

@@ -1,7 +1,7 @@
 //! Drop-in `IndexMap` / `IndexSet` for the React Compiler port.
 //!
-//! Newtype wrappers over [`bun_collections::ArrayHashMap`] with the allocator
-//! fixed to [`bun_alloc::AstAlloc`], so every map/set built during a compile
+//! Newtype wrappers over [`bun_core::collections::ArrayHashMap`] with the allocator
+//! fixed to [`bun_core::alloc_impl::AstAlloc`], so every map/set built during a compile
 //! lives in the per-parse arena and is bulk-freed on reset (no per-entry
 //! `Drop`). Method surface mirrors `indexmap::IndexMap` / `indexmap::IndexSet`
 //! closely enough that upstream call sites need only swap the `use` line.
@@ -17,12 +17,12 @@ use core::hash::Hash;
 use core::iter::{FromIterator, Zip};
 use core::slice;
 
-use bun_alloc::AstAlloc;
-use bun_collections::array_hash_map::{ArrayHashMap, AutoContext, MapEntry};
+use bun_core::alloc_impl::AstAlloc;
+use bun_core::collections::array_hash_map::{ArrayHashMap, AutoContext, MapEntry};
 
 /// Unordered map/set keyed by small `Copy` ids — `std`'s SipHash is the wrong
 /// default for dense `u32` newtypes. The `disallowed_types` lint is satisfied:
-/// the hasher is `FxBuildHasher` (same choice `bun_collections::AutoContext`
+/// the hasher is `FxBuildHasher` (same choice `bun_core::collections::AutoContext`
 /// makes for small-int keys), not `RandomState`.
 #[allow(clippy::disallowed_types)]
 pub type FxHashMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
@@ -32,7 +32,7 @@ pub type FxHashSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
 type Inner<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
 
 pub type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;
-pub use bun_collections::array_hash_map::{OccupiedEntry, VacantEntry};
+pub use bun_core::collections::array_hash_map::{OccupiedEntry, VacantEntry};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IndexMap

@@ -4,7 +4,7 @@ use core::ptr;
 
 use crate::schema_api as api;
 use bun_core::String;
-use bun_url::URL as ZigURL;
+use bun_core::url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
@@ -89,7 +89,7 @@ impl ZigException {
         error_list: &mut Vec<api::JsException>,
         root_path: &[u8],
         origin: Option<&ZigURL>,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         let name_slice = self.name.to_utf8();
         let message_slice = self.message.to_utf8();
 

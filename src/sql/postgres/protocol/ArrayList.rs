@@ -25,7 +25,7 @@ impl<'a> ArrayList<'a> {
 // caller's `Vec<u8>`; the `'a` borrow is the safety invariant (Vec outlives ctx).
 #[derive(Clone, Copy)]
 pub struct ArrayListCtx<'a> {
-    array: bun_ptr::BackRef<Vec<u8>>,
+    array: bun_core::ptr::BackRef<Vec<u8>>,
     _p: core::marker::PhantomData<&'a mut Vec<u8>>,
 }
 
@@ -33,7 +33,7 @@ impl<'a> ArrayListCtx<'a> {
     #[inline]
     pub fn new(array: &'a mut Vec<u8>) -> Self {
         Self {
-            array: bun_ptr::BackRef::new_mut(array),
+            array: bun_core::ptr::BackRef::new_mut(array),
             _p: core::marker::PhantomData,
         }
     }

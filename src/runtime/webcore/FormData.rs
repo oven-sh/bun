@@ -1,13 +1,14 @@
 //! HTML `FormData` parsing + JS bridge.
 
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
     ZigStringJsc as _,
 };
-use bun_semver::{self, SlicedString};
+#[allow(unused_imports)]
+use bun_core::semver::{self, SlicedString};
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
@@ -21,7 +22,7 @@ pub struct FormData<'a> {
     pub buffer: &'a [u8],
 }
 
-pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
+pub type Map<'a> = ArrayHashMap<bun_core::semver::String, FieldEntry<'a>>;
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -85,8 +86,8 @@ impl AsyncFormDataExt for AsyncFormData {
 pub struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub filename: bun_semver::String,
-    pub content_type: bun_semver::String,
+    pub filename: bun_core::semver::String,
+    pub content_type: bun_core::semver::String,
     pub is_file: bool,
     pub zero_count: u8,
 }
@@ -95,8 +96,8 @@ impl Default for Field<'_> {
     fn default() -> Self {
         Field {
             value: b"",
-            filename: bun_semver::String::default(),
-            content_type: bun_semver::String::default(),
+            filename: bun_core::semver::String::default(),
+            content_type: bun_core::semver::String::default(),
             is_file: false,
             zero_count: 0,
         }
@@ -216,7 +217,7 @@ pub fn to_js_from_multipart_data(
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+        fn on_entry(wrap: &mut Self, name: bun_core::semver::String, field: &Field<'_>, buf: &[u8]) {
             let value_str: &[u8] = field.value;
             let key = ZigString::init_utf8(name.slice(buf));
 
@@ -234,7 +235,7 @@ pub fn to_js_from_multipart_data(
                 } else {
                     let mime = 'brk: {
                         if !filename_str.is_empty() {
-                            let extension = bun_paths::extension(filename_str);
+                            let extension = bun_core::paths::extension(filename_str);
                             if !extension.is_empty() {
                                 if let Some(m) =
                                     bun_http::MimeType::by_extension_no_default(&extension[1..])
@@ -292,7 +293,7 @@ pub fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
+    mut iterator: impl FnMut(&mut C, bun_core::semver::String, &Field<'_>, &[u8]),
 ) -> crate::Result<()> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
@@ -335,8 +336,8 @@ pub fn for_each_multipart_entry<C>(
         remain = &remain[header_end + 4..];
 
         let mut field = Field::default();
-        let mut name = bun_semver::String::default();
-        let mut filename: Option<bun_semver::String> = None;
+        let mut name = bun_core::semver::String::default();
+        let mut filename: Option<bun_core::semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {

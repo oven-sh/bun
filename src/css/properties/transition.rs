@@ -6,7 +6,7 @@ use crate::Printer;
 use crate::PropertyHandlerContext;
 use crate::Result as CssResult;
 use crate::SmallList;
-use bun_alloc::ArenaVecExt as _;
+use bun_core::alloc_impl::ArenaVecExt as _;
 
 use crate::css_properties::Property;
 use crate::css_properties::PropertyId;
@@ -36,7 +36,7 @@ impl Transition {
         self == rhs
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_core::alloc_impl::Arena) -> Self {
         // All four fields deep-clone via `#[derive(Clone)]` with no
         // arena indirections (any heap-carrying variants of `PropertyId`/
         // `EasingFunction` clone deeply onto the global heap), so Clone is exact.
@@ -435,7 +435,7 @@ mod transition_handler_body {
 
     #[inline]
     fn get_transitions(
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         properties: &mut SmallList<PropertyId, 1>,
         durations: &mut SmallList<Time, 1>,
         delays: &mut SmallList<Time, 1>,
@@ -494,12 +494,12 @@ mod transition_handler_body {
 
     fn expand_properties(
         properties: &mut SmallList<PropertyId, 1>,
-        arena: &bun_alloc::Arena,
+        arena: &bun_core::alloc_impl::Arena,
         context: &mut PropertyHandlerContext,
     ) -> Option<SmallList<PropertyId, 1>> {
         #[inline]
         fn replace(
-            arena: &bun_alloc::Arena,
+            arena: &bun_core::alloc_impl::Arena,
             propertiez: &mut SmallList<PropertyId, 1>,
             props: &[PropertyId],
             i: u32,

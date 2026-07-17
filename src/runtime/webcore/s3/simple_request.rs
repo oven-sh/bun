@@ -11,13 +11,13 @@ use bun_http::{
 };
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_picohttp as picohttp;
+use bun_core::picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
-use bun_url::URL;
+use bun_core::url::URL;
 
 use crate::webcore::s3::list_objects;
 
@@ -119,7 +119,7 @@ pub struct S3HttpSimpleTask {
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    pub vm: Option<bun_core::ptr::BackRef<VirtualMachine>>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: *mut c_void,
@@ -358,7 +358,7 @@ impl S3HttpSimpleTask {
                             size: response
                                 .headers
                                 .get(b"content-length")
-                                .map(bun_http_types::parse_content_length)
+                                .map(bun_core::http_types::parse_content_length)
                                 .unwrap_or(0),
                         }),
                         this.callback_context,
@@ -634,7 +634,7 @@ pub(crate) fn execute_simple_s3_request(
         callback,
         range: options.range,
         headers,
-        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+        vm: Some(bun_core::ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
@@ -658,20 +658,20 @@ pub(crate) fn execute_simple_s3_request(
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = URL::parse(unsafe { bun_core::ptr::detach_lifetime_ref(&*task.sign_result.url) });
     // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
     // by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+        unsafe { bun_core::ptr::detach_lifetime(task.headers.buf.as_slice()) };
     // SAFETY: same lifetime-extension invariant as `url` above — `task.body` is a heap-owned
     // `Box<[u8]>` field of `*task` (an owned copy of the caller's slice) and outlives the
     // AsyncHTTP request; it is freed only when `task` is dropped in `on_response`.
-    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*task.body) };
+    let body: &'static [u8] = unsafe { bun_core::ptr::detach_lifetime(&*task.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
         // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
         // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
         Some(URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
+            bun_core::ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
     } else {
         None

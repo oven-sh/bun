@@ -16,7 +16,7 @@ pub struct InternalState<'a> {
     /// pending response is the temporary storage for the response headers, url and status code
     /// this uses shared_response_headers_buf to store the headers
     /// this will be turned None once the metadata is cloned
-    pub pending_response: Option<bun_picohttp::Response<'static>>,
+    pub pending_response: Option<bun_core::picohttp::Response<'static>>,
 
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
@@ -28,7 +28,7 @@ pub struct InternalState<'a> {
     pub transfer_encoding: Encoding,
     pub encoding: Encoding,
     pub content_encoding_i: u8,
-    pub chunked_decoder: bun_picohttp::phr_chunked_decoder,
+    pub chunked_decoder: bun_core::picohttp::phr_chunked_decoder,
     pub decompressor: Decompressor,
     pub stage: Stage,
     /// This is owned by the user and should not be freed here.
@@ -40,7 +40,7 @@ pub struct InternalState<'a> {
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
-    pub request_body: bun_ptr::RawSlice<u8>,
+    pub request_body: bun_core::ptr::RawSlice<u8>,
     pub original_request_body: HTTPRequestBody<'a>,
     pub request_sent_len: usize,
     pub fail: Option<Error>,
@@ -127,14 +127,14 @@ impl Default for InternalState<'_> {
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
             content_encoding_i: u8::MAX,
-            chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
+            chunked_decoder: bun_core::picohttp::phr_chunked_decoder::default(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,
             body_out_str: None,
             compressed_body: MutableString::init_empty(),
             content_length: None,
             total_body_received: 0,
-            request_body: bun_ptr::RawSlice::EMPTY,
+            request_body: bun_core::ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
@@ -149,7 +149,7 @@ impl Default for InternalState<'_> {
 
 impl<'a> InternalState<'a> {
     pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
-        let request_body = bun_ptr::RawSlice::new(body.slice());
+        let request_body = bun_core::ptr::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,
             request_body,
@@ -194,7 +194,7 @@ impl<'a> InternalState<'a> {
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
             original_request_body: HTTPRequestBody::Bytes(b""),
-            request_body: bun_ptr::RawSlice::EMPTY,
+            request_body: bun_core::ptr::RawSlice::EMPTY,
             certificate_info: None,
             flags: InternalStateFlags::new(),
             total_body_received: 0,
@@ -228,7 +228,7 @@ impl<'a> InternalState<'a> {
     #[inline]
     pub fn chunked_decoder_and_body_buffer(
         &mut self,
-    ) -> (&mut bun_picohttp::phr_chunked_decoder, &mut MutableString) {
+    ) -> (&mut bun_core::picohttp::phr_chunked_decoder, &mut MutableString) {
         match self.body_out_str {
             _ if self.encoding.is_compressed() => {
                 (&mut self.chunked_decoder, &mut self.compressed_body)

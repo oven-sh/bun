@@ -128,7 +128,7 @@ impl<'c> StructuralIndex<'c> {
             let word_off = self.src_off / 4096;
             let nwords = (chunk_len.div_ceil(64)).div_ceil(64);
             let filled = self.win.len();
-            let (n, chunk_flags) = bun_highway::json_structural_index_chunk(
+            let (n, chunk_flags) = bun_core::highway::json_structural_index_chunk(
                 &self.contents[self.src_off..self.src_off + chunk_len],
                 self.src_off,
                 &mut self.win.spare_capacity_mut()[..chunk_len + 66],

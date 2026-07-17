@@ -120,7 +120,7 @@ impl File {
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),
             Err(err) => {
-                if let Some(dir_path) = bun_paths::dirname(path) {
+                if let Some(dir_path) = bun_core::paths::dirname(path) {
                     let _ = mkdir_recursive_at(dir, dir_path);
                     return openat_a(dir, path, flags, mode).map(Self::from_fd);
                 }
@@ -147,7 +147,7 @@ impl File {
     #[inline]
     pub fn openat_os_path(
         dir: impl AsFd,
-        path: &bun_paths::OSPathSliceZ,
+        path: &bun_core::paths::OSPathSliceZ,
         flags: i32,
         mode: Mode,
     ) -> Maybe<File> {
@@ -368,7 +368,7 @@ impl File {
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
-    pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'a [u8]> {
+    pub fn get_path<'a>(&self, buf: &'a mut bun_core::paths::PathBuffer) -> Maybe<&'a [u8]> {
         get_fd_path(self.handle, buf).map(|s| &*s)
     }
 
@@ -404,8 +404,8 @@ impl File {
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
-        let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
+        let mut buf = bun_core::paths::PathBuffer::default();
+        let normalized = bun_core::paths::resolve_path::join_abs_string_buf_z::<bun_core::paths::platform::Loose>(
             top_level_dir,
             &mut buf.0,
             &[input_path],
@@ -423,7 +423,7 @@ impl File {
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(
         dir: impl AsFd,
-        path: &bun_paths::OSPathSliceZ,
+        path: &bun_core::paths::OSPathSliceZ,
         data: &[u8],
     ) -> Maybe<()> {
         let dir = dir.as_fd();

@@ -58,7 +58,7 @@ struct State {
     self_weak: std::sync::Weak<IOReader>,
     /// Backref so async read callbacks can drive `Yield::run`. See
     /// `IOWriter::interp`.
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Option<bun_core::ptr::ParentRef<Interpreter>>,
 }
 
 pub struct IOReader {
@@ -179,7 +179,7 @@ impl IOReader {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_core::ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]
@@ -437,7 +437,7 @@ fn dispatch_read_chunk(
     child: ChildPtr,
     chunk: &[u8],
     remove: &mut bool,
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Option<bun_core::ptr::ParentRef<Interpreter>>,
 ) -> Yield {
     let Some(interp) = interp else {
         return Yield::suspended();
@@ -453,7 +453,7 @@ fn dispatch_read_chunk(
 fn dispatch_reader_done(
     child: ChildPtr,
     err: Option<sys::SystemError>,
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Option<bun_core::ptr::ParentRef<Interpreter>>,
 ) -> Yield {
     let Some(interp) = interp else {
         return Yield::suspended();

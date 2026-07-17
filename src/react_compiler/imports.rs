@@ -11,7 +11,7 @@ use crate::collections::{IndexMap, IndexSet};
 use crate::diagnostics::{
     CompilerError, CompilerErrorDetail, ErrorCategory, Position, SourceLocation,
 };
-use bun_alloc::{AstAlloc, AstVec};
+use bun_core::alloc_impl::{AstAlloc, AstVec};
 use bun_ast::{
     ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };

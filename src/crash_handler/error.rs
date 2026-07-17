@@ -12,10 +12,10 @@ pub enum Error {
     EndOfFile,
 
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
 
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::alloc_impl::AllocError),
 
     #[error(transparent)]
     Core(#[from] bun_core::Error),
@@ -23,7 +23,7 @@ pub enum Error {
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
-        Error::Sys(bun_errno::SystemErrno::from(e))
+        Error::Sys(bun_core::errno::SystemErrno::from(e))
     }
 }
 

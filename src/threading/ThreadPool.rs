@@ -520,7 +520,7 @@ impl ThreadPool {
             // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
             // strictly outlives every `RunnerTask` (wait_for_all() blocks until all
             // tasks finish), so this is the canonical `BackRef` invariant.
-            ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
+            ctx: bun_core::ptr::BackRef<WaitContext<Ctx, V, F>>,
             i: usize,
         }
 
@@ -557,7 +557,7 @@ impl ThreadPool {
                     node: Node::default(),
                     callback: call::<Ctx, V, F>,
                 },
-                ctx: bun_ptr::BackRef::new(&wait_context),
+                ctx: bun_core::ptr::BackRef::new(&wait_context),
             });
         }
         // Push to the Vec first (no realloc: capacity reserved), then take
@@ -612,7 +612,7 @@ impl ThreadPool {
             // `current` is the calling worker's own stack-local `Thread` (set in
             // `ThreadRegistration::new`); BackRef invariant — pointee outlives
             // this read — holds for the `thread_pool` field load.
-            if bun_ptr::BackRef::from(current)
+            if bun_core::ptr::BackRef::from(current)
                 .thread_pool
                 .as_ptr()
                 .cast_const()
@@ -743,7 +743,7 @@ impl ThreadPool {
             let stack_size = self.stack_size as usize;
             // `BackRef<ThreadPool>: Send` (ThreadPool is `Sync`); pool's `join()`
             // waits for every worker, so the back-reference invariant holds.
-            let pool = bun_ptr::BackRef::new(self);
+            let pool = bun_core::ptr::BackRef::new(self);
             match std::thread::Builder::new()
                 .stack_size(stack_size)
                 .spawn(move || Thread::run(pool))
@@ -807,7 +807,7 @@ impl ThreadPool {
                         if can_wake && (sync.spawned() as u32) < self.max_threads {
                             let stack_size = self.stack_size as usize;
                             // `BackRef<ThreadPool>: Send`; see `warm()`.
-                            let pool = bun_ptr::BackRef::new(self);
+                            let pool = bun_core::ptr::BackRef::new(self);
                             match std::thread::Builder::new()
                                 .stack_size(stack_size)
                                 .spawn(move || Thread::run(pool))
@@ -895,7 +895,7 @@ impl ThreadPool {
                     // `current` is the calling worker's own stack-local
                     // `Thread`; BackRef invariant (pointee outlives holder)
                     // holds for the `&self` `drain_idle_events` call.
-                    bun_ptr::BackRef::from(current).drain_idle_events();
+                    bun_core::ptr::BackRef::from(current).drain_idle_events();
                 }
 
                 if stats_enabled() {
@@ -989,7 +989,7 @@ impl ThreadPool {
         // stack and outlives the entire `unregister` call. BackRef invariant
         // — pointee outlives holder — covers the `join_event.wait()` and
         // `.next` reads below.
-        let thread = bun_ptr::BackRef::from(thread);
+        let thread = bun_core::ptr::BackRef::from(thread);
         thread.join_event.wait();
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
@@ -1001,7 +1001,7 @@ impl ThreadPool {
         // `next_thread` is a registered worker still blocked in
         // `join_event.wait()`; the BackRef invariant (pointee outlives holder)
         // holds for the duration of this `notify()` call.
-        bun_ptr::BackRef::from(next_thread).join_event.notify();
+        bun_core::ptr::BackRef::from(next_thread).join_event.notify();
     }
 
     fn join(&self) {
@@ -1026,7 +1026,7 @@ impl ThreadPool {
         // `thread` is a registered worker blocked in `join_event.wait()`;
         // BackRef invariant (pointee outlives holder) holds for this
         // `notify()` call.
-        bun_ptr::BackRef::from(thread).join_event.notify();
+        bun_core::ptr::BackRef::from(thread).join_event.notify();
     }
 }
 
@@ -1050,7 +1050,7 @@ pub struct Thread {
     run_queue: node::Queue,
     idle_queue: node::Queue,
     run_buffer: node::Buffer,
-    thread_pool: bun_ptr::BackRef<ThreadPool>,
+    thread_pool: bun_core::ptr::BackRef<ThreadPool>,
 }
 
 thread_local! {
@@ -1064,7 +1064,7 @@ thread_local! {
 /// `pool` is a [`BackRef`]: the pool's `join()` blocks on every registered
 /// worker, so it strictly outlives this guard.
 struct ThreadRegistration {
-    pool: bun_ptr::BackRef<ThreadPool>,
+    pool: bun_core::ptr::BackRef<ThreadPool>,
     thread: *mut Thread,
 }
 
@@ -1074,7 +1074,7 @@ impl ThreadRegistration {
         CURRENT.with(|c| c.set(thread));
         pool.register(thread);
         Self {
-            pool: bun_ptr::BackRef::new(pool),
+            pool: bun_core::ptr::BackRef::new(pool),
             thread,
         }
     }
@@ -1140,7 +1140,7 @@ impl Thread {
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
-    fn run(thread_pool: bun_ptr::BackRef<ThreadPool>) {
+    fn run(thread_pool: bun_core::ptr::BackRef<ThreadPool>) {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
         // (Rust 2024) discharges the link-time proof so no `unsafe` block.
@@ -1423,7 +1423,7 @@ impl Event {
             };
             if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
                 has_swept = true;
-                bun_alloc::mimalloc::mi_on_thread_idle();
+                bun_core::alloc_impl::mimalloc::mi_on_thread_idle();
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;

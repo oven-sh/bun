@@ -8,7 +8,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_alloc::Arena as ArenaAllocator;
+use bun_core::alloc_impl::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -77,18 +77,18 @@ impl ModuleLoader {
 /// into the VM via raw pointers without aliasing the guard; the VM-outlives-
 /// guard contract is the BackRef type invariant.
 ///
-/// [`BackRef`]: bun_ptr::BackRef
+/// [`BackRef`]: bun_core::ptr::BackRef
 #[must_use = "dropping immediately resets the arena before transpilation"]
-pub struct ArenaResetGuard(bun_ptr::BackRef<VirtualMachine>);
+pub struct ArenaResetGuard(bun_core::ptr::BackRef<VirtualMachine>);
 
 impl ArenaResetGuard {
-    /// `vm` must be the live per-thread VM (the [`bun_ptr::BackRef`]
+    /// `vm` must be the live per-thread VM (the [`bun_core::ptr::BackRef`]
     /// invariant). Drop routes through [`VirtualMachine::as_mut`], which
     /// derives provenance from the thread-local slot, so neither construction
     /// nor teardown performs a raw deref here.
     #[inline]
     pub fn new(vm: *mut VirtualMachine) -> Self {
-        Self(bun_ptr::BackRef::from(
+        Self(bun_core::ptr::BackRef::from(
             core::ptr::NonNull::new(vm).expect("vm non-null"),
         ))
     }

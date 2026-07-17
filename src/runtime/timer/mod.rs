@@ -1,10 +1,10 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
 
-use bun_collections::ArrayHashMap;
+use bun_core::collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
+use bun_core::libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_threading::Guarded;
@@ -59,7 +59,7 @@ macro_rules! impl_timer_object {
     ($T:ident, $tag:ident, $js_name:literal) => {
         #[::bun_jsc::JsClass(name = $js_name)]
         pub struct $T {
-            pub ref_count: ::bun_ptr::RefCount<Self>,
+            pub ref_count: ::bun_core::ptr::RefCount<Self>,
             pub event_loop_timer: super::EventLoopTimer,
             pub internals: super::TimerObjectInternals,
         }
@@ -67,10 +67,10 @@ macro_rules! impl_timer_object {
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
 
         // Intrusive single-thread refcount mixin.
-        impl ::bun_ptr::RefCounted for $T {
+        impl ::bun_core::ptr::RefCounted for $T {
             type DestructorCtx = ();
             #[inline]
-            unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
+            unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_core::ptr::RefCount<Self> {
                 // SAFETY: caller contract — `this` points to a live `Self`.
                 unsafe { &raw mut (*this).ref_count }
             }
@@ -85,7 +85,7 @@ macro_rules! impl_timer_object {
         impl ::core::default::Default for $T {
             fn default() -> Self {
                 Self {
-                    ref_count: ::bun_ptr::RefCount::init(),
+                    ref_count: ::bun_core::ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
                     event_loop_timer: super::EventLoopTimer::init_paused(
                         super::EventLoopTimerTag::$tag,
@@ -107,7 +107,7 @@ macro_rules! impl_timer_object {
             #[inline]
             pub unsafe fn ref_(this: *mut Self) {
                 // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::ref_(this) }
+                unsafe { ::bun_core::ptr::RefCount::<Self>::ref_(this) }
             }
 
             /// Decrement the intrusive refcount; on zero runs `deinit` (drops
@@ -119,7 +119,7 @@ macro_rules! impl_timer_object {
             #[inline]
             pub unsafe fn deref(this: *mut Self) {
                 // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::deref(this) }
+                unsafe { ::bun_core::ptr::RefCount::<Self>::deref(this) }
             }
 
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:

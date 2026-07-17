@@ -18,7 +18,7 @@ use crate::webcore::blob::store as blob_store;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
-use bun_core::base64;
+use bun_core::util::base64;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
@@ -384,7 +384,7 @@ fn source_from_js(
                     "Image(): only base64 data: URLs are supported",
                 )));
             }
-            let mut out = vec![0u8; bun_base64::decode_len(payload)];
+            let mut out = vec![0u8; bun_core::base64::decode_len(payload)];
             let r = base64::decode(&mut out, payload);
             if r.fail {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -759,7 +759,7 @@ impl Image {
                             // unpinned in `then()` via `Input::release()`.
                             let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
                             Ok(Input {
-                                bytes: bun_ptr::RawSlice::new(bytes),
+                                bytes: bun_core::ptr::RawSlice::new(bytes),
                                 pinned: v,
                                 ..Default::default()
                             })
@@ -771,7 +771,7 @@ impl Image {
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
             Source::Owned(b) => Ok(Input {
-                bytes: bun_ptr::RawSlice::new(b.as_slice()),
+                bytes: bun_core::ptr::RawSlice::new(b.as_slice()),
                 ..Default::default()
             }),
             Source::Path(p) => Ok(Input {
@@ -1404,7 +1404,7 @@ pub struct PipelineTask<'a> {
 pub struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
-    bytes: bun_ptr::RawSlice<u8>,
+    bytes: bun_core::ptr::RawSlice<u8>,
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
@@ -1418,7 +1418,7 @@ pub struct Input {
 impl Default for Input {
     fn default() -> Self {
         Self {
-            bytes: bun_ptr::RawSlice::EMPTY,
+            bytes: bun_core::ptr::RawSlice::EMPTY,
             path: None,
             pinned: JSValue::ZERO,
             copied: None,

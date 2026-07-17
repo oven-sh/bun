@@ -81,7 +81,7 @@ impl AbortSignal {
         extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
             // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
             // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
+            let val = unsafe { bun_core::ptr::callback_ctx::<C>(ptr) };
             C::on_abort(val, reason);
         }
         self.add_listener(ctx.cast::<c_void>(), callback::<C>)
@@ -104,7 +104,7 @@ impl AbortSignal {
     }
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
-        bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
+        bun_core::analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
         WebCore__AbortSignal__signal(self, global_object, reason)
     }
 
@@ -217,7 +217,7 @@ impl AbortSignal {
 // `AbortSignal` is an `opaque_ffi!` type (`!Freeze` via `UnsafeCell`), so
 // `&AbortSignal` derived from the stored pointer carries no read-only
 // assumption that C++-side mutation could violate.
-unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
+unsafe impl bun_core::ptr::ExternalSharedDescriptor for AbortSignal {
     #[inline]
     unsafe fn ext_ref(this: *mut Self) {
         // `opaque_ref` is the centralised ZST-handle deref proof; caller
@@ -238,7 +238,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
 /// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
 /// cannot own a C++-allocated object — its payload address is not the C++
 /// object address).
-pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
+pub type AbortSignalRef = bun_core::ptr::ExternalShared<AbortSignal>;
 
 impl AbortSignal {
     /// Downcast a JS value, ref the underlying signal, and wrap. Returns

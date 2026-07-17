@@ -72,7 +72,7 @@ mod posix_compat {
     pub(super) use bun_sys::posix::mode_t;
 
     /// Errno enum with **unprefixed** variant names. The real
-    /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
+    /// `bun_core::errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
     /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
     #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]

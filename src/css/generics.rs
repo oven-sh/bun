@@ -11,15 +11,15 @@
 
 use core::cmp::Ordering;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::VecExt;
-// `bun_wyhash::Wyhash` is the final4 variant
+use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
+use bun_core::collections::VecExt;
+// `bun_core::wyhash::Wyhash` is the final4 variant
 // (NOT `Wyhash11`, which is a legacy
 // variant kept only for on-disk lockfile compat — different digest).
 // Re-exported `pub` so `#[derive(CssHash)]` (in `bun_css_derive`) can name the
 // hasher type as `::bun_css::generics::Wyhash` without depending on `bun_wyhash`
 // directly.
-pub use bun_wyhash::Wyhash;
+pub use bun_core::wyhash::Wyhash;
 
 use crate::SmallList;
 use crate::css_parser as css;
@@ -35,9 +35,9 @@ use crate::values::rect::Rect;
 use crate::values::size::Size2D;
 use crate::{PrintErr, VendorPrefix};
 
-// In this AST crate, lists map to `bun_alloc::ArenaVec<'bump, T>` fed the
+// In this AST crate, lists map to `bun_core::alloc_impl::ArenaVec<'bump, T>` fed the
 // parser arena.
-pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
+pub type ArrayList<'bump, T> = bun_core::alloc_impl::ArenaVec<'bump, T>;
 
 // ───────────────────────────────────────────────────────────────────────────────
 // DeepClone
@@ -56,7 +56,7 @@ pub trait DeepClone<'bump>: Sized {
 /// rules. Re-exported here so `use crate::generics::DeepClone;` brings both
 /// the trait and the derive into scope (same-name trait+derive is the std
 /// idiom, cf. `Clone`).
-pub use bun_css_derive::DeepClone;
+pub use bun_macros::DeepClone;
 
 #[inline]
 pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump Arena) -> T {
@@ -188,7 +188,7 @@ pub trait CssEql {
 /// See `src/css_derive/lib.rs` for the expansion rules.
 /// Re-exported here so `use crate::generics::CssEql;` brings both trait and
 /// derive into scope (same-name idiom, cf. `Clone`).
-pub use bun_css_derive::CssEql;
+pub use bun_macros::CssEql;
 
 #[inline]
 pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
@@ -891,7 +891,7 @@ pub trait CssHash {
 /// See `src/css_derive/lib.rs` for the expansion rules.
 /// Re-exported here so `use crate::generics::CssHash;` brings both trait and
 /// derive into scope.
-pub use bun_css_derive::CssHash;
+pub use bun_macros::CssHash;
 
 #[inline]
 pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
@@ -1087,7 +1087,7 @@ pub trait IsCompatible {
 /// variants `true` / payload variants delegate). See `src/css_derive/lib.rs`.
 /// Re-exported here so `use crate::generics::IsCompatible;` brings both trait
 /// and derive into scope.
-pub use bun_css_derive::IsCompatible;
+pub use bun_macros::IsCompatible;
 
 #[inline]
 pub(crate) fn is_compatible<T: IsCompatible>(val: &T, browsers: &crate::targets::Browsers) -> bool {

@@ -1,11 +1,12 @@
 use core::fmt;
 
-use bun_collections::{HashMap, IdentityContext};
+use bun_core::collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+#[allow(unused_imports)]
+use bun_core::paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
-use bun_semver::{self as semver, String as SemverString};
+use bun_core::semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
 use crate::bun_json::Expr;
@@ -91,7 +92,7 @@ pub struct Entry {
     pub resolution: FolderResolution,
 }
 
-// bun_collections::HashMap currently ignores the context/load-factor
+// bun_core::collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
 pub type Map = HashMap<u64, Entry, IdentityContext<u64>>;
 
@@ -100,7 +101,7 @@ pub(crate) fn normalize(path: &[u8]) -> &[u8] {
 }
 
 pub fn hash(normalized_path: &[u8]) -> u64 {
-    bun_wyhash::hash(normalized_path)
+    bun_core::wyhash::hash(normalized_path)
 }
 
 // ── NewResolver ───────────────────────────────────────────────────────────
@@ -190,7 +191,7 @@ fn normalize_package_json_path<'a>(
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         non_normalized_path
-    } else if bun_paths::is_absolute(non_normalized_path) {
+    } else if bun_core::paths::is_absolute(non_normalized_path) {
         strings::trim_right(non_normalized_path, SEP_STR.as_bytes())
     } else {
         strings::trim_right(normalize(non_normalized_path), SEP_STR.as_bytes())
@@ -351,9 +352,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     let has_scripts = package.scripts.has_any()
         || 'brk: {
-            let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-            let binding_dot_gyp_path = bun_paths::resolve_path::join_abs_string_z::<
-                bun_paths::platform::Auto,
+            let dir = bun_core::paths::dirname(abs.as_bytes()).unwrap_or(b"");
+            let binding_dot_gyp_path = bun_core::paths::resolve_path::join_abs_string_z::<
+                bun_core::paths::platform::Auto,
             >(dir, &[b"binding.gyp" as &[u8]]);
             break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
         };
@@ -415,8 +416,8 @@ pub fn get_or_put(
         let rel_len = paths.rel.len();
         rel_buf[..rel_len].copy_from_slice(paths.rel);
         // `paths` is dead past this point → `joined` is no longer borrowed.
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
+        bun_core::paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
+        bun_core::paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
         (
             // `normalize_package_json_path` wrote `joined[abs_len] = 0`; the
             // separator rewrite above never touches the NUL.
@@ -494,7 +495,7 @@ pub fn get_or_put(
     let package = match result {
         Ok(p) => p,
         Err(err) => {
-            let stored = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            let stored = if err == crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT) {
                 FolderResolution::Err(crate::Error::MissingPackageJSON)
             } else {
                 FolderResolution::Err(err)

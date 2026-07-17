@@ -1,5 +1,5 @@
-use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
+use bun_core::alloc_impl::ArenaVecExt as _;
+use bun_core::collections::VecExt;
 
 use crate::js_lexer;
 use crate::js_lexer::T;
@@ -214,7 +214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
-        let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
+        let mut args = bun_core::alloc_impl::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
@@ -231,7 +231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            let mut ts_decorators = bun_alloc::AstAlloc::vec();
+            let mut ts_decorators = bun_core::alloc_impl::AstAlloc::vec();
             if opts.allow_ts_decorators {
                 ts_decorators = p.parse_type_script_decorators()?;
                 if ts_decorators.len_u32() > 0 {

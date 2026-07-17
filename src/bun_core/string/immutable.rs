@@ -2885,10 +2885,10 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
 }
 
 // The full `paths` submodule lives in
-// `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
+// `bun_core::paths::string_paths` (it depends upward on `bun_paths` resolve/pool
 // helpers and would cycle here). Callers reach the Windows path-shape
 // helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
-// `bun_paths::strings::*`; this module re-exports only the path-shape
+// `bun_core::paths::strings::*`; this module re-exports only the path-shape
 // primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
 // itself can build on them.
 pub use crate::strings_impl::{

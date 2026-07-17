@@ -4,7 +4,7 @@ use crate::css_values::length::LengthPercentage;
 use crate::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber};
 use crate::{Parser, PrintErr, Printer, SmallList};
 
-use bun_collections::VecExt;
+use bun_core::collections::VecExt;
 use bun_core::strings;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
@@ -504,7 +504,7 @@ impl GridTemplateAreas {
     const HTML_SPACE_CHARACTERS: &[u8] = &[0x0020, 0x0009, 0x000a, 0x000c, 0x000d];
 
     fn parse_string<'bump>(
-        bump: &'bump bun_alloc::Arena,
+        bump: &'bump bun_core::alloc_impl::Arena,
         s: &[u8],
         tokens: &mut SmallList<Option<*const [u8]>, 1>,
     ) -> Result<u32, ()> {
@@ -579,7 +579,7 @@ mod tests {
 
     /// Parse one row string; cells are `None` for `.` null-cell tokens.
     fn parse_areas(s: &'static [u8]) -> Result<(u32, Vec<Option<&'static [u8]>>), ()> {
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_core::alloc_impl::Arena::new();
         let mut tokens = SmallList::<Option<*const [u8]>, 1>::default();
         let columns = GridTemplateAreas::parse_string(&bump, s, &mut tokens)?;
         let cells = tokens

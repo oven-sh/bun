@@ -351,7 +351,7 @@ fn release_gen_val_array_buffer(b: &GenVal<GenArrayBuffer>) {
     if !b.0.is_null() {
         // SAFETY: `b.0` is the `RefPtr<JSC::ArrayBuffer>::leakRef()` result from
         // C++ `ExternTraits` — a live `JSC::ArrayBuffer*` carrying +1.
-        unsafe { <JSCArrayBuffer as bun_ptr::ExternalSharedDescriptor>::ext_deref(b.0) };
+        unsafe { <JSCArrayBuffer as bun_core::ptr::ExternalSharedDescriptor>::ext_deref(b.0) };
     }
 }
 
@@ -361,7 +361,7 @@ fn release_gen_val_blob(b: &GenVal<GenBlob>) {
         // SAFETY: `b.0` is the `RefPtr<BlobImpl>::leakRef()` result from C++
         // `ExternTraits` — a live heap-allocated `Blob*` carrying +1.
         unsafe {
-            <crate::webcore_types::Blob as bun_ptr::ExternalSharedDescriptor>::ext_deref(
+            <crate::webcore_types::Blob as bun_core::ptr::ExternalSharedDescriptor>::ext_deref(
                 b.0.cast::<crate::webcore_types::Blob>(),
             )
         };
@@ -496,7 +496,7 @@ impl SSLConfigFile {
                     // source buffer; profile if it shows up on a hot path.
                     // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
                     // (per crate prereq); `mi_free` is size-agnostic.
-                    unsafe { bun_alloc::basic::free_without_size(arr.data.cast()) };
+                    unsafe { bun_core::alloc_impl::basic::free_without_size(arr.data.cast()) };
                 }
                 Self::Array(GenList(out))
             }
@@ -1058,16 +1058,16 @@ macro_rules! js_class_module {
                 if ptr.is_null() { None } else { Some(ptr) }
             }
 
-            /// [`from_js`] as a [`ParentRef`](::bun_ptr::ParentRef) — wraps the
+            /// [`from_js`] as a [`ParentRef`](::bun_core::ptr::ParentRef) — wraps the
             /// raw `m_ctx` backref deref. The payload is GC-rooted by the
             /// caller's `CallFrame` for the duration of the host call, so the
             /// `ParentRef` invariant (pointee outlives holder) holds for any
             /// stack-scoped use.
             #[inline]
-            pub fn from_js_ref(v: JSValue) -> ::core::option::Option<::bun_ptr::ParentRef<Payload>> {
+            pub fn from_js_ref(v: JSValue) -> ::core::option::Option<::bun_core::ptr::ParentRef<Payload>> {
                 from_js(v)
                     .and_then(::core::ptr::NonNull::new)
-                    .map(::bun_ptr::ParentRef::from)
+                    .map(::bun_core::ptr::ParentRef::from)
             }
 
             /// Create a new JS wrapper instance owning `ptr`. The C++ side

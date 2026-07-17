@@ -1,4 +1,4 @@
-use bun_paths::resolve_path;
+use bun_core::paths::resolve_path;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -57,8 +57,8 @@ pub struct EbusyState {
     pub main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
-    pub absolute_targets: bun_collections::StringSet,
-    pub absolute_srcs: bun_collections::StringSet,
+    pub absolute_targets: bun_core::collections::StringSet,
+    pub absolute_srcs: bun_core::collections::StringSet,
 }
 
 impl Cp {
@@ -449,7 +449,7 @@ impl ShellCpTask {
     /// for `-v`; on Windows the paths arrive as WTF-16 and are transcoded.
     /// Takes `&self` because subtasks fan out concurrently — the only mutated
     /// state is the locked `verbose_output` buffer.
-    pub(crate) fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
+    pub(crate) fn cp_on_copy(&self, src: &[bun_core::paths::OSPathChar], dest: &[bun_core::paths::OSPathChar]) {
         if !self.opts.verbose {
             return;
         }
@@ -459,10 +459,10 @@ impl ShellCpTask {
         }
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let mut buf2 = bun_paths::PathBuffer::uninit();
-            let src8 = bun_paths::strings::from_wpath(&mut buf, src);
-            let dest8 = bun_paths::strings::from_wpath(&mut buf2, dest);
+            let mut buf = bun_core::paths::PathBuffer::uninit();
+            let mut buf2 = bun_core::paths::PathBuffer::uninit();
+            let src8 = bun_core::paths::strings::from_wpath(&mut buf, src);
+            let dest8 = bun_core::paths::strings::from_wpath(&mut buf2, dest);
             self.on_copy_impl(src8, dest8);
         }
     }
@@ -519,7 +519,7 @@ impl ShellCpTask {
         // heap-allocated task; the worker thread has exclusive access until
         // the bounce-back is posted.
         unsafe {
-            let this = bun_ptr::container_of::<ShellCpTask, _>(
+            let this = bun_core::ptr::container_of::<ShellCpTask, _>(
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
             );
@@ -572,8 +572,8 @@ impl ShellCpTask {
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
-        let mut buf2 = bun_paths::PathBuffer::uninit();
-        let mut buf3 = bun_paths::PathBuffer::uninit();
+        let mut buf2 = bun_core::paths::PathBuffer::uninit();
+        let mut buf3 = bun_core::paths::PathBuffer::uninit();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
@@ -685,11 +685,11 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            src: bun_jsc::node::PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_unchecked(
                 self.src_absolute.as_deref().unwrap(),
                 false,
             )),
-            dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            dest: bun_jsc::node::PathLike::String(bun_core::ptr::cow_slice::CowSlice::init_unchecked(
                 self.tgt_absolute.as_deref().unwrap(),
                 false,
             )),

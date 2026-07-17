@@ -10,7 +10,7 @@ use crate::{
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
-use bun_collections::{HiveArray, TaggedPtrUnion};
+use bun_core::collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_core::{self, FeatureFlags};
 use bun_uws as uws;
@@ -22,7 +22,7 @@ const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_core::ptr::CellRefCounted)]
 pub struct HTTPContext<const SSL: bool> {
     /// Heap-allocated custom-SSL contexts only. The cache entry in
     /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
@@ -62,7 +62,7 @@ pub struct HTTPContext<const SSL: bool> {
 // PORTING.md this stays intrusive rather than `Rc<T>`. Derived via
 // `#[derive(CellRefCounted)]` above; default `destroy` (`heap::take`) applies
 // (this struct is Box-allocated for custom-SSL entries; statics never hit 0).
-pub(crate) type HTTPContextRc<const SSL: bool> = bun_ptr::IntrusiveRc<HTTPContext<SSL>>;
+pub(crate) type HTTPContextRc<const SSL: bool> = bun_core::ptr::IntrusiveRc<HTTPContext<SSL>>;
 
 pub(crate) type PooledSocketHiveAllocator<const SSL: bool> =
     HiveArray<PooledSocket<SSL>, POOL_SIZE>;
@@ -72,15 +72,15 @@ pub type HTTPSocket<const SSL: bool> = uws::SocketHandler<SSL>;
 pub(crate) type ActiveSocket<const SSL: bool> = TaggedPtrUnion<ActiveSocketTypes<SSL>>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
-/// rules (the `bun_ptr::impl_tagged_ptr_union!` macro impls on a tuple, which
+/// rules (the `bun_core::impl_tagged_ptr_union!` macro impls on a tuple, which
 /// is foreign even when every element is local).
 pub(crate) struct ActiveSocketTypes<const SSL: bool>;
 
 // Note: tags assigned 1024 - i, descending.
-impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
+impl<const SSL: bool> bun_core::ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
     const LEN: usize = 4;
-    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
-    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
+    const MIN_TAG: bun_core::ptr::tagged_pointer::TagType = 1024 - 3;
+    fn type_name_from_tag(tag: bun_core::ptr::tagged_pointer::TagType) -> Option<&'static str> {
         match tag {
             1024 => Some("DeadSocket"),
             1023 => Some("HTTPClient"),
@@ -90,26 +90,26 @@ impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SS
         }
     }
 }
-impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
+impl<const SSL: bool> bun_core::ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
+    const TAG: bun_core::ptr::tagged_pointer::TagType = 1024;
     const NAME: &'static str = "DeadSocket";
 }
-impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
+impl<const SSL: bool> bun_core::ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for HTTPClient<'static>
 {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1023;
+    const TAG: bun_core::ptr::tagged_pointer::TagType = 1023;
     const NAME: &'static str = "HTTPClient";
 }
-impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
+impl<const SSL: bool> bun_core::ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for PooledSocket<SSL>
 {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1022;
+    const TAG: bun_core::ptr::tagged_pointer::TagType = 1022;
     const NAME: &'static str = "PooledSocket";
 }
-impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
+impl<const SSL: bool> bun_core::ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for h2::ClientSession
 {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1021;
+    const TAG: bun_core::ptr::tagged_pointer::TagType = 1021;
     const NAME: &'static str = "H2.ClientSession";
 }
 
@@ -138,7 +138,7 @@ pub(crate) trait ActiveSocketExt<const SSL: bool>: Copy {
 #[inline(always)]
 fn active_socket_get_mut<'a, const SSL: bool, T>(tagged: ActiveSocket<SSL>) -> Option<&'a mut T>
 where
-    T: bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>,
+    T: bun_core::ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>,
 {
     // SAFETY: see [`ActiveSocketExt`] trait-level INVARIANT — the tagged pointer
     // identifies an object live for the dispatched callback, HTTP-thread-only.
@@ -363,12 +363,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// so a shared borrow is sound regardless of other raw aliases on this
     /// single thread.
     ///
-    /// Returns a [`bun_ptr::ParentRef`] (the registry's strong ref ⇒ the
+    /// Returns a [`bun_core::ptr::ParentRef`] (the registry's strong ref ⇒ the
     /// session outlives the handle) so the shared deref goes through the safe
     /// `Deref` impl instead of an open-coded raw-ptr reborrow.
     #[inline]
-    fn h2_session_ref(session: *const h2::ClientSession) -> bun_ptr::ParentRef<h2::ClientSession> {
-        bun_ptr::ParentRef::from(
+    fn h2_session_ref(session: *const h2::ClientSession) -> bun_core::ptr::ParentRef<h2::ClientSession> {
+        bun_core::ptr::ParentRef::from(
             NonNull::new(session.cast_mut()).expect("h2 registry session is non-null"),
         )
     }
@@ -426,7 +426,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             let pos = pc
                 .waiters
                 .iter()
-                .position(|w| bun_ptr::BackRef::from(*w).async_http_id == async_http_id);
+                .position(|w| bun_core::ptr::BackRef::from(*w).async_http_id == async_http_id);
             if let Some(i) = pos {
                 let waiter = pc.waiters.swap_remove(i);
                 // Same liveness as above; exclusive access — the waiter was
@@ -882,7 +882,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // SAFETY: hostname borrows either a static literal or `client.url`/
             // `client.http_proxy` which outlive `connected_url` for the
             // duration of the connect attempt.
-            unsafe { bun_ptr::detach_lifetime(hostname) };
+            unsafe { bun_core::ptr::detach_lifetime(hostname) };
 
         if SSL {
             if client.can_offer_h2() {

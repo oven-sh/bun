@@ -14,7 +14,7 @@
 
 use core::sync::atomic::Ordering;
 
-use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
+use bun_core::collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
 use super::jsc;
@@ -27,7 +27,7 @@ pub(crate) mod js_escape;
 pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
-// `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
+// `dev_server_body` (`bun_core::declare_scope!(DevServer, visible)`) and
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
@@ -366,7 +366,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub dev: bun_ptr::BackRef<DevServer>,
+    pub dev: bun_core::ptr::BackRef<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,
     /// Allows actions which inspect or mutate sensitive DevServer state.
@@ -457,7 +457,7 @@ impl HotReloadEvent {
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
-                let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
+                let changed_dir = bun_core::paths::string_paths::without_trailing_slash_windows_path(
                     changed_dir_with_slash,
                 );
 
@@ -490,7 +490,7 @@ impl HotReloadEvent {
                         let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
                             .resolver
                             .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(
                                     source_file_path.slice(),
                                 ),
                                 unsafe { &*specifier },
@@ -606,13 +606,13 @@ impl HotReloadEvent {
             return;
         }
 
-        let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
+        let ends_with_sep = bun_core::paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
         self.extra_files.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
         } else {
             dir_path
         });
-        self.extra_files.push(bun_paths::SEP);
+        self.extra_files.push(bun_core::paths::SEP);
         self.extra_files.extend_from_slice(sub_path);
         self.extra_files.push(0);
     }
@@ -1101,7 +1101,7 @@ pub mod directory_watch_store {
         /// key storage; compared by *pointer identity*. The graph calls
         /// `removeDependenciesForFile` before freeing the key, so the slice
         /// outlives every read — `RawSlice` invariant.
-        pub source_file_path: bun_ptr::RawSlice<u8>,
+        pub source_file_path: bun_core::ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub specifier: Box<[u8]>,
     }
@@ -1109,7 +1109,7 @@ pub mod directory_watch_store {
         fn default() -> Self {
             Dep {
                 next: None,
-                source_file_path: bun_ptr::RawSlice::EMPTY,
+                source_file_path: bun_core::ptr::RawSlice::EMPTY,
                 specifier: Box::default(),
             }
         }
@@ -1126,7 +1126,7 @@ bun_bundler::link_impl_DevServerHandle! {
         log_for_resolution_failures(abs_path, graph) => {
             match (*this).get_log_for_resolution_failures(abs_path, graph) {
                 Ok(log) => log,
-                Err(_) => bun_alloc::out_of_memory(),
+                Err(_) => bun_core::alloc_impl::out_of_memory(),
             }
         },
         finalize_bundle(bv2, result) => {
@@ -1180,7 +1180,7 @@ bun_bundler::link_impl_DevServerHandle! {
             let _ = (*this)
                 .barrel_files_with_deferrals
                 .get_or_put(path)
-                .map_err(|_| bun_alloc::out_of_memory());
+                .map_err(|_| bun_core::alloc_impl::out_of_memory());
             Ok(())
         },
         register_barrel_export(barrel_path, alias) => {
@@ -1230,13 +1230,13 @@ impl DirectoryWatchStore {
         specifier: &[u8],
         renderer: Graph,
         loader: bun_ast::Loader,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::alloc_impl::AllocError> {
         use bun_ast::Loader;
         // When it does not resolve to a file path, there is nothing to track.
         if specifier.is_empty() {
             return Ok(());
         }
-        if !bun_paths::is_absolute(import_source) {
+        if !bun_core::paths::is_absolute(import_source) {
             return Ok(());
         }
 
@@ -1255,13 +1255,13 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+        let mut buf = bun_core::paths::path_buffer_pool::get();
+        let joined = bun_core::paths::resolve_path::join_abs_string_buf::<bun_core::paths::platform::Auto>(
+            bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(import_source),
             &mut buf.0,
             &[specifier],
         );
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+        let dir = bun_core::paths::resolve_path::dirname::<bun_core::paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -1273,7 +1273,7 @@ impl DirectoryWatchStore {
         // SAFETY: `dev` is the heap-allocated DevServer; `graph_safety_lock` is
         // disjoint from `directory_watchers`. RAII guard unlocks on drop.
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
-        let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
+        let owned_file_path: bun_core::ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
                 // SAFETY: `dev` is the live DevServer owning this store;
                 // `client_graph` is disjoint from `directory_watchers` so this
@@ -1295,7 +1295,7 @@ impl DirectoryWatchStore {
         match self.insert(dir, owned_file_path, specifier) {
             Ok(()) => Ok(()),
             Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
-            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
+            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_core::alloc_impl::AllocError),
         }
     }
 
@@ -1304,7 +1304,7 @@ impl DirectoryWatchStore {
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
-        file_path: bun_ptr::RawSlice<u8>,
+        file_path: bun_core::ptr::RawSlice<u8>,
         specifier: &[u8],
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
@@ -1328,13 +1328,13 @@ impl DirectoryWatchStore {
         // Note: reshaped for borrowck — capture gop scalars before
         // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
-            bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
+            bun_core::paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
         )?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
         let specifier_cloned: Box<[u8]> =
-            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+            if specifier[0] == b'.' || bun_core::paths::is_absolute(specifier) {
                 Box::<[u8]>::from(specifier)
             } else {
                 let mut v = Vec::with_capacity(2 + specifier.len());
@@ -1385,11 +1385,11 @@ impl DirectoryWatchStore {
                 (fd, false)
             } else {
                 // Build a NUL-terminated path buffer.
-                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
+                if dir_name_to_watch.len() >= bun_core::paths::MAX_PATH_BYTES {
                     return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
                 }
-                let mut zbuf = bun_paths::path_buffer_pool::get();
-                let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
+                let mut zbuf = bun_core::paths::path_buffer_pool::get();
+                let zpath = bun_core::paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
                 match bun_sys::open(
                     zpath,
                     bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,

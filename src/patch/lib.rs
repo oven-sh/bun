@@ -8,10 +8,10 @@ pub use error::{Error, Result};
 
 use core::mem;
 
-use bun_collections::bit_set::ArrayBitSet;
+use bun_core::collections::bit_set::ArrayBitSet;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{self as paths, PathBuffer};
+use bun_core::paths::{self as paths, PathBuffer};
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
@@ -1816,7 +1816,7 @@ pub fn git_diff_internal(
         b"",
         b"git",
     )
-    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+    .ok_or(crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
 
     const ARGV: &[&[u8]] = &[
         b"-c",

@@ -584,8 +584,9 @@ test('mocks a constructor', (t) => {
   assert.strictEqual(call.result, instance);
   assert.strictEqual(call.target, Clazz);
   assert.strictEqual(call.this, instance);
-  // FIXME: JSC's private-field message differs from V8's ("Cannot access
-  // invalid private field (evaluating 'this.#privateValue')").
+  // Bun: JSC's private-field message differs from V8's ("Cannot access
+  // invalid private field (evaluating 'this.#privateValue')"), so match on
+  // the error constructor instead of V8's message text.
   // assert.throws(() => {
   //   instance.getPrivateValue();
   // }, /TypeError: Cannot read private member #privateValue /);
@@ -800,8 +801,9 @@ test('method() fails if method cannot be redefined', (t) => {
     return a + this.prop;
   }
 
-  // FIXME: JSC's defineProperty message differs from V8's ("Attempting to
-  // change value of a readonly property.").
+  // Bun: JSC's defineProperty message differs from V8's ("Attempting to
+  // change value of a readonly property."), so match on the error
+  // constructor instead of V8's message text.
   // assert.throws(() => {
   //   t.mock.method(obj, 'method', mockMethod);
   // }, /Cannot redefine property: method/);

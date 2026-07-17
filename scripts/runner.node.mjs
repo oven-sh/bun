@@ -536,6 +536,11 @@ async function checkLoopbackHealth(context) {
       style: "error",
       context: "loopback",
     });
+    // Best-effort: reboot so the box comes back healthy instead of failing every
+    // queued job until the nightly cleanup reboot. Only the newer agent.mjs
+    // provisioned boxes have passwordless sudo; -n makes this a no-op elsewhere.
+    // +1 leaves time for the annotation upload and for this job to exit cleanly.
+    spawnSync("sudo", ["-n", "/sbin/shutdown", "-r", "+1", "lo0 input wedged"], { timeout: 5_000 });
   }
   return false;
 }
@@ -546,7 +551,10 @@ async function checkLoopbackHealth(context) {
 async function runTests() {
   assertExpectedPlatform();
   if (isCI && isMacOS && !(await checkLoopbackHealth())) {
-    process.exit(1);
+    // 255 matches getRetry()'s automatic-retry list in .buildkite/ci.mjs so this
+    // job is rescheduled onto a (hopefully healthy) sibling instead of going
+    // hard red because of the agent it landed on.
+    process.exit(255);
   }
 
   let execPath;
@@ -719,9 +727,9 @@ async function runTests() {
 
       if (isCI && isMacOS && error === "timeout" && !(await checkLoopbackHealth(title))) {
         // The agent's loopback died mid-run; every remaining network test will
-        // also time out. Abort the shard instead of retrying into the job-level
-        // timeout. checkLoopbackHealth() already annotated the build.
-        process.exit(1);
+        // also time out. checkLoopbackHealth() already annotated the build;
+        // 255 lets getRetry() reschedule this job onto a healthy sibling.
+        process.exit(255);
       }
 
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {

@@ -344,6 +344,35 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"
     ),
+    // Node.js `--test` runner mode, hidden like the node trace flags above.
+    // Value-taking ones must be declared (else the value parses as the
+    // entrypoint); kept out of RUNTIME_PARAMS_ to avoid TEST_PARAMS's `-t`.
+    parse_param!("--test"),
+    parse_param!("--test-only"),
+    parse_param!("--test-force-exit"),
+    parse_param!("--test-randomize"),
+    parse_param!("--test-update-snapshots"),
+    parse_param!("--experimental-test-coverage"),
+    parse_param!("--experimental-test-module-mocks"),
+    parse_param!("--experimental-test-snapshots"),
+    parse_param!("--test-reporter <STR>..."),
+    parse_param!("--test-reporter-destination <STR>..."),
+    parse_param!("--test-name-pattern <STR>..."),
+    parse_param!("--test-skip-pattern <STR>..."),
+    parse_param!("--experimental-test-tag-filter <STR>..."),
+    parse_param!("--test-coverage-include <STR>..."),
+    parse_param!("--test-coverage-exclude <STR>..."),
+    parse_param!("--test-timeout <STR>"),
+    parse_param!("--test-concurrency <STR>"),
+    parse_param!("--test-shard <STR>"),
+    parse_param!("--test-isolation <STR>"),
+    parse_param!("--experimental-test-isolation <STR>"),
+    parse_param!("--test-global-setup <STR>"),
+    parse_param!("--test-random-seed <STR>"),
+    parse_param!("--test-rerun-failures <STR>"),
+    parse_param!("--test-coverage-branches <STR>"),
+    parse_param!("--test-coverage-functions <STR>"),
+    parse_param!("--test-coverage-lines <STR>"),
 ];
 
 pub(crate) const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -1098,6 +1127,17 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
+        } else if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunAsNodeCommand)
+            && args.flag(b"--test")
+        {
+            // Cmd gate first: `args.flag` asserts the name exists in the
+            // table, and only AUTO/RUN declare the node `--test` family.
+            // Boots the embedded driver through the eval path.
+            ctx.runtime_options.eval.script =
+                bun_core::runtime_embed_file!(Codegen, "eval/node_test.ts")
+                    .as_bytes()
+                    .to_vec()
+                    .into_boxed_slice();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

@@ -9,3 +9,11 @@ fixtures/snapshot
 fixtures/repl*
 .tmp.*
 **/fails.txt
+!fixtures/test-runner/default-behavior
+!fixtures/test-runner/default-behavior/**
+!fixtures/test-runner/todo-suite-failing-hook.mjs
+!fixtures/test-runner/mock-timers-with-timeout.js
+!fixtures/test-runner/root-duration.mjs
+!fixtures/test-runner/coverage
+fixtures/test-runner/coverage/*
+!fixtures/test-runner/coverage/stdin.test.js

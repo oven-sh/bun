@@ -10,7 +10,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
-use crate::cli::test_command::CommandLineReporter;
+use crate::cli::test_command::{CommandLineReporter, is_node_test_child};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -570,6 +570,11 @@ impl BunTestRoot {
     }
 
     pub fn on_before_print(&self) {
+        if is_node_test_child() {
+            // node:test run() children emit only the serialized event stream;
+            // the lazy file header and dot flush are reporter output.
+            return;
+        }
         if let Some(active_file) = &self.active_file {
             // Do NOT go through `<BunTestCell as Deref>` here. Two of the three
             // callers (`on_uncaught_exception`, test_command.rs report-status)
@@ -1309,6 +1314,18 @@ impl BunTest {
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
             return; // do not print error, it was already consumed
+        }
+        // A run() child carries test-attributed errors in its event stream;
+        // only those prints are suppressed. Between-tests errors still print
+        // and count, else the child exits 0 and the parent reports a pass.
+        if is_node_test_child()
+            && !matches!(
+                handle_status,
+                HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+                    | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
+            )
+        {
+            return;
         }
         let Some(exception) = exception else {
             return; // the exception should not be visible (eg m_terminationException)

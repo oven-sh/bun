@@ -765,11 +765,18 @@ impl JunitReporter {
 }
 
 /// Drain the event loop after a file's tests finish, like a node process
-/// would before exiting; the vendored-node-test runner opts in via
-/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
-/// completed async work. Off by default: bun suites keep exit-after-tests.
+/// would before exiting: on for node:test run() children, or opt-in via
+/// `BUN_TEST_DRAIN_EVENT_LOOP=1` (the vendored-node-test runner sets it) so
+/// mustCall()-style exit checks see completed async work.
 pub(crate) fn should_drain_event_loop() -> bool {
-    env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
+    is_node_test_child() || env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
+}
+
+/// A node:test run() child emits only its serialized event stream, so
+/// reporter output is suppressed (verdicts and exit codes unaffected).
+/// Matches node:test's exact value so a foreign env var can't silence us.
+pub(crate) fn is_node_test_child() -> bool {
+    env_var::NODE_TEST_CONTEXT.get().is_some_and(|value| value == b"child-v8")
 }
 
 pub struct CommandLineReporter {
@@ -1330,7 +1337,7 @@ impl CommandLineReporter {
             .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });
         if let Some(idx) = worker_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line);
-        } else {
+        } else if !is_node_test_child() {
             let _ = Output::error_writer().write_all(formatted_line);
         }
 
@@ -1396,6 +1403,9 @@ impl CommandLineReporter {
     }
 
     pub fn print_summary(&mut self) {
+        if is_node_test_child() {
+            return;
+        }
         let summary_ = self.summary();
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
         let files = summary_.files;
@@ -1973,7 +1983,7 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        if !ctx.test_options.test_worker && !is_node_test_child() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -2642,6 +2652,7 @@ impl TestCommand {
             && !Output::is_ai_agent()
             && !reporter.reporters.dots
             && !reporter.reporters.only_failures
+            && !is_node_test_child()
         {
             if reporter.summary().skip > 0 {
                 pretty_error!("\n<r><d>{} tests skipped:<r>\n", reporter.summary().skip);
@@ -2786,7 +2797,9 @@ impl TestCommand {
             let did_label_filter_out_all_tests = summary.did_label_filter_out_all_tests()
                 && reporter.jest.unhandled_errors_between_tests == 0;
 
-            if !did_label_filter_out_all_tests {
+            if is_node_test_child() {
+                // Counts still feed the exit-code logic below; nothing prints.
+            } else if !did_label_filter_out_all_tests {
                 struct DotIndenter {
                     indent: bool,
                 }

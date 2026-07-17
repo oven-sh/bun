@@ -109,6 +109,10 @@ platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows
 // Opt-in for the vendored node:test suite and run() children.
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
+// node:test sets this in the children its run() spawns (value "child-v8");
+// their reporter output is suppressed and the event loop drains before exit.
+new!(pub NODE_TEST_CONTEXT: string, "NODE_TEST_CONTEXT", {});
+
 new!(pub BUN_TRACY_PATH: string, "BUN_TRACY_PATH", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});

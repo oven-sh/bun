@@ -49,6 +49,11 @@ impl CurrentFile {
             self.has_printed_filename = true;
             return;
         }
+        if crate::cli::test_command::is_node_test_child() {
+            // node:test run() children emit only the serialized event stream.
+            self.has_printed_filename = true;
+            return;
+        }
         if reporter.reporters.dots || reporter.reporters.only_failures {
             // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);

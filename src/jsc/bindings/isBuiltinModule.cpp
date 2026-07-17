@@ -45,6 +45,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "constants"_s,
     "inspector"_s,
     "node:test"_s,
+    "node:test/reporters"_s,
     "bun:sqlite"_s,
     "path/posix"_s,
     "path/win32"_s,

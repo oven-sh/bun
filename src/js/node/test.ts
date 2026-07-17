@@ -334,7 +334,8 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       await runOneFile(files[i], opts, reporter, counts);
     }
 
-    reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
+    // No run-level plan: node's parent forwards each child's root plan and
+    // adds none of its own.
     const durationMs = Date.now() - started;
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
@@ -492,36 +493,40 @@ function republishChildEvent(
 ) {
   const { type, data } = event;
   data.file = file;
-  if (type === "test:pass" || type === "test:fail") {
+  const isVerdict = type === "test:pass" || type === "test:fail";
+  if (isVerdict || type === "test:complete") {
     const isSuite = data.type === "suite";
-    if (data.nesting === 0) counts.topLevel++;
-    // node counts a suite in `suites` and stops there: a skipped or todo suite
-    // never lands in skipped/todo/passed/tests (countCompletedTest, test.js).
-    if (isSuite) counts.suites++;
-    else {
-      counts.tests++;
-      if (data.skip) counts.skipped++;
-      else if (data.todo) counts.todo++;
-      else if (type === "test:pass") counts.passed++;
-      else counts.failed++;
+    if (isVerdict) {
+      if (data.nesting === 0) counts.topLevel++;
+      // node counts a suite in `suites` and stops there: a skipped or todo
+      // suite never lands in skipped/todo/passed/tests (countCompletedTest).
+      if (isSuite) counts.suites++;
+      else {
+        counts.tests++;
+        if (data.skip) counts.skipped++;
+        else if (data.todo) counts.todo++;
+        else if (type === "test:pass") counts.passed++;
+        else counts.failed++;
+      }
     }
     // node carries the node kind on `details`, not on the event itself.
     const detailType = isSuite ? "suite" : "test";
     const serialized = data.error;
+    let error;
     if (serialized !== undefined) {
       const { message, stack, code, failureType, name } = serialized;
-      const error = new Error(message);
+      error = new Error(message);
       error.stack = stack;
       if (name !== undefined && name !== "Error") error.name = name;
       if (code !== undefined) (error as any).code = code;
       if (failureType !== undefined) (error as any).failureType = failureType;
-      data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
-    } else {
-      data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType };
     }
+    data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
+    if (type === "test:complete") data.details.passed = data.passed;
     delete data.error;
     delete data.duration_ms;
     delete data.type;
+    delete data.passed;
   }
   reporter.emitMessage(type, data);
 }
@@ -530,10 +535,34 @@ function republishChildEvent(
 // spawning parent can rebuild node's event stream.
 const runChildReporterEnabled = process.env[kRunChildEnv] !== undefined;
 
+if (runChildReporterEnabled) {
+  // node's child emits its root-level plan when the file finishes; the file
+  // boundary in bun:test is process exit.
+  process.on("exit", () => {
+    if (rootNode !== undefined && rootNode.reportedCount > 0) {
+      emitRunChildEvent("test:plan", { __proto__: null, nesting: 0, count: rootNode.reportedCount });
+    }
+  });
+}
+
+// In standalone mode the same events feed an in-process TestsStream instead
+// of the parent's stdout pipe.
+let standaloneSink: ((type: string, data: unknown) => void) | null = null;
+
 function emitRunChildEvent(type: string, data: unknown) {
+  if (standaloneSink !== null) {
+    standaloneSink(type, data);
+    return;
+  }
   try {
     process.stdout.write(kRunEventPrefix + JSON.stringify({ type, data }) + "\n");
   } catch {}
+}
+
+// True when the run-child event synthesis should be active — either a run()
+// child streaming to its parent, or standalone mode reporting in-process.
+function runEventsEnabled(): boolean {
+  return runChildReporterEnabled || standaloneActive;
 }
 
 // node's top-level tests are nesting 0, so the root node itself doesn't count.
@@ -561,45 +590,192 @@ function serializeRunError(error: unknown) {
 // A test or suite that bun:test will never invoke (the `skip` and `todo`
 // options). Node still reports it as a pass carrying the directive.
 function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
-  if (!runChildReporterEnabled) return;
+  if (!runEventsEnabled()) return;
   // `{ skip: true, todo: true }` reports as a skip: node checks `skipped`
   // first and only then `isTodo` (test.js getReportDetails).
   const skipped = node.skipped || mode === "skip";
-  emitRunChildEvent("test:pass", {
+  reportQueueChain(node);
+  const data = {
     __proto__: null,
     name: node.name,
     nesting: nestingOf(node),
-    testNumber: 0,
+    testNumber: nextTestNumberFor(node),
     duration_ms: 0,
     skip: skipped ? true : undefined,
     todo: !skipped ? true : undefined,
     type: node.isSuite ? "suite" : "test",
     tags: node.tags,
     error: undefined,
+  };
+  emitRunChildEvent("test:complete", { ...data, passed: true });
+  reportStartChain(node);
+  emitRunChildEvent("test:pass", data);
+  // Directive-only nodes never execute, so completion bookkeeping for the
+  // enclosing suite happens here.
+  noteRunChildDone(node.parent, false);
+}
+
+// node's todo directive is inherited: a test inside a todo suite reports (and
+// counts) as todo, and its failure cannot fail the run.
+function hasTodoAncestor(node: TestNode): boolean {
+  for (let cur = node.parent; cur !== undefined; cur = cur.parent) {
+    if (cur.todoFlag) return true;
+  }
+  return false;
+}
+
+function nextTestNumberFor(node: TestNode): number {
+  const parent = node.parent;
+  return parent !== undefined ? ++parent.reportedCount : 0;
+}
+
+// node's per-test flush order: enqueue, dequeue, complete, (subtest plan),
+// ancestor starts, own start, verdict — so the queue and start phases are
+// separate to let `complete` sit between them.
+function reportQueueChain(node: TestNode) {
+  if (!runEventsEnabled()) return;
+  const chain: TestNode[] = [];
+  for (let cur: TestNode | undefined = node; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
+    if (cur.queueReported) break;
+    chain.push(cur);
+  }
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const entry = chain[i];
+    entry.queueReported = true;
+    const data = {
+      __proto__: null,
+      name: entry.name,
+      nesting: nestingOf(entry),
+      type: entry.isSuite ? "suite" : "test",
+      tags: entry.tags,
+    };
+    emitRunChildEvent("test:enqueue", data);
+    emitRunChildEvent("test:dequeue", data);
+  }
+}
+
+function reportStartChain(node: TestNode) {
+  if (!runEventsEnabled()) return;
+  const chain: TestNode[] = [];
+  for (let cur: TestNode | undefined = node; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
+    if (cur.startReported) break;
+    chain.push(cur);
+  }
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const entry = chain[i];
+    entry.startReported = true;
+    entry.startedAtMs = performance.now();
+    emitRunChildEvent("test:start", {
+      __proto__: null,
+      name: entry.name,
+      nesting: nestingOf(entry),
+      tags: entry.tags,
+    });
+  }
+}
+
+// A collection suite has no completion callback of its own: it finishes when
+// its describe callback has settled (all children registered) AND its last
+// registered child has reported.
+function noteRunChildDone(parent: TestNode | undefined, failed: boolean) {
+  if (!runEventsEnabled()) return;
+  // The root node is not a suite node in node's stream.
+  while (parent !== undefined && parent.parent !== undefined) {
+    parent.childrenDone++;
+    if (failed) parent.childrenFailed++;
+    if (!maybeCompleteSuite(parent)) return;
+    failed = parent.childrenFailed > 0;
+    parent = parent.parent;
+  }
+}
+
+// Emits the suite's own completion event once it is truly finished. Returns
+// whether the suite completed (so the caller can bubble to its parent).
+function maybeCompleteSuite(suite: TestNode): boolean {
+  if (!suite.isSuite || !suite.collectionSettled || suite.suiteReported) return false;
+  if (suite.childrenDone < suite.childrenCount) return false;
+  suite.suiteReported = true;
+  // A todo suite's advisory results never fail it (or the run) in node.
+  const isTodo = suite.todoFlag || hasTodoAncestor(suite);
+  if (isTodo) suite.childrenFailed = 0;
+  const suiteFailed = suite.childrenFailed > 0;
+  const failedCount = suite.childrenFailed;
+  const data = {
+    __proto__: null,
+    name: suite.name,
+    nesting: nestingOf(suite),
+    testNumber: nextTestNumberFor(suite),
+    type: "suite",
+    todo: isTodo ? true : undefined,
+    duration_ms: suite.startedAtMs > 0 ? performance.now() - suite.startedAtMs : 0,
+    tags: suite.tags,
+    error: suiteFailed
+      ? serializeRunError(
+          makeTestFailure(`${failedCount} subtest${failedCount > 1 ? "s" : ""} failed`, "subtestsFailed"),
+        )
+      : undefined,
+  };
+  // node's order around a finishing suite: its completion, the plan covering
+  // its children, then its own verdict.
+  emitRunChildEvent("test:complete", { ...data, passed: !suiteFailed });
+  emitRunChildEvent("test:plan", {
+    __proto__: null,
+    nesting: nestingOf(suite) + 1,
+    count: suite.childrenCount,
   });
+  emitRunChildEvent(suiteFailed ? "test:fail" : "test:pass", data);
+  return true;
+}
+
+// Called when a suite's describe callback has finished registering children.
+function noteSuiteCollectionSettled(suite: TestNode) {
+  if (!runEventsEnabled()) return;
+  suite.collectionSettled = true;
+  if (maybeCompleteSuite(suite)) {
+    noteRunChildDone(suite.parent, suite.childrenFailed > 0);
+  }
+}
+
+// Registers a child with its enclosing suite for run()-child suite accounting.
+// Checks inStandaloneMode() directly: at the first standalone registration
+// standaloneActive has not latched yet (standaloneRegister runs after this).
+function noteRunChildRegistered(parent: TestNode) {
+  if (!runChildReporterEnabled && !inStandaloneMode()) return;
+  if (parent.parent !== undefined) parent.childrenCount++;
 }
 
 // Called for every test node as its result is finalized, so subtests report
 // with the same shape as top-level tests. No-op outside a run() child.
 function reportNodeToRunParent(node: TestNode, startedAt: number) {
-  if (!runChildReporterEnabled || node.isSuite) return;
-  const { skipped, todoFlag, expectFailure } = node;
+  if (!runEventsEnabled() || node.isSuite) return;
+  const { skipped, expectFailure } = node;
+  const todoEffective = node.todoFlag || hasTodoAncestor(node);
   // node reports the xfail label when there is one, otherwise `true`.
-  const xfail = !skipped && !todoFlag && expectFailure ? (expectFailure.label ?? true) : undefined;
+  const xfail = !skipped && !todoEffective && expectFailure ? (expectFailure.label ?? true) : undefined;
+  reportQueueChain(node);
   // node spreads a `directive` into the event: `skip: true` / `todo: true`, with
   // the other key absent entirely.
-  emitRunChildEvent(node.passed ? "test:pass" : "test:fail", {
+  const data = {
     __proto__: null,
     name: node.name,
     nesting: nestingOf(node),
-    testNumber: 0,
+    testNumber: nextTestNumberFor(node),
     duration_ms: performance.now() - startedAt,
     skip: skipped ? true : undefined,
-    todo: !skipped && todoFlag ? true : undefined,
+    todo: !skipped && todoEffective ? true : undefined,
     expectFailure: xfail,
     tags: node.tags,
     error: node.passed ? undefined : serializeRunError(node.error),
-  });
+  };
+  emitRunChildEvent("test:complete", { ...data, passed: node.passed });
+  // A test that ran subtests reports the plan covering them.
+  if (node.reportedCount > 0) {
+    emitRunChildEvent("test:plan", { __proto__: null, nesting: nestingOf(node) + 1, count: node.reportedCount });
+  }
+  reportStartChain(node);
+  emitRunChildEvent(node.passed ? "test:pass" : "test:fail", data);
+  // A failing todo child does not fail its suite (node counts it as todo).
+  noteRunChildDone(node.parent, !node.passed && !skipped && !todoEffective);
 }
 
 // -----------------------------------------------------------------------------
@@ -1398,6 +1574,20 @@ class TestNode {
   todoFlag = false;
   expectFailure: ExpectFailure = false;
   started = false;
+  // run()-child suite accounting: a collection suite completes when its last
+  // registered child reports, at which point its own suite event is emitted.
+  childrenCount = 0;
+  childrenDone = 0;
+  childrenFailed = 0;
+  collectionSettled = false;
+  suiteReported = false;
+  queueReported = false;
+  startReported = false;
+  startedAtMs = 0;
+  // node numbers each reported child 1..n within its parent.
+  reportedCount = 0;
+  // Standalone mode: children collected at declaration, run on beforeExit.
+  standaloneChildren: StandaloneEntry[] | undefined;
   finished = false;
   passed = false;
   error: unknown = null;
@@ -2113,7 +2303,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
   node.started = true;
-  const started = runChildReporterEnabled ? performance.now() : 0;
+  const started = runEventsEnabled() ? performance.now() : 0;
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
@@ -2326,6 +2516,207 @@ function bunTest() {
   return jest(Bun.main);
 }
 
+// -----------------------------------------------------------------------------
+// Standalone mode — `bun file.js` on a file that uses node:test. Node
+// bootstraps its runner lazily on the first registration (harness.js
+// lazyBootstrapRoot) and runs the queue on beforeExit; outside `bun test`
+// there is no native runner, so the shim does the same with its own
+// execution machinery and the node:test/reporters port.
+// -----------------------------------------------------------------------------
+type StandaloneEntry = {
+  node: TestNode;
+  fn: TestFn;
+  isSuite: boolean;
+  mode?: "skip";
+  build?: Promise<unknown>;
+};
+
+let standaloneActive = false;
+let standaloneScheduled = false;
+const standaloneQueue: StandaloneEntry[] = [];
+
+function inStandaloneMode(): boolean {
+  if (standaloneActive) return true;
+  if (runChildReporterEnabled) return false;
+  // The native runner's file generation is 0 iff this process is not
+  // `bun test` (jsFileGeneration returns 0 without an active TestRunner).
+  // standaloneActive only latches on an actual registration, so probing here
+  // (e.g. from a preload before the runner's first file) is side-effect free.
+  return fileGeneration() === 0;
+}
+
+function standaloneRegister(entry: StandaloneEntry) {
+  standaloneActive = true;
+  const parent = entry.node.parent;
+  if (parent !== undefined && parent.parent !== undefined) {
+    (parent.standaloneChildren ??= []).push(entry);
+  } else {
+    standaloneQueue.push(entry);
+  }
+  if (!standaloneScheduled) {
+    standaloneScheduled = true;
+    process.once("beforeExit", runStandalone);
+  }
+}
+
+async function runStandalone() {
+  const stream = new TestsStream();
+  const counts = makeRunCounts();
+  const startedAt = performance.now();
+
+  // The standalone sink feeds the same restructuring path the run() parent
+  // uses, so reporters see node's event shapes. Hoisted fn + bind, per the
+  // builtin convention for long-lived callbacks.
+  standaloneSink = standaloneSinkImpl.bind(undefined, stream, counts);
+
+  const reporterDone = attachStandaloneReporters(stream);
+  const root = getRootNode();
+
+  try {
+    for (const hook of root.hooks.before) {
+      await runHook(hook, root, root.getSuiteCtx());
+    }
+    for (const entry of standaloneQueue) {
+      await runStandaloneEntry(entry);
+    }
+    for (const hook of root.hooks.after) {
+      await runHook(hook, root, root.getSuiteCtx());
+    }
+  } catch (err) {
+    console.error(err);
+    counts.failed++;
+  } finally {
+    const durationMs = performance.now() - startedAt;
+    if (root.reportedCount > 0) {
+      standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
+    }
+    emitRunDiagnostics(stream, counts, durationMs);
+    stream.emitMessage("test:summary", {
+      __proto__: null,
+      success: counts.failed === 0,
+      counts,
+      duration_ms: durationMs,
+      file: undefined,
+    });
+    stream.endStream();
+    standaloneSink = null;
+    await reporterDone;
+    if (counts.failed > 0 || counts.cancelled > 0) process.exitCode = 1;
+  }
+}
+
+function standaloneSinkImpl(stream: TestsStream, counts: Record<string, number>, type: string, data: unknown) {
+  republishChildEvent({ type, data }, Bun.main, stream, counts);
+}
+
+async function runStandaloneEntry(entry: StandaloneEntry) {
+  const { node, fn, isSuite, mode } = entry;
+  if (mode === "skip") {
+    // Never executes; its directive event is its completion.
+    if (isSuite) node.suiteReported = true;
+    reportDirectiveOnlyNode(node, "skip");
+    return;
+  }
+  if (!isSuite) {
+    // executeTestNode reports the node's events itself.
+    await executeTestNode(node, fn);
+    return;
+  }
+  // Suites: the callback already ran at declaration (node runs describe
+  // bodies during load); execute the collected children in order.
+  if (entry.build !== undefined) {
+    try {
+      await entry.build;
+    } catch (err) {
+      node.childrenFailed++;
+      node.error = err;
+    }
+  }
+  const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
+  for (const hook of node.hooks.before) {
+    try {
+      await runHook(hook, node, node.getSuiteCtx());
+    } catch (err) {
+      // A todo suite's hook failure is advisory, like in the run() child.
+      if (!isTodoSuite) {
+        node.childrenFailed++;
+        node.error = err;
+      }
+    }
+  }
+  for (const child of node.standaloneChildren ?? []) {
+    await runStandaloneEntry(child);
+  }
+  for (const hook of node.hooks.after) {
+    try {
+      await runHook(hook, node, node.getSuiteCtx());
+    } catch (err) {
+      if (!isTodoSuite) {
+        node.childrenFailed++;
+        node.error = err;
+      }
+    }
+  }
+  // Settle + complete + bubble to the parent in one step.
+  noteSuiteCollectionSettled(node);
+}
+
+async function attachStandaloneReporters(stream: TestsStream): Promise<unknown> {
+  const reporters = require("node:test/reporters");
+  const names: string[] = [];
+  const argv = process.execArgv;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith("--test-reporter=")) names.push(arg.slice("--test-reporter=".length));
+    else if (arg === "--test-reporter" && i + 1 < argv.length) names.push(argv[++i]);
+  }
+  if (names.length === 0) names.push("spec");
+
+  const promises: Promise<void>[] = [];
+  for (const name of names) {
+    let reporter = (reporters as Record<string, unknown>)[name];
+    if (reporter === undefined) {
+      // A custom reporter is a module specifier, like in node.
+      try {
+        const path = require("node:path");
+        const mod = await import(name.startsWith(".") ? path.resolve(process.cwd(), name) : name);
+        reporter = mod.default ?? mod;
+      } catch (err) {
+        console.error(err);
+        process.exitCode = 1;
+        continue;
+      }
+    }
+    if (typeof reporter !== "function") {
+      console.error(new TypeError(`The reporter '${name}' is not a function or a stream`));
+      process.exitCode = 1;
+      continue;
+    }
+    const { PassThrough } = require("node:stream");
+    const copy = new PassThrough({ objectMode: true });
+    stream.pipe(copy);
+    if (typeof (reporter as any)?.prototype?._transform === "function") {
+      promises.push(
+        new Promise(resolvePromise => {
+          const transform = new (reporter as any)();
+          copy.pipe(transform).pipe(process.stdout, { end: false });
+          transform.on("end", resolvePromise);
+          transform.on("error", resolvePromise);
+        }),
+      );
+    } else {
+      promises.push(
+        (async () => {
+          for await (const chunk of (reporter as any)(copy)) {
+            process.stdout.write(chunk);
+          }
+        })(),
+      );
+    }
+  }
+  return Promise.all(promises);
+}
+
 function bunTestOptions(options: TestOptions) {
   // The node-style timeout is enforced by executeTestNode itself so that a
   // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
@@ -2363,7 +2754,9 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         // todo body's failure must reach bun:test's own todo accounting instead.
         if (node.skipped) {
           markCurrentResult(false, done);
-        } else if (node.todoFlag && !declaredTodo) {
+        } else if ((node.todoFlag || hasTodoAncestor(node)) && !declaredTodo) {
+          // Inherited todo too: a failing test inside a todo suite must not
+          // fail the child process (node treats it as todo).
           markCurrentResult(true, done);
         } else {
           done(failure);
@@ -2410,11 +2803,24 @@ function addTest(
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
 
-  const { test } = bunTest();
-  const passOptions = bunTestOptions(options);
-
   // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
   const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+
+  if (inStandaloneMode()) {
+    noteRunChildRegistered(parent);
+    if (effectiveMode === "skip") {
+      standaloneRegister({ node, fn, isSuite: false, mode: "skip" });
+    } else {
+      // node runs todo bodies in standalone mode too.
+      if (effectiveMode === "todo") node.todoFlag = true;
+      standaloneRegister({ node, fn, isSuite: false });
+    }
+    return Promise.resolve(undefined);
+  }
+  noteRunChildRegistered(parent);
+
+  const { test } = bunTest();
+  const passOptions = bunTestOptions(options);
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
     // Node runs a todo body, so `t.skip()` inside one still changes the
@@ -2514,11 +2920,39 @@ function addSuite(
   const parent = currentCollectionParent();
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
-
-  const { describe } = bunTest();
+  noteRunChildRegistered(parent);
 
   // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
   const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+
+  if (inStandaloneMode()) {
+    if (effectiveMode === "skip") {
+      standaloneRegister({ node: suiteNode, fn, isSuite: true, mode: "skip" });
+      return Promise.resolve(undefined);
+    }
+    if (effectiveMode === "todo") suiteNode.todoFlag = true;
+    // node runs describe callbacks at declaration; children collected during
+    // the callback land in suiteNode.standaloneChildren.
+    let build: unknown;
+    try {
+      build = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+    } catch (err) {
+      suiteNode.childrenFailed++;
+      suiteNode.error = err;
+    }
+    const entry: StandaloneEntry = { node: suiteNode, fn, isSuite: true };
+    if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
+      const pending = build as Promise<unknown>;
+      // Attach a handler now so a rejection before the queue runs it is not
+      // reported as unhandled.
+      pending.catch(() => {});
+      entry.build = pending;
+    }
+    standaloneRegister(entry);
+    return Promise.resolve(undefined);
+  }
+
+  const { describe } = bunTest();
 
   // Node never invokes a skipped suite's callback (it does run a todo one), so
   // the children are never declared and side effects in the body never happen.
@@ -2526,15 +2960,35 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : () => {
-          return runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+          const built = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+          if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
+            return (built as Promise<unknown>).finally(() => noteSuiteCollectionSettled(suiteNode));
+          }
+          noteSuiteCollectionSettled(suiteNode);
+          return built;
         };
 
   const passOptions = bunTestOptions(options);
 
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
-  else if (effectiveMode === "todo") register = describe.todo;
-  if (effectiveMode !== undefined) reportDirectiveOnlyNode(suiteNode, effectiveMode);
+  else if (effectiveMode === "todo") {
+    if (runChildReporterEnabled) {
+      // node runs a todo suite's children and reports each as todo (the todo
+      // directive is inherited). bun:test's describe.todo never executes them,
+      // so a run() child registers a plain describe and relies on todoFlag —
+      // the children report with todo, and the suite completes through them.
+      suiteNode.todoFlag = true;
+    } else {
+      register = describe.todo;
+    }
+  }
+  if (effectiveMode === "skip" || (effectiveMode === "todo" && !runChildReporterEnabled)) {
+    // A skipped suite reports as a leaf: its directive event is its completion
+    // (its children are never declared at all).
+    suiteNode.suiteReported = true;
+    reportDirectiveOnlyNode(suiteNode, effectiveMode);
+  }
 
   if (passOptions !== undefined) {
     register(name, wrapped, passOptions);
@@ -2602,11 +3056,24 @@ function before(arg0: unknown, arg1: unknown) {
     }
     return;
   }
+  if (inStandaloneMode()) {
+    // Standalone execution runs owner.hooks.before itself.
+    owner.hooks.before.push(hook);
+    return;
+  }
   const { beforeAll } = bunTest();
   beforeAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("before hook failed")),
+      err => {
+        // A todo suite's results are advisory in node: its failing before hook
+        // must not fail the run (its children still report, as todo).
+        if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
+          done();
+          return;
+        }
+        done(err ?? new Error("before hook failed"));
+      },
     );
   });
 }
@@ -2615,6 +3082,10 @@ function after(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
   if (owner.isRunning()) {
+    owner.hooks.after.push(hook);
+    return;
+  }
+  if (inStandaloneMode()) {
     owner.hooks.after.push(hook);
     return;
   }

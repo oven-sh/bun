@@ -888,7 +888,8 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim());
+  const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim() || "{}");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // js_value stays Strong while a websocket is connected → GC must not
   // collect the wrapper. baseline already includes the prototype(s), so the
   // live instance shows as baseline+1.
@@ -896,7 +897,6 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
   // becomes collectable again (no leak).
   expect(afterCloseGC).toBe(baseline);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 }, 15_000);
 
 test("should be able to async upgrade using custom protocol", async () => {
@@ -2018,12 +2018,12 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const { baseline, after } = JSON.parse(stdout.trim());
+    const { baseline, after } = JSON.parse(stdout.trim() || "{}");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     // baseline already includes the prototype(s); a collected instance returns
     // to it exactly. On main this fails: the cycle keeps the instance alive
     // (after = baseline+1).
     expect(after).toBe(baseline);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   }, 15_000);
 
   // Control: a handler that does NOT close over server is collected on main
@@ -2070,9 +2070,9 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const { baseline, after } = JSON.parse(stdout.trim());
-    expect(after).toBe(baseline);
+    const { baseline, after } = JSON.parse(stdout.trim() || "{}");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(after).toBe(baseline);
   }, 15_000);
 
   // JSServerWebSocket holds a traced reference to the JSServer wrapper, so the
@@ -2167,13 +2167,13 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const { baseline, whileConnected, echo, afterClose } = JSON.parse(stdout.trim());
+    const { baseline, whileConnected, echo, afterClose } = JSON.parse(stdout.trim() || "{}");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     // baseline already includes the prototype(s); the instance on top of it
     // proves the ws traced root kept it alive across GC.
     expect(whileConnected).toBeGreaterThan(baseline);
     expect(echo).toMatch(/^\d+:hi$/); // handler dispatched (server.port captured)
     expect(afterClose).toBe(baseline); // instance collected, back to prototype floor
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   }, 15_000);
 
   // Reload swaps handlers via WriteBarrier .set() — old handlers become
@@ -2214,10 +2214,10 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const { baseline, beforeReload, afterReload } = JSON.parse(stdout.trim());
+    const { baseline, beforeReload, afterReload } = JSON.parse(stdout.trim() || "{}");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(beforeReload).toBeGreaterThan(baseline); // sanity: the async handler was counted
     expect(afterReload).toBeLessThan(beforeReload); // old handler released after reload
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
   // reload({websocket}) that omits a previously-set per-event handler must
@@ -2283,11 +2283,11 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const { baseline, withPing, afterReload, oldPingFired } = JSON.parse(stdout.trim());
+    const { baseline, withPing, afterReload, oldPingFired } = JSON.parse(stdout.trim() || "{}");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(withPing).toBeGreaterThan(baseline); // sanity: async ping was counted
     expect(afterReload).toBeLessThan(withPing); // dropped slot cleared → old ping collected
     expect(oldPingFired).toBe(0); // and never dispatched after reload
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
   // Stress test under aggressive GC — catches missing write barriers.
@@ -2374,9 +2374,9 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const { body, ok } = JSON.parse(stdout.trim());
-    expect({ body, ok }).toEqual({ body: "1", ok: true });
+    const { body, ok } = JSON.parse(stdout.trim() || "{}");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ body, ok }).toEqual({ body: "1", ok: true });
   }, 30_000);
 
   // An accessor- or Proxy-backed options object returns a fresh handler fn
@@ -2438,8 +2438,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const { body, msgs } = JSON.parse(stdout.trim() || "{}");
-    expect({ body, msgs }).toEqual({ body: "ok-fetch", msgs: ["ws-open", "m:hi"] });
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ body, msgs }).toEqual({ body: "ok-fetch", msgs: ["ws-open", "m:hi"] });
   }, 30_000);
 
   // Sibling of the above for server.reload(): on_reload_from_zig moves the
@@ -2495,8 +2495,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const { body, msgs } = JSON.parse(stdout.trim() || "{}");
-    expect({ body, msgs }).toEqual({ body: "v2", msgs: ["r-open", "r:hi"] });
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ body, msgs }).toEqual({ body: "v2", msgs: ["r-open", "r:hi"] });
   }, 30_000);
 
   // A ws.close() inside the message handler on the last socket of a stopped

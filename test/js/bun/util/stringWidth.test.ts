@@ -1100,12 +1100,18 @@ describe("stringWidth extended", () => {
         seed = (seed * 1103515245 + 12345) & 0x7fffffff;
         return seed;
       };
-      // ESC plus every kind of byte that can follow it: introducers,
-      // intermediates, final bytes, terminators, combining marks, wide chars.
-      // C1 bytes are left out — Bun.stripANSI treats them as sequence
-      // introducers, Bun.stringWidth and Bun.sliceAnsi as zero-width controls.
+      // ESC, the C1 introducers (DCS/SOS/CSI/ST/OSC/PM/APC), every kind of
+      // byte that can follow them — introducers, intermediates, final bytes,
+      // terminators — plus combining marks and wide characters.
       const alphabet = [
         "\x1b",
+        "\x90",
+        "\x98",
+        "\x9b",
+        "\x9c",
+        "\x9d",
+        "\x9e",
+        "\x9f",
         "[",
         "]",
         "(",

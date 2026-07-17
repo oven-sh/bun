@@ -100,6 +100,10 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+// Resolved at module load, as node does (lib/internal/worker.js): resolving it
+// lazily inside the constructor would build the channel out of whatever
+// Map/Object user code had tampered with by then.
+const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -1087,6 +1091,11 @@ class Worker extends EventEmitter {
         });
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+    }
+    // node publishes the newly-constructed Worker here, at the end of the
+    // constructor (lib/internal/worker.js).
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({ worker: this });
     }
   }
 

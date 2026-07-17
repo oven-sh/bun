@@ -3224,7 +3224,11 @@ impl H2FrameParser {
                     self.js_socket_flushing.set(false);
 
                     // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
-                    let code = if result.is_number() { result.to_int32() } else { -1 };
+                    let code = if result.is_number() {
+                        result.to_int32()
+                    } else {
+                        -1
+                    };
                     if code == -1 {
                         // JS did not take the bytes (e.g. the session's socket is not ready
                         // yet). Keep them queued for the next flush — clearing here loses

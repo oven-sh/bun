@@ -88,6 +88,15 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
     if (kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
       eof = 1;
       events |= UV_READABLE;
+    } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_adopted_socket(wp)->readable_ended) {
+      /* on_end already delivered (half-open). AFD reports DISCONNECT
+       * level-triggered, so without this guard the else branch maps it to a
+       * readable dispatch every tick, recv() returns 0, and loop.c's
+       * allow_half_open path re-arms WRITABLE - a spin that also fires the
+       * user on_writable handler each iteration. The re-arm above has already
+       * dropped UV_DISCONNECT for this report; the next us_poll_change that
+       * adds it back lands here again and is a no-op, so the poll settles at
+       * us_poll_events(wp) within two iterations. */
     } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_socket_is_probeable(wp)) {
       /* A paused socket polls without READABLE, so the read loop cannot
        * discover terminal states for it - and the pause contract forbids

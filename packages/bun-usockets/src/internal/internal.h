@@ -297,6 +297,10 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* on_end has been dispatched for the half-open path; recv() can only return
+   * 0 now. Guards against re-dispatching on_end and re-arming WRITABLE when a
+   * level-triggered EOF indication (Windows AFD UV_DISCONNECT) keeps firing. */
+  unsigned char readable_ended : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

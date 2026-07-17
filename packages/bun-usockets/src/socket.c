@@ -450,6 +450,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->fin_deferred = 0;
+    s->readable_ended = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */

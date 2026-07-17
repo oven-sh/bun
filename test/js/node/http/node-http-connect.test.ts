@@ -881,19 +881,15 @@ describe("Should be compatible with node.js", () => {
     });
     expect(await process.exited).toBe(0);
   });
-  test(
-    "tests should run on bun",
-    async () => {
-      const process = Bun.spawn({
-        cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "ignore",
-        env: bunEnv,
-      });
-      expect(await process.exited).toBe(0);
-    },
-    // The child bun-debug runs seven subtests; startup alone is ~2s under ASAN.
-    30_000,
-  );
+  test("tests should run on bun", async () => {
+    const process = Bun.spawn({
+      cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    expect(await process.exited).toBe(0);
+  }, // The child bun-debug runs seven subtests; startup alone is ~2s under ASAN.
+  30_000);
 });

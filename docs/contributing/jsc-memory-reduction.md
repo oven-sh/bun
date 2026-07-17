@@ -4,34 +4,34 @@ This document catalogs the memory layout of core JSC heap types as measured in B
 
 ## Current Sizes (Linux x64, release)
 
-| Type                | `sizeof` | Size class | Notes |
-|---------------------|---------:|-----------:|-------|
-| `JSCell`            | 8        | 16         | 4B StructureID + 4B type/flags blob |
-| `JSObjectWithButterfly` | 16   | 16         | + `Butterfly*` |
-| `JSArray`           | 16       | 16         | cell only; butterfly allocated separately |
-| `JSString`          | 16       | 16         | + `StringImpl*` (or rope tag) in `m_fiber` |
-| `JSRopeString`      | 32       | 32         | 3 packed fiber pointers + length |
-| `JSFunction`        | 32       | 32         | |
-| `Structure`         | **112**  | 112        | see layout below |
-| `StructureRareData` | 112      | 112        | |
-| `PropertyTable`     | 40       | 48         | + out-of-line hash table |
-| `JSFinalObject` (`{}` default) | **64** | 64 | 6 inline slots pre-reserved |
-| `[]` cell + butterfly | 16 + **48** | 16 + 48 | 5 pre-reserved vector slots |
+| Type                           |    `sizeof` | Size class | Notes                                      |
+| ------------------------------ | ----------: | ---------: | ------------------------------------------ |
+| `JSCell`                       |           8 |         16 | 4B StructureID + 4B type/flags blob        |
+| `JSObjectWithButterfly`        |          16 |         16 | + `Butterfly*`                             |
+| `JSArray`                      |          16 |         16 | cell only; butterfly allocated separately  |
+| `JSString`                     |          16 |         16 | + `StringImpl*` (or rope tag) in `m_fiber` |
+| `JSRopeString`                 |          32 |         32 | 3 packed fiber pointers + length           |
+| `JSFunction`                   |          32 |         32 |                                            |
+| `Structure`                    |     **112** |        112 | see layout below                           |
+| `StructureRareData`            |         112 |        112 |                                            |
+| `PropertyTable`                |          40 |         48 | + out-of-line hash table                   |
+| `JSFinalObject` (`{}` default) |      **64** |         64 | 6 inline slots pre-reserved                |
+| `[]` cell + butterfly          | 16 + **48** |    16 + 48 | 5 pre-reserved vector slots                |
 
 MarkedSpace size classes (bytes): `16, 32, 48, 64, 80, 112, 160, 224, 320, ...`
 (There is no 96-byte class; anything in `81..112` allocates 112.)
 
 ### Measured heap per object (1M instances, RSS delta)
 
-| Pattern | Bun | Node 26 | Notes |
-|---|---:|---:|---|
-| `{}` | 90 B | 88 B | 64-byte cell + array slot + block header amortization |
-| `{a:1}` | 60 B | 52 B | literal analyzer sizes the cell to 32 B |
-| `{a..f:1}` (6 props) | 90 B | 154 B | JSC wins: all inline |
-| `{a..g:1}` (7 props) | 112 B | 148 B | spills to butterfly |
-| `[]` | 91 B | 80 B | 48-byte butterfly dominates |
-| `[1,2,3,4,5]` | 38 B | 74 B | JSC wins: CoW butterfly shared |
-| `{}; o['k'+i]=i` | 598 B | n/a | 1 Structure per object: Structure dominates |
+| Pattern              |   Bun | Node 26 | Notes                                                 |
+| -------------------- | ----: | ------: | ----------------------------------------------------- |
+| `{}`                 |  90 B |    88 B | 64-byte cell + array slot + block header amortization |
+| `{a:1}`              |  60 B |    52 B | literal analyzer sizes the cell to 32 B               |
+| `{a..f:1}` (6 props) |  90 B |   154 B | JSC wins: all inline                                  |
+| `{a..g:1}` (7 props) | 112 B |   148 B | spills to butterfly                                   |
+| `[]`                 |  91 B |    80 B | 48-byte butterfly dominates                           |
+| `[1,2,3,4,5]`        |  38 B |    74 B | JSC wins: CoW butterfly shared                        |
+| `{}; o['k'+i]=i`     | 598 B |     n/a | 1 Structure per object: Structure dominates           |
 
 ## `Structure` Layout (112 bytes)
 
@@ -118,14 +118,14 @@ When an object overflows its inline slots, the first butterfly property segment 
 
 To cross from the 112-byte class to the 80-byte class, 32 bytes must be removed. Candidates, in order of increasing risk:
 
-| Field | Bytes | Proposal | Hot? |
-|---|---:|---|---|
-| `m_cachedPrototypeChain` | 8 | Move to `StructureRareData` | Cold. Lazy cache, null on most transition structures. |
-| `m_propertyTableUnsafe` | 8 | Move to `StructureRareData` | Null except on pinned/dictionary structures. Dictionary-object property access goes through it, so dictionary reads gain one indirection; non-dictionary (the overwhelming majority) are unaffected. |
-| `m_seenProperties` | 8→4 | Use `TinyBloomFilter<uint32_t>` unconditionally | Warm on property miss path. A 32-bit filter has higher false-positive rate than 64-bit, but the filter is a fast-reject hint only; correctness is unchanged. Already 32-bit on Apple. |
-| padding at offset 26 | 2 | Reorder `m_propertyHash` before `m_maxOffset` | Free. |
-| `m_classInfo` | 8→? | 16- or 32-bit index into a global `ClassInfo*` table | Read on every `jsDynamicCast`. A table lookup (one extra load) replaces a direct pointer. ~1000 distinct `ClassInfo` instances exist in Bun. |
-| `m_realm` | 8→4 | There is typically one `JSGlobalObject` per VM, a handful with `node:vm`. No existing 32-bit encoding is suitable. Lowest priority. |
+| Field                    | Bytes | Proposal                                                                                                                            | Hot?                                                                                                                                                                                                 |
+| ------------------------ | ----: | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `m_cachedPrototypeChain` |     8 | Move to `StructureRareData`                                                                                                         | Cold. Lazy cache, null on most transition structures.                                                                                                                                                |
+| `m_propertyTableUnsafe`  |     8 | Move to `StructureRareData`                                                                                                         | Null except on pinned/dictionary structures. Dictionary-object property access goes through it, so dictionary reads gain one indirection; non-dictionary (the overwhelming majority) are unaffected. |
+| `m_seenProperties`       |   8→4 | Use `TinyBloomFilter<uint32_t>` unconditionally                                                                                     | Warm on property miss path. A 32-bit filter has higher false-positive rate than 64-bit, but the filter is a fast-reject hint only; correctness is unchanged. Already 32-bit on Apple.                |
+| padding at offset 26     |     2 | Reorder `m_propertyHash` before `m_maxOffset`                                                                                       | Free.                                                                                                                                                                                                |
+| `m_classInfo`            |   8→? | 16- or 32-bit index into a global `ClassInfo*` table                                                                                | Read on every `jsDynamicCast`. A table lookup (one extra load) replaces a direct pointer. ~1000 distinct `ClassInfo` instances exist in Bun.                                                         |
+| `m_realm`                |   8→4 | There is typically one `JSGlobalObject` per VM, a handful with `node:vm`. No existing 32-bit encoding is suitable. Lowest priority. |
 
 The first four rows total **8 + 8 + 4 + 2 = 22 bytes**, leaving `Structure` at 90 → still the 112-byte class. Adding `m_classInfo` as a 16-bit index removes another 6 bytes → 84, still 112. An additional 4 bytes must come from somewhere to reach 80; the remaining candidate is encoding `m_previousOrRareData` as a 32-bit ID (both `Structure` and `StructureRareData` could be allocated from the structure heap), saving 4 bytes.
 
@@ -190,14 +190,14 @@ All JIT tiers already branch on `m_fiber & isRopeInPointer` before loading the `
 
 ## Summary Table
 
-| Change | Scope | Per-instance saving | Estimated difficulty |
-|---|---|---|---|
-| 1a. `{}` fallback 6→2 | `{}` / `new C()` with 0 analyzed props | 64→32 B (50%) | 1-line constant, no JIT change |
-| 1b. `[]` pre-growth 5→1 | `[]` / `new Array()` | 64→32 B (50%) | 1-line constant, no JIT change |
-| 1c. `initialOutOfLineCapacity` 4→2 | objects spilling by 1-2 props | 16 B | 1-line constant |
-| 2. `Structure` → 80 B | every Structure | 112→80 B (29%) | Move 2 fields to rare data, reorder, 32-bit bloom, LLInt/JIT offset updates |
-| 3. Pointer compression | every cell-pointer field | varies; ~40% overall in V8's experience | New allocator, `CellID` type, `WriteBarrier` traits, LLInt/JIT decode at every compressed load |
-| 4. Inline small strings | strings ≤7 Latin-1 chars | ~48→16 B (67%) | New `JSString` variant, JIT branch widening, `value()` materialization |
+| Change                             | Scope                                  | Per-instance saving                     | Estimated difficulty                                                                           |
+| ---------------------------------- | -------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 1a. `{}` fallback 6→2              | `{}` / `new C()` with 0 analyzed props | 64→32 B (50%)                           | 1-line constant, no JIT change                                                                 |
+| 1b. `[]` pre-growth 5→1            | `[]` / `new Array()`                   | 64→32 B (50%)                           | 1-line constant, no JIT change                                                                 |
+| 1c. `initialOutOfLineCapacity` 4→2 | objects spilling by 1-2 props          | 16 B                                    | 1-line constant                                                                                |
+| 2. `Structure` → 80 B              | every Structure                        | 112→80 B (29%)                          | Move 2 fields to rare data, reorder, 32-bit bloom, LLInt/JIT offset updates                    |
+| 3. Pointer compression             | every cell-pointer field               | varies; ~40% overall in V8's experience | New allocator, `CellID` type, `WriteBarrier` traits, LLInt/JIT decode at every compressed load |
+| 4. Inline small strings            | strings ≤7 Latin-1 chars               | ~48→16 B (67%)                          | New `JSString` variant, JIT branch widening, `value()` materialization                         |
 
 Changes 1a-1b were prototyped behind `USE(BUN_JSC_ADDITIONS)` and measured below. Changes 2-4 are design-stage.
 
@@ -205,23 +205,23 @@ Changes 1a-1b were prototyped behind `USE(BUN_JSC_ADDITIONS)` and measured below
 
 Built locally (`--webkit=local`, RelWithDebInfo) with 1a and 1b applied; compared against the release prebuilt. 1M instances per row.
 
-| Pattern | Baseline heap/obj | Patched heap/obj | Delta |
-|---|---:|---:|---:|
-| `{}` | 64 B | 32 B | **-50%** |
-| `[]` | 64 B | 48 B | -25% (LLInt/Baseline: 32 B) |
-| `new Array()` | 64 B | 48 B | -25% |
-| `{a}`, `{a,b,c}`, `{a..g}`, `[1]`, `[1..5]`, `Object.create(null)` | unchanged | unchanged | 0 |
+| Pattern                                                            | Baseline heap/obj | Patched heap/obj |                       Delta |
+| ------------------------------------------------------------------ | ----------------: | ---------------: | --------------------------: |
+| `{}`                                                               |              64 B |             32 B |                    **-50%** |
+| `[]`                                                               |              64 B |             48 B | -25% (LLInt/Baseline: 32 B) |
+| `new Array()`                                                      |              64 B |             48 B |                        -25% |
+| `{a}`, `{a,b,c}`, `{a..g}`, `[1]`, `[1..5]`, `Object.create(null)` |         unchanged |        unchanged |                           0 |
 
 DFG/FTL's `NewArray` path applies `max(BASE_CONTIGUOUS_VECTOR_LEN=3, hint)` even when the hint is 1 (`DFGByteCodeParser.cpp:8184` + `ButterflyInlines.h:64`), so once the loop tiers up the butterfly is 32 B, not 16 B. Reaching 32 B under DFG would need `BASE_CONTIGUOUS_VECTOR_LEN` lowered too, or the hint special-cased for 0-element arrays.
 
 Performance (1M iterations, median of 5, control-adjusted against `{x,y,z}` literal which both builds run in ~64 ms):
 
-| Pattern | Baseline | Patched | Delta |
-|---|---:|---:|---:|
-| `{}` then `helper(o)` adding 3 props | 65.9 ms | 71.6 ms | +8.6% |
-| `{}` then `helper(o)` adding 5 props | 67.7 ms | 74.5 ms | +10.0% |
-| `[]` then 5× `push` | 9.5 ms | 10.2 ms | +7.4% |
-| `{x:i, y:i, z:i}` (control) | 65.9 ms | 64.2 ms | -2.6% |
+| Pattern                              | Baseline | Patched |  Delta |
+| ------------------------------------ | -------: | ------: | -----: |
+| `{}` then `helper(o)` adding 3 props |  65.9 ms | 71.6 ms |  +8.6% |
+| `{}` then `helper(o)` adding 5 props |  67.7 ms | 74.5 ms | +10.0% |
+| `[]` then 5× `push`                  |   9.5 ms | 10.2 ms |  +7.4% |
+| `{x:i, y:i, z:i}` (control)          |  65.9 ms | 64.2 ms |  -2.6% |
 
 The "helper adds N properties" pattern regresses because the third property now triggers a butterfly allocation that the 6-slot default avoided. Object literals (which the static analyzer sizes correctly) are unaffected. This is a real speed/space trade-off; 1a is not free.
 
@@ -251,11 +251,13 @@ The choke points are the `jsString(VM&, ...)` family in `JSString.h:985-1030` an
 ### Touch Points
 
 Runtime C++:
+
 - `runtime/JSString.h`: `isSubstring()` tighten, `length()`, `is8Bit()`, `view()`, `value()`, `tryGetValue()`, `getValueImpl()`, `tryGetValueImpl()`, `toIdentifier()`, `toAtomString()`, `toExistingAtomString()`, `swapToAtomString()`, `jsString` overloads.
 - `runtime/JSStringInlines.h`: `JSString::destroy` (skip `~String()` when inline), `equal()`, `equalInline()`, `resolveToBuffer()`, `jsSubstringOfResolved()`.
 - `runtime/JSString.cpp`: `visitChildrenImpl` (skip `reportExtraMemoryVisited`), `estimatedSize`, `dumpToStream`.
 
 JIT tiers — every site that does `load fiber → branch-if-rope → deref as StringImpl*` needs the branch widened to `fiber & 0b11 != 0`, with an inline-path that reads length from byte 0 and chars from bytes 1..7:
+
 - `llint/LowLevelInterpreter64.asm:2418` / `LowLevelInterpreter32_64.asm:2230` (`op_switch_char`).
 - `jit/AssemblyHelpers.h:1248` `branchIfRopeStringImpl` / `branchIfNotRopeStringImpl`.
 - `jit/JITInlines.h:74` `emitLoadCharacterString`.
@@ -279,4 +281,3 @@ Measured: `JSON.parse` of `{"m":"GET","s":"ok","t":"json"}` 100 000 times create
 **Change:** add an `AtomString` fast path to `jsString(VM&, ...)` (`JSString.h:985-1030`) that, when the incoming `StringImpl` is already atomic, indexes a `KeyAtomStringCache`-shaped array by `impl->existingHash() % capacity` and returns the cached `JSString*` on a pointer-equal hit. Atom strings already carry a computed hash, so the lookup is one masked index and one pointer compare; no hashing, no locking. The cache is per-`VM`, holds raw `JSString*`, and is cleared on every GC the same way the existing caches are (`KeyAtomStringCache::clear()` from `Heap::finalize`).
 
 **Effect:** eliminates duplicate `JSString` wrappers for repeated atom values returned from native code (`Request.method`, header lookups, URL component getters, enum-like string returns). 16 B per avoided duplicate; no JIT involvement; no behaviour change (returning an identical `JSString*` is unobservable since strings compare by value).
-

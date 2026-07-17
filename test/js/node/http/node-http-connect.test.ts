@@ -562,12 +562,14 @@ describe("HTTP server CONNECT", () => {
   // and (on epoll, with autoDestroy disabled) nothing ever closed the socket.
   // Linux-only: the close is reported via EPOLLHUP once both halves have FIN'd;
   // kqueue/libuv need the readable_ended re-arm to re-derive it.
-  test.skipIf(!isLinux)("https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close", async () => {
-    // The client uses tls.connect({ socket: rawNetSocket }) so end() routes
-    // through the raw FIN path (not a TLS close_notify first), which is the
-    // ordering that leaves the server's eof already consumed by the
-    // allow_half_open branch before the deferred socket.end() runs.
-    const fixture = /* js */ `
+  test.skipIf(!isLinux)(
+    "https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close",
+    async () => {
+      // The client uses tls.connect({ socket: rawNetSocket }) so end() routes
+      // through the raw FIN path (not a TLS close_notify first), which is the
+      // ordering that leaves the server's eof already consumed by the
+      // allow_half_open branch before the deferred socket.end() runs.
+      const fixture = /* js */ `
       const https = require("node:https");
       const net = require("node:net");
       const tls = require("node:tls");
@@ -600,22 +602,23 @@ describe("HTTP server CONNECT", () => {
         client.on("close", () => console.log("client:close"));
       });
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, CERT: tlsCert.cert, KEY: tlsCert.key },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    // Before the fix the server socket never closes: stdout stops at
-    // server:finish and the process hangs until the test timeout. client:close
-    // and server:close may interleave, so assert presence + server ordering.
-    const lines = stdout.split("\n").filter(Boolean);
-    expect(lines.filter(l => l.startsWith("server:"))).toEqual(["server:end", "server:finish", "server:close"]);
-    expect(lines).toContain("client:close");
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, CERT: tlsCert.cert, KEY: tlsCert.key },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // Before the fix the server socket never closes: stdout stops at
+      // server:finish and the process hangs until the test timeout. client:close
+      // and server:close may interleave, so assert presence + server ordering.
+      const lines = stdout.split("\n").filter(Boolean);
+      expect(lines.filter(l => l.startsWith("server:"))).toEqual(["server:end", "server:finish", "server:close"]);
+      expect(lines).toContain("client:close");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 /**

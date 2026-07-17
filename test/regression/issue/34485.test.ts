@@ -93,3 +93,78 @@ test("keep-alive requests survive middleware that wraps res.on/write/end", async
   );
   expect(exitCode).toBe(0);
 });
+
+// Same middleware pattern, but the requests are pipelined (all sent in one
+// packet). Queued responses rely on the same pre-registered detach-on-finish
+// listener to advance the pipeline; pre-fix this crashed identically.
+test("pipelined requests survive middleware that wraps res.on/write/end", async () => {
+  using dir = tempDir("issue-34485-pipelined", {
+    "server.js": `
+      const http = require("http");
+      const net = require("net");
+      const { PassThrough } = require("stream");
+
+      // Same shape as @polka/compression, with an identity stream so the
+      // response bytes stay directly assertable: writes routed through a
+      // stream, end() called from its 'end' event, res.on() diverted onto it.
+      function middleware(req, res) {
+        const { end, write, on } = res;
+        const compress = new PassThrough();
+        compress.on("data", chunk => write.call(res, chunk) || compress.pause());
+        on.call(res, "drain", () => compress.resume());
+        compress.on("end", () => end.call(res));
+        res.write = function (chunk, enc) {
+          return compress.write(chunk, enc);
+        };
+        res.end = function (chunk, enc) {
+          return compress.end(chunk, enc);
+        };
+        res.on = function (type, listener) {
+          compress.on(type, listener);
+          return this;
+        };
+      }
+
+      const server = http.createServer((req, res) => {
+        middleware(req, res);
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("body-of" + req.url + "|");
+      });
+
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        const sock = net.connect(port, "127.0.0.1", () => {
+          sock.write(
+            "GET /1 HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n" +
+              "GET /2 HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n" +
+              "GET /3 HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n",
+          );
+        });
+        let data = "";
+        sock.setEncoding("latin1");
+        sock.on("data", c => (data += c));
+        sock.on("end", () => {
+          const statuses = data.split("HTTP/1.1 200").length - 1;
+          const i1 = data.indexOf("body-of/1|");
+          const i2 = data.indexOf("body-of/2|");
+          const i3 = data.indexOf("body-of/3|");
+          console.log("statuses:", statuses, "ordered:", i1 >= 0 && i1 < i2 && i2 < i3);
+          server.close();
+        });
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("statuses: 3 ordered: true\n");
+  expect(exitCode).toBe(0);
+});

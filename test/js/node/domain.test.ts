@@ -324,3 +324,36 @@ test.concurrent("domain error handler runs outside the domain", async () => {
   expect(stderr).toContain("second");
   expect(exitCode).not.toBe(0);
 });
+
+// A frozen / non-extensible thrown value cannot be decorated with the
+// domain / domainThrown properties, but must still reach the handler.
+test.concurrent("domain routes frozen thrown values to the handler", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const domain = require("domain").create();
+      domain.on("error", err => {
+        console.log("caught:", err.message);
+      });
+      domain.run(() => {
+        setTimeout(() => {
+          throw Object.freeze(new Error("frozen-boom"));
+        }, 1);
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught: frozen-boom\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

@@ -21,14 +21,18 @@ function bindCallbackToDomain(d, cb) {
       // and the error is tagged as thrown rather than emitted.
       d.exit();
       if (typeof err === "object" && err !== null) {
-        ObjectDefineProperty(err, "domain", {
-          __proto__: null,
-          configurable: true,
-          enumerable: false,
-          value: d,
-          writable: true,
-        });
-        err.domainThrown = true;
+        // Best-effort: a frozen / non-extensible / proxy-backed thrown value
+        // must still reach the handler even if it cannot be decorated.
+        try {
+          ObjectDefineProperty(err, "domain", {
+            __proto__: null,
+            configurable: true,
+            enumerable: false,
+            value: d,
+            writable: true,
+          });
+          err.domainThrown = true;
+        } catch {}
       }
       d.emit("error", err);
     } finally {
@@ -75,15 +79,19 @@ domain.createDomain = domain.create = function () {
   function emitError(e) {
     e ||= $ERR_UNHANDLED_ERROR();
     if (typeof e === "object") {
-      e.domainEmitter = this;
-      ObjectDefineProperty(e, "domain", {
-        __proto__: null,
-        configurable: true,
-        enumerable: false,
-        value: d,
-        writable: true,
-      });
-      e.domainThrown = false;
+      // Best-effort: decoration failure on a frozen / non-extensible value
+      // must not prevent the error from reaching the handler.
+      try {
+        e.domainEmitter = this;
+        ObjectDefineProperty(e, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: d,
+          writable: true,
+        });
+        e.domainThrown = false;
+      } catch {}
     }
     d.emit("error", e);
   }

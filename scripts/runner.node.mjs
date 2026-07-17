@@ -507,6 +507,39 @@ async function runTests() {
   // don't run docker tests. Lifetime is tied to this process via the stdin
   // pipe.
   if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    // `docker compose version` only checks the CLI. `docker version` talks to
+    // the daemon and fails when dockerd never started on this ephemeral agent
+    // (the OpenRC unit for buildkite-agent does not order after docker, and
+    // the buildkite-agent user cannot start the daemon). When that happens and
+    // this shard carries container-backed tests, every one of them fails with
+    // "Docker is not available" and shows up as a new failure on the PR. Poll
+    // the daemon briefly in case it is just slow, then exit EX_TEMPFAIL so the
+    // Buildkite automatic-retry rule reschedules once on a fresh agent instead.
+    const dockerPrefixes = Object.keys(dockerPrestartMap);
+    const shardNeedsDocker = tests.some(t => {
+      const p = t.replaceAll("\\", "/");
+      return dockerPrefixes.some(prefix => p.startsWith(prefix));
+    });
+    if (shardNeedsDocker) {
+      let daemonUp = spawnSync("docker", ["version"], { stdio: "ignore" }).status === 0;
+      if (!daemonUp) {
+        console.warn("docker daemon unreachable; polling for it before running container-backed tests");
+        const deadline = Date.now() + 30_000;
+        while (!daemonUp && Date.now() < deadline) {
+          await setTimeoutPromise(1000);
+          daemonUp = spawnSync("docker", ["version"], { stdio: "ignore" }).status === 0;
+        }
+        if (!daemonUp) {
+          console.error(
+            "docker daemon never became reachable on this agent; " +
+              "exiting 75 (EX_TEMPFAIL) so Buildkite retries the job on a fresh one.",
+          );
+          process.exit(75);
+        }
+        console.warn("docker daemon is now reachable");
+      }
+    }
+
     const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
     const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
       stdio: ["pipe", "pipe", "inherit"],

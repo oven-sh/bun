@@ -958,6 +958,9 @@ class Worker extends EventEmitter {
     // option accesses below don't throw on `new Worker(file, null)`.
     options ??= {};
 
+    // Bun's WebWorker honours { ref: false }; hasRef() should agree with it.
+    if ((options as any).ref === false) this.#hasRef = false;
+
     this.#name = normalizeWorkerName(options.name);
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
@@ -1100,12 +1103,12 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
-    // node publishes the newly-constructed Worker here, at the end of the
-    // constructor (lib/internal/worker.js).
+    // node's AsyncWrap emits the WORKER init synchronously when the handle is
+    // constructed mid-constructor, before the dc publish at the end.
+    this.#emitAsyncHooksInit();
     if (workerThreadsChannel.hasSubscribers) {
       workerThreadsChannel.publish({ worker: this });
     }
-    this.#emitAsyncHooksInit();
   }
 
   // node's WORKER resource is the C++ handle, so hasRef() follows ref()/unref()

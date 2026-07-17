@@ -3387,10 +3387,16 @@ where
         // by ctx.create's BACKREF aliases disjoint fields.
         ctx.on_response(unsafe { &*self_ptr }, args[0], response_value);
 
-        // Overwrite the stack slot holding the Request JS cell so the
-        // conservative stack scan cannot pin it once this frame's callers
-        // reuse the bytes for an exit-time collectNow. black_box forces the
-        // store; if the user retained `req` it stays reachable via the heap.
+        // Scrub the Request cell pointer from this frame's storage. A later
+        // event-loop tick dispatching `close` via `innerInvokeEventListeners`
+        // allocates a frame whose reserved-but-unwritten locals overlap this
+        // exact slot; `Heap::gatherStackRoots` on that tick then marks the
+        // stale pointer (proven via `BUN_JSC_verboseVerifyGC` +
+        // `Heap::dumpVerifierMarkerData`: "visited from scan of
+        // ConservativeScan roots"; heap snapshot with
+        // `appendHidden`→`append` shows zero incoming edges). Same mechanism
+        // as JSC's own `sanitizeStackForVM`, which cannot reach above current
+        // SP. `black_box` prevents the dead store from being elided.
         args[0] = JSValue::ZERO;
         core::hint::black_box(&mut args);
 

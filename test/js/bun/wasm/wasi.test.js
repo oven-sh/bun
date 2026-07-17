@@ -24,6 +24,24 @@ it("Should support printing 'hello world'", () => {
   });
 });
 
+it("random_get returns WASI_ESUCCESS and only fills the requested region", () => {
+  const wasi = new WASI({ version: "preview1" });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const WASI_ESUCCESS = 0;
+  const bufPtr = 4096;
+  const bufLen = 16;
+
+  const full = new Uint8Array(wasi.memory.buffer);
+  full.fill(0);
+
+  expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+  expect(full.slice(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
+  // Nothing outside [bufPtr, bufPtr + bufLen) may be touched.
+  expect(full.slice(0, bufPtr).every(b => b === 0)).toBe(true);
+  expect(full.slice(bufPtr + bufLen).every(b => b === 0)).toBe(true);
+});
+
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",

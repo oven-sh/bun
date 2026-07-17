@@ -1371,7 +1371,7 @@ function installBunExposeInternalsShim() {
               case "--max-http-header-size":
                 return require("node:http").maxHeaderSize;
               case "--insecure-http-parser":
-                return false;
+                return process.execArgv.includes("--insecure-http-parser");
               default:
                 return undefined;
             }

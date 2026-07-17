@@ -444,9 +444,11 @@ private:
                      * backpressure, stop reading (and stop consuming the
                      * already-received requests: the signal parks them) until
                      * onWritable drains it. This request still dispatches, like
-                     * Node, which pauses from within parserOnIncoming. */
-                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0
-                        && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
+                     * Node, which pauses from within parserOnIncoming. No
+                     * already-paused guard: the replay clears the signal but not
+                     * the state bit, so gating on the bit would let the whole
+                     * spill dispatch unbounded on the first replay. */
+                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                         httpResponseData->nodeHttpReadsPausedSignal = true;
                         ((HttpResponse<SSL> *) s)->pause();

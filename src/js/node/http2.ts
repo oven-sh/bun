@@ -6294,16 +6294,7 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
-// Minimal HTTP/1.1 response writer used by the allowHTTP1 fallback. It mimics
-// the surface of the native NodeHTTPResponse handle that ServerResponse drives
-// (cork/writeHead/write/end/abort/...), serializing directly onto the TLS socket.
-const {
-  createHttp1FallbackResponseHandle,
-  connectionListenerHTTP1,
-  closeIdleHttp1Connections,
-  kHttp1Connections,
-  kHttp1ActiveRequests,
-} = require("internal/http1_server_fallback");
+const { connectionListenerHTTP1, closeIdleHttp1Connections, kHttp1Connections } = require("internal/http1_server_fallback");
 
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
@@ -6534,6 +6525,11 @@ class Http2SecureServer extends tls.Server {
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
+      // connectionListenerHTTP1 reads these off the server when initializing
+      // the per-connection parser, matching Node's storeHTTP1Options.
+      this.maxHeaderSize = http1Options.maxHeaderSize;
+      this.insecureHTTPParser = http1Options.insecureHTTPParser;
+      this.httpValidation = http1Options.httpValidation;
     }
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);

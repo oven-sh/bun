@@ -84,7 +84,11 @@ const {
 } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
-const { connectionListenerHTTP1 } = require("internal/http1_server_fallback");
+const {
+  connectionListenerHTTP1,
+  closeIdleHttp1Connections,
+  closeAllHttp1Connections,
+} = require("internal/http1_server_fallback");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
@@ -490,6 +494,7 @@ Server.prototype.unref = function () {
 };
 
 Server.prototype.closeAllConnections = function () {
+  closeAllHttp1Connections(this);
   const server = this[serverSymbol];
   if (!server) {
     return;
@@ -512,6 +517,7 @@ Server.prototype.getConnections = function (callback) {
 };
 
 Server.prototype.closeIdleConnections = function () {
+  closeIdleHttp1Connections(this);
   const server = this[serverSymbol];
   server?.closeIdleConnections();
 };
@@ -521,6 +527,7 @@ Server.prototype.close = function (optionalCallback?) {
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
+  closeIdleHttp1Connections(this);
   if (!server) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
     // Like Node.js's net.Server#close, close() returns the server.
@@ -1207,14 +1214,6 @@ function applyServerCustomOptions(server: Server) {
   );
 }
 
-function httpAllowHalfOpenGet(this: Server) {
-  return this[kHttpAllowHalfOpen];
-}
-
-// Node reads `server.httpAllowHalfOpen` when the peer's FIN arrives (socketOnEnd), so
-// assigning it after listen() has to reach the native listener too. Push the flags
-// alone: setServerCustomOptions() would also re-register the connection filter, which
-// appends rather than replaces and can reallocate the vector uWS is iterating.
 // Same resolution the client applies: httpValidation wins, then an explicit
 // insecureHTTPParser, then the process-wide --insecure-http-parser. Native
 // implements two of llhttp's lenient bits, addressed here as bit 0 = lenient
@@ -1228,6 +1227,14 @@ function serverLenientFlags(server: Server) {
   return lenient === HTTPParser.kLenientAll ? 0b11 : 0b01;
 }
 
+function httpAllowHalfOpenGet(this: Server) {
+  return this[kHttpAllowHalfOpen];
+}
+
+// Node reads `server.httpAllowHalfOpen` when the peer's FIN arrives (socketOnEnd), so
+// assigning it after listen() has to reach the native listener too. Push the flags
+// alone: setServerCustomOptions() would also re-register the connection filter, which
+// appends rather than replaces and can reallocate the vector uWS is iterating.
 function httpAllowHalfOpenSet(this: Server, value) {
   const previous = !!this[kHttpAllowHalfOpen];
   this[kHttpAllowHalfOpen] = value;
@@ -3151,7 +3158,9 @@ ServerResponse.prototype.writeContinue = function (cb) {
     this._sent100 = true;
     return;
   }
-  this.socket?.[kHandle]?.response?.writeContinue();
+  const native = this.socket?.[kHandle]?.response;
+  if (native) native.writeContinue();
+  else this[kHandle]?.writeContinue?.();
   this._sent100 = true;
   cb?.();
 };

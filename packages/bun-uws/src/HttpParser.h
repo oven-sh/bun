@@ -1056,14 +1056,11 @@ struct HttpResponseData;
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     /* Charge the value the way llhttp hands it to on_header_value: leading
-                     * OWS skipped, trailing OWS still counted. Measure before the trims
-                     * below, or a value padded with trailing spaces is undercharged and we
-                     * accept a header block Node answers with 431. */
-                    const char *chargedValueStart = preliminaryValue;
-                    while (chargedValueStart < postPaddedBuffer && isHTTPHeaderValueWhitespace((unsigned char) *chargedValueStart)) {
-                        chargedValueStart++;
-                    }
-                    const size_t chargedValueLength = (size_t) (postPaddedBuffer - chargedValueStart);
+                     * OWS skipped (countedValueStart already sits past it), trailing OWS
+                     * still counted. Measure before the trims below, or a value padded with
+                     * trailing spaces is undercharged and we accept a header block Node
+                     * answers with 431. */
+                    const size_t chargedValueLength = (size_t) (postPaddedBuffer - countedValueStart);
                     postPaddedBuffer += 2;
                     /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
                     while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.back())) {

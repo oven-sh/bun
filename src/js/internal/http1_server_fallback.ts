@@ -167,6 +167,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     cork(callback) {
       return callback();
     },
+    writeContinue() {
+      socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+    },
     writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;
       statusCode |= 0;
@@ -343,6 +346,25 @@ function connectionListenerHTTP1(server, socket, options) {
       this.detachSocket(socket);
     });
 
+    // Node's parserOnIncoming Expect routing (the native dispatcher applies the
+    // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
+    const expect = req.headers.expect;
+    if (expect !== undefined) {
+      if (String(expect).trim().toLowerCase() === "100-continue") {
+        if (server.listenerCount("checkContinue") > 0) {
+          server.emit("checkContinue", req, res);
+        } else {
+          res.writeContinue();
+          server.emit("request", req, res);
+        }
+      } else if (server.listenerCount("checkExpectation") > 0) {
+        server.emit("checkExpectation", req, res);
+      } else {
+        res.writeHead(417);
+        res.end();
+      }
+      return 0;
+    }
     server.emit("request", req, res);
     return 0;
   };
@@ -410,6 +432,11 @@ function connectionListenerHTTP1(server, socket, options) {
   }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
+  socket.once("end", function onHttp1SocketEnd() {
+    // Node's socketOnEnd: let llhttp detect a message cut short by EOF.
+    const ret = parser.finish();
+    if (ret instanceof Error) onHttp1SocketError(ret, undefined);
+  });
   socket.once("close", () => {
     connections.delete(socket);
     try {
@@ -428,10 +455,19 @@ function closeIdleHttp1Connections(server) {
   }
 }
 
+function closeAllHttp1Connections(server) {
+  const connections = server[kHttp1Connections];
+  if (!connections) return;
+  for (const socket of connections) {
+    if (!socket.destroyed) socket.destroy();
+  }
+}
+
 export default {
   createHttp1FallbackResponseHandle,
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
+  closeAllHttp1Connections,
   kHttp1Connections,
   kHttp1ActiveRequests,
 };

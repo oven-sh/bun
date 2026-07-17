@@ -27,7 +27,7 @@ import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { PassThrough, Writable } from "node:stream";
+import { PassThrough, Writable, duplexPair } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
@@ -2882,9 +2882,9 @@ it("standalone ServerResponse discards body writes to a no-body response without
 
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
   // noBodyStatus must suppress the Transfer-Encoding header in flushHeaders()
+  // and the terminating chunk in internalEnd(), like the one-shot end() path.
   // The /second GET is chunked, not Content-Length: writeHead() freezes the
   // framing while _contentLength is still null, exactly as Node does.
-  // and the terminating chunk in internalEnd(), like the one-shot end() path.
   const server = createServer((req, res) => {
     if (req.url === "/nobody") {
       res.writeHead(204);
@@ -3932,8 +3932,6 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   // parserOnIncoming: an Upgrade with a listener switches protocols with the
   // first tunnel bytes as bodyHead; without one it falls through as a normal
   // request with req.upgrade cleared; CONNECT without a listener destroys.
-  const { duplexPair } = await import("node:stream");
-
   {
     const server = createServer(() => {
       throw new Error("request handler must not run for a handled upgrade");
@@ -3946,9 +3944,13 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     server.emit("connection", serverSide);
     const out = await new Promise<string>(resolve => {
       let buf = "";
+      let sentMore = false;
       clientSide.on("data", d => {
         buf += d;
-        if (buf.includes("HEAD:early")) clientSide.write("more");
+        if (!sentMore && buf.includes("HEAD:early")) {
+          sentMore = true;
+          clientSide.write("more");
+        }
         if (buf.includes("TUNNEL:more")) resolve(buf);
       });
       clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\nearly");
@@ -3956,6 +3958,8 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
     expect(out).toContain("HEAD:early");
     expect(out).toContain("TUNNEL:more");
+    clientSide.destroy();
+    serverSide.destroy();
   }
 
   {
@@ -3974,6 +3978,8 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     });
     expect(out).toContain("HTTP/1.1 200");
     expect(out).toEndWith("normal:false");
+    clientSide.destroy();
+    serverSide.destroy();
   }
 
   {

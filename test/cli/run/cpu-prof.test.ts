@@ -125,7 +125,7 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("--cpu-prof-name is not inherited by workers (they get distinct files)", async () => {
+  test("--cpu-prof-name is inherited by workers, as node does", async () => {
     using dir = tempDir("cpu-prof-name-worker", {
       "test.js": `
         const { Worker } = require("node:worker_threads");
@@ -147,10 +147,10 @@ describe.concurrent("--cpu-prof", () => {
     const exitCode = await proc.exited;
 
     const profiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
-    // Main thread writes the named file; the worker writes a separate
-    // thread-id-suffixed default instead of clobbering it.
-    expect(profiles).toContain(customName);
-    expect(profiles.length).toBe(2);
+    // Every thread writes the one named path, last wins, so there is a single
+    // file. node v26.3.0 does the same: with a worker, --cpu-prof-name yields 1
+    // file where the default name yields 2 — it only thread-stamps the default.
+    expect(profiles).toEqual([customName]);
     expect(exitCode).toBe(0);
   });
 

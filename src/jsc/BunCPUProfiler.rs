@@ -52,15 +52,11 @@ pub fn publish_inherited_config(config: CPUProfilerConfig) {
     let _ = INHERITED_CONFIG.set(config);
 }
 
-/// The config a newly-started worker VM should profile with, if any.
-/// `name` is cleared so each worker writes a thread-id-suffixed default
-/// filename instead of every thread truncating the one `--cpu-prof-name` path.
+/// The config a newly-started worker VM should profile with, if any. An explicit
+/// `--cpu-prof-name` is inherited, so every thread writes that one path and the
+/// last wins — node does the same (v26.3.0: named gives 1 file, default 2).
 pub fn inherited_config_for_worker(thread_id: u32) -> Option<CPUProfilerConfig> {
-    INHERITED_CONFIG.get().map(|c| CPUProfilerConfig {
-        thread_id,
-        name: b"",
-        ..*c
-    })
+    INHERITED_CONFIG.get().map(|c| CPUProfilerConfig { thread_id, ..*c })
 }
 
 // C++ function declarations

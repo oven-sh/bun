@@ -137,23 +137,25 @@ class MockFunctionContext {
       // record in completion order, and the stack is captured post-invoke.
       let result: unknown;
       let error: unknown;
+      const isConstruct = target !== undefined;
       try {
-        result =
-          target === undefined
-            ? (implementation as Function).$apply(thisArg, args)
-            : Reflect.construct(implementation as Function, args, target as Function);
+        result = !isConstruct
+          ? (implementation as Function).$apply(thisArg, args)
+          : Reflect.construct(implementation as Function, args, target as Function);
         return result;
       } catch (e) {
         error = e;
         throw e;
       } finally {
+        // node's mock is a Proxy over the original, so its construct trap
+        // records the proxy's target (the original) and the new instance.
         ctx.#calls.push({
           arguments: args,
           error,
           result,
           stack: new Error(),
-          target,
-          this: thisArg,
+          target: isConstruct ? ctx.#original : undefined,
+          this: isConstruct ? result : thisArg,
         });
       }
     };
@@ -266,6 +268,21 @@ function validateStringOrSymbol(value: unknown, name: string) {
   }
 }
 
+// Functions declared inside bun's builtins get no `prototype`, but node's
+// default original is a plain `function () {}`, so give it one explicitly.
+function createDefaultOriginal(): Function {
+  const original = function () {};
+  Object.defineProperty(original, "prototype", {
+    // @ts-ignore
+    __proto__: null,
+    value: {},
+    writable: true,
+    enumerable: false,
+    configurable: false,
+  });
+  return original;
+}
+
 class MockTracker {
   #mocks: { ctx: { restore: () => void } }[] = [];
   #timers: unknown;
@@ -316,6 +333,16 @@ class MockTracker {
       value: original.name,
       configurable: true,
     });
+    // node's mock proxies the original, so `.prototype` reads through to it:
+    // mirror the value and its writability (a class's prototype is read-only,
+    // and a method/arrow original has no prototype at all).
+    const prototypeDescriptor = Object.getOwnPropertyDescriptor(original, "prototype");
+    Object.defineProperty(mockFunction, "prototype", {
+      // @ts-ignore
+      __proto__: null,
+      value: prototypeDescriptor?.value,
+      writable: prototypeDescriptor?.writable ?? true,
+    });
     return mockFunction;
   }
 
@@ -347,7 +374,7 @@ class MockTracker {
     const { times = Infinity } = (options ?? kEmptyObject) as { times?: number };
     validateTimes(times, "options.times");
     return this.#createMockFunction(
-      (original as Function) ?? function () {},
+      (original as Function) ?? createDefaultOriginal(),
       implementation as Function | undefined,
       undefined,
       times,

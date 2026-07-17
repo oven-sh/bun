@@ -3489,3 +3489,35 @@ it("http2 server sends each session's frames to its own peer under interleaved r
     server.close();
   }
 });
+
+it("client connects over a user Duplex that already has a 'data' listener", async () => {
+  // A 'data' listener attached before connect() puts the stream in flowing mode, so the
+  // peer's first frames can arrive before the connect callback has run. The preface must
+  // survive that: it used to be dropped, silently stalling the session.
+  const { duplexPair } = require("node:stream");
+  const [clientSide, serverSide] = duplexPair();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.emit("connection", serverSide);
+
+  clientSide.on("data", () => {});
+  const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+  client.on("error", () => {});
+
+  const req = client.request({ ":path": "/" });
+  let status = 0;
+  let body = "";
+  req.setEncoding("utf8");
+  req.on("response", headers => {
+    status = headers[":status"];
+  });
+  req.on("data", chunk => (body += chunk));
+  await new Promise(resolve => req.on("end", resolve));
+  expect(status).toBe(200);
+  expect(body).toBe("ok");
+  client.close();
+  server.close();
+});

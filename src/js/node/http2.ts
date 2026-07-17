@@ -5592,6 +5592,12 @@ class ClientHttp2Session extends Http2Session {
     }
 
     function onConnect() {
+      // The parser's construction re-enters JS and can drain the tick queue, so a
+      // connect that fires from that drain arrives before the constructor finished.
+      if (this.#parser === undefined) {
+        process.nextTick(onConnect.bind(this));
+        return;
+      }
       try {
         this.#onConnect(arguments);
         listener?.$call(this, this);
@@ -5605,6 +5611,7 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
       this.#maxOutstandingSettings = options.maxOutstandingSettings;
     }
+    let connectOnNextTick = false;
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
@@ -5613,7 +5620,7 @@ class ClientHttp2Session extends Http2Session {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
         socket.once(connectEvent, onConnect.bind(this));
       } else {
-        process.nextTick(onConnect.bind(this));
+        connectOnNextTick = true;
       }
     } else {
       socket = connectWithProtocol(
@@ -5655,6 +5662,12 @@ class ClientHttp2Session extends Http2Session {
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
+    if (connectOnNextTick) {
+      // Queued only now that the session is fully built: the parser's construction
+      // re-enters JS, which can drain the tick queue, and an earlier-queued onConnect
+      // would then run against a session whose #parser is not assigned yet.
+      process.nextTick(onConnect.bind(this));
+    }
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.

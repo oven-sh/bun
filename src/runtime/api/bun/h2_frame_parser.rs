@@ -1462,6 +1462,8 @@ pub struct H2FrameParser {
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
     has_nonnative_backpressure: Cell<bool>,
+    /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
+    js_socket_flushing: Cell<bool>,
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
@@ -3159,6 +3161,13 @@ impl H2FrameParser {
 
     pub(crate) fn flush(&self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
+        // The onWrite dispatch below re-enters JS, and a synchronous transport
+        // (duplexPair) can re-enter flush() from inside it: bail so the in-flight
+        // bytes are not sent a second time (through any arm — a connect callback
+        // running inside the dispatch may have attached a native socket).
+        if self.js_socket_flushing.get() {
+            return 0;
+        }
         // Keep `self` alive across the re-entrant JS calls below.
         let _keepalive = self.keepalive();
 
@@ -3173,7 +3182,8 @@ impl H2FrameParser {
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
-                let bytes_len = self.write_buffer.get().slice().len();
+                let offset = self.write_buffer_offset.get();
+                let bytes_len = self.write_buffer.get().slice()[offset..].len();
                 if bytes_len > 0 {
                     let global = self.handlers.get().global();
                     // A failed conversion means the VM is terminating (or OOM): report
@@ -3182,22 +3192,42 @@ impl H2FrameParser {
                         .handlers
                         .get()
                         .binary_type
-                        .to_js(self.write_buffer.get().slice(), &global)
+                        .to_js(&self.write_buffer.get().slice()[offset..], &global)
                     else {
                         return 0;
                     };
+                    self.js_socket_flushing.set(true);
                     let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                    self.js_socket_flushing.set(false);
 
-                    // defer block
-                    self.write_buffer_offset.set(0);
-                    self.write_buffer.with_mut(|wb| {
-                        wb.clear();
-                        if wb.capacity() > MAX_BUFFER_SIZE as usize {
-                            wb.shrink_to(MAX_BUFFER_SIZE as usize);
-                        }
-                    });
+                    // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
+                    let code = if result.is_number() { result.to_int32() } else { -1 };
+                    if code == -1 {
+                        // JS did not take the bytes (e.g. the session's socket is not ready
+                        // yet). Keep them queued for the next flush — clearing here loses
+                        // the connection preface when the peer's first frames arrive before
+                        // the connect callback has run.
+                        self.has_nonnative_backpressure.set(true);
+                        return 0;
+                    }
 
-                    if result.is_boolean() && !result.to_boolean() {
+                    // Consume exactly what was handed to JS: writes made re-entrantly during
+                    // the dispatch sit after it in the buffer and wait for the next flush.
+                    // `>=` also covers the buffer having been cleared (detach) during the
+                    // dispatch, where advancing would strand the offset past the end.
+                    if offset + bytes_len >= self.write_buffer.get().slice().len() {
+                        self.write_buffer_offset.set(0);
+                        self.write_buffer.with_mut(|wb| {
+                            wb.clear();
+                            if wb.capacity() > MAX_BUFFER_SIZE as usize {
+                                wb.shrink_to(MAX_BUFFER_SIZE as usize);
+                            }
+                        });
+                    } else {
+                        self.write_buffer_offset.set(offset + bytes_len);
+                    }
+
+                    if code == 0 {
                         self.has_nonnative_backpressure.set(true);
                         return bytes_len;
                     }
@@ -9777,6 +9807,7 @@ impl H2FrameParser {
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
+            js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),

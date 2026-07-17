@@ -1544,9 +1544,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();
-                if abrupt {
-                    self.flags.insert(ServerFlags::TERMINATED);
-                }
+            }
+            // A previous graceful stop already took the listener. An abrupt stop
+            // still needs to close the app so in-flight connections are torn down.
+            if abrupt {
+                self.terminate_app();
             }
             return;
         };
@@ -1579,13 +1581,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
-        } else if !self.flags.contains(ServerFlags::TERMINATED) {
-            if let Some(ws) = self.config.websocket.as_mut() {
-                ws.handler.app = None;
-            }
-            self.flags.insert(ServerFlags::TERMINATED);
+        } else {
+            self.terminate_app();
+        }
+    }
+
+    /// Force-close every connection on the uws app and mark the server
+    /// terminated. Guarded by `TERMINATED` so repeated abrupt stops are no-ops.
+    fn terminate_app(&mut self) {
+        if self.flags.contains(ServerFlags::TERMINATED) {
+            return;
+        }
+        if let Some(ws) = self.config.websocket.as_mut() {
+            ws.handler.app = None;
+        }
+        self.flags.insert(ServerFlags::TERMINATED);
+        if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
+            bun_opaque::opaque_deref_mut(app).close();
         }
     }
 

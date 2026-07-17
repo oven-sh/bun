@@ -77,13 +77,11 @@ shipped apps cannot rely on.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
   works.
-- **The `NUL` device is unreachable inside AppContainers by default.** Its
-  ACL predates AppContainers and is re-derived at every boot; it admits the
+- **`"ignore"` stdio fails by default.** It opens the `NUL` device, whose ACL
+  predates AppContainers and is re-derived at every boot; it admits the
   container only when the device ACL carries the container SIDs (grant them per
-  boot from an elevated context) or when a session-level `NUL` symlink points at
-  an accessible object. `"ignore"` stdio and user code opening `"NUL"` both
-  fail with `EACCES` when the device is denied; grant the device ACL or use
-  `"pipe"`/`"inherit"` stdio instead.
+  boot from an elevated context). `"inherit"` stdin works without host setup;
+  piped stdout/stderr work.
 - A package cache created **outside** the container is currently
   re-validated as a miss inside it; prefer letting the sandboxed process
   populate its own `BUN_INSTALL_CACHE_DIR`.

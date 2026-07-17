@@ -242,9 +242,10 @@ const r = {};
 async function main() {
   r.tempRewritten = /\\\\AC\\\\Temp/i.test(process.env.TEMP || "");
 
-  // Explicit stdin: Bun.spawn's default is "ignore", which opens the NUL
-  // device; an AppContainer's default device ACL denies that.
-  const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdin: "pipe" });
+  // stdin must be inherit here: the NUL device ACL denies AppContainers
+  // ("ignore" opens NUL), and a piped fd 0 currently also fails uv_spawn
+  // inside a container.
+  const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
   r.realpath = fs.realpathSync(".") === fs.realpathSync.native(".");
@@ -283,7 +284,7 @@ async function main() {
     fs.writeFileSync("fork-child.js", 'process.send("ping"); process.on("message", () => process.exit(0));');
     const cp = require("child_process");
     return await new Promise(resolve => {
-      const child = cp.fork("fork-child.js", [], { stdio: ["pipe", "pipe", "pipe", "ipc"] });
+      const child = cp.fork("fork-child.js", [], { stdio: ["inherit", "pipe", "pipe", "ipc"] });
       const timer = setTimeout(() => {
         try { child.kill(); } catch {}
         resolve("timeout waiting for ipc");

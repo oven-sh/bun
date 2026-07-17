@@ -88,37 +88,37 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         out += `Content-Length: ${contentLength}\r\n`;
       }
     }
-    if (!hasDate) {
-      out += `Date: ${new Date().toUTCString()}\r\n`;
-    }
-    // renderNativeHeaders reports its Connection decision through the
-    // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
-    // NodeHTTP.cpp); honor an explicit close (res.shouldKeepAlive = false,
-    // the graceful-shutdown pattern) over the parser-derived flag.
-    // A close-delimited response still advertises the close it performs: only
-    // the keep-alive line is suppressed, since the connection ends with the
-    // body. When the user removed the Connection header (_removedConnection),
-    // renderNativeHeaders sets neither bit, so nothing is written here.
-    if (!hasConnection) {
-      if ((autoBits & 4) !== 0) {
-        out += "Connection: close\r\n";
-      } else if (!closeDelimited) {
-        // No close bit and no Connection pair on a close-delimited response means
-        // the user removed the header (Node's _removedConnection) — write none
-        // rather than inventing keep-alive on a connection that ends with the
-        // body. Every other response still advertises its connection state.
+    // Mirror the native writeAutoHeaders exactly: each line is written iff its
+    // bit is set, so res.sendDate = false, removeHeader("date"), a removed
+    // Connection header (neither connection bit) and a suppressed Keep-Alive
+    // timeout all round-trip identically through this path. A head-less write
+    // (nothing called writeHead on this handle) keeps the old defaults — that
+    // only happens off node:http's ServerResponse, which always renders bits.
+    if (head === null) {
+      if (!hasDate) {
+        out += `Date: ${new Date().toUTCString()}\r\n`;
+      }
+      if (!hasConnection && !closeDelimited) {
         if (shouldKeepAlive) {
           out += "Connection: keep-alive\r\n";
-          // A user-sent Keep-Alive header (already written by the loop above)
-          // suppresses the auto line, like the native writeAutoHeaders. The
-          // bit-carried timeout wins when present; otherwise fall back to this
-          // handle's configured timeout, preserving pre-bits behavior.
           if (!hasKeepAlive) {
-            const kaSecs =
-              (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
-            out += `Keep-Alive: timeout=${kaSecs}\r\n`;
+            out += `Keep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
           }
         } else {
+          out += "Connection: close\r\n";
+        }
+      }
+    } else {
+      if (!hasDate && (autoBits & 1) !== 0) {
+        out += `Date: ${new Date().toUTCString()}\r\n`;
+      }
+      if (!hasConnection) {
+        if ((autoBits & 2) !== 0) {
+          out += "Connection: keep-alive\r\n";
+          if (!hasKeepAlive && (autoBits & 8) !== 0) {
+            out += `Keep-Alive: timeout=${head.keepAliveTimeoutSecs}\r\n`;
+          }
+        } else if ((autoBits & 4) !== 0) {
           out += "Connection: close\r\n";
         }
       }
@@ -299,6 +299,11 @@ function connectionListenerHTTP1(server, socket, options) {
     };
 
     const res = new ServerResponseClass(req);
+    // The native dispatcher seeds these from the server; renderNativeHeaders
+    // reads them to decide the Keep-Alive auto-header bits, so the fallback
+    // path must carry them too or keep-alive responses lose their timeout line.
+    res._keepAliveTimeout = keepAliveTimeout;
+    res._maxRequestsPerSocket = server.maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);

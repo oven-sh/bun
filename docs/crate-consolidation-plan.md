@@ -306,13 +306,13 @@ The cache entry stores `js_parser::Options` but lives in `bun_ast` (below `bun_j
 
 ## 5. `PORTING.md` / `LAYERING:` comment cleanup
 
-Separate mechanical pass, independent of the crate moves:
+Separate mechanical pass, independent of the crate moves. Two overlapping populations are covered (the exec-summary rows count each independently):
 
-- **327** `PORTING.md` §rule citations (§Forbidden, §Allocators, §Global mutable state, §Concurrency, §Idiom map, §JSC types, §Strings, §Pointers, §FFI, §Comptime reflection, §Collections, §Logging): delete the comment. The referenced document no longer exists.
-- **46** `PORTING.md` §Dispatch / `LAYERING:` comments that document the jsc↔runtime / \*\_jsc machinery: delete with the code they annotate.
-- **11** `LAYERING:` comments on edges that survive (`glob↔resolver`, `ast↔bundler`, `core↔sys`, `install_types` regex): rewrite to name the `OnceLock`/`dyn` that now carries the seam.
-- **13** `TODO(port)` / lifetime-threading items: keep (real work, tracked in §8.3 as out-of-scope).
-- **1** BoringSSL URL (`uws/lib.rs:399`): keep.
+**Population A: comments containing `PORTING.md` (396 matches).** 327 historical §rule citations (§Forbidden, §Allocators, §Global mutable state, §Concurrency, §Idiom map, §JSC types, §Strings, §Pointers, §FFI, §Comptime reflection, §Collections, §Logging) + 57 layering-workaround annotations + 11 lifetime-threading notes that cite PORTING.md + 1 external BoringSSL URL. Disposition: delete the 327 historical citations (the referenced document no longer exists); delete 46 of the 57 layering annotations with the code they annotate; rewrite the remaining 11 layering annotations to name the `OnceLock`/`dyn` that now carries the seam; keep the 11 lifetime-threading notes; keep the BoringSSL URL.
+
+**Population B: comments containing `LAYERING:` (92 matches).** These partially overlap the 57 layering annotations above. Same disposition applies.
+
+**Separately:** 2 `TODO(port)` comments in `react_compiler` (not PORTING.md references; real feature gaps) stay as tracked in §8.3.
 
 ---
 
@@ -394,11 +394,11 @@ Separate mechanical pass, independent of the crate moves:
 
 ## 8. Migration recipe
 
-Each step leaves `cargo check --workspace` passing. Source files stay at their current disk paths; absorbing crates `#[path]`-mount them (so `build.rs` repo-root computation and codegen scanners keep working until step 10).
+Each step leaves `cargo check --workspace` passing. Source files stay at their current disk paths; absorbing crates `#[path]`-mount them (so `build.rs` repo-root computation and codegen scanners keep working until step 10). The only exceptions are the two enum moves in Step 1.5 and the file renames in Step 7.8/7.9, which are noted explicitly.
 
 ### Step 1: Prerequisites (no crate graph change)
 
-1. Move `src/io/write.rs` → `src/bun_core/io_write.rs`; `bun_core/lib.rs` adds `#[path = "io_write.rs"] pub mod io;` (re-exporting `Write`, `FmtAdapter`, `FixedBufferStream`, `BufWriter`, `DiscardingWriter`, `AsFmt`, `Result`). `src/io/lib.rs` replaces its definitions with `pub use bun_core::io::*;`.
+1. `src/bun_core/lib.rs` adds `#[path = "../io/write.rs"] pub mod io;` (mounting `Write`, `FmtAdapter`, `FixedBufferStream`, `BufWriter`, `DiscardingWriter`, `AsFmt`, `Result` from their existing location). `src/io/lib.rs` replaces its `mod write;` with `pub use bun_core::io::*;`. `src/io/write.rs` stays on disk; only its crate-of-record changes.
 2. Tree-wide `sed`: `bun_io::{Write,FmtAdapter,FixedBufferStream,BufWriter,Result,AsFmt,DiscardingWriter}` → `bun_core::io::…` (css, sourcemap, crash_handler, zlib, brotli, js_parser, js_printer).
 3. Delete dead Cargo edges: `analytics→sys`, `http→dispatch`, `dotenv→dispatch`, `js_parser→dispatch`, `options_types→{libarchive,zlib}`, `css_jsc→js_parser`.
 4. `src/jsc/uuid.rs:23`: replace `bun_boringssl::rand_bytes` with `bun_sys::getrandom` (or `libc::getentropy`).

@@ -1202,7 +1202,7 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         // completion) enqueued this after the event loop's last tick. The
         // dispatch arm above would have `delete`d it; mirror that here so the
         // re-queue path doesn't keep it alive past worker VM dealloc. Runs
-        // before JSC teardown, so ~Ref<TicketData> is safe.
+        // before JSC teardown, so ~Ref<Ticket> is safe.
         task_tag::JSCDeferredWorkTask => {
             unsafe extern "C" {
                 fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);

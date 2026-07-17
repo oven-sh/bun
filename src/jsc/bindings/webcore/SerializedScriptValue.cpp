@@ -6403,11 +6403,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         if (auto arrayBuffer = toPossiblySharedArrayBuffer(vm, transferable.get())) {
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
                 return Exception { DataCloneError };
-            if (!arrayBuffer->isDetachable()) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
-                RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
-            }
+            // No isDetachable() gate: Bun's native borrows call ArrayBuffer::pin(),
+            // which clears isDetachable() without setting the lock flag. The old
+            // isLocked() gate let a pinned buffer through so transferTo() took its
+            // copyTo() fallback (see bindings.cpp JSC__JSValue__pinArrayBuffer);
+            // isDetachable() would reject it. Let transferTo() handle both.
             arrayBuffers.append(WTF::move(arrayBuffer));
             continue;
         }

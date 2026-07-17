@@ -25,8 +25,10 @@ if (WASM_ENV_STR?.length) {
 }
 
 const wasi = new WASI({
+  version: "preview1",
   args: process.argv.slice(1),
   env,
+  returnOnExit: false,
   preopens: {
     ".": WASM_CWD || process.cwd(),
     "/": WASM_ROOT_DIR || "/",

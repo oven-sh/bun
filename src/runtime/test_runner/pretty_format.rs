@@ -2933,23 +2933,23 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let number = number_value.to_int32();
-            let digits = digits_value.to_int32();
+            let number = number_value.as_number();
+            let digits = digits_value.as_number();
 
             let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.amf_add_for_new_line(b"NumberNotCloseTo".len());
-                writer.write_all(b"NumberNotCloseTo");
+                this.amf_add_for_new_line(b"NumberNotCloseTo ".len());
+                writer.write_all(b"NumberNotCloseTo ");
             } else {
                 this.amf_add_for_new_line(b"NumberCloseTo ".len());
                 writer.write_all(b"NumberCloseTo ");
             }
             writer.print(format_args!(
                 "{} ({} digit{})",
-                number,
-                digits,
-                if digits == 1 { "" } else { "s" },
+                bun_fmt::FormatDouble { number },
+                bun_fmt::FormatDouble { number: digits },
+                if digits == 1.0 { "" } else { "s" },
             ));
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
             let Some(object_value) =

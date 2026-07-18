@@ -240,9 +240,23 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
-                });
+                use bun_core::WTFStringImplExt as _;
+
+                // `--` terminates option parsing here too: Node truncates a
+                // worker's execArgv at the first `--` instead of reporting it.
+                let end = exec_argv
+                    .iter()
+                    .position(|&wtf| {
+                        // SAFETY: each entry is a live `WTFStringImpl*` owned by
+                        // the worker's options for the worker's lifetime.
+                        !wtf.is_null() && unsafe { &*wtf }.to_owned_slice_z().as_bytes() == b"--"
+                    })
+                    .unwrap_or(exec_argv.len());
+                return JSValue::create_array_from_iter(
+                    global_object,
+                    exec_argv[..end].iter(),
+                    |&wtf| BunString::init(wtf).to_js(global_object),
+                );
             }
         }
 
@@ -307,6 +321,16 @@ mod _impl {
         for arg in iter {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
+
+            // `--` terminates option parsing: Node drops it and treats the
+            // next token as the script, so it must not land in execArgv.
+            // Unless it is the value of a pending value-taking option -- Node
+            // rejects that command line outright ("--conditions requires an
+            // argument"), but Bun's CLI accepts it, and dropping the value
+            // here would stop execArgv from round-tripping through fork().
+            if arg == b"--" && !prev.is_some_and(|p| MAP.contains(p)) {
+                break;
+            }
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(BunString::clone_utf8(arg));

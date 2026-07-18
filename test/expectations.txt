@@ -27,27 +27,28 @@
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
 # Verbatim node v26.3.0 tests that register an object with onGC() (a
-# FinalizationRegistry), call globalThis.gc(), then assert the cleanup
-# callback has fired. JSC is a conservative collector: a stale word on the
-# native stack that matches the object's address keeps it alive across gc().
-# On linux-x64-musl the release build's stack layout lands one such word in
-# an outer event-loop frame that the test's gc+setImmediate loop never
-# overwrites, so the assertion can never become true. The listeners ARE
-# removed and the requests ARE collectable (the same tests pass on glibc
-# and darwin, and test/js/node/http/node-http-client-request-gc.test.ts
-# from #34500 covers the deterministic case on every lane). These files are
-# verbatim upstream ports we do not edit; quarantined on the failing
-# linux-x64-musl matrix only.
+# FinalizationRegistry), call globalThis.gc(), then assert every registered
+# object's cleanup callback has fired. V8 is precise and delivers the
+# callback within one tick; JSC gives no such guarantee, and on the
+# linux-x64-musl release build one object out of N intermittently survives
+# the test's gc+setImmediate loop (http tests wedge at done/collected/total
+# 8/7/8; net/tls fail the single-tick assertion). The same tests pass on
+# glibc/darwin/windows and the deterministic retention check in
+# test/js/node/http/node-http-client-request-gc.test.ts (#34500) passes on
+# every lane, so ClientRequest IS collectable; the musl-only residual has
+# not been root-caused. The files are verbatim upstream ports we do not
+# edit (test/js/node/test/parallel/CLAUDE.md). Quarantined on the failing
+# linux-x64-musl matrix only so they keep running everywhere else.
 #
 # tls/net: single gc()+setImmediate, fails fast (builds 63145, 75280):
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC conservative stack scan pins the connect listener closure on musl x64
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # JSC conservative stack scan pins the connect listener closure on musl x64
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # onGC callback not delivered within one gc()+setImmediate on musl x64 release
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # onGC callback not delivered within one gc()+setImmediate on musl x64 release
 # http: loops gc()+setImmediate until countGC === count; one ClientRequest
-# stays pinned so the loop never terminates (builds 74665, 75248, 75256):
-[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client.js [ TIMEOUT ] # JSC conservative stack scan pins one ClientRequest on musl x64
-[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client-onerror.js [ TIMEOUT ] # JSC conservative stack scan pins one ClientRequest on musl x64
-[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client-timeout.js [ TIMEOUT ] # JSC conservative stack scan pins one ClientRequest on musl x64
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ TIMEOUT ] # JSC conservative stack scan pins one ClientRequest on musl x64
+# of N is not collected so the loop never terminates (builds 74665, 75248, 75256):
+[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
+[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client-onerror.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
+[ LINUX-X64-MUSL ] test/js/node/test/sequential/test-gc-http-client-timeout.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ TIMEOUT ] # one of N ClientRequests not collected by gc()+setImmediate loop on musl x64 release
 
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public

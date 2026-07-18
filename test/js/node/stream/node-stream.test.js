@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { Duplex, finished, isDisturbed, isErrored, isReadable, isWritable, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1599,5 +1599,90 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
       expect(caught.message).toBe(`The "${name}" argument must be of type function. Received type number (123)`);
       r.destroy();
     }
+  });
+});
+
+// Node documents WHATWG web streams as valid operands for these helpers and brands its own
+// web stream classes with Symbol.for("nodejs.stream.*") getters. Bun's streams are native and
+// don't carry those symbols, so the helpers read the internal [[state]]/[[disturbed]] directly.
+describe("isReadable/isWritable/isErrored/isDisturbed on WHATWG web streams", () => {
+  const probe = stream => ({
+    isReadable: isReadable(stream),
+    isWritable: isWritable(stream),
+    isErrored: isErrored(stream),
+    isDisturbed: isDisturbed(stream),
+  });
+
+  it("ReadableStream: readable", () => {
+    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    expect(probe(rs)).toEqual({ isReadable: true, isWritable: null, isErrored: false, isDisturbed: false });
+  });
+
+  it("ReadableStream: closed", () => {
+    const rs = new ReadableStream({ start(c) { c.close(); } });
+    expect(probe(rs)).toEqual({ isReadable: false, isWritable: null, isErrored: false, isDisturbed: false });
+  });
+
+  it("ReadableStream: errored + disturbed after read()", async () => {
+    const rs = new ReadableStream({ start(c) { c.error(new Error("boom")); } });
+    await rs.getReader().read().catch(() => {});
+    expect(probe(rs)).toEqual({ isReadable: false, isWritable: null, isErrored: true, isDisturbed: true });
+  });
+
+  it("ReadableStream: disturbed after cancel()", async () => {
+    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    await rs.cancel();
+    expect(probe(rs)).toEqual({ isReadable: false, isWritable: null, isErrored: false, isDisturbed: true });
+  });
+
+  it("ReadableStream: disturbed after successful read(), still readable", async () => {
+    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    const reader = rs.getReader();
+    await reader.read();
+    reader.releaseLock();
+    expect(probe(rs)).toEqual({ isReadable: true, isWritable: null, isErrored: false, isDisturbed: true });
+  });
+
+  it("WritableStream: writable", () => {
+    const ws = new WritableStream({ write() {} });
+    expect(probe(ws)).toEqual({ isReadable: null, isWritable: true, isErrored: false, isDisturbed: false });
+  });
+
+  it("WritableStream: closed", async () => {
+    const ws = new WritableStream({ write() {} });
+    const writer = ws.getWriter();
+    await writer.close();
+    writer.releaseLock();
+    expect(probe(ws)).toEqual({ isReadable: null, isWritable: false, isErrored: false, isDisturbed: false });
+  });
+
+  it("WritableStream: errored", async () => {
+    const ws = new WritableStream({ start(c) { c.error(new Error("boom")); } });
+    await ws.getWriter().closed.catch(() => {});
+    expect(probe(ws)).toEqual({ isReadable: null, isWritable: false, isErrored: true, isDisturbed: false });
+  });
+
+  it("TransformStream falls through (no web-stream brand)", () => {
+    const ts = new TransformStream();
+    expect(probe(ts)).toEqual({ isReadable: null, isWritable: null, isErrored: false, isDisturbed: false });
+  });
+
+  it("Symbol.for('nodejs.stream.*') overrides still take precedence", () => {
+    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    Object.defineProperty(rs, Symbol.for("nodejs.stream.readable"), { value: false });
+    expect(isReadable(rs)).toBe(false);
+  });
+
+  it("node Readable/Writable operands are unaffected", () => {
+    const r = new Readable({ read() {} });
+    expect(isReadable(r)).toBe(true);
+    expect(isErrored(r)).toBe(false);
+    expect(isDisturbed(r)).toBe(false);
+    r.destroy();
+
+    const w = new Writable({ write(chunk, enc, cb) { cb(); } });
+    expect(isWritable(w)).toBe(true);
+    expect(isErrored(w)).toBe(false);
+    w.destroy();
   });
 });

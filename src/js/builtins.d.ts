@@ -120,6 +120,14 @@ declare function $webStreamClosedPromise(stream: ReadableStream | WritableStream
  * no-op once the stream is no longer readable/writable. Throws for any other value.
  */
 declare function $webStreamControllerError(stream: ReadableStream | WritableStream, error: unknown): void;
+
+/**
+ * Read a WHATWG ReadableStream/WritableStream's [[state]] internal slot as an integer.
+ * ReadableStream: 0 = readable, 1 = closed, 2 = errored.
+ * WritableStream: 0 = writable, 1 = erroring, 2 = errored, 3 = closed.
+ * Throws for any other value.
+ */
+declare function $webStreamState(stream: ReadableStream | WritableStream): number;
 declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,

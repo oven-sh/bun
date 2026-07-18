@@ -497,6 +497,46 @@ describe("Bun.semver.satisfies()", () => {
     }
   });
 
+  test("hyphen range left endpoint with wildcard zeroes trailing components", () => {
+    // node-semver's hyphenReplace: once a component is a wildcard, every
+    // component after it is zeroed. "1.x.256 - 1" desugars to ">=1.0.0 <2.0.0-0".
+    testSatisfies("1.x.256 - 1", "1.0.0", true);
+    testSatisfies("1.x.256 - 1", "1.0.20", true);
+    testSatisfies("1.x.256 - 1", "1.0.255", true);
+    testSatisfies("1.x.256 - 1", "1.0.256", true);
+    testSatisfies("1.x.256 - 1", "1.5.0", true);
+    testSatisfies("1.x.256 - 1", "0.9.9", false);
+    testSatisfies("1.x.256 - 1", "2.0.0", false);
+
+    testSatisfies("1.*.256 - 1", "1.0.0", true);
+    testSatisfies("1.*.256 - 1", "1.0.255", true);
+    testSatisfies("1.X.256 - 1", "1.0.0", true);
+
+    // "x.2.3 - 6" desugars to "<7.0.0-0" (no lower bound).
+    testSatisfies("x.2.3 - 6", "0.0.1", true);
+    testSatisfies("x.2.3 - 6", "0.1.0", true);
+    testSatisfies("x.2.3 - 6", "0.2.2", true);
+    testSatisfies("x.2.3 - 6", "0.2.3", true);
+    testSatisfies("x.2.3 - 6", "5.0.0", true);
+    testSatisfies("x.2.3 - 6", "7.0.0", false);
+
+    // "1.x.256-beta - 3" desugars to ">=1.0.0 <4.0.0-0" (prerelease dropped).
+    testSatisfies("1.x.256-beta - 3", "1.0.0", true);
+    testSatisfies("1.x.256-beta - 3", "1.0.0-beta", false);
+    testSatisfies("1.2.x-beta - 3", "1.2.0-beta", false);
+
+    // Right endpoint with trailing numeric after wildcard (already worked).
+    testSatisfies("1.0.0 - 2.x.5", "2.9.9", true);
+    testSatisfies("1.0.0 - 2.x.5", "3.0.0", false);
+    testSatisfies("1.0.0 - x.5.5", "999.0.0", true);
+
+    // Right endpoint drops any prerelease after a wildcard.
+    testSatisfies("1.0.0 - 2.x.5-beta", "2.9.9", true);
+    testSatisfies("1.0.0 - 2.x.5-beta", "3.0.0-alpha", false);
+    testSatisfies("1.0.0 - 2.0.x-beta", "2.0.9", true);
+    testSatisfies("1.0.0 - 2.0.x-beta", "2.1.0-alpha", false);
+  });
+
   test("range includes", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/range-include.js#L3
     var tests = [

@@ -45,7 +45,7 @@ test("observer", async () => {
     todoBodyRan = true;
   });
   console.log("SKIP_BODY_RAN=" + String(skipBodyRan));
-  console.log("TODO_BODY_RAN=" + String(todoBodyRan));
+  console.log("MARKED_BODY_RAN=" + String(todoBodyRan));
 });
 
 process.on("exit", () => {

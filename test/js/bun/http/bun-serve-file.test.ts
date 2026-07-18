@@ -1,9 +1,22 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isLinux,
+  isWindows,
+  rmScope,
+  tempDir,
+  tempDirWithFiles,
+  tls as tlsCert,
+} from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { once } from "node:events";
+import { truncateSync, unlinkSync } from "node:fs";
+import * as net from "node:net";
 import { join } from "node:path";
+import * as tls from "node:tls";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
 const files = {
@@ -1138,3 +1151,115 @@ console.log("OK");
   },
   60_000,
 );
+
+// If the backing file shrinks mid-send (log rotation, truncate+rewrite
+// deploy), the server must close the connection rather than treating early
+// EOF as normal completion. Leaving the keep-alive socket open desyncs
+// HTTP/1.1 framing (RFC 9112 §6.2): the next response lands inside the first
+// response's declared Content-Length window.
+describe("Bun.serve file body truncated mid-send", () => {
+  const FILE_SIZE = 32 * 1024 * 1024; // well above localhost socket-buffer capacity
+  const MARKER = "SECOND-RESPONSE-MARKER";
+
+  async function probe(route: boolean, ssl: boolean) {
+    using dir = tempDir("serve-file-truncate", { "big.bin": Buffer.alloc(FILE_SIZE, 0x41) });
+    const file = join(String(dir), "big.bin");
+
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      ...(ssl ? { tls: tlsCert } : {}),
+      ...(route
+        ? {
+            routes: { "/big": Bun.file(file), "/marker": new Response(MARKER) },
+            fetch: () => new Response("x", { status: 404 }),
+          }
+        : {
+            fetch: req => {
+              const p = new URL(req.url).pathname;
+              if (p === "/big") return new Response(Bun.file(file));
+              if (p === "/marker") return new Response(MARKER);
+              return new Response("x", { status: 404 });
+            },
+          }),
+    });
+
+    const sock = ssl
+      ? tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(server.port, "127.0.0.1");
+    await once(sock, ssl ? "secureConnect" : "connect");
+    sock.write("GET /big HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n");
+
+    let head = "";
+    let contentLength = -1;
+    let bodyBytes = 0;
+    let closed = false;
+    let desynced = false;
+    const gotHeaders = Promise.withResolvers<void>();
+    const canTruncate = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+
+    sock.on("data", d => {
+      if (contentLength < 0) {
+        head += d.toString("latin1");
+        const i = head.indexOf("\r\n\r\n");
+        if (i < 0) return;
+        contentLength = Number(head.match(/content-length: ?(\d+)/i)?.[1] ?? -1);
+        bodyBytes = Buffer.byteLength(head.slice(i + 4), "latin1");
+        head = "";
+        gotHeaders.resolve();
+      } else {
+        bodyBytes += d.length;
+      }
+      if (bodyBytes > 64 * 1024) canTruncate.resolve();
+      if (d.includes(MARKER)) {
+        desynced = true;
+        finished.resolve();
+      }
+    });
+    sock.on("error", () => {});
+    sock.on("close", () => {
+      closed = true;
+      gotHeaders.resolve();
+      canTruncate.resolve();
+      finished.resolve();
+    });
+
+    await gotHeaders.promise;
+    await canTruncate.promise;
+    truncateSync(file, 1024);
+
+    // Drain until the server considers the request finished: the file stream
+    // has observed early EOF and either force-closed the socket (correct) or
+    // marked the response done (desync).
+    while (server.pendingRequests > 0 && !closed) await Bun.sleep(1);
+
+    if (!closed) {
+      // Server believes it is idle on a keep-alive socket; probe for desync.
+      sock.write("GET /marker HTTP/1.1\r\nHost: x\r\n\r\n");
+      await finished.promise;
+    }
+    sock.destroy();
+    return { contentLength, bodyBytes, closed, desynced };
+  }
+
+  for (const v of [
+    // Plain TCP on Linux takes the sendfile backend; on macOS/Windows it
+    // takes the buffered-reader backend (can_sendfile returns false there).
+    { name: "static route", route: true, ssl: false, skip: !isLinux },
+    { name: "fetch handler", route: false, ssl: false, skip: !isLinux },
+    // SSL always takes the buffered-reader backend (no sendfile over TLS).
+    { name: "static route (ssl)", route: true, ssl: true, skip: false },
+    { name: "fetch handler (ssl)", route: false, ssl: true, skip: false },
+  ]) {
+    test.concurrent.skipIf(v.skip)(v.name, async () => {
+      const r = await probe(v.route, v.ssl);
+      expect(r.contentLength).toBe(FILE_SIZE);
+      // The second request's response must never appear inside the first body
+      // window. The server closes so the client observes the short body.
+      expect({ desynced: r.desynced, closed: r.closed }).toEqual({ desynced: false, closed: true });
+      expect(r.bodyBytes).toBeLessThan(r.contentLength);
+    });
+  }
+});

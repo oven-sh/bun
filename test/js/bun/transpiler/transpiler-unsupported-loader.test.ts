@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 // `Loader::from_string` accepts these names (they are real bundler loaders) but
-// `Bun.Transpiler` cannot produce source text for them. Passing one used to
-// reach `parse_unsupported_loader` and abort the process with a panic instead
-// of throwing a catchable error.
+// `Bun.Transpiler` cannot produce source text for them.
 const unsupported = ["file", "napi", "node", "base64", "dataurl", "sh", "sqlite", "sqlite_embedded", "html"] as const;
 
 describe("Bun.Transpiler rejects non-transpilable loaders", () => {

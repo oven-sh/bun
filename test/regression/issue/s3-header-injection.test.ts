@@ -1,8 +1,26 @@
 import { S3Client } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 // Test that CRLF characters in S3 options are rejected to prevent header injection.
 // See: HTTP Header Injection via S3 Content-Disposition Value
+
+// S3Client resolves its proxy from the env without consulting NO_PROXY, so a CI
+// HTTP_PROXY would swallow requests to our localhost mock endpoints. Clear them
+// for the duration of this file and restore afterwards.
+const proxyEnvKeys = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
+const savedProxyEnv: Record<string, string | undefined> = {};
+beforeAll(() => {
+  for (const key of proxyEnvKeys) {
+    savedProxyEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+});
+afterAll(() => {
+  for (const key of proxyEnvKeys) {
+    if (savedProxyEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedProxyEnv[key];
+  }
+});
 
 describe("S3 header injection prevention", () => {
   test("contentDisposition with CRLF should throw", () => {

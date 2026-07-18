@@ -445,12 +445,12 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
     uint64_t minRequested = arguments.min;
 
     if (!view->byteLength())
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() must have a non-zero byteLength"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() must have a non-zero byteLength"_s))));
     RefPtr<ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     if (!viewedBuffer || !viewedBuffer->byteLength())
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() is backed by a zero-length ArrayBuffer"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() is backed by a zero-length ArrayBuffer"_s))));
     if (viewedBuffer->isDetached() || view->isDetached())
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The view passed to read() is backed by a detached ArrayBuffer"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The view passed to read() is backed by a detached ArrayBuffer"_s))));
     if (!minRequested)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'min' option must be greater than 0"_s))));
     TypedArrayType viewType = typedArrayType(view->type());

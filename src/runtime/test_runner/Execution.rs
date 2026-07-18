@@ -93,6 +93,13 @@ pub struct Execution {
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
     pub on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
+    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
+    /// set/restored alongside it. `get_current_state_data()` can't name a
+    /// sequence inside a concurrent group; this can, for code re-entered from
+    /// the microtask drain inside `run_test_callback` (node:test's runtime
+    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
+    /// stamped).
+    pub on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
 pub struct ConcurrentGroup {
@@ -290,6 +297,7 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
+            on_stack_entry_data: core::cell::Cell::new(None),
         }
     }
 
@@ -1010,22 +1018,26 @@ fn step_sequence_one(
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log(format_args!("runSequence queued callback"));
 
+        let entry_data = EntryData {
+            sequence_index,
+            entry: next_item_ptr.as_ptr() as *const (),
+            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+        };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
-            entry_data: Some(EntryData {
-                sequence_index,
-                entry: next_item_ptr.as_ptr() as *const (),
-                remaining_repeat_count: sequence.remaining_repeat_count as i64,
-            }),
+            entry_data: Some(entry_data),
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
+        let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
         let on_stack_cell = &raw const this.on_stack_entry;
-        // SAFETY: `on_stack_cell` points into `buntest.execution`, which is
+        let on_stack_data_cell = &raw const this.on_stack_entry_data;
+        // SAFETY: both cells point into `buntest.execution`, which is
         // never moved during execution (arena-owned BunTest behind an Rc).
         let _restore = scopeguard::guard((), move |()| unsafe {
             (*on_stack_cell).set(prev_on_stack);
+            (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
         if BunTest::run_test_callback(

@@ -1341,11 +1341,15 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     {
+        let owner = bun_io::max_buf::Owner {
+            ptr: subprocess_nn.cast::<()>(),
+            on_overflow: SubprocessT::on_max_buffer_overflow,
+        };
         let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer);
+        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stderr_maxbuf.set(mb);
         let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer);
+        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stdout_maxbuf.set(mb);
     }
 

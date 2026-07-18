@@ -1,4 +1,4 @@
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 const { isWindows } = require("../../node/test/common");
 
@@ -93,6 +93,52 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
     const stdout = await proc.stdout.bytes();
     expect(stdout.length).toBeGreaterThan(maxBuffer);
     expect(stdout.length).toBeLessThanOrEqual(bound);
+  });
+});
+
+// Touching `proc.stdout`/`proc.stderr` hands the buffered reader to a
+// `FileReader`; `maxBuffer` must still kill the child via the `MaxBuf` → `Subprocess`
+// owner link (it does not go through the reader's parent vtable).
+describe.each(["stdout", "stderr"] as const)("maxBuffer kills the process after .%s was accessed", fd => {
+  // The child writes well past `maxBuffer` and then blocks forever. Without the
+  // kill, `proc.exited` never resolves and the test times out.
+  const firehose = `process.${fd}.write(Buffer.alloc(300000, 65).toString()); setInterval(() => {}, 1e9);`;
+  const killSignal = isWindows ? "SIGKILL" : "SIGHUP";
+
+  test.concurrent("Bun.spawn (getter before exit)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", firehose],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      maxBuffer: 1000,
+      killSignal,
+    });
+    const stream = proc[fd];
+    expect(stream).toBeInstanceOf(ReadableStream);
+    await proc.exited;
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      exitCode: null,
+      signalCode: killSignal,
+    });
+  });
+
+  test.concurrent("Bun.spawn (stream consumed before exit)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", firehose],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      maxBuffer: 1000,
+      killSignal,
+    });
+    const [bytes] = await Promise.all([proc[fd].bytes(), proc.exited]);
+    expect(bytes.length).toBeGreaterThan(1000);
+    expect(bytes.length).toBeLessThanOrEqual(1000 + 64 * 1024);
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      exitCode: null,
+      signalCode: killSignal,
+    });
   });
 });
 

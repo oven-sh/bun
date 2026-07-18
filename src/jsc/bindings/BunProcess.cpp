@@ -1354,7 +1354,22 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        wrapped.emit(eventType, args);
+        // The caller emits this event with the promise's async context installed.
+        // A listener that throws is reported as an uncaught exception; let the
+        // throw out of emit and clear the slot before reporting it, instead of
+        // letting EventEmitter report it inside the installed window. Node's
+        // uncaughtException handler observes undefined here too (even with a
+        // persistent enterWith), so "clear" — not "restore the drain's ambient" —
+        // is the semantic the dual-runtime test pins.
+        WTF::NakedPtr<JSC::Exception> listenerException;
+        wrapped.emit(eventType, args, listenerException);
+        if (listenerException) [[unlikely]] {
+            auto* asyncContextData = globalObject->m_asyncContextData.get();
+            JSC::JSValue saved = asyncContextData->getInternalField(0);
+            asyncContextData->putInternalField(JSC::getVM(globalObject), 0, JSC::jsUndefined());
+            Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(JSC::JSValue(listenerException.get())));
+            asyncContextData->putInternalField(JSC::getVM(globalObject), 0, saved);
+        }
         return true;
     }
 

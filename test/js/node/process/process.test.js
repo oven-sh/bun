@@ -1083,15 +1083,24 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
-  it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
-    // Pins the observable behaviour: order is preserved, late .catch()
-    // suppresses delivery, and a rejection raised from inside the handler is
-    // also delivered.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  // With an AsyncLocalStorage active, every rejection is queued wrapped in an
+  // AsyncContextFrame, which both places that match against the pending list
+  // have to unwrap.
+  it.each([false, true])(
+    "delivers many unhandledRejections in order, including ones queued from the handler (AsyncLocalStorage: %p)",
+    async withAsyncLocalStorage => {
+      // Pins the observable behaviour: order is preserved, late .catch()
+      // suppresses delivery, and a rejection raised from inside the handler is
+      // also delivered.
+      const prelude = withAsyncLocalStorage
+        ? `const { AsyncLocalStorage } = require("async_hooks"); new AsyncLocalStorage().enterWith({ id: 1 });`
+        : "";
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          prelude +
+            `
           const N = 1000;
           const seen = [];
           let nestedSeen = false;
@@ -1130,14 +1139,15 @@ describe.concurrent(() => {
             throw new Error("spurious rejectionHandled fired " + spuriousRejectionHandled + "x");
           console.log("ok");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
-  });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    },
+  );
 
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {

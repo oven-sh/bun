@@ -997,7 +997,7 @@ pub use abort_signal::{AbortSignal, AbortSignalRef};
 // re-exported here so `crate::VM` and `crate::vm::VM` name the same nominal
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
-pub use self::js_global_object::{GlobalRef, JSGlobalObject};
+pub use self::js_global_object::{ClearedAsyncContextScope, GlobalRef, JSGlobalObject};
 pub use self::vm::{HeapType, Lock as ApiLock, VM};
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.

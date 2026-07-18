@@ -96,6 +96,15 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+// Installs `context` as the current async context, returning the previous one.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__exchangeAsyncContext(JSGlobalObject* globalObject, JSC::EncodedJSValue context)
+{
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue previous = asyncContextData->getInternalField(0);
+    asyncContextData->putInternalField(JSC::getVM(globalObject), 0, JSValue::decode(context));
+    return JSValue::encode(previous);
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \

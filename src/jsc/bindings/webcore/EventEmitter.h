@@ -56,6 +56,7 @@ public:
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&, WTF::NakedPtr<JSC::Exception>& returnedException);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
@@ -107,7 +108,7 @@ private:
     {
     }
 
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, WTF::NakedPtr<JSC::Exception>* returnedException = nullptr);
     void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;

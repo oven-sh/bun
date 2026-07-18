@@ -14,7 +14,14 @@ using namespace JSC;
 
 JSC_DEFINE_HOST_FUNCTION(jsNotifyUndiciSubscribed, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    defaultGlobalObject(globalObject)->hasUndiciDiagnosticsSubscriber = true;
+    auto* global = defaultGlobalObject(globalObject);
+    global->hasUndiciDiagnosticsSubscriber = true;
+    // Eagerly load the helper module while the just-subscribed Channel is
+    // still on markActive()'s stack, so its module-scope dc.channel()
+    // constants pin it. diagnostics_channel's WeakReference.incRef() does not
+    // upgrade to a strong hold (see node_util.h TODO), so without this the
+    // Channel could be collected before the first fetch() resolves it.
+    global->m_undiciDiagnosticsModule.getInitializedOnMainThread(global);
     return JSValue::encode(jsUndefined());
 }
 

@@ -412,11 +412,14 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    // NUL-terminate a
-                    // non-empty result; leave an empty expansion empty so the
-                    // ambiguous-redirect check in `Builtin::init_redirections`
-                    // still fires.
-                    let mut buf = out.buf;
+                    // Zero words or >1 word (glob/brace split) leave the buffer
+                    // empty so the ambiguous-redirect check in
+                    // `Builtin::init_redirections` / `init_subproc_redirections` fires.
+                    let mut buf = if out.bounds.is_empty() {
+                        out.buf
+                    } else {
+                        Vec::new()
+                    };
                     if !buf.is_empty() && buf.last() != Some(&0) {
                         buf.push(0);
                     }

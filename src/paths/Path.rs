@@ -220,7 +220,7 @@ pub trait PathUnit: crate::PathChar {
     fn buffer_as_slice(buf: &Self::Buffer) -> &[Self];
 
     /// `bun.windows.long_path_prefix{,_u8}` lifted into the unit trait so
-    /// `crate::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
+    /// `crate::paths::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
     /// switch.
     const LONG_PATH_PREFIX: &'static [Self];
 
@@ -270,7 +270,7 @@ impl PathUnit for u8 {
     type Buffer = PathBuffer;
     const MAX_PATH: usize = MAX_PATH_BYTES;
     type ZSlice = ZStr;
-    const LONG_PATH_PREFIX: &'static [u8] = &crate::windows::LONG_PATH_PREFIX_U8;
+    const LONG_PATH_PREFIX: &'static [u8] = &crate::paths::windows::LONG_PATH_PREFIX_U8;
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
@@ -319,7 +319,7 @@ impl PathUnit for u16 {
     type Buffer = WPathBuffer;
     const MAX_PATH: usize = PATH_MAX_WIDE;
     type ZSlice = WStr;
-    const LONG_PATH_PREFIX: &'static [u16] = &crate::windows::LONG_PATH_PREFIX;
+    const LONG_PATH_PREFIX: &'static [u16] = &crate::paths::windows::LONG_PATH_PREFIX;
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
@@ -667,7 +667,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         #[cfg(windows)]
         {
-            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this._buf_append_input(crate::paths::windows::long_path_prefix_for::<U>(), false);
         }
 
         this._buf_append_input(trimmed, false);
@@ -785,7 +785,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
         #[cfg(windows)]
         {
-            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this._buf_append_input(crate::paths::windows::long_path_prefix_for::<U>(), false);
         }
 
         this._buf_append_input(trimmed, false);

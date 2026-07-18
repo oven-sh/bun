@@ -97,6 +97,10 @@ pub use http_types::*;
 pub use analytics::*;
 pub use picohttp::*;
 pub use valkey::*;
+// On Windows `paths::dirname` and `util::dirname` are distinct fns; pick the
+// UNC-aware `paths` one explicitly so `bun_core::dirname` is unambiguous.
+#[cfg(windows)]
+pub use paths::dirname;
 
 // `bun_output` facade surface (not mounted; impl is native in `output.rs`).
 pub use output::{

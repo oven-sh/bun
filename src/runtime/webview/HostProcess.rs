@@ -23,6 +23,7 @@ use bun_loop::{self, Process};
 #[cfg(target_os = "macos")]
 use {
     crate::Error,
+    crate::jsc_ext::JSGlobalObjectExt as _,
     crate::vm::virtual_machine::VirtualMachine,
     bun_loop::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,

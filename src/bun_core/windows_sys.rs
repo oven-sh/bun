@@ -58,9 +58,9 @@ pub use bun_windows_sys::kernel32;
 // `c::` alias used by `output.rs`.
 pub use kernel32 as c;
 
-/// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
-/// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.
+/// `bun.windows.libuv` — safe wrapper over the `libuv_sys` mount's declaration.
 pub mod libuv {
+    #[allow(clashing_extern_declarations)]
     unsafe extern "C" {
         /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
         pub(crate) safe fn uv_disable_stdio_inheritance();

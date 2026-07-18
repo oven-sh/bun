@@ -2651,8 +2651,7 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
 
     if let Some(path) = env_var::BUN_DEBUG.get() {
         if !path.is_empty() && path != b"0" && path != b"false" {
-            // MOVE_DOWN: bun_core::paths::dirname → bun_core (bundled with SEP/PathBuffer move-in).
-            if let Some(dir) = crate::dirname(path) {
+            if let Some(dir) = crate::paths::dirname(path) {
                 let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 

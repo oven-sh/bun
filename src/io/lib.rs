@@ -2115,7 +2115,7 @@ pub mod waker {
         }
 
         pub fn init() -> crate::io::error::Result<Self> {
-            let kq = crate::safe_c::kqueue();
+            let kq = crate::io::safe_c::kqueue();
             if kq < 0 {
                 return Err(
                     bun_core::errno::SystemErrno::init(bun_core::errno::posix::errno() as i64)

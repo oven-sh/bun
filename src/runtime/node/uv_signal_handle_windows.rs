@@ -8,6 +8,8 @@ use core::ffi::c_int;
 #[cfg(windows)]
 use crate::JSGlobalObject;
 #[cfg(windows)]
+use crate::jsc_ext::JSGlobalObjectExt as _;
+#[cfg(windows)]
 use bun_sys::windows::libuv;
 
 #[cfg(windows)]

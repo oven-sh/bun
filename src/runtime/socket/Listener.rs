@@ -24,6 +24,8 @@ use crate::socket::{
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
+use crate::jsc_ext::JSGlobalObjectExt as _;
+#[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]

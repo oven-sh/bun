@@ -5016,6 +5016,33 @@ unsafe fn _resolve<'a>(
     Ok(())
 }
 
+/// C++ `ZigGlobalObject::moduleLoaderResolve` → here.
+///
+/// # Safety
+/// C++ passes valid non-null pointers for every argument.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
+    res: *mut ErrorableString,
+    global: *const JSGlobalObject,
+    specifier: *mut bun_core::String,
+    source: *mut bun_core::String,
+    query: *mut bun_core::String,
+) {
+    bun_jsc::mark_binding();
+    // SAFETY: C++ passes valid non-null pointers. `bun_core::String` is `Copy`,
+    // so `*specifier` / `*source` is a bitwise load — no refcount bump (the
+    // caller still owns the ref).
+    let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
+    // SAFETY: C++ passes valid non-null pointers.
+    let (res, query) = unsafe { (&mut *res, &mut *query) };
+    match VirtualMachine::resolve(res, global, specifier, source, Some(query), true) {
+        Ok(()) => {}
+        Err(_) => {
+            debug_assert!(!res.success);
+        }
+    }
+}
+
 /// `LoaderHooks::resolve` body —
 /// `VirtualMachine.resolveMaybeNeedsTrailingSlash`.
 ///

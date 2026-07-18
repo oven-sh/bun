@@ -7,8 +7,8 @@
 //! resolve unchanged.
 
 use crate::PathChar;
+use crate::paths::windows;
 use crate::resolve_path;
-use crate::windows;
 use bun_core::strings;
 use bun_core::{WStr, ZStr};
 

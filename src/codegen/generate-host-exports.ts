@@ -539,7 +539,7 @@ const importCandidates: Array<[string, string]> = [
   ["bun_jsc", "JSObject"],
   ["bun_jsc", "JSPromise"],
   ["bun_jsc", "ZigStackFrame"],
-  ["crate::vm", "VirtualMachine"],
+  ["crate::vm::virtual_machine", "VirtualMachine"],
   ["crate::bake::dev_server::inspector_agent", "InspectorBunFrontendDevServerAgentHandle"],
   ["crate::vm::debugger", "LifecycleHandle"],
   ["crate::vm::debugger", "TestReporterHandle"],

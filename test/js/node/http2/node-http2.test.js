@@ -8,7 +8,8 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
-import { Duplex } from "stream";
+import { PerformanceObserver } from "node:perf_hooks";
+import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
@@ -3502,7 +3503,7 @@ it("fails the whole session when an outbound header block cannot be encoded", as
     const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 100000 });
     const sessionError = new Promise(resolve => client.on("error", resolve));
     const requestError = new Promise(resolve => {
-      const req = client.request({ "test-header": "A".repeat(90000) });
+      const req = client.request({ "test-header": Buffer.alloc(90000, "A").toString() });
       req.on("error", resolve);
       req.end();
     });
@@ -3525,7 +3526,7 @@ it("delivers a session error from the event loop, not inside the call that detec
     const sessionError = new Promise(resolve => server.on("sessionError", resolve));
     server.on("stream", stream => {
       stream.on("error", () => {});
-      stream.additionalHeaders({ "test-header": "A".repeat(90000) });
+      stream.additionalHeaders({ "test-header": Buffer.alloc(90000, "A").toString() });
       observed.destroyedAfterSubmit = stream.destroyed;
       stream.respond();
       stream.end();
@@ -3586,7 +3587,6 @@ it("delivers the reserved push stream and fails the session when its headers can
 });
 
 it("PerformanceObserver receives http2 session and stream entries", async () => {
-  const { PerformanceObserver } = require("node:perf_hooks");
   const entries = [];
   // Two streams (client+server) + two sessions (client+server): resolve once
   // the observer has delivered at least four entries instead of sleeping.
@@ -3642,7 +3642,6 @@ it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
   // node sends one DATA frame with END_STREAM for stream.end(data); bun used to append a
   // separate empty END_STREAM frame after it. Counted through the client's own
   // perf_hooks frame stats (which exclude the GOAWAY, as node's do).
-  const { PerformanceObserver } = require("node:perf_hooks");
   const server = http2.createServer();
   try {
     server.on("stream", stream => {
@@ -3681,7 +3680,6 @@ it("client connects over a user Duplex that already has a 'data' listener", asyn
   // A 'data' listener attached before connect() puts the stream in flowing mode, so the
   // peer's first frames can arrive before the connect callback has run. The preface must
   // survive that: it used to be dropped, silently stalling the session.
-  const { duplexPair } = require("node:stream");
   const [clientSide, serverSide] = duplexPair();
   const server = http2.createServer();
   server.on("stream", stream => {

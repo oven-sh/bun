@@ -3495,7 +3495,11 @@ impl H2FrameParser {
             return false;
         }
         if self.pending_header_compression_error.get() {
-            self.pending_header_compression_error.set(false);
+            // Keep the pending latch set across the dispatch and flush: the
+            // re-entrant detach() -> uncork()/unregister_auto_flush() the JS
+            // teardown drives must early-return at the pending guard instead of
+            // mutating the task map run() is iterating (aliasing UB). The latch
+            // is cleared once we are back here with no re-entry on the stack.
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(ErrorCode::COMPRESSION_ERROR.0 as f64),
@@ -3503,10 +3507,10 @@ impl H2FrameParser {
                 JSValue::UNDEFINED,
             );
             let _ = self.flush();
-            // Terminal: the dispatch's teardown usually corks a GOAWAY, which
-            // flush() -> uncork() -> unregister_auto_flush() releases. If nothing
-            // corked (session already gone), release the registration's flag+ref
-            // here so the task and its retained parser ref do not persist.
+            self.pending_header_compression_error.set(false);
+            // Terminal: release the registration's flag+ref so the retained
+            // parser ref does not persist. Returning false lets run() drop the
+            // map entry it owns.
             if self.auto_flusher.get().registered.get() {
                 self.auto_flusher.get().registered.set(false);
                 self.deref();
@@ -7399,6 +7403,10 @@ impl H2FrameParser {
                 frame[3] = 3; // RST_STREAM
                 frame[5..9].copy_from_slice(&stream_id.to_be_bytes());
                 frame[9..13].copy_from_slice(&error_code.to_be_bytes());
+                // Hand-serialized (bypasses FrameHeader::write), so account for
+                // it the way every other outbound frame site does.
+                this.frames_sent_legacy
+                    .set(this.frames_sent_legacy.get() + 1);
                 this.write(&frame);
                 let _ = this.flush();
             }

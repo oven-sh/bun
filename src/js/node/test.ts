@@ -233,6 +233,15 @@ function validateRunOptions(options: Record<string, unknown>) {
       throw $ERR_INVALID_ARG_VALUE("options.env", env, "is not supported with isolation='none'");
     }
   }
+  // Node validates these via the root Test constructor, not inline here;
+  // the observable error is the same synchronous throw.
+  const { concurrency, timeout, signal } = options as Record<string, any>;
+  if (signal !== undefined) validateAbortSignal(signal, "options.signal");
+  if (timeout != null && timeout !== Infinity) validateNumber(timeout, "options.timeout", 0, kTimeoutMax);
+  if (concurrency != null && typeof concurrency !== "boolean") {
+    if (typeof concurrency === "number") validateUint32(concurrency, "options.concurrency", true);
+    else throw $ERR_INVALID_ARG_TYPE("options.concurrency", ["boolean", "number"], concurrency);
+  }
 
   return {
     files,
@@ -251,9 +260,9 @@ function validateRunOptions(options: Record<string, unknown>) {
     testNamePatterns,
     testSkipPatterns,
     testTagFilterExpressions,
-    concurrency: (options as any).concurrency,
-    timeout: (options as any).timeout,
-    signal: (options as any).signal,
+    concurrency,
+    timeout,
+    signal,
   };
 }
 

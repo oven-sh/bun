@@ -766,10 +766,12 @@ function getMaxListeners(emitterOrTarget) {
 Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
 
 // Copy-pasta from Node.js source code
+let _addAbortListener;
 function addAbortListener(signal, listener) {
   // Shared with internal consumers (streams, mock timers); the internal
   // module also survives an earlier listener's stopImmediatePropagation().
-  return require("internal/abort_listener").addAbortListener(signal, listener);
+  _addAbortListener ??= require("internal/abort_listener").addAbortListener;
+  return _addAbortListener(signal, listener);
 }
 
 let EventEmitterReferencingAsyncResource;

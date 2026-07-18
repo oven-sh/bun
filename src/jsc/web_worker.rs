@@ -1038,11 +1038,12 @@ impl WebWorker {
                 }
                 Some(config)
             } else if own_exec_argv.is_none() {
-                self.parent_cpu_profiler_config
-                    .map(|c| crate::bun_cpu_profiler::CPUProfilerConfig {
+                self.parent_cpu_profiler_config.map(|c| {
+                    crate::bun_cpu_profiler::CPUProfilerConfig {
                         thread_id: self.execution_context_id,
                         ..c
-                    })
+                    }
+                })
             } else {
                 None
             };

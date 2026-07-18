@@ -1,7 +1,7 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import net from "node:net";
 import { bunEnv, bunExe } from "harness";
+import net from "node:net";
 
 describe("path parameters", () => {
   let server: Server;

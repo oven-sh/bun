@@ -1185,9 +1185,7 @@ describe.concurrent("unhandledRejection async context", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe(`created-in-A="B" created-in-C=null\n`);
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `created-in-A="B" created-in-C=null\n`, stderr: "", exitCode: 0 });
   });
 
   // Rejections raised inside a context are stored wrapped in an AsyncContextFrame,
@@ -1219,9 +1217,7 @@ describe.concurrent("unhandledRejection async context", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("unhandled:late:ctx,rejectionHandled\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unhandled:late:ctx,rejectionHandled\n", stderr: "", exitCode: 0 });
   });
 
   // expect(fn).toThrow() drains pending rejections synchronously, so the drain can
@@ -1249,9 +1245,7 @@ describe.concurrent("unhandledRejection async context", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("store: null\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "store: null\n", stderr: "", exitCode: 0 });
   });
 
   // --unhandled-rejections=strict routes the rejection into uncaughtException. Node

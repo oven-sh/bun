@@ -123,8 +123,6 @@ impl Drop for Stream {
 }
 
 impl Stream {
-    /// Callers pass `id`, `session`, `client`, `send_window`; the rest of the
-    /// fields get their defaults.
     pub fn new(
         id: u32,
         async_http_id: Option<u32>,

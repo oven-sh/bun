@@ -803,7 +803,11 @@ impl InitCommand {
                 },
                 &bun_ast::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
-                    indent: Default::default(),
+                    indent: bun_ast::Indentation {
+                        scalar: 2,
+                        count: 0,
+                        character: bun_ast::IndentationCharacter::Space,
+                    },
                     mangled_props: None,
                     ..Default::default()
                 },

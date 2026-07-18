@@ -312,7 +312,7 @@ pub mod random {
         use super::*;
         use crate::node::util::validators;
         use bun_core::String as BunString;
-        use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
+        use bun_jsc::{JSType, StringJsc as _, UUID};
 
         #[bun_jsc::host_fn]
         pub(crate) fn random_int(
@@ -517,25 +517,11 @@ pub mod random {
                 }
             }
 
-            // jsDateNow() is exactly what JS Date.now() returns, so the embedded
-            // timestamp is never behind a Date.now() sample taken by the caller.
-            let now_ms = global.js_date_now().max(0.0) as u64;
-            let mut entropy = [0u8; 10];
-            if disable_entropy_cache {
-                boringssl::rand_bytes(&mut entropy);
-            } else {
-                entropy
-                    .copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
-            }
-            let uuid = UUID7::init(now_ms, entropy);
-
-            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-            uuid.print(
-                (&mut bytes[..36])
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            str.transfer_to_js(global)
+            // Same implementation as Bun.randomUUIDv7()'s default path; only
+            // the option validation above differs.
+            let timestamp = global.js_date_now().max(0.0) as u64;
+            let uuid = crate::webcore::crypto::uuid_v7_at(global, timestamp, disable_entropy_cache);
+            crate::webcore::crypto::uuid_v7_to_hex_js(global, &uuid)
         }
 
         pub(crate) fn assert_offset(

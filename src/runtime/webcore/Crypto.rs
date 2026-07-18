@@ -247,25 +247,47 @@ pub(crate) fn bun_random_uuid_v7(
             .unwrap();
         }
 
-        break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
+        // js_date_now() is exactly Date.now() (same precise clock + any
+        // setSystemTime() override), so the input timestamp is never behind a
+        // caller's Date.now() sample. UUID7::init may bump it on rollover.
+        break 'brk global.js_date_now().max(0.0) as u64;
     };
 
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
-
-    let uuid = UUID7::init(timestamp, <[u8; 10]>::try_from(&entropy[0..10]).unwrap());
+    let uuid = uuid_v7_at(global, timestamp, false);
 
     if encoding == Encoding::Hex {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        return str.transfer_to_js(global);
+        return uuid_v7_to_hex_js(global, &uuid);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
+}
+
+/// Shared core of `Bun.randomUUIDv7()` and `crypto.randomUUIDv7()`: 10 bytes
+/// of entropy from the VM cache (or fresh BoringSSL bytes when bypassed),
+/// fed to `UUID7::init` at `timestamp`.
+pub(crate) fn uuid_v7_at(
+    global: &JSGlobalObject,
+    timestamp: u64,
+    disable_entropy_cache: bool,
+) -> UUID7 {
+    let mut entropy = [0u8; 10];
+    if disable_entropy_cache {
+        bun_boringssl_sys::rand_bytes(&mut entropy);
+    } else {
+        entropy.copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
+    }
+    UUID7::init(timestamp, entropy)
+}
+
+/// Renders `uuid` as the canonical 36-character string.
+pub(crate) fn uuid_v7_to_hex_js(global: &JSGlobalObject, uuid: &UUID7) -> JsResult<JSValue> {
+    let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+    uuid.print(
+        (&mut bytes[..36])
+            .try_into()
+            .expect("infallible: size matches"),
+    );
+    str.transfer_to_js(global)
 }
 
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]

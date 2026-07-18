@@ -5710,9 +5710,8 @@ pub fn jsdom_file_construct_(
     }
 
     if !set_last_modified {
-        // `lastModified` should be the current date in milliseconds if unspecified.
-        blob.last_modified
-            .set(bun_core::time::milli_timestamp() as f64);
+        // File API spec: default is "the equivalent of Date.now()".
+        blob.last_modified.set(global_this.js_date_now());
     }
 
     if blob.content_type_slice().is_empty() {

@@ -12,6 +12,7 @@ import {
   isWindows,
   tempDirWithFiles,
 } from "harness";
+import { parseEnv } from "node:util";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -437,6 +438,43 @@ test("#3911", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("a\nb");
+});
+
+describe(".env quoted value with trailing junk does not swallow following lines", () => {
+  describe.each([
+    ["double", `"`],
+    ["single", `'`],
+    ["backtick", "`"],
+  ])("%s quotes", (_, q) => {
+    test("util.parseEnv", () => {
+      expect(parseEnv(`A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`)).toEqual({
+        A: "hello",
+        B: "x",
+        C: "3",
+      });
+      expect(parseEnv(`A=${q}hello${q} junk\r\nB=${q}x${q}\r\nC=3\r\n`)).toEqual({
+        A: "hello",
+        B: "x",
+        C: "3",
+      });
+      expect(parseEnv(`A=${q}${q} junk\nB=2\n`)).toEqual({ A: "", B: "2" });
+      expect(parseEnv(`A=${q}hello\nworld${q} junk\nB=2\n`)).toEqual({
+        A: "hello\nworld",
+        B: "2",
+      });
+      expect(parseEnv(`A=${q}hello${q} # comment\nB=2\n`)).toEqual({ A: "hello", B: "2" });
+      expect(parseEnv(`A=${q}hello${q}junk\nB=2\n`)).toEqual({ A: "hello", B: "2" });
+    });
+
+    test(".env file", () => {
+      const dir = tempDirWithFiles("dotenv-trailing-junk", {
+        ".env": `A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`,
+        "index.ts": "console.log(JSON.stringify({A: process.env.A, B: process.env.B, C: process.env.C}));",
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(JSON.parse(stdout)).toEqual({ A: "hello", B: "x", C: "3" });
+    });
+  });
 });
 
 describe("boundary tests", () => {

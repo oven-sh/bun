@@ -85,6 +85,10 @@ describe("path.toNamespacedPath", () => {
     assert.strictEqual(path.win32.toNamespacedPath("/a"), "/a");
     assert.strictEqual(path.win32.toNamespacedPath("/ÅÅ"), "\\ÅÅ");
     assert.strictEqual(path.win32.toNamespacedPath("/😀"), "\\😀");
+    // Boundary: resolved "\\Å啕" is exactly 6 UTF-8 bytes (3 units);
+    // resolved "\\啕啕" is 7 bytes (3 units) and bypasses the conversion.
+    assert.strictEqual(path.win32.toNamespacedPath("/Å\u5555"), "\\Å\u5555");
+    assert.strictEqual(path.win32.toNamespacedPath("/\u5555\u5555"), "\\\u5555\u5555");
   });
 
   test("posix", () => {

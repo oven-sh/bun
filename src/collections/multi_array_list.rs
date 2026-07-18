@@ -1347,6 +1347,11 @@ fn aligned_alloc<T, A: Allocator>(
 
 // Index-based context sorts — port of `mem.sortContext` / `mem.sortUnstableContext`.
 
+const SMALL_SORT_THRESHOLD: usize = 32;
+
+/// Stable O(n log n) sort of `[a, b)` via an index-based comparator and swap.
+/// Sorts a permutation vector with `slice::sort_by`, then applies it in place
+/// with cycle-following (≤ n-1 `swap` calls).
 fn bun_collections_sort_context(
     a: usize,
     b: usize,
@@ -1354,17 +1359,51 @@ fn bun_collections_sort_context(
     mut swap: impl FnMut(usize, usize),
 ) {
     debug_assert!(a <= b);
-    if a >= b {
+    let n = b - a;
+    if n < 2 {
         return;
     }
-    let mut i = a + 1;
-    while i < b {
-        let mut j = i;
-        while j > a && less(j, j - 1) {
-            swap(j, j - 1);
-            j -= 1;
+    if n <= SMALL_SORT_THRESHOLD {
+        let mut i = a + 1;
+        while i < b {
+            let mut j = i;
+            while j > a && less(j, j - 1) {
+                swap(j, j - 1);
+                j -= 1;
+            }
+            i += 1;
         }
-        i += 1;
+        return;
+    }
+
+    let mut perm: Vec<usize> = (a..b).collect();
+    perm.sort_by(|&i, &j| {
+        if less(i, j) {
+            core::cmp::Ordering::Less
+        } else if less(j, i) {
+            core::cmp::Ordering::Greater
+        } else {
+            core::cmp::Ordering::Equal
+        }
+    });
+    // `perm[k]` is the absolute source index for target `a + k`. Walk each
+    // cycle once; mark visited positions by writing the identity back.
+    for k in 0..n {
+        if perm[k] == a + k {
+            continue;
+        }
+        let mut j = k;
+        loop {
+            let src = perm[j];
+            debug_assert!((a..b).contains(&src));
+            if src == a + k {
+                perm[j] = a + j;
+                break;
+            }
+            swap(a + j, src);
+            perm[j] = a + j;
+            j = src - a;
+        }
     }
 }
 
@@ -1533,6 +1572,19 @@ mod tests {
         assert_eq!(list.items::<"a", u32>(), &[0, 5, 2, 3, 4]);
     }
 
+    struct ByA {
+        a: *const u32,
+        len: usize,
+    }
+    impl SortContext for ByA {
+        fn less_than(&self, ai: usize, bi: usize) -> bool {
+            debug_assert!(ai < self.len && bi < self.len);
+            // SAFETY: `a` is the live `"a"` column base and `ai`/`bi` < `len`;
+            // the column is not reallocated during sort.
+            unsafe { *self.a.add(ai) < *self.a.add(bi) }
+        }
+    }
+
     #[test]
     fn sort_swaps_all_columns() {
         let mut list = MultiArrayList::<Foo>::default();
@@ -1544,20 +1596,117 @@ mod tests {
             })
             .unwrap();
         }
-        let raw = list.items_raw::<"a", u32>();
+        let a = list.items_raw::<"a", u32>();
         let len = list.len();
-        struct Ctx {
-            a: *const u32,
-            len: usize,
-        }
-        impl SortContext for Ctx {
-            fn less_than(&self, ai: usize, bi: usize) -> bool {
-                debug_assert!(ai < self.len && bi < self.len);
-                unsafe { *self.a.add(ai) < *self.a.add(bi) }
-            }
-        }
-        list.sort(&Ctx { a: raw, len });
+        list.sort(&ByA { a, len });
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
+    }
+
+    fn sort_via_context<T: Copy + Ord>(data: &mut Vec<T>, a: usize, b: usize) -> usize {
+        let cells = core::cell::Cell::from_mut(data.as_mut_slice()).as_slice_of_cells();
+        let swaps = core::cell::Cell::new(0usize);
+        bun_collections_sort_context(
+            a,
+            b,
+            |i, j| cells[i].get() < cells[j].get(),
+            |i, j| {
+                swaps.set(swaps.get() + 1);
+                cells[i].swap(&cells[j]);
+            },
+        );
+        swaps.get()
+    }
+
+    #[test]
+    fn sort_context_orders_correctly() {
+        for &n in &[0usize, 1, 2, 31, 32, 33, 200] {
+            let n32 = n as u32;
+            let mut v: Vec<u32> = (0..n32).rev().collect();
+            sort_via_context(&mut v, 0, n);
+            assert!(v.windows(2).all(|w| w[0] <= w[1]), "reverse n={n}");
+
+            let mut v: Vec<u32> = (0..n32).collect();
+            sort_via_context(&mut v, 0, n);
+            assert_eq!(v, (0..n32).collect::<Vec<_>>(), "sorted n={n}");
+
+            let mut v: Vec<u32> = (0..n32)
+                .map(|i| if i % 2 == 0 { i / 2 } else { n32 - 1 - i / 2 })
+                .collect();
+            sort_via_context(&mut v, 0, n);
+            assert!(v.windows(2).all(|w| w[0] <= w[1]), "interleaved n={n}");
+        }
+    }
+
+    #[test]
+    fn sort_context_linear_swaps() {
+        // Cycle-following does ≤ n-1 swaps; insertion sort would do n(n-1)/2.
+        let n = 400usize;
+        let mut v: Vec<u32> = (0..n as u32).rev().collect();
+        let swaps = sort_via_context(&mut v, 0, n);
+        assert!(v.windows(2).all(|w| w[0] <= w[1]));
+        assert!(swaps < n, "expected <{n} swaps, got {swaps}");
+    }
+
+    #[test]
+    fn sort_context_stable() {
+        // (key, original_index); sort by key, equal keys must keep index order.
+        let n = 300usize;
+        let mut v: Vec<(u32, u32)> = (0..n as u32).map(|i| (i % 7, i)).collect();
+        let cells = core::cell::Cell::from_mut(v.as_mut_slice()).as_slice_of_cells();
+        bun_collections_sort_context(
+            0,
+            n,
+            |i, j| cells[i].get().0 < cells[j].get().0,
+            |i, j| cells[i].swap(&cells[j]),
+        );
+        for w in v.windows(2) {
+            assert!(w[0].0 <= w[1].0);
+            if w[0].0 == w[1].0 {
+                assert!(
+                    w[0].1 < w[1].1,
+                    "stability broken: {:?} before {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sort_context_span_offset() {
+        // Sort only [10, 90) of a 100-element array; ends must stay put.
+        let mut v: Vec<u32> = (0..100u32).map(|i| (i * 37) % 100).collect();
+        let head = v[..10].to_vec();
+        let tail = v[90..].to_vec();
+        let mut mid: Vec<u32> = v[10..90].to_vec();
+        mid.sort();
+        sort_via_context(&mut v, 10, 90);
+        assert_eq!(&v[..10], &head[..]);
+        assert_eq!(&v[90..], &tail[..]);
+        assert_eq!(&v[10..90], &mid[..]);
+    }
+
+    #[test]
+    fn sort_large_list_all_columns() {
+        let n = 500u32;
+        let mut list = MultiArrayList::<Foo>::default();
+        for i in (0..n).rev() {
+            list.push(Foo {
+                a: i,
+                b: (i % 256) as u8,
+                c: i as u64 * 10,
+            })
+            .unwrap();
+        }
+        let a = list.items_raw::<"a", u32>();
+        let len = list.len();
+        list.sort(&ByA { a, len });
+        let a_col = list.items::<"a", u32>();
+        let c_col = list.items::<"c", u64>();
+        for i in 0..n as usize {
+            assert_eq!(a_col[i], i as u32);
+            assert_eq!(c_col[i], i as u64 * 10);
+        }
     }
 }

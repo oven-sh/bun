@@ -1036,7 +1036,7 @@ macro_rules! js_class_module {
                     #[link_name = concat!($TypeName, "__create")]
                     safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                     #[link_name = concat!($TypeName, "__getConstructor")]
-                    safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+                    safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
                     #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
                     fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
                 }
@@ -1089,7 +1089,7 @@ macro_rules! js_class_module {
             /// Lazily fetch the constructor `JSFunction` from `globalObject`.
             #[inline]
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                __get_constructor(global)
+                __get_constructor(global.as_ptr())
             }
 
             /// Detach (`ptr = null`) or replace the wrapped native pointer on

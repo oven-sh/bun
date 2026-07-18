@@ -90,8 +90,10 @@ test.concurrent("bun ./index.html", async () => {
   });
 
   // Start the server by running bun with the HTML file
+  // --hostname=127.0.0.1, not the "localhost" default: on v6-preferring hosts
+  // serve() binds ::1 while fetch()'s resolver picks 127.0.0.1 → ECONNREFUSED.
   await using process = Bun.spawn({
-    cmd: [bunExe(), "index.html", "--port=0"],
+    cmd: [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"],
     env: {
       ...bunEnv,
       NODE_ENV: "production",
@@ -216,7 +218,7 @@ env = "BUN_PUBLIC_*"
 
   // Start the server by running bun with multiple HTML files
   await using process = Bun.spawn({
-    cmd: [bunExe(), "index.html", "about.html", "--port=0"],
+    cmd: [bunExe(), "index.html", "about.html", "--port=0", "--hostname=127.0.0.1"],
     env: {
       ...bunEnv,
       NODE_ENV: "production",
@@ -417,7 +419,7 @@ test.concurrent("bun *.html", async () => {
 
   // Start the server using glob pattern
   await using process = Bun.spawn({
-    cmd: [bunExe(), "*.html", "--port=0"],
+    cmd: [bunExe(), "*.html", "--port=0", "--hostname=127.0.0.1"],
     env: {
       ...bunEnv,
       NODE_ENV: "production",
@@ -510,7 +512,7 @@ test.concurrent("bun serve svg files with correct Content-Type", async () => {
 
   // Start the server by running bun with the HTML file
   await using process = Bun.spawn({
-    cmd: [bunExe(), "index.html", "--port=0"],
+    cmd: [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"],
     env: {
       ...bunEnv,
       NODE_ENV: "production",
@@ -578,7 +580,7 @@ test.concurrent("bun serve files with correct Content-Type headers", async () =>
 
   // Start the server by running bun with the HTML file
   await using process = Bun.spawn({
-    cmd: [bunExe(), "index.html", "--port=0"],
+    cmd: [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"],
     env: {
       ...bunEnv,
       NODE_ENV: "production",

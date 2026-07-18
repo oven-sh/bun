@@ -1236,3 +1236,53 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("node:vm validation error messages match Node.js", () => {
+  const vm = require("node:vm");
+
+  test("measureMemory options.mode uses 'property' for dotted names", async () => {
+    let err: any;
+    try {
+      await vm.measureMemory({ mode: "bogus" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err?.message).toBe("The property 'options.mode' must be one of: 'summary', 'detailed'. Received 'bogus'");
+  });
+
+  test("measureMemory options.execution uses 'property' for dotted names", async () => {
+    let err: any;
+    try {
+      await vm.measureMemory({ execution: "bogus" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err?.message).toBe("The property 'options.execution' must be one of: 'default', 'eager'. Received 'bogus'");
+  });
+
+  test("createContext options.microtaskMode uses 'property' for dotted names", () => {
+    let err: any;
+    try {
+      vm.createContext({}, { microtaskMode: "bogus" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err?.message).toBe(
+      "The property 'options.microtaskMode' must be one of: 'afterEvaluate', undefined. Received 'bogus'",
+    );
+  });
+
+  test("SourceTextModule options.context renders 'an vm.Context'", () => {
+    let err: any;
+    try {
+      new vm.SourceTextModule("1", { context: {} });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(err?.message).toBe('The "options.context" property must be an vm.Context. Received an instance of Object');
+  });
+});

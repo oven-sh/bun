@@ -360,6 +360,44 @@ console.log("About manifest:", aboutHtml);
     },
   });
 
+  // The manifest is meant to be passed straight to a static-file server, so its
+  // `input` keys must be project-relative and every path must use `/` regardless
+  // of the host (no leaked build-machine absolute paths, no backslashes).
+  test("html-import/manifest-paths-are-posix-relative", async () => {
+    const dir = tempDirWithFiles("html-manifest-paths", {
+      "server.ts": `import m from "./page/index.html"; console.log(JSON.stringify(m));`,
+      "page/index.html": `<!doctype html><link rel="stylesheet" href="./s.css"><script type="module" src="./a.ts"></script>`,
+      "page/a.ts": `import icon from "./icon.txt" with { type: "file" }; console.log(icon);`,
+      "page/s.css": `body { color: red }`,
+      "page/icon.txt": `hi`,
+    });
+
+    const out = join(dir, "out");
+    const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun", root: dir });
+    expect(r.success).toBe(true);
+    const js = readFileSync(join(out, "server.js"), "utf8");
+    const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
+    const manifest = JSON.parse(JSON.parse('"' + m[1] + '"')) as {
+      index: string;
+      files: Array<{ input?: string; path: string; loader: string }>;
+    };
+
+    expect(manifest.index).not.toContain("\\");
+
+    const byLoader = Object.fromEntries(manifest.files.map(f => [f.loader, f]));
+    // Entry chunks are keyed by the entry HTML source, relative to `root`.
+    expect(byLoader.html.input).toBe("page/index.html");
+    expect(byLoader.js.input).toBe("page/index.html");
+    expect(byLoader.css.input).toBe("page/index.html");
+    // file-loader asset
+    expect(byLoader.file.input).toBe("page/icon.txt");
+    for (const f of manifest.files) {
+      expect(f.path).not.toContain("\\");
+      if (f.input !== undefined) expect(f.input).not.toContain("\\");
+    }
+    expect(byLoader.file.path).toStartWith("./");
+  });
+
   // The HTML chunk's etag must change when only a referenced JS/CSS chunk
   // changes; otherwise the browser 304s to a body that points at chunks the
   // server no longer has.

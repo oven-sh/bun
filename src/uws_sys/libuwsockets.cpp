@@ -1324,18 +1324,54 @@ extern "C"
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
+      if (close_connection)
+      {
+        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
+      }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      if (!uwsRes->uWS::AsyncSocket<true>::isCorked())
+      {
+        if (data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE)
+        {
+          if ((data->state & uWS::HttpResponseData<true>::HTTP_RESPONSE_PENDING) == 0)
+          {
+            if (uwsRes->uWS::AsyncSocket<true>::getBufferedAmount() == 0)
+            {
+              uwsRes->uWS::AsyncSocket<true>::shutdown();
+              uwsRes->uWS::AsyncSocket<true>::close();
+            }
+          }
+        }
+      }
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
+      if (close_connection)
+      {
+        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
+      }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      if (!uwsRes->uWS::AsyncSocket<false>::isCorked())
+      {
+        if (data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE)
+        {
+          if ((data->state & uWS::HttpResponseData<false>::HTTP_RESPONSE_PENDING) == 0)
+          {
+            if (uwsRes->uWS::AsyncSocket<false>::getBufferedAmount() == 0)
+            {
+              uwsRes->uWS::AsyncSocket<false>::shutdown();
+              uwsRes->uWS::AsyncSocket<false>::close();
+            }
+          }
+        }
+      }
     }
   }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {

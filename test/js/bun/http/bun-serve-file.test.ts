@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { unlinkSync } from "node:fs";
+import * as net from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1138,3 +1139,61 @@ console.log("OK");
   },
   60_000,
 );
+
+// The sendfile(2) fast path used for Bun.file() bodies must honour
+// Connection: close / HTTP/1.0 semantics after an asynchronous completion.
+describe.skipIf(isWindows)("Bun.file() sendfile closes connection when requested", () => {
+  const SIZE = 32 * 1024 * 1024;
+  let dir: string;
+  let server: Server;
+
+  beforeAll(async () => {
+    dir = tempDirWithFiles("sendfile-close", {
+      "big.bin": Buffer.alloc(SIZE, 0x62),
+    });
+    server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      development: false,
+      fetch: () => new Response(Bun.file(join(dir, "big.bin"))),
+    });
+  });
+
+  afterAll(() => {
+    server?.stop(true);
+    using _ = rmScope(dir);
+  });
+
+  async function request(raw: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ body: number; ended: boolean }>();
+    let body = -1;
+    let head = Buffer.alloc(0);
+    const socket = net.connect({ port: server.port, host: "127.0.0.1" }, () => socket.write(raw));
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      if (body < 0) {
+        head = Buffer.concat([head, chunk]);
+        const i = head.indexOf("\r\n\r\n");
+        if (i < 0) return;
+        body = 0;
+        chunk = head.subarray(i + 4);
+      }
+      body += chunk.length;
+    });
+    socket.on("end", () => resolve({ body, ended: true }));
+    socket.on("close", () => resolve({ body, ended: false }));
+    try {
+      return await promise;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  test.each([
+    ["Connection: close", `GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`],
+    ["HTTP/1.0", `GET / HTTP/1.0\r\nHost: x\r\n\r\n`],
+  ])("%s", async (_name, raw) => {
+    const result = await request(raw);
+    expect(result).toEqual({ body: SIZE, ended: true });
+  });
+});

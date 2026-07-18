@@ -22,7 +22,7 @@ function go() {
   // One request per tick carries an AbortSignal so the per-stream SignalRef box is live on
   // both parsers when terminate() lands, exercising the signal disarm in
   // Stream::free_native_for_thread_exit.
-  client.request({ ":path": "/", signal: AbortSignal.timeout(1e6) }).end();
+  client.request({ ":path": "/" }, { signal: AbortSignal.timeout(1e6) }).end();
   for (let i = 0; i < 2; i++) client.request().end();
   setImmediate(go);
 }

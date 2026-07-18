@@ -3492,7 +3492,7 @@ it("http2 server sends each session's frames to its own peer under interleaved r
 
 // When a worker is terminated mid-stream, ~VM's lastChanceToFinalize can miss the JSH2FrameParser
 // cell for that worker (the same gap the no-validate-leaksan.txt worker tests cover). The parser
-// slot sits in a ManuallyDrop hive, so without Bun__H2FrameParser__onThreadExit its engine's
+// slot sits in a ManuallyDrop hive, so without h2_frame_parser_on_thread_exit its engine's
 // stream HashMap, lshpack state and per-stream boxes leak. This asserts only that no
 // h2-frame-parser allocation shows up in LeakSanitizer's report; the gap itself also leaks other
 // cell types (Immediate, Blob) that are out of scope here.

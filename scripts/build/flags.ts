@@ -1269,7 +1269,15 @@ export const linkerFlags: Flag[] = [
       // that actually runs on the `bun <file>` startup path; segregating it
       // into `.text.unlikely` made ~84% of that section resident at startup
       // anyway, so the monolithic default `.text` has *better* RSS locality.
-      "-Wl,--hash-style=both",
+      //
+      // gnu (not both): `both` also emits the legacy SysV `.hash` (16 KB,
+      // measured by relink), which exists only for pre-2006 dynamic linkers.
+      // glibc has preferred `.gnu.hash` since 2.5 and our floor is 2.17.
+      // The FreeBSD entry below stays `both` on purpose: freebsdVersion is
+      // overridable below the 14.3 default, nothing here is validated on
+      // FreeBSD hardware, and `both` is a strict superset of `gnu` — it can
+      // only cost size, never correctness.
+      "-Wl,--hash-style=gnu",
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
@@ -1460,9 +1468,8 @@ export function linkDepends(cfg: Config): string[] {
  * Strip step only runs for plain release builds (bun-profile → bun).
  * Not for debug/asan/valgrind/assertions variants — those keep symbols.
  *
- * Always: --strip-all --strip-debug --discard-all.
- * Platform extras remove unwind/exception sections we compile without
- * (no -fexceptions, lolhtml built with panic=abort).
+ * Always: --strip-all. Platform extras remove unwind/exception sections we
+ * compile without (no -fexceptions, lolhtml built with panic=abort).
  *
  * Linux section removal: CMake notes llvm-strip doesn't fully delete
  * these (leaves [LOAD #2 [R]]), GNU strip does. If size matters and
@@ -1470,9 +1477,15 @@ export function linkDepends(cfg: Config): string[] {
  */
 export const stripFlags: Flag[] = [
   {
-    // Core strip: symbols + debug info + local symbols.
-    flag: ["--strip-all", "--strip-debug", "--discard-all"],
-    desc: "Remove symbols, debug info, local symbols",
+    // --strip-all ONLY. GNU strip's strip level is a last-flag-wins enum
+    // (binutils objcopy.c: each of --strip-all / --strip-debug / --strip-unneeded
+    // assigns `strip_symbols`), so appending --strip-debug after --strip-all
+    // silently DOWNGRADES it to debug-only and leaves the full .symtab/.strtab
+    // behind. --discard-all (locals) is likewise subsumed by --strip-all.
+    // Measured on the release binary: the 3-flag spelling left 41,080 more
+    // bytes than --strip-all alone. Do not "restore" the extra flags.
+    flag: ["--strip-all"],
+    desc: "Remove all symbols (--strip-debug/--discard-all would DOWNGRADE this; see comment)",
   },
   {
     flag: [

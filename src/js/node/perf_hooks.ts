@@ -133,10 +133,9 @@ function lazyInspect() {
   return (_lazyInspect ??= require("internal/util/inspect").inspect);
 }
 
-// Node prints performance entries as `<ClassName> { ...toJSON() }`. WebCore
-// exposes name/entryType/startTime/duration as prototype accessors, so the
-// entries have no own properties and default inspection prints `{}`.
-// Ported from node's lib/internal/perf/performance_entry.js.
+// Node prints entries as `<ClassName> { ...toJSON() }`; WebCore's fields are
+// prototype accessors so default inspection prints `{}`. Ported from node's
+// lib/internal/perf/performance_entry.js.
 if (PerformanceEntry) {
   const kInspect = Symbol.for("nodejs.util.inspect.custom");
   Object.defineProperty(PerformanceEntry.prototype, kInspect, {
@@ -323,11 +322,9 @@ function processTimerifyComplete(name, start, args, histogram) {
 
 const nodeTiming = createPerformanceNodeTiming();
 
-// Node augments the real `performance` object rather than exporting a
-// forwarding shim, so `globalThis.performance === require('perf_hooks').performance`
-// and `performance.timerify` / `.eventLoopUtilization` / `.nodeTiming` exist.
-// They go on Performance.prototype, non-enumerable, exactly as node does in
-// lib/internal/perf/performance.js, so Object.keys(performance) is unchanged.
+// Node augments the real `performance` object (not a forwarding shim), so
+// timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
+// non-enumerable, per lib/internal/perf/performance.js.
 if (Performance) {
   Object.defineProperties(Performance.prototype, {
     nodeTiming: {

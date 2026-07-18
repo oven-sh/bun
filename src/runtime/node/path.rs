@@ -2865,7 +2865,13 @@ pub(crate) fn relative(
     if from_zig_str.is_16bit() || to_zig_str.is_16bit() {
         let from16 = PathUtf16::of(&from_zig_str);
         let to16 = PathUtf16::of(&to_zig_str);
-        return relative_js_t::<u16>(global_object, pool, is_windows, from16.slice(), to16.slice());
+        return relative_js_t::<u16>(
+            global_object,
+            pool,
+            is_windows,
+            from16.slice(),
+            to16.slice(),
+        );
     }
     let from_zig_slice = from_zig_str.to_slice();
     let to_zig_slice = to_zig_str.to_slice();

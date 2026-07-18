@@ -96,36 +96,40 @@ server.listen(...listenArgs, () => {
 setTimeout(() => process.exit(0), 3000).unref();
 `;
 
+// Each test spawns its own isolated subprocess with no shared state, so run concurrently.
 for (const socketMode of ["tcp", "unix"] as const) {
-  test(`http.request delivers response while request body stream is still open (${socketMode})`, async () => {
-    using dir = tempDir("issue-13696", {});
-    const socketPath = socketMode === "unix" ? join(String(dir), "docker.sock") : undefined;
+  test.concurrent(
+    `http.request delivers response while request body stream is still open (${socketMode})`,
+    async () => {
+      using dir = tempDir("issue-13696", {});
+      const socketPath = socketMode === "unix" ? join(String(dir), "docker.sock") : undefined;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture(socketPath)],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(socketPath)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const lines = stdout.trim().split("\n");
-    // The server must have received the request (a single write() dispatches
-    // it), the response must be emitted with status 200, every body chunk must
-    // be delivered, and the response must end cleanly.
-    expect({ lines, stderr }).toEqual({
-      lines: ["request-seen", "response-status:200", "recv:chunk-0", "recv:chunk-1", "recv:chunk-2", "response-end"],
-      stderr: expect.not.stringContaining("request-error"),
-    });
-    expect(exitCode).toBe(0);
-  });
+      const lines = stdout.trim().split("\n");
+      // The server must have received the request (a single write() dispatches
+      // it), the response must be emitted with status 200, every body chunk must
+      // be delivered, and the response must end cleanly.
+      expect({ lines, stderr }).toEqual({
+        lines: ["request-seen", "response-status:200", "recv:chunk-0", "recv:chunk-1", "recv:chunk-2", "response-end"],
+        stderr: expect.not.stringContaining("request-error"),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 }
 
 // Also cover the case where flushHeaders() is called explicitly (which already
 // started the fetch in duplex mode) but the response was still being held back
 // until req.end().
-test("http.request emits 'response' in duplex mode after flushHeaders() without end()", async () => {
+test.concurrent("http.request emits 'response' in duplex mode after flushHeaders() without end()", async () => {
   const src = `
 const net = require("net");
 const http = require("http");

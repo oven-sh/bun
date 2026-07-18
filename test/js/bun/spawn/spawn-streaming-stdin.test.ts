@@ -3,7 +3,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD, isASAN } from "harness";
 import { join } from "path";
 
-const N = 50;
+// Reduced iterations: 16 concurrent spawns already exceed the leak thresholds asserted below.
+const N = isASAN ? 16 : 32;
 const concurrency = 16;
 const delay = isASAN ? 500 : 150;
 

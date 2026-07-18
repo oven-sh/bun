@@ -14,7 +14,8 @@ beforeAll(async () => {
   htmlText = (await Bun.file(html).text()).replace(/\r\n/g, "\n");
 });
 
-it("fetch() with a buffered gzip response works (one chunk)", async () => {
+// Each test creates its own server on port: 0 and only reads module-level consts, so run concurrently.
+it.concurrent("fetch() with a buffered gzip response works (one chunk)", async () => {
   using server = Bun.serve({
     port: 0,
 
@@ -43,7 +44,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
   gcTick(true);
 });
 
-it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
+it.concurrent("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
   using server = Bun.serve({
     port: 0,
 
@@ -66,33 +67,36 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
   expect(text).toEqual(htmlText);
 });
 
-it("fetch() with a protocol-relative redirect that returns a buffered gzip response works (one chunk)", async () => {
-  using server = Bun.serve({
-    port: 0,
+it.concurrent(
+  "fetch() with a protocol-relative redirect that returns a buffered gzip response works (one chunk)",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
 
-    async fetch(req, server) {
-      if (req.url.endsWith("/redirect"))
-        return new Response(await Bun.file(gzipped).arrayBuffer(), {
-          headers: {
-            "Content-Encoding": "gzip",
-            "Content-Type": "text/html; charset=utf-8",
-          },
-        });
+      async fetch(req, server) {
+        if (req.url.endsWith("/redirect"))
+          return new Response(await Bun.file(gzipped).arrayBuffer(), {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Type": "text/html; charset=utf-8",
+            },
+          });
 
-      const { host } = server.url;
-      return Response.redirect(`://${host}/redirect`);
-    },
-  });
+        const { host } = server.url;
+        return Response.redirect(`://${host}/redirect`);
+      },
+    });
 
-  const res = await fetch(new URL("hey", server.url), { verbose: true });
-  expect(new URL(res.url)).toEqual(new URL("redirect", server.url));
-  expect(res.redirected).toBe(true);
-  expect(res.status).toBe(200);
-  const text = (await res.text()).replace(/\r\n/g, "\n");
-  expect(text).toEqual(htmlText);
-});
+    const res = await fetch(new URL("hey", server.url), { verbose: true });
+    expect(new URL(res.url)).toEqual(new URL("redirect", server.url));
+    expect(res.redirected).toBe(true);
+    expect(res.status).toBe(200);
+    const text = (await res.text()).replace(/\r\n/g, "\n");
+    expect(text).toEqual(htmlText);
+  },
+);
 
-it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
+it.concurrent("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
   using server = Bun.serve({
     port: 0,
 
@@ -128,7 +132,7 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
 // registered deprecated alias of `gzip`. Node/undici lowercase the
 // Content-Encoding value before matching and accept `x-gzip`; we must too,
 // otherwise res.text()/res.json() silently return raw compressed bytes.
-describe("fetch() decodes Content-Encoding case-insensitively", () => {
+describe.concurrent("fetch() decodes Content-Encoding case-insensitively", () => {
   const payload = JSON.stringify({ hello: "world", n: 42 });
   const bodies = {
     gzip: gzipSync(payload),
@@ -258,7 +262,7 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
   });
 });
 
-it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
+it.concurrent("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
   const compressed = await Bun.file(gzipped).arrayBuffer();
   var socketToClose!: Socket;
   let pending,
@@ -368,8 +372,10 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
 // same as the original Zig implementation; only available memory limits it.
 // Run in a subprocess so the ~1 GiB output buffer does not linger in the test
 // process.
-it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works", async () => {
-  const fixture = /* js */ `
+it.concurrent(
+  "fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works",
+  async () => {
+    const fixture = /* js */ `
       import { createGzip } from "node:zlib";
 
       const CHUNK = Buffer.alloc(1024 * 1024);
@@ -412,19 +418,21 @@ it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB 
         server.stop(true);
       }
     `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: `OK ${1025 * 1024 * 1024}`,
-    stderr: expect.not.stringContaining("error"),
-    exitCode: 0,
-  });
-}, 60_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `OK ${1025 * 1024 * 1024}`,
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  },
+  60_000,
+);
 
 describe("corrupt compressed responses", () => {
   // A body decompression failure is a body error: fetch() must resolve (status
@@ -786,7 +794,7 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   });
 });
 
-describe("empty compressed responses", () => {
+describe.concurrent("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.
   // https://github.com/oven-sh/bun/issues/23149

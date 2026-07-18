@@ -10,7 +10,8 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-describe("backpressure", () => {
+// Each test creates its own server on port:0 with bounded streaming memory, so they can run concurrently.
+describe.concurrent("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
   // whenever a write reports backpressure, then ends the response. Reusing one
   // chunk buffer keeps the test's peak memory small (the previous version held

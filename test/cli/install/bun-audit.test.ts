@@ -43,10 +43,14 @@ function doAuditTest(
     args?: string[];
     exitCode: number;
     files: DirectoryTree | string;
+    // Each case spawns its own subprocess against a shared read-only server, so they are
+    // safe to run concurrently; tests that write file snapshots opt out via concurrent:false.
+    concurrent?: boolean;
     fn: (std: { stdout: PromiseLike<string>; stderr: PromiseLike<string>; dir: string }) => Promise<void>;
   },
 ) {
-  test(label, async () => {
+  const testFn = options.concurrent === false ? test : test.concurrent;
+  testFn(label, async () => {
     const dir = tempDirWithFiles("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
     const cmd = [bunExe(), "audit", ...(options.args ?? [])];
@@ -147,6 +151,7 @@ describe("`bun audit`", () => {
 
   doAuditTest("should exit code 1 when there are vulnerabilities", {
     exitCode: 1,
+    concurrent: false,
     files: fixture("express@3"),
     fn: async ({ stdout }) => {
       expect(await stdout).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
@@ -155,6 +160,7 @@ describe("`bun audit`", () => {
 
   doAuditTest("should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities", {
     exitCode: 0,
+    concurrent: false,
     files: fixture("safe-is-number@7"),
     args: ["--json"],
     fn: async ({ stdout }) => {
@@ -166,6 +172,7 @@ describe("`bun audit`", () => {
 
   doAuditTest("should print valid JSON and exit 1 when --json is passed and there are vulnerabilities", {
     exitCode: 1,
+    concurrent: false,
     files: fixture("express@3"),
     args: ["--json"],
     fn: async ({ stdout }) => {
@@ -179,6 +186,7 @@ describe("`bun audit`", () => {
     "should exit 1 and behave exactly the same when there are vulnerabilities when only devDependencies are specified",
     {
       exitCode: 1,
+      concurrent: false,
       files: fixture("vuln-with-only-dev-dependencies"),
       fn: async ({ stdout }) => {
         expect(await stdout).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
@@ -190,6 +198,7 @@ describe("`bun audit`", () => {
     "when a project has some safe dependencies and some vulnerable dependencies, we should not print the safe dependencies",
     {
       exitCode: 1,
+      concurrent: false,
       files: fixture("mix-of-safe-and-vulnerable-dependencies"),
       fn: async ({ stdout }) => {
         // this fixture is using a safe version of is-number and an unsafe version of ms

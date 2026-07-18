@@ -14,7 +14,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 //
 // Fix: Detect when Bun.build is called from within macro mode and throw a clear error.
 
-test("Bun.build from macro during bundling throws instead of hanging", async () => {
+test.concurrent("Bun.build from macro during bundling throws instead of hanging", async () => {
   using dir = tempDir("issue-26360", {
     // A simple file that will be bundled by the macro
     "browser.ts": `console.log("browser code");
@@ -78,7 +78,7 @@ if (!result.success) {
   expect(stdout).toContain("Bun.build cannot be called from within a macro");
 });
 
-test("CLI bun build with macro that calls Bun.build also throws", async () => {
+test.concurrent("CLI bun build with macro that calls Bun.build also throws", async () => {
   using dir = tempDir("issue-26360-cli", {
     "browser.ts": `console.log("browser code");
 export default "";
@@ -119,7 +119,7 @@ console.log("ERROR_MSG:", getErrorMessage());
   expect(stdout).toContain("Bun.build cannot be called from within a macro");
 });
 
-test("regular Bun.build (not in macro) still works", async () => {
+test.concurrent("regular Bun.build (not in macro) still works", async () => {
   using dir = tempDir("issue-26360-normal", {
     "entry.ts": `
       console.log("hello world");

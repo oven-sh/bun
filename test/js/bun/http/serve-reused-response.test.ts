@@ -5,7 +5,8 @@ import { bunEnv, bunExe } from "harness";
 // A fetch handler that returns a Response whose body has already been used
 // (most often the same Response object returned for every request) must invoke
 // the error handler instead of silently sending a 200 with an empty body.
-describe("returning a Response with an already-used body", () => {
+// Each test spins up its own port:0 server (or subprocess) with no shared state, so run concurrently.
+describe.concurrent("returning a Response with an already-used body", () => {
   const alreadyUsedError = {
     code: "ERR_BODY_ALREADY_USED",
     name: "TypeError",

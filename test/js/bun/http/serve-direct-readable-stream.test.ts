@@ -41,7 +41,9 @@ test("HTTPResponseSink displays correct message", async () => {
 // callback (which is what detach()'s onClose invokes for a direct stream).
 // Under ASAN this is a heap-use-after-free without the fix; in release it
 // segfaults on the scrubbed buffer pointer.
-test.skipIf(!isASAN)(
+// The ASAN-only subprocess repros below are independent (own Bun.spawn, no shared
+// state) so they run concurrently to avoid serial ASAN startup cost per spawn.
+test.concurrent.skipIf(!isASAN)(
   "controller.end() after pull() resolved does not use the sink after free",
   async () => {
     const fixture = `
@@ -127,7 +129,7 @@ test.skipIf(!isASAN)(
 //     uws_res_state <- AnyResponse::should_close_connection
 //     <- RequestContext::should_close_connection
 //     <- RequestContext::handle_resolve_stream
-test.skipIf(!isASAN)(
+test.concurrent.skipIf(!isASAN)(
   "client disconnect after controller.end() with a parked pull() does not use the socket after free",
   async () => {
     const fixture = `
@@ -212,7 +214,7 @@ test.skipIf(!isASAN)(
 // Same setup, but the parked pull() rejects after controller.end(). The
 // rejection goes through handle_reject_stream, which had the same stale
 // `resp` dereference on its tail (`end_stream(should_close_connection())`).
-test.skipIf(!isASAN)(
+test.concurrent.skipIf(!isASAN)(
   "client disconnect after controller.end() with a parked rejecting pull() does not use the socket after free",
   async () => {
     const fixture = `
@@ -296,7 +298,7 @@ test.skipIf(!isASAN)(
 // it. Skipping that leaves the callback pointing at a RequestContext the
 // stream-resolution microtask has already released, and lsquic's later
 // on_stream_close invokes it on the freed slot.
-test.skipIf(!isASAN)(
+test.concurrent.skipIf(!isASAN)(
   "h3: controller.end() from a parked pull() disarms onAborted before the context is released",
   async () => {
     const fixture = `

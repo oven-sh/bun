@@ -24,7 +24,8 @@ const agent1 = {
   ca: readFileSync(join(keys, "ca1-cert.pem"), "utf8"),
 };
 
-describe("https.request checkServerIdentity", () => {
+// Each test spawns its own isolated subprocess with its own server; no shared state, safe to run concurrently.
+describe.concurrent("https.request checkServerIdentity", () => {
   // Direct repro of the ASAN crash: trusted CA + servername that does not
   // match the cert. Before the fix this hit use-after-poison in
   // HTTPContext.onHandshake on ASAN builds instead of emitting 'error'.

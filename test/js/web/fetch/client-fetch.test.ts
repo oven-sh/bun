@@ -9,17 +9,17 @@ import net from "node:net";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
-test("function signature", () => {
+test.concurrent("function signature", () => {
   expect(fetch.name).toBe("fetch");
   expect(fetch.length).toBe(1);
 });
 
-test("args validation", async () => {
+test.concurrent("args validation", async () => {
   expect(fetch()).rejects.toThrow(TypeError);
   expect(fetch("ftp://unsupported")).rejects.toThrow(TypeError);
 });
 
-test("request json", async () => {
+test.concurrent("request json", async () => {
   const obj = { asd: true };
   await using server = createServer((req, res) => {
     res.end(JSON.stringify(obj));
@@ -30,7 +30,7 @@ test("request json", async () => {
   expect(obj).toEqual(await body.json());
 });
 
-test("request text", async () => {
+test.concurrent("request text", async () => {
   const obj = { asd: true };
   await using server = createServer((req, res) => {
     res.end(JSON.stringify(obj));
@@ -41,7 +41,7 @@ test("request text", async () => {
   expect(JSON.stringify(obj)).toEqual(await body.text());
 });
 
-test("request arrayBuffer", async () => {
+test.concurrent("request arrayBuffer", async () => {
   const obj = { asd: true };
   await using server = createServer((req, res) => {
     res.end(JSON.stringify(obj));
@@ -52,7 +52,7 @@ test("request arrayBuffer", async () => {
   expect(Buffer.from(JSON.stringify(obj))).toEqual(Buffer.from(await body.arrayBuffer()));
 });
 
-test("should set type of blob object to the value of the `Content-Type` header from response", async () => {
+test.concurrent("should set type of blob object to the value of the `Content-Type` header from response", async () => {
   const obj = { asd: true };
   await using server = createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
@@ -64,7 +64,7 @@ test("should set type of blob object to the value of the `Content-Type` header f
   expect("application/json;charset=utf-8").toBe((await response.blob()).type);
 });
 
-test("pre aborted with readable request body", async () => {
+test.concurrent("pre aborted with readable request body", async () => {
   const server = createServer((req, res) => {}).listen(0);
   try {
     await once(server, "listening");
@@ -88,7 +88,7 @@ test("pre aborted with readable request body", async () => {
   }
 });
 
-test("pre aborted with closed readable request body", async () => {
+test.concurrent("pre aborted with closed readable request body", async () => {
   await using server = createServer((req, res) => {}).listen(0);
   await once(server, "listening");
   const ac = new AbortController();
@@ -113,7 +113,7 @@ test("pre aborted with closed readable request body", async () => {
   ).rejects.toThrow();
 });
 
-test("unsupported formData 1", async () => {
+test.concurrent("unsupported formData 1", async () => {
   await using server = createServer((req, res) => {
     res.setHeader("content-type", "asdasdsad");
     res.end();
@@ -122,7 +122,7 @@ test("unsupported formData 1", async () => {
   expect(fetch(`http://localhost:${server.address().port}`).then(res => res.formData())).rejects.toThrow(TypeError);
 });
 
-test("multipart formdata not base64", async () => {
+test.concurrent("multipart formdata not base64", async () => {
   // Construct example form data, with text and blob fields
   const formData = new FormData();
   formData.append("field1", "value1");
@@ -179,7 +179,7 @@ test.todo("multipart formdata base64", async () => {
   expect(createHash("sha256").update(data).digest("base64")).toBe(digest);
 });
 
-test("multipart fromdata non-ascii filed names", async () => {
+test.concurrent("multipart fromdata non-ascii filed names", async () => {
   const request = new Request("http://localhost", {
     method: "POST",
     headers: {
@@ -197,7 +197,7 @@ test("multipart fromdata non-ascii filed names", async () => {
   expect(form.get("fiŝo")).toBe("value1");
 });
 
-test("busboy emit error", async () => {
+test.concurrent("busboy emit error", async () => {
   const formData = new FormData();
   formData.append("field1", "value1");
 
@@ -218,7 +218,7 @@ test("busboy emit error", async () => {
 });
 
 // https://github.com/nodejs/undici/issues/2244
-test("parsing formData preserve full path on files", async () => {
+test.concurrent("parsing formData preserve full path on files", async () => {
   const formData = new FormData();
   formData.append("field1", new File(["foo"], "a/b/c/foo.txt"));
 
@@ -228,7 +228,7 @@ test("parsing formData preserve full path on files", async () => {
   expect(form.get("field1").name).toBe("a/b/c/foo.txt");
 });
 
-test("urlencoded formData", async () => {
+test.concurrent("urlencoded formData", async () => {
   await using server = createServer((req, res) => {
     res.setHeader("content-type", "application/x-www-form-urlencoded");
     res.end("field1=value1&field2=value2");
@@ -240,7 +240,7 @@ test("urlencoded formData", async () => {
   expect(formData.get("field2")).toBe("value2");
 });
 
-test("text with BOM", async () => {
+test.concurrent("text with BOM", async () => {
   await using server = createServer((req, res) => {
     res.setHeader("content-type", "application/x-www-form-urlencoded");
     res.end("\uFEFFtest=\uFEFF");
@@ -262,7 +262,7 @@ test.todo("formData with BOM", async () => {
   expect(formData.get("\uFEFFtest")).toBe("\uFEFF");
 });
 
-test("locked blob body", async () => {
+test.concurrent("locked blob body", async () => {
   await using server = createServer((req, res) => {
     res.end();
   }).listen(0);
@@ -274,7 +274,7 @@ test("locked blob body", async () => {
   reader.cancel();
 });
 
-test("disturbed blob body", async () => {
+test.concurrent("disturbed blob body", async () => {
   await using server = createServer((req, res) => {
     res.end();
   }).listen(0);
@@ -285,7 +285,7 @@ test("disturbed blob body", async () => {
   expect(res.blob()).rejects.toThrow("Body already used");
 });
 
-test("redirect with body", async () => {
+test.concurrent("redirect with body", async () => {
   let count = 0;
   await using server = createServer(async (req, res) => {
     let body = "";
@@ -313,7 +313,7 @@ test("redirect with body", async () => {
   expect(await res.text()).toBe("2");
 });
 
-test("redirect with stream", async () => {
+test.concurrent("redirect with stream", async () => {
   const location = "/asd";
   const body = "hello!";
   await using server = createServer(async (req, res) => {
@@ -338,7 +338,7 @@ test("redirect with stream", async () => {
   expect(await res.text()).toBe(body);
 });
 
-test("fail to extract locked body", () => {
+test.concurrent("fail to extract locked body", () => {
   const stream = new ReadableStream({});
   const reader = stream.getReader();
   try {
@@ -350,7 +350,7 @@ test("fail to extract locked body", () => {
   reader.cancel();
 });
 
-test("fail to extract locked body", () => {
+test.concurrent("fail to extract locked body", () => {
   const stream = new ReadableStream({});
   const reader = stream.getReader();
   try {
@@ -366,7 +366,7 @@ test("fail to extract locked body", () => {
   reader.cancel();
 });
 
-test("post FormData with Blob", async () => {
+test.concurrent("post FormData with Blob", async () => {
   const body = new FormData();
   body.append("field1", new Blob(["asd1"]));
 
@@ -382,7 +382,7 @@ test("post FormData with Blob", async () => {
   expect(/asd1/.test(await res.text())).toBeTruthy();
 });
 
-test("post FormData with File", async () => {
+test.concurrent("post FormData with File", async () => {
   const body = new FormData();
   body.append("field1", new File(["asd1"], "filename123"));
 
@@ -400,7 +400,7 @@ test("post FormData with File", async () => {
   expect(/filename123/.test(result)).toBeTrue();
 });
 
-test("unresolvable hostname rejects with the resolver error", async () => {
+test.concurrent("unresolvable hostname rejects with the resolver error", async () => {
   // A DNS label longer than 63 bytes is illegal (RFC 1035 section 2.3.4), so
   // getaddrinfo rejects it locally without touching the network. The cases,
   // each of which must name the hostname getaddrinfo actually failed on:
@@ -467,7 +467,7 @@ test("unresolvable hostname rejects with the resolver error", async () => {
   });
 });
 
-test("do not decode redirect body", async () => {
+test.concurrent("do not decode redirect body", async () => {
   const obj = { asd: true };
   await using server = createServer((req, res) => {
     if (req.url === "/resource") {
@@ -487,7 +487,7 @@ test("do not decode redirect body", async () => {
   expect(JSON.stringify(obj)).toBe(await body.text());
 });
 
-test("decode non-redirect body with location header", async () => {
+test.concurrent("decode non-redirect body with location header", async () => {
   const obj = { asd: true };
   await using server = createServer((req, res) => {
     res.statusCode = 201;
@@ -501,7 +501,7 @@ test("decode non-redirect body with location header", async () => {
   expect(JSON.stringify(obj)).toBe(await body.text());
 });
 
-test("error on redirect", async () => {
+test.concurrent("error on redirect", async () => {
   await using server = createServer((req, res) => {
     res.statusCode = 302;
     res.end();
@@ -515,7 +515,7 @@ test("error on redirect", async () => {
   ).rejects.toThrow(/UnexpectedRedirect/);
 });
 
-test("Receiving non-Latin1 headers", async () => {
+test.concurrent("Receiving non-Latin1 headers", async () => {
   const ContentDisposition = [
     "inline; filename=rock&roll.png",
     "inline; filename=\"rock'n'roll.png\"",
@@ -543,7 +543,7 @@ test("Receiving non-Latin1 headers", async () => {
 });
 
 // https://github.com/nodejs/undici/issues/1527
-test("fetching with Request object - issue #1527", async () => {
+test.concurrent("fetching with Request object - issue #1527", async () => {
   const server = createServer((req, res) => {
     res.end();
   }).listen(0);
@@ -568,7 +568,7 @@ test("fetching with Request object - issue #1527", async () => {
 // message there, silently truncating the upload and parking the rest of the
 // user's bytes at request-line position on the reused keep-alive connection.
 // Node emits no frame for an empty chunk; the expected wire below matches it.
-test.each([
+test.concurrent.each([
   [["AAAA", "", "BBBB"], "4\r\nAAAA\r\n4\r\nBBBB\r\n0\r\n\r\n"],
   [["", "AAAA"], "4\r\nAAAA\r\n0\r\n\r\n"],
 ])("an empty request body chunk %j is not framed as the chunked terminator", async (chunks, expectedWireBody) => {
@@ -617,38 +617,41 @@ test.each([
 // Content-Length the body is sent raw, so an empty enqueue buffers nothing,
 // but it still reported backpressure -- pausing the request body stream to
 // wait for a drain event that can never arrive. The upload hung forever.
-test("an empty request body chunk does not stall a stream body sent with an explicit Content-Length", async () => {
-  let recorded = Buffer.alloc(0);
-  await using server = net
-    .createServer(sock => {
-      sock.on("error", () => {});
-      sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
-        if (recorded.toString("latin1").endsWith("AAAABBBB")) {
-          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-        }
-      });
-    })
-    .listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
+test.concurrent(
+  "an empty request body chunk does not stall a stream body sent with an explicit Content-Length",
+  async () => {
+    let recorded = Buffer.alloc(0);
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("data", d => {
+          recorded = Buffer.concat([recorded, d]);
+          if (recorded.toString("latin1").endsWith("AAAABBBB")) {
+            sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
 
-  const encoder = new TextEncoder();
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    duplex: "half",
-    headers: { "content-length": "8" },
-    body: new ReadableStream({
-      start(controller) {
-        for (const chunk of ["AAAA", "", "BBBB"]) controller.enqueue(encoder.encode(chunk));
-        controller.close();
-      },
-    }),
-  });
-  expect(await res.text()).toBe("ok");
-  const raw = recorded.toString("latin1");
-  expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("AAAABBBB");
-});
+    const encoder = new TextEncoder();
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      duplex: "half",
+      headers: { "content-length": "8" },
+      body: new ReadableStream({
+        start(controller) {
+          for (const chunk of ["AAAA", "", "BBBB"]) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      }),
+    });
+    expect(await res.text()).toBe("ok");
+    const raw = recorded.toString("latin1");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("AAAABBBB");
+  },
+);
 
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be
 // joined into the preceding field value with SP, or the message rejected.
@@ -657,7 +660,7 @@ test("an empty request body chunk does not stall a stream body sent with an expl
 // surface as "sid=1;") and, for a folded Transfer-Encoding / Content-Length,
 // changes the framing this client applies to the body. Node's fetch rejects
 // such responses; so does Bun now.
-test("a response with an obs-fold header continuation is rejected, not silently truncated", async () => {
+test.concurrent("a response with an obs-fold header continuation is rejected, not silently truncated", async () => {
   await using server = net
     .createServer(sock => {
       sock.on("error", () => {});

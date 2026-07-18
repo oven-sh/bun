@@ -479,7 +479,8 @@ class InlineSnapshotTester {
   }
 }
 
-describe("inline snapshots", () => {
+// Each test spawns independent subprocesses on unique tmpfiles (tmpid++ is sync); safe to run concurrently.
+describe.concurrent("inline snapshots", () => {
   const bad = '"bad"';
   const helper_js = /*js*/ `
     import {expect} from "bun:test";

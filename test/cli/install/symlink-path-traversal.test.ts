@@ -522,7 +522,7 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
   });
 });
 
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "rejects symlink targets that climb through other symlinks from the same archive (.bun-tag write stays inside the package)",
   async () => {
     // A tarball can ship symlinks whose targets each normalize to a path
@@ -625,7 +625,7 @@ it.skipIf(isWindows)(
   60000,
 );
 
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "does not change permissions of a file reached through a symlinked bin target",
   async () => {
     // After creating `node_modules/.bin/<name>`, the installer chmods the bin
@@ -686,7 +686,7 @@ it.skipIf(isWindows)(
   60000,
 );
 
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "skips a package bin entry whose name contains a NUL byte and links the remaining entries",
   async () => {
     using dir = tempDir("bin-name-nul-test", {
@@ -726,7 +726,7 @@ it.skipIf(isWindows)(
   60000,
 );
 
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "does not link a bin target that resolves outside the package through a symlinked directory",
   async () => {
     using dir = tempDir("bin-target-symlinked-dir-test", {
@@ -773,7 +773,7 @@ it.skipIf(isWindows)(
   60000,
 );
 
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "rejects a GitHub tarball whose root directory name contains a path separator",
   async () => {
     const tarball = createTarball([

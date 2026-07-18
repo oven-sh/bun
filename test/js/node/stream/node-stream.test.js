@@ -310,7 +310,7 @@ process.stdin.pipe(transform).pipe(process.stdout);
 process.stdin.on("end", () => console.log(totalChunkSize));
 `;
 describe("process.stdin", () => {
-  it("should pipe correctly", async () => {
+  it.concurrent("should pipe correctly", async () => {
     const dir = join(tmpdir(), "process-stdin-test");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "process-stdin-test.js"), processStdInTest, {});
@@ -389,7 +389,7 @@ it("Readable.fromWeb", async () => {
 
 // An error from the underlying web stream must surface on the node Readable as an
 // 'error' event (and destroy it), not as a global unhandled rejection.
-it("Readable.fromWeb propagates web stream errors to 'error' and destroys", async () => {
+it.concurrent("Readable.fromWeb propagates web stream errors to 'error' and destroys", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -440,7 +440,7 @@ it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys
   expect(r.errored?.message).toBe("start-boom");
 });
 
-it("Readable.fromWeb piped to a Writable surfaces web stream errors on the destination", async () => {
+it.concurrent("Readable.fromWeb piped to a Writable surfaces web stream errors on the destination", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -613,7 +613,7 @@ it("#9242.10 PassThrough has constructor", () => {
   expect(pt.constructor).toBe(PassThrough);
 });
 
-it("should send Readable events in the right order", async () => {
+it.concurrent("should send Readable events in the right order", async () => {
   const package_dir = tmpdirSync();
   const fixture_path = join(package_dir, "fixture.js");
 
@@ -773,7 +773,7 @@ describe("webstreams adapters (Node v26 sync)", () => {
   // Upstream: v26 newStreamWritableFromWritableStream writev done() shape —
   // a rejected chunk write during a corked writev must error the stream with
   // the original error and must not produce an unhandled rejection.
-  it("Writable.fromWeb writev rejection errors the stream with the original error", async () => {
+  it.concurrent("Writable.fromWeb writev rejection errors the stream with the original error", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1021,7 +1021,7 @@ describe("webstreams adapters (Node v26 sync)", () => {
   // Upstream: v26 end-of-stream only snapshots the AsyncLocalStorage context
   // when one is active at registration time; a callback registered outside
   // any context observes the context active when the stream settles.
-  it("finished() callback registered outside an ALS context observes the firing context", async () => {
+  it.concurrent("finished() callback registered outside an ALS context observes the firing context", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1045,7 +1045,7 @@ describe("webstreams adapters (Node v26 sync)", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("finished() callback registered inside an ALS context observes the registration context", async () => {
+  it.concurrent("finished() callback registered inside an ALS context observes the registration context", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1170,7 +1170,7 @@ describe("webstreams adapters (Node v26 sync)", () => {
 
     // Exercises the direct-stream close path, which writes the terminal state itself rather
     // than going through readableStreamClose().
-    it("type: 'direct' ReadableStream consumed by a native sink (Bun.serve)", async () => {
+    it.concurrent("type: 'direct' ReadableStream consumed by a native sink (Bun.serve)", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -1228,33 +1228,36 @@ for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0
   });
 }
 
-it("stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG_VALUE RangeError", async () => {
-  // Regression: ERR_INVALID_ARG_VALUE_RangeError had no case in
-  // jsFunctionMakeErrorWithCode's switch, so the thrown error's message was
-  // just the property name instead of node's formatted message.
-  const script = `
+it.concurrent(
+  "stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG_VALUE RangeError",
+  async () => {
+    // Regression: ERR_INVALID_ARG_VALUE_RangeError had no case in
+    // jsFunctionMakeErrorWithCode's switch, so the thrown error's message was
+    // just the property name instead of node's formatted message.
+    const script = `
     const { text, from } = require("node:stream/iter");
     text(from("hello"), { encoding: "not-a-real-encoding" }).then(
       () => console.log("FAIL: resolved"),
       err => console.log([err.name, err.code, err.message].join("|")),
     );
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe(
-    "RangeError|ERR_INVALID_ARG_VALUE|The property 'options.encoding' is invalid. Received 'not-a-real-encoding'",
-  );
-  // Loading node:stream/iter emits an ExperimentalWarning to stderr.
-  expect(stderr).toContain("ExperimentalWarning");
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(
+      "RangeError|ERR_INVALID_ARG_VALUE|The property 'options.encoding' is invalid. Received 'not-a-real-encoding'",
+    );
+    // Loading node:stream/iter emits an ExperimentalWarning to stderr.
+    expect(stderr).toContain("ExperimentalWarning");
+    expect(exitCode).toBe(0);
+  },
+);
 
-it("require.resolve.paths agrees with require about gated stream/iter specifiers", async () => {
+it.concurrent("require.resolve.paths agrees with require about gated stream/iter specifiers", async () => {
   // Without the flag the introspection APIs must not report stream/iter as
   // a builtin (node returns a lookup-paths array there); with the flag they
   // must (null, like any builtin).

@@ -1,5 +1,10 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { isASAN } from "harness";
+
+// Fewer iterations under ASAN; still >> 512 so the "<512 new strings" assertion stays meaningful.
+const cloneIters = isASAN ? 1024 * 64 : 1024 * 512;
+const newIters = isASAN ? 1024 * 16 : 1024 * 128;
 
 const requestOptions = [
   ["http://localhost:3000/"],
@@ -26,7 +31,7 @@ test.each(requestOptions)("new Request(%s).clone().method doesnt create a new JS
   const {
     objectTypeCounts: { string: initialStrings },
   } = heapStats();
-  for (let i = 0; i < 1024 * 512; i++) {
+  for (let i = 0; i < cloneIters; i++) {
     request.clone().method;
   }
   const {
@@ -43,7 +48,7 @@ test.each(requestOptions)("new Request(%s).method doesnt create a new JSString e
   const {
     objectTypeCounts: { string: initialStrings },
   } = heapStats();
-  for (let i = 0; i < 1024 * 128; i++) {
+  for (let i = 0; i < newIters; i++) {
     // @ts-expect-error
     const request = new Request(...arguments);
     request.method;

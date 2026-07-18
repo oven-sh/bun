@@ -1,12 +1,14 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick, getMaxFD } from "harness";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick, getMaxFD, isASAN } from "harness";
 
 test("spawn can read from stdout multiple chunks", async () => {
   gcTick(true);
   var maxFD: number = -1;
   let concurrency = 7;
-  const count = 100;
+  // fd/object-count leak checks below compare against the first batch, so 3 batches
+  // still detect a per-spawn leak; reduce under ASAN where each spawn is ~5x slower.
+  const count = isASAN ? 21 : 100;
   const interval = setInterval(dumpStats, 1000).unref();
   for (let i = 0; i < count; ) {
     const promises = new Array(concurrency);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import { gc as gcTrace, isASAN, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -137,8 +137,12 @@ describe("TextEncoder", () => {
 
     expect([...new TextEncoder().encode(String.fromCodePoint(0))]).toEqual([0]);
 
-    const fixture = new Uint8Array(await Bun.file(import.meta.dir + "/utf8-encoding-fixture.bin").arrayBuffer());
-    const length = 0x110000;
+    // ASAN: 0x20000 covers every UTF-8 width class (1/2/3-byte, surrogates, 4-byte) against
+    // the same fixture bytes; the full 0x110000 sweep still runs on non-ASAN lanes.
+    const length = isASAN ? 0x20000 : 0x110000;
+    const fixture = new Uint8Array(
+      await Bun.file(import.meta.dir + "/utf8-encoding-fixture.bin").arrayBuffer(),
+    ).subarray(0, length * 4);
     let textEncoder = new TextEncoder();
     let textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
     let encodeOut = new Uint8Array(length * 4);
@@ -165,7 +169,7 @@ describe("TextEncoder", () => {
     expect(encodeDecodedOut).toEqual(encodeIntoOut);
     expect(encodeDecodedOut).toEqual(fixture);
 
-    expect(() => textEncoder.encode(String.fromCodePoint(length + 1))).toThrow();
+    expect(() => textEncoder.encode(String.fromCodePoint(0x110000 + 1))).toThrow();
   });
 
   it("should encode long latin1 text", async () => {

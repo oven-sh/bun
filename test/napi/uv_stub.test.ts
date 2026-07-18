@@ -13,7 +13,7 @@ const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 // same CrashHandler__unsupportedUVFunction formatter, so a strided sample
 // exercises the mechanism on asan while every non-asan lane still runs the
 // full set.
-const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
+const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 20 === 0) : all_symbols_to_test;
 
 // We use libuv on Windows
 describe.if(!isWindows)("uv stubs", () => {

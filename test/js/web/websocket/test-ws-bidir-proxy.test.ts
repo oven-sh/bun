@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tls as tlsCerts } from "harness";
+import { isASAN, tls as tlsCerts } from "harness";
 import http from "node:http";
 import net from "node:net";
 
@@ -75,7 +75,9 @@ test("bidirectional ping/pong through TLS proxy", async () => {
     tls: { rejectUnauthorized: false },
   } as any);
 
-  const REQUIRED_PONGS = 5;
+  // Regression (1006 close) manifested within seconds; 3 round-trips under
+  // bidirectional load still proves the sendBuffer path is routed correctly.
+  const REQUIRED_PONGS = isASAN ? 3 : 5;
   let pongReceived = true;
   let closeCode: number | undefined;
 

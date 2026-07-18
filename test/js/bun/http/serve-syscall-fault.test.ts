@@ -25,7 +25,8 @@ async function spawnServer(body: string, env: Record<string, string> = {}) {
   return { proc, port: Number(line.trim()) };
 }
 
-describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
+// Each test spawns its own isolated server subprocess on port:0 with no shared state, so run concurrently.
+describe.concurrent.skipIf(skip)("Bun.serve under injected syscall faults", () => {
   test("send → short writes (1 byte) deliver complete fixed-length body", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");

@@ -15,7 +15,8 @@ afterAll(() => {
   registry.stop();
 });
 
-describe("bun update --interactive", () => {
+// Each test creates its own tempDir and subprocess; registry is read-only after beforeAll.
+describe.concurrent("bun update --interactive", () => {
   it("should handle package names of unusual lengths", async () => {
     const dir = tempDirWithFiles("update-interactive-test", {
       "package.json": JSON.stringify({

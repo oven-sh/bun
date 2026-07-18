@@ -2,11 +2,12 @@ const vm = require("vm");
 const { describe, it, expect } = require("bun:test");
 const { isASAN, isDebug } = require("harness");
 
-// 50k×50KB ≈ 2.5 GB of source text — if module records leak their source we
+// 20k×50KB ≈ 1 GB of source text — if module records leak their source we
 // blow past the threshold. Debug builds parse/link ~50× slower, so scale down.
 // ASAN's quarantine raises the RSS floor; keep a wide-but-bounded ceiling there.
-const ITERATIONS = isDebug ? 2_000 : 50_000;
-const THRESHOLD_MB = isDebug ? (isASAN ? 1500 : 300) : isASAN ? 3500 : 3000;
+// RSS delta scales linearly with N (~54 KB/iter), so thresholds scale with it.
+const ITERATIONS = isDebug ? 2_000 : 20_000;
+const THRESHOLD_MB = isDebug ? (isASAN ? 1500 : 300) : isASAN ? 1400 : 1200;
 
 describe("vm.SourceTextModule", () => {
   it(

@@ -2,7 +2,8 @@ import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import net from "node:net";
 
-describe("path parameters", () => {
+// Each describe.concurrent block either owns its own server per test or shares a read-only server.
+describe.concurrent("path parameters", () => {
   let server: Server;
 
   beforeAll(() => {
@@ -93,7 +94,7 @@ describe("path parameters", () => {
   });
 });
 
-describe("HTTP methods", () => {
+describe.concurrent("HTTP methods", () => {
   let server: Server;
 
   beforeAll(() => {
@@ -130,7 +131,7 @@ describe("HTTP methods", () => {
   });
 });
 
-describe("implicit HEAD for per-method route objects", () => {
+describe.concurrent("implicit HEAD for per-method route objects", () => {
   // HEAD must return the same representation as GET without the body
   // (RFC 9110 section 9.3.2).
   test("HEAD is served by the GET handler when no HEAD handler is declared", async () => {
@@ -282,7 +283,7 @@ describe("implicit HEAD for per-method route objects", () => {
   });
 });
 
-describe("static responses", () => {
+describe.concurrent("static responses", () => {
   let server: Server;
 
   beforeAll(() => {
@@ -326,7 +327,7 @@ describe("static responses", () => {
   });
 });
 
-describe("route precedence", () => {
+describe.concurrent("route precedence", () => {
   let server: Server;
 
   beforeAll(() => {
@@ -379,7 +380,7 @@ describe("route precedence", () => {
   });
 });
 
-describe("error handling", () => {
+describe.concurrent("error handling", () => {
   let server: Server;
 
   beforeAll(() => {
@@ -418,7 +419,7 @@ describe("error handling", () => {
   });
 });
 
-describe("request properties", () => {
+describe.concurrent("request properties", () => {
   let server: Server;
 
   beforeAll(() => {

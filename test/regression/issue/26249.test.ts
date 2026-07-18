@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 
-test.skipIf(isWindows)("cc() respects C_INCLUDE_PATH environment variable", async () => {
+test.concurrent.skipIf(isWindows)("cc() respects C_INCLUDE_PATH environment variable", async () => {
   // Create a temp directory with a custom include dir and header file
   using dir = tempDir("ffi-include-path-test", {
     "custom_include": {
@@ -59,7 +59,7 @@ console.log(get_magic());
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("cc() respects multiple paths in C_INCLUDE_PATH", async () => {
+test.concurrent.skipIf(isWindows)("cc() respects multiple paths in C_INCLUDE_PATH", async () => {
   // Create a temp directory with multiple custom include dirs
   using dir = tempDir("ffi-multi-include-path-test", {
     "include1": {

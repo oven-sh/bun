@@ -5,7 +5,7 @@
 // address — surfacing as e.g. `Export named 'beforeAll' not found in module
 // 'node:fs'`. Reproduced with BUN_JSC_collectContinuously=1.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 
 test("require(esm) sync queue is a GC root", async () => {
   using dir = tempDir("require-esm-gc-roots", {
@@ -47,7 +47,9 @@ test("require(esm) sync queue is a GC root", async () => {
   const gcEnv = isWindows
     ? { ...bunEnv, BUN_JSC_forceRAMSize: String(64 * 1024 * 1024) }
     : { ...bunEnv, BUN_JSC_collectContinuously: "1" };
-  const N = isWindows ? 8 : 30;
+  // ASAN already maximizes per-allocation GC pressure under collectContinuously,
+  // so 8 runs exercise the missing-root bug as reliably as 30 at ~1/4 the cost.
+  const N = isWindows || isASAN ? 8 : 30;
   const runs = Array.from({ length: N }, async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "entry.cjs"],

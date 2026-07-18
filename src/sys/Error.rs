@@ -347,20 +347,14 @@ impl Error {
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
         // Node reports libuv's codes in `err.errno` on every platform. On POSIX
-        // that is just the negated host errno; on Windows the two families in
-        // `self.errno` (uv magnitudes when `from_libuv`, `E` discriminants from
-        // CRT/kernel32 paths otherwise) both have to surface as the synthetic
-        // libuv value (`ENOENT` → -4058), or JS sees -2 from fs.access and
-        // -4058 from fs.open for the same underlying error.
+        // that is just the negated host errno. On Windows `self.errno` may be
+        // either an `E` discriminant or a raw libuv magnitude regardless of
+        // `from_libuv` (callers are inconsistent), so always try the
+        // discriminant→UV table first; a raw magnitude falls through to plain
+        // negation and lands on the same value.
         #[cfg(windows)]
-        let js_errno = if self.from_libuv {
-            c_int::from(self.errno).wrapping_neg()
-        } else {
-            u16::try_from(self.errno)
-                .ok()
-                .and_then(crate::windows::libuv::e_discriminant_to_uv)
-                .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg())
-        };
+        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
+            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
         #[cfg(not(windows))]
         let js_errno = c_int::from(self.errno).wrapping_neg();
 

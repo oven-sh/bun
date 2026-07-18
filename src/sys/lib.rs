@@ -69,6 +69,15 @@ impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
     #[inline]
     pub fn get_errno(&self) -> E {
+        // On Windows `self.errno` is a libuv code (e.g. UV_EBUSY = -4082);
+        // canonicalize to the small `E` discriminant so Rust-side callers that
+        // compare against `E::BUSY`/`E::BADF` keep matching.
+        #[cfg(windows)]
+        if let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno) {
+            if let Some(e) = E::try_from_raw(d) {
+                return e;
+            }
+        }
         e_from_negated(self.errno)
     }
     pub fn deref(&self) {

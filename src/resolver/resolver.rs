@@ -4735,32 +4735,21 @@ impl<'a> Resolver<'a> {
         }
 
         // Check for exact matches first
-        {
-            // NOTE: ArrayHashMap has no `&self` (key,value) iterator; zip the
-            // parallel `keys()`/`values()` slices (insertion order).
-            for (key, value) in tsconfig
-                .paths
-                .keys()
-                .iter()
-                .zip(tsconfig.paths.values().iter())
-            {
-                if strings::eql_long(key, path, true) {
-                    for original_path in value.iter() {
-                        let mut absolute_original_path: &[u8] = original_path;
+        if let Some(entry) = tsconfig.paths.get(path) {
+            for original_path in entry.original_paths.iter() {
+                let mut absolute_original_path: &[u8] = original_path;
 
-                        if !bun_paths::is_absolute(absolute_original_path) {
-                            let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            absolute_original_path =
-                                self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
-                        }
+                if !bun_paths::is_absolute(absolute_original_path) {
+                    let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
+                    absolute_original_path =
+                        self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
+                }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
-                        }
-                    }
+                if self
+                    .load_as_file_or_directory(absolute_original_path, kind, out)
+                    .is_success()
+                {
+                    return MatchStatus::Success;
                 }
             }
         }
@@ -4775,13 +4764,13 @@ impl<'a> Resolver<'a> {
         let mut longest_match_prefix_length: i32 = -1;
         let mut longest_match_suffix_length: i32 = -1;
 
-        for (key, original_paths) in tsconfig
+        for (key, entry) in tsconfig
             .paths
             .keys()
             .iter()
             .zip(tsconfig.paths.values().iter())
         {
-            if let Some(star) = strings::index_of_char(key, b'*') {
+            if let Some(star) = entry.star {
                 let star = star as usize;
                 let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
                 let suffix: &[u8] = if star == key.len() - 1 {
@@ -4807,7 +4796,7 @@ impl<'a> Resolver<'a> {
                     longest_match = Some(TSConfigMatch {
                         prefix,
                         suffix,
-                        original_paths,
+                        original_paths: &entry.original_paths,
                     });
                 }
             }

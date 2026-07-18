@@ -113,9 +113,11 @@ async function runBoth(test: Test): Promise<RunResult> {
 }
 
 describe("stdin", () => {
-  it("pause allows process to exit", async () => {
-    // in node, raw stdin behaves differently than pty. run this test in bun only for now.
-    expect(await run(bunExe(), { file: "pause.fixture.js", stdin: ["abc\n", "pause\n", "def\n"], end: false }))
+  it("pause allows process to exit once stdin closes", async () => {
+    // _read re-arms the native read after pause()'s disown() (Node's
+    // onpause/Socket._read), so the EOF that follows "pause" is delivered
+    // and the process exits cleanly. Matches Node on every platform.
+    expect(await runBoth({ file: "pause.fixture.js", stdin: ["abc\n", "pause\n"], end: true }))
       .toMatchInlineSnapshot(`
       {
         "autoKilled": false,

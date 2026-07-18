@@ -915,7 +915,7 @@ fn emit_vlq(
 ) {
     if *generated_line < state.generated_line {
         let gap = (state.generated_line - *generated_line) as usize;
-        let _ = out.append_char_n_times(b';', gap);
+        out.list.resize(out.list.len() + gap, b';');
         prev.generated_column = 0;
         *generated_line = state.generated_line;
     }

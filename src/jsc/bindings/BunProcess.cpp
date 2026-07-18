@@ -87,6 +87,7 @@
 // Using the same typedef and define for `mode_t` and `umask` as node on windows.
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #define umask _umask
+#define getpid _getpid
 typedef int mode_t;
 #endif
 #include "JSNextTickQueue.h"
@@ -1624,7 +1625,109 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     } else if (!Bun__NODE_NO_WARNINGS()) {
-        auto jsArgs = JSValue::encode(value);
+        // Match Node.js default warning format:
+        //   (bun:<pid>) [<code>] <name>: <message>
+        //   <detail>
+        WTF::StringBuilder builder;
+        builder.append("(bun:"_s);
+        builder.append(getpid());
+        builder.append(") "_s);
+
+        if (value.isObject()) {
+            auto* warning = value.getObject();
+
+            JSValue code = warning->getIfPropertyExists(globalObject, builtinNames(vm).codePublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (code && code.toBoolean(globalObject)) {
+                auto codeStr = code.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                builder.append('[');
+                builder.append(codeStr);
+                builder.append("] "_s);
+            }
+
+            JSValue traceProcessWarnings = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "traceProcessWarnings"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            bool trace = traceProcessWarnings && traceProcessWarnings.toBoolean(globalObject);
+            if (!trace) {
+                JSValue warningName = warning->getIfPropertyExists(globalObject, vm.propertyNames->name);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (warningName && warningName.isString()) {
+                    auto warningNameStr = warningName.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (warningNameStr == "DeprecationWarning"_s) {
+                        JSValue traceDeprecation = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "traceDeprecation"_s));
+                        RETURN_IF_EXCEPTION(scope, {});
+                        trace = traceDeprecation && traceDeprecation.toBoolean(globalObject);
+                    }
+                }
+            }
+
+            String stackStr;
+            if (trace) {
+                JSValue stack = warning->getIfPropertyExists(globalObject, vm.propertyNames->stack);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (stack && stack.toBoolean(globalObject)) {
+                    stackStr = stack.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            }
+
+            JSValue toStringFn = warning->get(globalObject, vm.propertyNames->toString);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!stackStr.isNull()) {
+                builder.append(stackStr);
+            } else if (toStringFn.isCallable()) {
+                JSC::MarkedArgumentBuffer noArgs;
+                auto callData = JSC::getCallData(toStringFn);
+                JSValue result = JSC::call(globalObject, toStringFn, callData, warning, noArgs);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto str = result.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                builder.append(str);
+            } else {
+                JSValue name = warning->get(globalObject, vm.propertyNames->name);
+                RETURN_IF_EXCEPTION(scope, {});
+                String nameStr;
+                if (name.isUndefined()) {
+                    nameStr = "Error"_s;
+                } else {
+                    nameStr = name.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                JSValue message = warning->get(globalObject, vm.propertyNames->message);
+                RETURN_IF_EXCEPTION(scope, {});
+                String messageStr;
+                if (!message.isUndefined()) {
+                    messageStr = message.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                if (nameStr.isEmpty()) {
+                    builder.append(messageStr);
+                } else if (messageStr.isEmpty()) {
+                    builder.append(nameStr);
+                } else {
+                    builder.append(nameStr);
+                    builder.append(": "_s);
+                    builder.append(messageStr);
+                }
+            }
+
+            JSValue detail = warning->getIfPropertyExists(globalObject, vm.propertyNames->detail);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (detail && detail.isString()) {
+                auto detailStr = detail.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                builder.append('\n');
+                builder.append(detailStr);
+            }
+        } else {
+            auto str = value.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            builder.append(str);
+        }
+
+        auto jsArgs = JSValue::encode(jsString(vm, builder.toString()));
         Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -2824,10 +2927,6 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         return jsUndefined();
     }
 }
-
-#if OS(WINDOWS)
-#define getpid _getpid
-#endif
 
 static JSValue constructPid(VM& vm, JSObject* processObject)
 {

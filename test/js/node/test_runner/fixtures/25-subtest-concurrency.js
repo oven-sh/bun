@@ -60,6 +60,14 @@ function serial(t) {
 test("default concurrency is serial", t => serial(t));
 test("concurrency: false is serial", { concurrency: false }, t => serial(t));
 
+// Node: "If unspecified, subtests inherit this value from their parent." A
+// grandchild whose intermediate parent omits the option must inherit 4.
+test("unspecified concurrency inherits from the parent", { concurrency: 4 }, async t => {
+  await t.test("mid", ct => interleaved(ct, "inherit"));
+  // An explicit value on the intermediate parent overrides the inherited one.
+  await t.test("mid-serial", { concurrency: 1 }, ct => serial(ct));
+});
+
 // An inline describe() inside a running test honors its own concurrency option.
 test("inline suite with concurrency interleaves its children", async t => {
   const started = [false, false];
@@ -73,6 +81,22 @@ test("inline suite with concurrency interleaves its children", async t => {
     test("y", body(1));
   });
   t.after(() => assert.deepStrictEqual(started, [true, true]));
+});
+
+// An inline suite inside a concurrent parent runs its children once it has a
+// parent slot; it is not gated on every prior sibling of the parent settling.
+test("inline suite is not gated on the parent's prior concurrent siblings", { concurrency: 3 }, async t => {
+  let suiteChildRan = false;
+  const releaseSlow = Promise.withResolvers();
+  const slow = t.test("slow", () => releaseSlow.promise);
+  describe("inner", () => {
+    test("x", () => {
+      suiteChildRan = true;
+      releaseSlow.resolve();
+    });
+  });
+  await slow;
+  assert.ok(suiteChildRan, "inline suite child waited for an unrelated concurrent sibling");
 });
 
 // Bad values keep throwing Node's error codes.

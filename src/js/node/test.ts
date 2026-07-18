@@ -1271,20 +1271,21 @@ function validateTimeoutAndSignal(options: TestOptions | HookOptions) {
   }
 }
 
-function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined; concurrency: number } {
+function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined; concurrency: number | undefined } {
   const { concurrency, tags, plan } = options;
 
   // signal is validated for Node's error contract but not yet enforced
   // (t.signal never aborts).
   validateTimeoutAndSignal(options);
-  // Node: default 1, `true` -> Infinity for a non-root test, `false` -> 1.
-  let resolvedConcurrency = 1;
+  // Node: an unspecified value inherits from the parent; `true` -> Infinity
+  // for a non-root test; `false` -> 1. `undefined` here means "inherit".
+  let resolvedConcurrency: number | undefined;
   if (concurrency != null) {
     if (typeof concurrency === "number") {
       validateUint32(concurrency, "options.concurrency", true);
       resolvedConcurrency = concurrency;
     } else if (typeof concurrency === "boolean") {
-      if (concurrency) resolvedConcurrency = Infinity;
+      resolvedConcurrency = concurrency ? Infinity : 1;
     } else {
       throw $ERR_INVALID_ARG_TYPE("options.concurrency", ["boolean", "number"], concurrency);
     }
@@ -1678,7 +1679,7 @@ async function drainSubtestChain(node: TestNode) {
   } while (chain !== node.subtestChain);
 }
 
-function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown): Promise<undefined> {
+function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, release: () => void): Promise<undefined> {
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
@@ -1698,6 +1699,10 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
       // A failing suite-level before hook fails the suite, like Node.
       recordSuiteFailure(suite, err);
     }
+    // The suite now has its parent slot, its build has settled, and its
+    // before hooks have run (or failed): release the gate so its children
+    // start. Always release, otherwise drainSubtestChain would hang.
+    release();
     // Wait for children created during the callback and any they schedule.
     await drainSubtestChain(suite);
     for (const hook of suite.hooks.after) {
@@ -1800,7 +1805,7 @@ function addTest(
       }
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
-      child.concurrency = concurrency;
+      child.concurrency = concurrency ?? runningNode.concurrency;
       if (mode === "todo") child.todoFlag = true;
       return scheduleSubtest(runningNode, child, fn);
     }
@@ -1810,7 +1815,7 @@ function addTest(
   const parent = currentCollectionParent();
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
-  node.concurrency = concurrency;
+  node.concurrency = concurrency ?? parent.concurrency;
 
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
@@ -1863,18 +1868,17 @@ function addSuite(
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
-    suite.concurrency = concurrency;
+    suite.concurrency = concurrency ?? runningNode.concurrency;
     if (mode === "skip" || options.skip) {
       return Promise.resolve(undefined);
     }
     if (mode === "todo") suite.todoFlag = true;
-    // The suite's children must run after the parent's previously scheduled
-    // subtests AND after the describe callback's own returned promise settles
-    // (Node's Suite.run awaits buildPromise before iterating subtests). The
-    // callback has not returned yet so its promise does not exist; seed the
-    // chain through a gate the callback's settlement opens.
+    // The suite's children must not start until the suite has acquired its
+    // slot on the parent AND the describe callback's returned promise has
+    // settled (Node's Suite.run awaits buildPromise before iterating
+    // subtests). Seed the chain with a gate that scheduleSuiteSubtest opens.
     const gate = Promise.withResolvers<void>();
-    suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
+    suite.subtestChain = gate.promise;
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.
     let build: unknown;
@@ -1886,19 +1890,19 @@ function addSuite(
       recordSuiteFailure(suite, err);
     }
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
-      // Attach a handler now: the real await happens when the suite's turn
-      // comes, which can be many ticks later (no unhandled rejection).
-      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
+      // Defuse now: the real await happens when the suite's turn comes,
+      // which can be many ticks later (no unhandled rejection).
+      (build as PromiseLike<unknown>).then(kDefaultFunction, kDefaultFunction);
     } else {
-      gate.resolve();
       build = undefined;
     }
-    return scheduleSuiteSubtest(runningNode, suite, build);
+    return scheduleSuiteSubtest(runningNode, suite, build, gate.resolve);
   }
 
   const parent = currentCollectionParent();
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
+  suiteNode.concurrency = concurrency ?? parent.concurrency;
 
   const { describe } = bunTest();
   const wrapped = () => {

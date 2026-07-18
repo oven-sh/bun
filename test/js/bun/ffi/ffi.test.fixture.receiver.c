@@ -269,7 +269,13 @@ static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
 }
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
-  return val.asInt64;
+  if (JSVALUE_IS_INT32(val)) {
+    return (int32_t)val.asInt64;
+  }
+  // Decode a double-encoded integer (JIT tier-up, Math.* provenance, etc.);
+  // int64_t intermediate keeps u32 callers (uint32_t)JSVALUE_TO_INT32(...) defined.
+  val.asInt64 -= DoubleEncodeOffset;
+  return (int32_t)(int64_t)val.asDouble;
 }
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {

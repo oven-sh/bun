@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -100,6 +100,74 @@ it("process.title with UTF-16 characters", () => {
 
   process.title = "bun";
   expect(process.title).toBe("bun");
+});
+
+it("process.title coerces non-string values via ToString", () => {
+  const original = process.title;
+  try {
+    process.title = 42;
+    expect(process.title).toBe("42");
+
+    process.title = { toString: () => "fromObject" };
+    expect(process.title).toBe("fromObject");
+
+    process.title = null;
+    expect(process.title).toBe("null");
+
+    expect(() => {
+      process.title = Symbol("s");
+    }).toThrow(TypeError);
+  } finally {
+    process.title = original;
+  }
+});
+
+it.skipIf(!isLinux)("process.title writes through to /proc/self/{comm,cmdline}", async () => {
+  const script = `
+    const fs = require("fs");
+    const comm = () => fs.readFileSync("/proc/self/comm", "utf8").trim();
+    const cmd0 = () => fs.readFileSync("/proc/self/cmdline").toString().split("\\0")[0];
+    process.title = "renamedproc";
+    const longTitle = "x".repeat(64);
+    const r1 = { readback: process.title, comm: comm(), cmdline0: cmd0() };
+    process.title = longTitle;
+    const r2 = { readback: process.title, comm: comm(), cmdline0: cmd0() };
+    console.log(JSON.stringify([r1, r2]));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script, "--some-padding-arg-for-cmdline-space"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [r1, r2] = JSON.parse(stdout);
+  expect(r1).toEqual({ readback: "renamedproc", comm: "renamedproc", cmdline0: "renamedproc" });
+  // JS readback preserves full length; kernel caps comm at 15 and cmdline at
+  // the original argv span, both of which must start with the title.
+  expect(r2.readback).toBe("x".repeat(64));
+  expect(r2.comm).toBe("x".repeat(15));
+  expect(r2.cmdline0.length).toBeGreaterThan(0);
+  expect("x".repeat(64).startsWith(r2.cmdline0)).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(!isLinux)("--title writes through to /proc/self/cmdline", async () => {
+  const script = `
+    const fs = require("fs");
+    console.log(fs.readFileSync("/proc/self/cmdline").toString().split("\\0")[0]);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--title=fromflag", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("fromflag");
+  expect(exitCode).toBe(0);
 });
 
 it("process.chdir() on root dir", () => {

@@ -4201,10 +4201,13 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    JSC::JSString* jsString = dynamicDowncast<JSC::JSString>(JSValue::decode(value));
-    if (!thisObject || !jsString) {
+    if (!thisObject) {
         return false;
     }
+    // Node coerces via ToString: `process.title = 42` reads back as "42",
+    // and Symbol throws TypeError.
+    JSC::JSString* jsString = JSValue::decode(value).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
 #if !OS(WINDOWS)
     BunString str = Bun::toStringRef(globalObject, jsString);
     Bun__Process__setTitle(globalObject, &str);

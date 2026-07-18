@@ -561,6 +561,36 @@ pub fn set_thread_name(name: &ZStr) {
     }
 }
 
+/// Write the process title to the OS so `ps`/`top`/`pgrep` and
+/// `/proc/self/{comm,cmdline}` reflect it. On Linux this does
+/// `prctl(PR_SET_NAME)` plus an in-place rewrite of the kernel argv block,
+/// matching libuv's `uv_set_process_title`. No-op on other platforms.
+pub fn set_process_title(title: &[u8]) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let mut comm = [0u8; 16];
+        let n = title.len().min(15);
+        comm[..n].copy_from_slice(&title[..n]);
+        // SAFETY: PR_SET_NAME reads a NUL-terminated string; `comm` is zeroed.
+        unsafe {
+            let _ = libc::prctl(libc::PR_SET_NAME, comm.as_ptr() as usize);
+        }
+        if let Some((ptr, cap)) = crate::os_argv_title_span() {
+            let n = title.len().min(cap.saturating_sub(1));
+            // SAFETY: `os_argv_title_span` returns the writable kernel argv
+            // region; `argv()` reads owned copies, so no aliasing.
+            unsafe {
+                core::ptr::copy_nonoverlapping(title.as_ptr(), ptr, n);
+                core::ptr::write_bytes(ptr.add(n), 0, cap - n);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = title;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Exit callbacks
 // ──────────────────────────────────────────────────────────────────────────

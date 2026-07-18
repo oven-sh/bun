@@ -175,8 +175,10 @@ mod _impl {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
-        // Assigning into the `Option<Box<[u8]>>` static drops the previous box.
-        *crate::cli::Bun__Node__ProcessTitle.lock() = Some(new_title);
+        // Hold the lock across the OS write so concurrent setters serialise.
+        let mut guard = crate::cli::Bun__Node__ProcessTitle.lock();
+        bun_core::set_process_title(&new_title);
+        *guard = Some(new_title);
     }
 
     // ───────────────────────────── execArgv ─────────────────────────────

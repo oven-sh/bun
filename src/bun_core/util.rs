@@ -3983,6 +3983,40 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     Some(unsafe { core::slice::from_raw_parts(p, n) })
 }
 
+/// Contiguous writable byte span starting at the kernel `argv[0]` for
+/// process-title rewriting (what `/proc/self/cmdline` / `ps` read on Linux).
+/// Cached on first call because later calls may observe an already-rewritten
+/// (NUL-padded) block. `None` if [`init_argv`] was not called or `argc == 0`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn os_argv_title_span() -> Option<(*mut u8, usize)> {
+    static SPAN: Once<Option<(usize, usize)>> = Once::new();
+    let &(addr, len) = SPAN
+        .get_or_init(|| {
+            // Ensure the original argv strings are copied into owned storage so
+            // overwriting the kernel block cannot be observed via `argv()`.
+            let _ = argv_storage();
+            let raw = raw_os_argv()?;
+            let first = *raw.first()?;
+            if first.is_null() {
+                return None;
+            }
+            // SAFETY: kernel argv entries are NUL-terminated and process-lifetime.
+            let mut end = unsafe { first.add(libc::strlen(first) + 1) };
+            for &p in &raw[1..] {
+                if p != end {
+                    break;
+                }
+                // SAFETY: as above.
+                end = unsafe { p.add(libc::strlen(p) + 1) };
+            }
+            // SAFETY: both pointers index the same contiguous kernel argv block.
+            let len = unsafe { end.offset_from(first) } as usize;
+            Some((first as usize, len))
+        })
+        .as_ref()?;
+    Some((addr as *mut u8, len))
+}
+
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is

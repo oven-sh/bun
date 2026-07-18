@@ -10,6 +10,7 @@ use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
 use crate::StringJsc as _;
+use crate::jsc_ext::{JSGlobalObjectExt as _, JSValueExt as _};
 use crate::timer::ElTimespec;
 
 pub use super::bun_test;

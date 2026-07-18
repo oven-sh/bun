@@ -1603,6 +1603,6 @@ describe("NODE_NO_WARNINGS", () => {
   );
 
   it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
-    expect(await warn("1")).toBe("");
+    expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
 });

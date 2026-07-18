@@ -1,3 +1,4 @@
+import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
@@ -1641,7 +1642,7 @@ describe("duplexPair teardown (test-duplex-error.js)", () => {
 it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => {
   // Reachable via exposedInternals["internal/fixed_queue"]; without the src/
   // change that entry (and the .fill()) is absent, so this test fails either way.
-  const FixedQueue = require("bun:internal-for-testing").exposedInternals["internal/fixed_queue"];
+  const FixedQueue = exposedInternals["internal/fixed_queue"];
   expect(typeof FixedQueue).toBe("function");
   const q = new FixedQueue();
   const list = q.head.list;

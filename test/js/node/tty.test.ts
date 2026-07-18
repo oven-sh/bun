@@ -301,3 +301,58 @@ describe("WriteStream.prototype.getColorDepth", () => {
     expect(WriteStream.prototype.getColorDepth.call(undefined, {})).toBe(isWindows ? 24 : 1);
   });
 });
+
+describe("FORCE_COLOR piped console", () => {
+  // Node.js only enables color for these exact FORCE_COLOR values; any other
+  // value (including "4", "junk", " 1") means no color. The native console
+  // colorizer (Bun.enableANSIColors) must agree with getColorDepth, or piped
+  // output gets ANSI escapes that Node would not emit.
+  const cases: [value: string, colored: boolean][] = [
+    ["", true],
+    ["1", true],
+    ["true", true],
+    ["2", true],
+    ["3", true],
+    ["0", false],
+    ["false", false],
+    ["junk", false],
+    ["4", false],
+    ["10", false],
+    [" 1", false],
+    ["2junk", false],
+  ];
+
+  test.concurrent.each(cases)("FORCE_COLOR=%j -> colored=%p", async (value, colored) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(JSON.stringify({
+          ansi: Bun.enableANSIColors,
+          depth: require("node:tty").WriteStream.prototype.getColorDepth.call({}, process.env),
+        }) + "\\n");
+        console.log("x", { a: 1 });`,
+      ],
+      env: { ...bunEnv, PATH: process.env.PATH, NO_COLOR: undefined, FORCE_COLOR: value },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const nl = stdout.indexOf("\n");
+    const meta = JSON.parse(stdout.slice(0, nl));
+    const rest = stdout.slice(nl + 1);
+    expect({
+      FORCE_COLOR: value,
+      ansi: meta.ansi,
+      colorDepthSaysColor: meta.depth > 2,
+      emittedEscapes: rest.includes("\x1b"),
+    }).toEqual({
+      FORCE_COLOR: value,
+      ansi: colored,
+      colorDepthSaysColor: colored,
+      emittedEscapes: colored,
+    });
+    expect(exitCode).toBe(0);
+  });
+});

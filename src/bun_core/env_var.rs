@@ -117,9 +117,9 @@ new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { de
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
 platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", windows = None, {});
-// TODO(markovejnovic): We should support enums in this library, and force_color's usage is,
-// indeed, an enum. The 80-20 is to make it an unsigned value (which also works well).
-new!(pub FORCE_COLOR: unsigned, "FORCE_COLOR", { deser: { error_handling: TruthyCast, empty_string_as: Value(1) } });
+// Raw string so `output::Source::get_force_color_depth` can do the exact
+// Node.js value match (""/"1"/"true"/"2"/"3"); any other value means no color.
+new!(pub FORCE_COLOR: string, "FORCE_COLOR", {});
 platform_specific_new!(pub fpath: string, posix = "fpath", windows = None, {});
 new!(pub GIT_SHA: string, "GIT_SHA", {});
 new!(pub GITHUB_ACTIONS: boolean, "GITHUB_ACTIONS", { default: false });
@@ -472,6 +472,7 @@ pub(crate) mod kind {
             ///
             /// Note: Most values are considered truthy, except for "", "0", "false", "no",
             /// and "off".
+            #[allow(dead_code)]
             TruthyCast,
         }
 
@@ -479,6 +480,7 @@ pub(crate) mod kind {
         #[derive(Clone, Copy)]
         pub(crate) enum EmptyStringAs {
             /// Empty strings are handled as the given value.
+            #[allow(dead_code)]
             Value(ValueType),
             /// Empty strings are treated as deserialization errors.
             Erroneous,

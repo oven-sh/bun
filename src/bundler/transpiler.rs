@@ -1970,6 +1970,8 @@ fn parse_data_loader<'a>(
                 let export_clauses = arena.alloc_slice_fill_default::<bun_ast::ClauseItem>(n);
                 let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
                     bun_collections::StringHashMap::default();
+                let mut mangled_names: bun_collections::StringHashMap<u32> =
+                    bun_collections::StringHashMap::default();
                 // duplicate_key_checker drops at end of scope (defer .deinit())
                 let mut count: usize = 0;
                 // reshaped for borrowck — cannot zip 4
@@ -2006,20 +2008,60 @@ fn parse_data_loader<'a>(
                     // actually-populated entries.
                     *visited.value_ptr = count as u32;
 
-                    symbols[count] = bun_ast::Symbol {
-                        original_name: match bun_core::MutableString::ensure_valid_identifier(name)
-                        {
-                            // The identifier lives in the
-                            // per-parse arena. Arena-copy the
-                            // owned `Box<[u8]>` so it is freed
-                            // with the arena instead of leaking
-                            // (PORTING.md §Forbidden patterns
-                            // bars `heap::alloc` for `&'static`).
-                            // SAFETY: ARENA — `arena` outlives
-                            // the returned `ParseResult.ast`.
-                            Ok(boxed) => bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed)),
+                    // Mangle the key into a valid binding identifier, then
+                    // suffix on collision with an earlier mangled name so
+                    // e.g. `{"if":1,"_if":2}` or `{"b c":1,"b_c":2}` get
+                    // distinct `var` bindings instead of re-declaring the
+                    // same one.
+                    let ident = match bun_core::MutableString::ensure_valid_identifier(name) {
+                        Ok(boxed) => boxed,
+                        Err(_) => return None,
+                    };
+                    let start_tries: Option<u32> = match mangled_names.get_or_put(&ident) {
+                        Ok(e) if !e.found_existing => {
+                            *e.value_ptr = 1;
+                            None
+                        }
+                        Ok(e) => Some(*e.value_ptr),
+                        Err(_) => return None,
+                    };
+                    // The identifier lives in the per-parse arena. Arena-copy
+                    // the owned bytes so they are freed with the arena instead
+                    // of leaking (PORTING.md §Forbidden patterns bars
+                    // `heap::alloc` for `&'static`).
+                    // SAFETY: ARENA — `arena` outlives the returned
+                    // `ParseResult.ast`.
+                    let arena_ident: &[u8] = if let Some(mut tries) = start_tries {
+                        let base_len = ident.len();
+                        let mut buf = match bun_core::MutableString::init_copy(&*ident) {
+                            Ok(b) => b,
                             Err(_) => return None,
-                        },
+                        };
+                        loop {
+                            tries += 1;
+                            buf.reset_to(base_len);
+                            if buf.append_int(tries as u64).is_err() {
+                                return None;
+                            }
+                            match mangled_names.get_or_put(&buf.list) {
+                                Ok(e) if !e.found_existing => {
+                                    *e.value_ptr = 1;
+                                    break;
+                                }
+                                Ok(_) => {}
+                                Err(_) => return None,
+                            }
+                        }
+                        if let Ok(e) = mangled_names.get_or_put(&ident) {
+                            *e.value_ptr = tries;
+                        }
+                        arena.alloc_slice_copy(&buf.list)
+                    } else {
+                        arena.alloc_slice_copy(&ident)
+                    };
+
+                    symbols[count] = bun_ast::Symbol {
+                        original_name: bun_ast::StoreStr::new(arena_ident),
                         ..Default::default()
                     };
 

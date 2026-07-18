@@ -5374,4 +5374,20 @@ describe("json/toml loader with reserved-word top-level keys", () => {
     expect(out).toContain('b_c as "b c"');
     expect(out).toContain("_if as if");
   });
+
+  it("suffixes when a mangled key collides with a sibling", () => {
+    const t = new Bun.Transpiler();
+    for (const [src, decl, aliases] of [
+      ['{"if":1,"_if":2}', "var _if = 1, _if2 = 2;", ["_if as if", "_if2 as _if"]],
+      ['{"_if":1,"if":2}', "var _if = 1, _if2 = 2;", ["_if", "_if2 as if"]],
+      ['{"let":1,"_let":2}', "var _let = 1, _let2 = 2;", ["_let as let", "_let2 as _let"]],
+      ['{"b c":1,"b_c":2}', "var b_c = 1, b_c2 = 2;", ['b_c as "b c"', "b_c2 as b_c"]],
+      ['{"if":1,"_if":2,"_if2":3}', "var _if = 1, _if2 = 2, _if22 = 3;", ["_if as if", "_if2 as _if", "_if22 as _if2"]],
+    ]) {
+      const out = t.transformSync(src, "json");
+      expect({ src, verdict: reparses(out) }).toEqual({ src, verdict: "ok" });
+      expect(out.split("\n")[0]).toBe(decl);
+      for (const a of aliases) expect(out).toContain(a);
+    }
+  });
 });

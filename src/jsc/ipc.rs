@@ -1,7 +1,10 @@
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
+use core::ptr::NonNull;
 
 use crate as jsc;
+use crate::api::bun_subprocess::Subprocess as SubprocessT;
+use crate::virtual_machine::IPCInstance;
 use crate::js_value::Protected;
 use crate::jsc_ext::{JSGlobalObjectExt as _, JSValueExt as _};
 use crate::json_line_buffer::JSONLineBuffer;
@@ -30,18 +33,15 @@ use bun_uws;
 // ──────────────────────────────────────────────────────────────────────────
 // SendQueue ownership (§Layering / Dispatch).
 //
-// `SendQueue.owner` is logically either a `*Subprocess` (parent side)
-// or a `*VirtualMachine` (child side). `Subprocess` lives in `bun_runtime`
-// (tier-6), so the concrete type cannot be named here. Instead of a hand-
-// rolled fn-pointer table, the owner is stored as a raw `*mut dyn` trait
-// object: `IPCInstance` (this crate) and `Subprocess` (`bun_runtime`) both
-// impl [`SendQueueOwner`], and the SendQueue is embedded inline in each, so
-// the pointer is a BACKREF (cleared before the owner drops).
+// `SendQueue.owner` is either a `*Subprocess` (parent side) or a
+// `*IPCInstance` (child side). Both concrete types live in `bun_runtime`, so
+// the owner is stored as a tagged `NonNull` enum [`SendQueueOwner`]; the
+// SendQueue is embedded inline in each owner, so the pointer is a BACKREF
+// (cleared before the owner drops).
 //
 // The JS host fns that need the concrete `Subprocess` / `Listener` types
 // (`do_send`, `emit_handle_ipc_message`, `Bun__Process__send`) live in
-// `bun_runtime::ipc_host`, which can name those types directly without a
-// runtime-registered hook table.
+// `bun_runtime::ipc_host`.
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO: rewrite this code.
@@ -843,10 +843,10 @@ pub struct SendQueue {
     pub socket: SocketUnion,
     /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`). The
     /// SendQueue is stored inline in its owner, so this is a self-referential
-    /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
-    /// live (every access goes through `unsafe { &mut *self.owner }` at the
+    /// raw pointer; never reborrow the pointee as `&mut` while a `&mut
+    /// SendQueue` is live (every access goes through a per-use raw deref at the
     /// call site).
-    pub owner: *mut dyn SendQueueOwner,
+    pub owner: SendQueueOwner,
 
     pub close_next_tick: Option<Task>,
     /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
@@ -860,23 +860,55 @@ pub struct SendQueue {
     pub windows: WindowsState,
 }
 
-/// Dispatch surface for the SendQueue's embedding object — either a
-/// `Subprocess` (parent side, `bun_runtime`) or a `VirtualMachine::IPCInstance`
-/// (child side, this crate). A trait object so the concrete `Subprocess`
-/// type need not be named here.
-pub trait SendQueueOwner {
-    fn global_this(&self) -> *const JSGlobalObject;
-    fn handle_ipc_close(&mut self);
-    fn handle_ipc_message(&mut self, msg: DecodedIPCMessage, handle: JSValue);
-    /// `Subprocess.this_value.tryGet()` — returns `ZERO` for the VM-side owner.
-    fn this_jsvalue(&self) -> JSValue;
-    fn kind(&self) -> SendQueueOwnerKind;
+/// Closed-set BACKREF to the SendQueue's embedding object — either a
+/// `Subprocess` (parent side) or a `VirtualMachine::IPCInstance` (child side).
+/// Both types now live in `bun_runtime`, so the former `*mut dyn` trait object
+/// is a tagged `NonNull` enum with direct method dispatch.
+#[derive(Copy, Clone)]
+pub enum SendQueueOwner {
+    Instance(NonNull<IPCInstance>),
+    Subprocess(NonNull<SubprocessT<'static>>),
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum SendQueueOwnerKind {
-    Subprocess,
-    VirtualMachine,
+impl SendQueueOwner {
+    pub fn global_this(&self) -> *const JSGlobalObject {
+        // SAFETY: BACKREF — owner embeds the SendQueue inline and outlives it;
+        // the pointer is set in `init()` / by the embedder before first use.
+        match *self {
+            SendQueueOwner::Instance(p) => unsafe { p.as_ref() }.global_this,
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
+        }
+    }
+    pub fn handle_ipc_close(&self) {
+        // SAFETY: BACKREF — see `global_this`.
+        match *self {
+            SendQueueOwner::Instance(mut p) => unsafe { p.as_mut() }.handle_ipc_close(),
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
+        }
+    }
+    pub fn handle_ipc_message(&self, msg: DecodedIPCMessage, handle: JSValue) {
+        // SAFETY: BACKREF — see `global_this`.
+        match *self {
+            SendQueueOwner::Instance(mut p) => {
+                unsafe { p.as_mut() }.handle_ipc_message(&msg, handle)
+            }
+            SendQueueOwner::Subprocess(p) => {
+                unsafe { p.as_ref() }.handle_ipc_message(&msg, handle)
+            }
+        }
+    }
+    /// `Subprocess.this_value.tryGet()` — returns `ZERO` for the VM-side owner.
+    pub fn this_jsvalue(&self) -> JSValue {
+        match *self {
+            SendQueueOwner::Instance(_) => JSValue::ZERO,
+            // SAFETY: BACKREF — see `global_this`.
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }
+                .this_value
+                .get()
+                .try_get()
+                .unwrap_or(JSValue::ZERO),
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -891,22 +923,7 @@ pub enum SocketUnion {
 }
 
 impl SendQueue {
-    /// Safe `&dyn SendQueueOwner` accessor — wraps the per-use raw deref +
-    /// autoref for `&self`-taking trait methods (`kind`, `this_jsvalue`,
-    /// `global_this`). The owner embeds this
-    /// `SendQueue` inline, so the formed `&Owner` overlaps `self` — but the
-    /// caller already holds at most `&SendQueue` here (shared/shared), so
-    /// there is no exclusive alias. NOT for `handle_ipc_*` (those take
-    /// `&mut dyn`; see field doc).
-    #[inline]
-    fn owner_ref(&self) -> &dyn SendQueueOwner {
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
-        // `owner` is set in `init()` / by the embedder before first use and
-        // never null afterward.
-        unsafe { &*self.owner }
-    }
-
-    pub fn init(mode: Mode, owner: *mut dyn SendQueueOwner, socket: SocketUnion) -> Self {
+    pub fn init(mode: Mode, owner: SendQueueOwner, socket: SocketUnion) -> Self {
         log!("SendQueue#init");
         Self {
             queue: Vec::new(),
@@ -1090,8 +1107,7 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*this.owner).handle_ipc_close() };
+        this.owner.handle_ipc_close();
         Ok(())
     }
 
@@ -1567,7 +1583,7 @@ impl SendQueue {
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
         // JSC for the VM's lifetime. `opaque_ref` is the safe ZST-handle deref
         // (panics on null) — see `bun_opaque::opaque_deref`.
-        crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
+        crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner.global_this()))
     }
 
     /// # Safety
@@ -1842,9 +1858,9 @@ fn handle_ipc_message(
                 // Get file descriptor and clear it
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
-                let target: JSValue = match send_queue.owner_ref().kind() {
-                    SendQueueOwnerKind::Subprocess => send_queue.owner_ref().this_jsvalue(),
-                    SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
+                let target: JSValue = match send_queue.owner {
+                    SendQueueOwner::Subprocess(_) => send_queue.owner.this_jsvalue(),
+                    SendQueueOwner::Instance(_) => JSValue::NULL,
                 };
 
                 // RAII: `enter()` now, `exit()` on drop — covers both the
@@ -1878,8 +1894,7 @@ fn handle_ipc_message(
             }
         }
     } else {
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
+        send_queue.owner.handle_ipc_message(message, JSValue::UNDEFINED);
     }
 }
 

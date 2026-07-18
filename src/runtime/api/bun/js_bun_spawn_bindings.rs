@@ -91,35 +91,15 @@ impl TerminalCreateResult {
     }
 }
 
-// ── IPC owner trait impl for Subprocess ─────────────────────────────────────
-// Mirrors the `IPCInstance` impl in `crate::vm::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `crate::vm::ipc` (tier-5)
-// sees only the `dyn SendQueueOwner` trait object.
-impl IPC::SendQueueOwner for SubprocessT<'static> {
-    fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this.as_ptr()
-    }
-    fn handle_ipc_close(&mut self) {
-        SubprocessT::handle_ipc_close(self)
-    }
-    fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, &msg, handle)
-    }
-    fn this_jsvalue(&self) -> JSValue {
-        self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
-    }
-    fn kind(&self) -> IPC::SendQueueOwnerKind {
-        IPC::SendQueueOwnerKind::Subprocess
-    }
-}
-
 #[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
+fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
     // `SendQueue.owner` is a BACKREF — the SendQueue is stored inline in
     // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
     // Erase the borrowed `'a` (raw-pointer lifetimes are not enforced) so the
-    // unsizing coercion to `dyn SendQueueOwner + 'static` is well-formed.
-    ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
+    // stored `NonNull<SubprocessT<'static>>` is well-formed.
+    IPC::SendQueueOwner::Subprocess(
+        NonNull::new(ptr.cast::<SubprocessT<'static>>()).expect("non-null Subprocess"),
+    )
 }
 
 bun_core::declare_scope!(Subprocess, hidden);

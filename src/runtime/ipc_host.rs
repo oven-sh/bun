@@ -2,7 +2,7 @@
 //! types (`Subprocess`, `Listener`).
 //!
 //! LAYERING: `crate::vm::ipc` defines the protocol/queue (mode-agnostic) and the
-//! `SendQueueOwner` trait. The host fns here close over the concrete
+//! `SendQueueOwner` enum. The host fns here close over the concrete
 //! `Subprocess` / `Listener` / `IPCInstance` types so `bun_jsc` keeps zero
 //! upward references into `bun_runtime`. The C-ABI exports (`Bun__Process__send`,
 //! `emit_handle_ipc_message` for JS2Native) are link-time symbols, so which

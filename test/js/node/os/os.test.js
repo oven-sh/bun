@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -60,6 +60,39 @@ it("loadavg", () => {
 
 it("homedir", () => {
   expect(os.homedir() !== "unknown").toBe(true);
+});
+
+describe.skipIf(isWindows)("homedir honors $HOME", () => {
+  const envVar = "HOME";
+  const child = `process.stdout.write(JSON.stringify(require("node:os").homedir()))`;
+  const run = async env => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", child],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  };
+  // Minimal env so nothing else contributes a HOME.
+  const base = { PATH: bunEnv.PATH, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" };
+
+  it.concurrent("returns $HOME verbatim when set", async () => {
+    expect(await run({ ...base, [envVar]: "/bun-homedir-test" })).toBe('"/bun-homedir-test"');
+  });
+
+  it.concurrent("returns $HOME verbatim when set to the empty string", async () => {
+    // uv_os_homedir: an empty-but-set $HOME is still "set"; Node returns "".
+    expect(await run({ ...base, [envVar]: "" })).toBe('""');
+  });
+
+  it.concurrent("falls back to the passwd entry only when $HOME is unset", async () => {
+    const out = await run({ ...base });
+    expect(out).toStartWith('"');
+    expect(out).not.toBe('""');
+  });
 });
 
 it("tmpdir", () => {

@@ -742,12 +742,10 @@ mod _impl {
         }
         #[cfg(not(windows))]
         {
-            // The posix implementation of uv_os_homedir first checks the HOME
-            // environment variable, then falls back to reading the passwd entry.
+            // uv_os_homedir returns $HOME verbatim whenever the variable is
+            // set (including empty) and only consults getpwuid_r when unset.
             if let Some(home) = env_var::HOME.get() {
-                if !home.is_empty() {
-                    return Ok(BunString::init(home));
-                }
+                return Ok(BunString::init(home));
             }
 
             // From libuv:

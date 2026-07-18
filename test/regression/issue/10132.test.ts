@@ -1,10 +1,14 @@
 import { $ } from "bun";
-import { beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync } from "fs";
 import { bunExe, isPosix, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 let dir = "";
+afterAll(() => {
+  // Reset global shell cwd so later test files that use Bun.$ don't inherit a deleted tempdir.
+  $.cwd(process.cwd());
+});
 beforeAll(() => {
   dir = tempDirWithFiles("issue-10132", {
     "subdir/one/two/three/hello.txt": "hello",

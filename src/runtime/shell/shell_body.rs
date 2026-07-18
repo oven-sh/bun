@@ -11,6 +11,7 @@ use crate::{
     MarkedArgumentBuffer, PlatformEventLoop,
 };
 use crate::{StringJsc as _, SysErrorJsc as _};
+use crate::jsc_ext::JSGlobalObjectExt as _;
 // `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
 use bun_core::strings;
 use bun_core::{OwnedString, String as BunString, ZStr};

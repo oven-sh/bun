@@ -282,7 +282,7 @@ describe.skipIf(skip)("TLS client under injected fatal send errno (us_socket_raw
 
     // On main the socket never closed: the spill path re-armed writable every
     // tick and the test timed out. With the fix, the first writable dispatch
-    // after the spill latches fatal_send_errno and the socket closes with the
+    // after the spill latches a pending close and the socket closes with the
     // send errno.
     await closed;
     expect({
@@ -312,7 +312,7 @@ describe.skipIf(skip)("TLS client under injected fatal send errno (us_socket_raw
     // 50 rounds of [one EPROTOTYPE, then a real send that drains the spill].
     // A successful send must reset unclassified_send_failures, so the counter
     // never reaches the 32-cap and the socket stays open throughout. If the
-    // reset is missing, round 33's errno latches fatal_send_errno and the
+    // reset is missing, round 33's errno latches a pending close and the
     // socket closes with EPROTOTYPE instead.
     let sawClose = false;
     pair.sock.on("close", () => (sawClose = true));

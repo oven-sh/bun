@@ -22,6 +22,7 @@
 
 use core::ffi::c_void;
 
+use crate::jsc_ext::JSGlobalObjectExt;
 use crate::vm::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
 

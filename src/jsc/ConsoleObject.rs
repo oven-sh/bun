@@ -3865,23 +3865,19 @@ pub mod formatter {
                 return self.print_bigint::<false>(writer_, value);
             }
             if value.is_symbol() {
-                let description = value.get_description(global);
-                writer.add_for_new_line("Symbol()".len() + description.len);
-                if description.len > 0 {
-                    writer.print(format_args!("Symbol({description})"));
-                } else {
-                    writer.write_all(b"Symbol()");
-                }
-                done!();
+                drop(writer);
+                return self.print_symbol::<false>(writer_, value);
             }
 
             drop(writer);
             let prev_quote = self.quote_strings;
             let prev_single = self.single_line;
             let prev_max_depth = self.max_depth;
+            let prev_indent = self.indent;
             let _r1 = defer_restore!(self.quote_strings, prev_quote);
             let _r2 = defer_restore!(self.single_line, prev_single);
             let _r3 = defer_restore!(self.max_depth, prev_max_depth);
+            let _r4 = defer_restore!(self.indent, prev_indent);
             self.quote_strings = true;
             self.single_line = true;
             self.max_depth = self.depth;

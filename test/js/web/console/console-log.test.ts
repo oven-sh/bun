@@ -163,6 +163,7 @@ it("console.log %s uses Node's format semantics, not engine ToString", async () 
     console.log("%s", "plain");
     console.log("%s", new Date(1700000000000));
     console.log("%s %s", Symbol("a"), { x: 1 });
+    console.log("%s %s %O", { a: 1 }, { b: 2 }, { c: 3 });
   `;
   await using proc = spawn({
     cmd: [bunExe(), "-e", src],
@@ -171,31 +172,31 @@ it("console.log %s uses Node's format semantics, not engine ToString", async () 
     stderr: "pipe",
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toBe("");
-  expect(out.replaceAll("\r\n", "\n")).toBe(
-    [
-      "Symbol(q)",
-      "Symbol()",
-      "{ a: 1 }",
-      "[ 1, 2 ]",
-      "-0",
-      "0",
-      "1.5",
-      "NaN",
-      "Infinity",
-      "-Infinity",
-      "42n",
-      "null",
-      "undefined",
-      "true",
-      "false",
-      "plain",
-      "2023-11-14T22:13:20.000Z",
-      "Symbol(a) { x: 1 }",
-      "",
-    ].join("\n"),
-  );
-  expect(exitCode).toBe(0);
+  const expected = [
+    "Symbol(q)",
+    "Symbol()",
+    "{ a: 1 }",
+    "[ 1, 2 ]",
+    "-0",
+    "0",
+    "1.5",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "42n",
+    "null",
+    "undefined",
+    "true",
+    "false",
+    "plain",
+    "2023-11-14T22:13:20.000Z",
+    "Symbol(a) { x: 1 }",
+    "{ a: 1 } { b: 2 } {",
+    "  c: 3,",
+    "}",
+    "",
+  ].join("\n");
+  expect({ out: out.replaceAll("\r\n", "\n"), err, exitCode }).toEqual({ out: expected, err: "", exitCode: 0 });
 });
 
 it("console.log with SharedArrayBuffer", () => {

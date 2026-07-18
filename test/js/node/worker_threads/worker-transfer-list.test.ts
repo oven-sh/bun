@@ -14,7 +14,10 @@ test("an invalid transferList entry throws before anything is detached", async (
     }).toThrow(TypeError);
     expect(buf.byteLength).toBe(8);
   } finally {
-    await worker?.terminate();
+    if (worker) {
+      await once(worker, "online").catch(() => {});
+      await worker.terminate();
+    }
   }
 });
 

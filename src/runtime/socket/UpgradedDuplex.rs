@@ -41,6 +41,17 @@ pub(crate) struct UpgradedDuplex {
     pub on_close_callback: StrongOptional,
     pub event_loop_timer: EventLoopTimer,
     pub current_timeout: u32,
+    /// Transport bytes that arrived before the TLS engine existed.
+    ///
+    /// `js_upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
+    /// `on_open` cannot re-enter JS before the caller holds the handle), but the
+    /// JS caller attaches its `data` listener as soon as that function returns.
+    /// When both ends of a `duplexPair()` are wrapped in-process, the peer's
+    /// engine starts first and writes its ClientHello while this side's
+    /// `wrapper` is still `None`. Dropping those bytes deadlocks the handshake
+    /// forever, so stage them here and replay them from
+    /// [`Self::drain_pending`] as soon as the engine is up.
+    pub pending_data: Vec<u8>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -227,6 +238,40 @@ impl UpgradedDuplex {
             if let Some(wrapper) = &mut self.wrapper {
                 wrapper.receive_data(data);
             }
+            return;
+        }
+        // Engine not up yet - `start_tls` is still queued. Stage the bytes;
+        // `drain_pending` feeds them in as soon as the engine is up.
+        self.pending_data.extend_from_slice(data);
+    }
+
+    /// Replay bytes that arrived before the engine existed. Called by
+    /// `DuplexUpgradeContext::run_event` once the `StartTLS` branch has
+    /// finished its bookkeeping, so the replay is indistinguishable from an
+    /// ordinary post-start delivery.
+    pub(super) fn drain_pending(&mut self) {
+        // Nothing to replay, or the engine never came up (the socket died
+        // before `StartTLS`). Bail before `mem::take` so the bytes are not
+        // destroyed by a drain that could not deliver them.
+        if self.pending_data.is_empty() || self.wrapper.is_none() {
+            return;
+        }
+        // `receive_data` can re-enter this object (it drives BoringSSL, which
+        // calls back into `internal_write`/`on_data`), so move the buffer out
+        // before handing it over rather than holding a borrow across the call.
+        // Taking ownership is load-bearing: a re-entrant `teardown()` clears
+        // `pending_data`, and BoringSSL must not have the slice freed under it.
+        let staged = std::mem::take(&mut self.pending_data);
+        self.reset_timeout();
+        // Feed in bounded slices rather than one concatenated buffer. Each JS
+        // chunk was originally delivered on its own; `receive_data` casts the
+        // length to `c_int` with a panicking `expect`, so handing it the sum of
+        // every chunk staged in the window would turn a large pre-start burst
+        // into a process abort. Re-check `wrapper` each round: BoringSSL can
+        // re-enter and tear the engine down partway through.
+        for chunk in staged.chunks(64 * 1024) {
+            let Some(wrapper) = &mut self.wrapper else { break };
+            wrapper.receive_data(chunk);
         }
     }
 
@@ -266,6 +311,7 @@ impl UpgradedDuplex {
             on_close_callback: StrongOptional::empty(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: 0,
+            pending_data: Vec::new(),
         }
     }
 
@@ -536,6 +582,7 @@ impl UpgradedDuplex {
             self.on_close_callback.deinit();
         }
         self.ssl_error = CertError::default();
+        self.pending_data = Vec::new();
     }
 }
 

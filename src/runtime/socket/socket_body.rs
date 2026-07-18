@@ -4317,6 +4317,18 @@ impl DuplexUpgradeContext {
                 }
                 // SAFETY: `this` is live; short-lived `&mut` for the field write.
                 unsafe { (*this).ssl_config = None }; // Drop frees.
+                // Bytes the peer sent while this task was still queued were
+                // staged by `UpgradedDuplex::on_internal_receive_data` (the
+                // engine did not exist yet to receive them). Feed them now
+                // that StartTLS is fully done, so the replay is ordered
+                // exactly like an ordinary post-start delivery. Without this
+                // the bytes are dropped and the handshake never advances -
+                // e.g. both ends of a `duplexPair()` wrapped in-process, where
+                // the peer's ClientHello lands before this side starts.
+                // SAFETY: `this` is live; `&mut` scoped to this call, and
+                // `drain_pending` does not free the allocation (close only
+                // schedules `deinit` for the next tick).
+                unsafe { (*this).upgrade.drain_pending() };
             }
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself

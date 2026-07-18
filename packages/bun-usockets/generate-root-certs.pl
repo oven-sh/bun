@@ -247,6 +247,11 @@ while (<TXT>) {
     print CRT "/* $1 */\n";
   }
 
+  # A CKO_NSS_TRUST object should only ever be consumed by the scan-forward
+  # loop below; reaching one here means it had no preceding CKO_CERTIFICATE.
+  if (/^CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST/) {
+    die "Parse error: orphan CKO_NSS_TRUST object at input line $. (no preceding CKO_CERTIFICATE)\n";
+  }
   # this is a match for the start of a certificate
   if (/^CKA_CLASS CK_OBJECT_CLASS CKO_CERTIFICATE/) {
     $start_of_cert = 1
@@ -259,6 +264,9 @@ while (<TXT>) {
     my $data;
     while (<TXT>) {
       last if (/^END/);
+      # Skip inline comments; split(/\\/) would otherwise decode any escape
+      # sequences after the '#' into junk bytes in the emitted DER.
+      next if (/^#/);
       chomp;
       my @octets = split(/\\/);
       shift @octets;
@@ -266,18 +274,27 @@ while (<TXT>) {
         $data .= chr(oct);
       }
     }
-    # scan forwards until the trust part
+    # Scan forward to this cert's trust object. Die if we hit another
+    # CKO_CERTIFICATE or EOF first: otherwise the next cert's trust bits would
+    # silently be attributed to this one and the next cert's DER swallowed.
+    my $found_trust = 0;
     while (<TXT>) {
-      last if (/^CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST/);
+      if (/^CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST/) { $found_trust = 1; last; }
+      if (/^CKA_CLASS CK_OBJECT_CLASS CKO_CERTIFICATE/) {
+        die "Parse error: no CKO_NSS_TRUST for \"$caname\" (next CKO_CERTIFICATE at input line $.)\n";
+      }
       chomp;
     }
+    die "Parse error: no CKO_NSS_TRUST for \"$caname\" (reached EOF)\n" unless $found_trust;
     # now scan the trust part to determine how we should trust this cert.
     # A trust object ends at a blank line; inline comments such as
     # "# For Server Distrust After:" must be skipped, not treated as the end.
+    my $trust_lines = 0;
     while (<TXT>) {
       last if (/^\s*$/);
       next if (/^#/);
-      if (/^CKA_TRUST_([A-Z_]+)\s+CK_TRUST\s+CKT_NSS_([A-Z_]+)\s*$/) {
+      if (/^\s*CKA_TRUST_([A-Z_]+)\s+CK_TRUST\s+CKT_NSS_([A-Z_]+)\s*$/) {
+        $trust_lines++;
         if ( !is_in_list($1,@valid_mozilla_trust_purposes) ) {
           report "Warning: Unrecognized trust purpose for cert: $caname. Trust purpose: $1. Trust Level: $2";
         } elsif ( !is_in_list($2,@valid_mozilla_trust_levels) ) {
@@ -287,6 +304,8 @@ while (<TXT>) {
         }
       }
     }
+    die "Parse error: CKO_NSS_TRUST for \"$caname\" ended before any CKA_TRUST_* line was seen (blank line or malformed trust object?)\n"
+      unless $trust_lines;
 
     if ( !should_output_cert(%trust_purposes_by_level) ) {
       $skipnum ++;
@@ -353,6 +372,14 @@ while (<TXT>) {
 print CRT "};\n";
 close(TXT) or die "Couldn't close $txt: $!\n";
 close(CRT) or die "Couldn't close $crt.~: $!\n";
+# Tripwire: every CKO_NSS_TRUST object in certdata.txt must have been consumed
+# by exactly one CKO_CERTIFICATE above. A mismatch means format drift silently
+# dropped or mis-paired a root (the #31611 Izenpe class of bug).
+open(TXT, "$txt") or die "Couldn't reopen $txt: $!\n";
+my $trust_objects = grep { /^CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST/ } <TXT>;
+close(TXT);
+die "Parse error: certdata.txt has $trust_objects CKO_NSS_TRUST objects but $certnum emitted + $skipnum skipped = ${\($certnum + $skipnum)}\n"
+  if $trust_objects != $certnum + $skipnum;
 unless( $stdout ) {
     rename "$crt.~", $crt or die "Failed to rename $crt.~ to $crt: $!\n";
 }

@@ -1364,9 +1364,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let len = bytes.len();
         // Same gate as the existing `write()` fast path (`len >= highWaterMark`
         // with an empty buffer) so this only changes how that path sends, not
-        // which path is taken.
+        // which path is taken. The c_uint upper bound falls back to `res.write()`
+        // for >4 GiB writes, which splits into UINT_MAX-framed sub-chunks
+        // (tryWriteBody's `writeUnsignedHex((unsigned int) length)` would
+        // truncate).
         if len <= PINNED_WRITE_THRESHOLD
             || (len as BlobSizeType) < self.high_water_mark
+            || len > core::ffi::c_uint::MAX as usize
             || !self.buffer.is_empty()
             || self.requested_end
             || !input_value.is_cell()

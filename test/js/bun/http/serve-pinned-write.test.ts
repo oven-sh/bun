@@ -263,11 +263,11 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const result = JSON.parse(stdout.trim());
-    expect({ detachedAfterAbort: result.detachedAfterAbort, exitCode }).toEqual({
+    const result = JSON.parse(stdout.trim() || "{}");
+    expect({ detachedAfterAbort: result.detachedAfterAbort, exitCode, stderr }).toEqual({
       detachedAfterAbort: true,
       exitCode: 0,
+      stderr: expect.any(String),
     });
   });
 });

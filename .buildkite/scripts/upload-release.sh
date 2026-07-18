@@ -55,6 +55,11 @@ function assert_sentry() {
   done
 }
 
+function assert_zip() {
+  command -v zip &> /dev/null || package_manager_install zip
+  command -v unzip &> /dev/null || package_manager_install unzip
+}
+
 function run_command() {
   set -x
   "$@"
@@ -285,6 +290,7 @@ function create_release() {
   assert_github
   assert_aws
   assert_sentry
+  assert_zip
 
   local tag="$1" # 'canary' or 'x.y.z'
   local artifacts=(
@@ -296,14 +302,10 @@ function create_release() {
     bun-linux-aarch64-profile.zip
     bun-linux-x64.zip
     bun-linux-x64-profile.zip
-    bun-linux-x64-baseline.zip
-    bun-linux-x64-baseline-profile.zip
     bun-linux-aarch64-musl.zip
     bun-linux-aarch64-musl-profile.zip
     bun-linux-x64-musl.zip
     bun-linux-x64-musl-profile.zip
-    bun-linux-x64-musl-baseline.zip
-    bun-linux-x64-musl-baseline-profile.zip
     bun-linux-aarch64-android.zip
     bun-linux-aarch64-android-profile.zip
     bun-linux-x64-android.zip
@@ -314,23 +316,55 @@ function create_release() {
     bun-freebsd-x64-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
-    bun-windows-x64-baseline.zip
-    bun-windows-x64-baseline-profile.zip
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
   )
 
+  # x64 builds only baseline (Nehalem). The -baseline names are copies of
+  # the plain zip with the inner directory renamed to match, since bun upgrade
+  # and the install scripts require the folder name to equal the zip name.
+  local -A baseline_alias=(
+    [bun-linux-x64]=bun-linux-x64-baseline
+    [bun-linux-x64-profile]=bun-linux-x64-baseline-profile
+    [bun-linux-x64-musl]=bun-linux-x64-musl-baseline
+    [bun-linux-x64-musl-profile]=bun-linux-x64-musl-baseline-profile
+    [bun-windows-x64]=bun-windows-x64-baseline
+    [bun-windows-x64-profile]=bun-windows-x64-baseline-profile
+  )
+
+  function repackage_baseline() {
+    local src="$1" dst="$2"
+    rm -rf "$src" "$dst" "$dst.zip"
+    unzip -q "$src.zip"
+    mv "$src" "$dst"
+    zip -qry "$dst.zip" "$dst" # inner folder is $dst
+    rm -rf "$dst"
+  }
+
+  function upload_file() {
+    local file="$1"
+    if [ "$tag" == "canary" ]; then
+      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$file" &
+    else
+      upload_s3_file "releases/$BUILDKITE_COMMIT" "$file" &
+    fi
+    upload_s3_file "releases/$tag" "$file" &
+    upload_github_asset "$tag" "$file" &
+    wait
+  }
+
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
-    if [ "$tag" == "canary" ]; then
-      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
+    local alias="${baseline_alias[${artifact%.zip}]}"
+    if [ -n "$alias" ]; then
+      # Build the alias before publishing either so the pair uploads together.
+      repackage_baseline "${artifact%.zip}" "$alias"
+      upload_file "$artifact"
+      upload_file "$alias.zip"
     else
-      upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+      upload_file "$artifact"
     fi
-    upload_s3_file "releases/$tag" "$artifact" &
-    upload_github_asset "$tag" "$artifact" &
-    wait
   }
 
   for artifact in "${artifacts[@]}"; do

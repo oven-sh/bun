@@ -523,7 +523,7 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
         }
     }
 
-    if to.len() >= 16 && crate::Environment::ENABLE_SIMD {
+    if to.len() >= 16 {
         const VECTOR_SIZE: usize = 16;
         let remain_in_u64_len = remain.len() - (remain.len() % VECTOR_SIZE);
         let to_in_u64_len = to.len() - (to.len() % VECTOR_SIZE);

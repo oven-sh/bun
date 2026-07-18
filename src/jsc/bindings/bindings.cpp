@@ -1150,9 +1150,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (left->isDetached() || right->isDetached()) [[unlikely]] {
-            // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
-            // throws on a detached ArrayBuffer; match that contract.
-            throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            if constexpr (!enableAsymmetricMatchers) {
+                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
+                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            }
             return false;
         }
 

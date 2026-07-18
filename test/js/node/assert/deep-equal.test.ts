@@ -664,6 +664,8 @@ describe("detached ArrayBuffer", () => {
     expect(error?.code).toBe("ERR_ASSERTION");
   });
 
+  // Node v26 passes typed-array views directly to Buffer.compare (no re-wrap over
+  // .buffer), so a detached view compares as zero-length. Node v22 and earlier threw.
   test("a detached typed-array view is comparable as zero-length", () => {
     function detachedView() {
       const buf = new ArrayBuffer(4);

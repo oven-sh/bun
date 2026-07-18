@@ -492,8 +492,8 @@ describe("Headers", () => {
         "Headers " +
           JSON.stringify(
             {
-              "cache-control": "public, immutable",
               "user-agent": "bun",
+              "cache-control": "public, immutable",
               "x-custom-header": "1",
             },
             null,

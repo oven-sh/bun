@@ -265,6 +265,8 @@ public:
     template<class Decoder> [[nodiscard]] static bool decode(Decoder &, HTTPHeaderMap &);
     void setUncommonHeader(const String &name, const String &value);
     void setUncommonHeaderCloneName(const StringView name, const String &value);
+    void addUncommonHeader(const String& name, const String& value);
+    void addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
@@ -336,5 +338,7 @@ bool HTTPHeaderMap::decode(Decoder &decoder, HTTPHeaderMap &headerMap)
 
     return true;
 }
+
+String lowercaseHeaderName(const String& name);
 
 } // namespace WebCore

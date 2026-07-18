@@ -2339,6 +2339,27 @@ impl PackageManifest {
             // PackageVersion's explicit `_padding_*` fields are zeroed by
             // `Default`, so no separate padding scrub is needed.
 
+            // Index the root `time` object once so the per-version publish-time
+            // lookup below is O(1) instead of a linear scan of ~V entries.
+            let time_obj = json.get(b"time").and_then(|e| match e.data {
+                JSON::ExprData::EObjectJSON(obj) => Some(obj),
+                _ => None,
+            });
+            let time_props: &[JSON::E::PropertyJSON] = time_obj
+                .as_ref()
+                .map(|o| o.get().properties())
+                .unwrap_or(&[]);
+            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
+            if !time_props.is_empty() {
+                time_index.ensure_total_capacity(time_props.len())?;
+                for (i, p) in time_props.iter().enumerate() {
+                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()))?;
+                    if !gop.found_existing {
+                        *gop.value_ptr = i as u32;
+                    }
+                }
+            }
+
             for prop in versions {
                 let version_name = prop.key.slice();
                 let mut sliced_version = SlicedString::init(version_name, version_name);
@@ -2939,13 +2960,14 @@ impl PackageManifest {
                     }
                 }
 
-                if let Some(time_expr) = json.get(b"time") {
-                    if let JSON::ExprData::EObjectJSON(time_obj) = &time_expr.data {
-                        if let Some(publish_time_str) =
-                            time_obj.get().get(version_name).and_then(|v| v.as_str())
-                        {
-                            if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                                package_version.publish_timestamp_ms = ms;
+                if !time_props.is_empty() {
+                    if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
+                        let entry = &time_props[i as usize];
+                        if entry.key.slice() == version_name {
+                            if let Some(publish_time_str) = entry.value.as_str() {
+                                if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
+                                    package_version.publish_timestamp_ms = ms;
+                                }
                             }
                         }
                     }

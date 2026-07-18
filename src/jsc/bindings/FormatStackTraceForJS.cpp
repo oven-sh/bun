@@ -17,6 +17,7 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/StackFrame.h"
+#include "JavaScriptCore/StructureInlines.h"
 #include "JavaScriptCore/VM.h"
 
 #include "BunClientData.h"
@@ -393,6 +394,18 @@ WTF::String formatStackTrace(
     return sb.toString();
 }
 
+// Reads a direct data property without materializing the structure's property
+// table (which allocates a GC cell the GC may just have cleared) and without
+// running user code. Safe to call from ErrorInstance::finalizeUnconditionally.
+static JSValue getDirectPropertyInFinalizer(JSObject* object, PropertyName propertyName)
+{
+    unsigned attributes = 0;
+    PropertyOffset offset = object->structure()->getConcurrently(propertyName.uid(), attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return {};
+    return object->getDirect(offset);
+}
+
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,
@@ -402,22 +415,39 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     OrdinalNumber& line,
     OrdinalNumber& column,
     String& sourceURL,
-    JSObject* errorInstance)
+    JSObject* errorInstance,
+    bool isInsideFinalizer)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String name = "Error"_s;
     WTF::String message;
 
     if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
         if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
+            if (isInsideFinalizer) {
+                // GC finalizer path (ErrorInstance::finalizeUnconditionally): no JS heap
+                // allocation and no user code. Mirrors sanitizedNameString's lookup
+                // (own property, then the direct prototype for e.g. "TypeError").
+                JSValue nameValue = getDirectPropertyInFinalizer(instance, vm.propertyNames->name);
+                if (!nameValue) {
+                    if (JSObject* prototype = instance->getPrototypeDirect().getObject())
+                        nameValue = getDirectPropertyInFinalizer(prototype, vm.propertyNames->name);
+                }
+                if (nameValue && nameValue.isString())
+                    name = asString(nameValue)->tryGetValueWithoutGC();
+
+                JSValue messageValue = getDirectPropertyInFinalizer(instance, vm.propertyNames->message);
+                if (messageValue && messageValue.isString())
+                    message = asString(messageValue)->tryGetValueWithoutGC();
+            } else {
+                if (!lexicalGlobalObject) {
+                    lexicalGlobalObject = errorInstance->globalObject();
+                }
+                name = instance->sanitizedNameString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                message = instance->sanitizedMessageString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
             }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -425,7 +455,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         globalObject = defaultGlobalObject();
     }
 
-    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
+    // In the finalizer, formatStackTrace must not see the instance: its SyntaxError
+    // branch does a putDirect, which would allocate in the JS heap during GC.
+    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, isInsideFinalizer ? nullptr : errorInstance);
 }
 
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -516,13 +548,13 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
+static String computeErrorInfoToStringInFinalizer(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
 
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
 
-    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
+    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, /* isInsideFinalizer */ true);
 }
 
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
@@ -565,7 +597,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
+    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, /* isInsideFinalizer */ false);
     RETURN_IF_EXCEPTION(scope, {});
     return jsString(vm, result);
 }
@@ -575,7 +607,7 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 }
 
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
+WTF::String computeErrorInfoWrapperToStringWithInstance(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
 
@@ -599,7 +631,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
+    WTF::String result = computeErrorInfoToStringInFinalizer(vm, stackTrace, line, column, sourceURL, errorInstance);
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker

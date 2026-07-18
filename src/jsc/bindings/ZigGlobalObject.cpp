@@ -533,7 +533,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
 #endif
 
-    vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
+    vm.setOnComputeErrorInfoWithInstance(computeErrorInfoWrapperToStringWithInstance);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {

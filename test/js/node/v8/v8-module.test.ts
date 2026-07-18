@@ -19,6 +19,10 @@ describe("v8.isStringOneByteRepresentation", () => {
 });
 
 describe("v8.GCProfiler", () => {
+  test("class name", () => {
+    expect(GCProfiler.name).toBe("GCProfiler");
+  });
+
   test("start/stop records a forced collection", () => {
     const profiler = new GCProfiler();
     profiler.start();
@@ -120,8 +124,10 @@ describe("v8.GCProfiler", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("worker exit 0\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "worker exit 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

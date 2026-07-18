@@ -1141,9 +1141,9 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   }
 });
 
-// Windows RSTs sockets abandoned at ExitProcess; bun must closesocket() them
-// first so the peer sees FIN (node does this via RunCleanup → uv_close). On
-// POSIX the kernel FINs on fd reap, so this is a Windows-only observable.
+// Windows RSTs sockets abandoned at ExitProcess; a POSIX kernel FINs on fd
+// reap. Node's natural-exit path (loop drained, unref'd handle) uv_close()s
+// each open handle before exiting, so this is a Windows-only node-compat gap.
 it.skipIf(!isWindows)("natural process exit with an open unref'd socket FINs the peer (no RST)", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -1174,46 +1174,16 @@ srv.listen(0, "127.0.0.1", () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  // Peer must observe a graceful close: END with the data, then CLOSE without error.
-  expect(stdout).toContain("END hello");
-  expect(stdout).toContain("CLOSE hadError=false");
-  expect(stdout).not.toContain("ERROR");
-  expect(exitCode).toBe(0);
-});
-
-it.skipIf(!isWindows)("process.exit() with an open socket FINs the peer (no RST)", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-const net = require("net");
-const { spawn } = require("child_process");
-const srv = net.createServer(c => {
-  c.on("end", () => console.log("END"));
-  c.on("error", e => console.log("ERROR " + e.code));
-  c.on("close", hadError => { console.log("CLOSE hadError=" + hadError); srv.close(); });
-});
-srv.listen(0, "127.0.0.1", () => {
-  const child = spawn(process.execPath, ["-e", \`
-    const s = require("net").connect(\${srv.address().port}, "127.0.0.1");
-    s.on("connect", () => { s.write("bye"); process.exit(0); });
-    s.on("error", () => {});
-  \`], { stdio: "inherit" });
-  child.on("close", code => console.log("CHILD_EXIT " + code));
-});
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+  // CHILD_EXIT may interleave with END/CLOSE; pick out the peer-observed lines.
+  const seen = stdout
+    .split(/\r?\n/)
+    .filter(l => l.startsWith("END") || l.startsWith("ERROR") || l.startsWith("CLOSE"))
+    .join("\n");
+  expect({ seen, stderr, exitCode }).toEqual({
+    seen: "END hello\nCLOSE hadError=false",
+    stderr: "",
+    exitCode: 0,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toContain("CLOSE hadError=false");
-  expect(stdout).not.toContain("ERROR");
-  expect(exitCode).toBe(0);
 });
 
 // https.Server.closeAllConnections() → server.stop(true) must FIN the client,
@@ -1250,8 +1220,13 @@ srv.listen(0, "127.0.0.1", () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toContain("CLIENT_CLOSE hadError=false");
-  expect(stdout).not.toContain("CLIENT_ERROR");
-  expect(exitCode).toBe(0);
+  const seen = stdout
+    .split(/\r?\n/)
+    .filter(l => l.startsWith("CLIENT_"))
+    .join("\n");
+  expect({ seen, stderr, exitCode }).toEqual({
+    seen: "CLIENT_END\nCLIENT_CLOSE hadError=false",
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -1622,9 +1622,9 @@ impl VirtualMachine {
 
             self.destroy();
         } else {
-            // Windows RSTs sockets abandoned at ExitProcess (POSIX FINs on fd
-            // reap). closesocket() each open fd so the kernel graceful-close
-            // survives ExitProcess, matching node's RunCleanup → uv_close.
+            // Windows RSTs sockets abandoned at ExitProcess; POSIX kernels FIN
+            // on fd reap. closesocket() each open fd so Windows matches POSIX
+            // (and node's natural-exit RunCleanup → uv_close).
             #[cfg(windows)]
             self.uws_loop_mut().close_fds_for_exit();
         }

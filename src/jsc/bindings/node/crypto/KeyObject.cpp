@@ -1119,23 +1119,26 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             return {};
         }
 
-        auto pubView = getJwkStringView(globalObject, scope, jwk, "pub"_s, "key.pub"_s);
+        // pubValue / privValue were already read and type-checked above; decode
+        // them directly so each JWK property is observed exactly once.
+        auto pubView = asString(pubValue)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto* pubBuf = decodeJwkString(globalObject, scope, pubView, "key.pub"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
+        JSArrayBufferView* privBuf = nullptr;
+        if (jwkType == CryptoKeyType::Private) {
+            auto privView = asString(privValue)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            privBuf = decodeJwkString(globalObject, scope, privView, "key.priv"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
         MarkPopErrorOnReturn markPopError;
 
-        ncrypto::EVPKeyPointer key;
-        if (jwkType == CryptoKeyType::Private) {
-            auto privView = getJwkStringView(globalObject, scope, jwk, "priv"_s, "key.priv"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto* privBuf = decodeJwkString(globalObject, scope, privView, "key.priv"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            key = newFromPrivateSeed(nid, privBuf->span());
-        } else {
-            key = newFromRawPublic(nid, pubBuf->span());
-        }
+        ncrypto::EVPKeyPointer key = jwkType == CryptoKeyType::Private
+            ? newFromPrivateSeed(nid, privBuf->span())
+            : newFromRawPublic(nid, pubBuf->span());
 
         if (!key) {
             ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
@@ -1153,6 +1156,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             }
         }
 
+        JSC::ensureStillAliveHere(pubBuf);
         return create(keyType, WTF::move(key));
     }
     case Kty::Okp: {

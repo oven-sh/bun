@@ -1756,3 +1756,81 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+describe.concurrent("worker termination during the 'beforeExit' drain", () => {
+  // A worker whose 'beforeExit' listener schedules more work enters
+  // on_before_exit()'s inner drain loop. If that work arms termination (an
+  // uncaught throw, process.exit(), or a parent terminate()), re-dispatching
+  // 'beforeExit' re-enters JS with a termination exception pending and trips
+  // JSC's Interpreter::executeCallImpl `!exception()` assertion, aborting the
+  // whole process. These tests spawn a fresh process per case so the parent's
+  // exit code proves the worker did not take the process down.
+  const run = async (workerBody: string, extraMain: string = "") => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const { writeSync } = require("node:fs");
+         const w = new Worker(${JSON.stringify(workerBody)}, { eval: true });
+         w.on("error", e => writeSync(1, "WORKER-ERROR " + e.message + "\\n"));
+         w.on("exit", code => writeSync(1, "WORKER-EXIT " + code + "\\n"));
+         ${extraMain}`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  test("uncaught throw from work a 'beforeExit' listener scheduled reports error and exits the worker", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { writeSync } = require("node:fs");
+       let n = 0;
+       process.on("beforeExit", () => {
+         writeSync(2, "W-BEFOREEXIT " + (++n) + "\\n");
+         if (n === 1) setImmediate(() => { throw new Error("boom"); });
+       });`,
+    );
+    expect(stderr.trim()).toBe("W-BEFOREEXIT 1");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["WORKER-ERROR boom", "WORKER-EXIT 1"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.exit() from work a 'beforeExit' listener scheduled exits the worker with that code", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { writeSync } = require("node:fs");
+       let n = 0;
+       process.on("beforeExit", () => {
+         writeSync(2, "W-BEFOREEXIT " + (++n) + "\\n");
+         if (n === 1) setImmediate(() => { process.exit(42); });
+       });`,
+    );
+    expect(stderr.trim()).toBe("W-BEFOREEXIT 1");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["WORKER-EXIT 42"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("parent terminate() while the worker is draining after 'beforeExit' stops the worker", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { writeSync } = require("node:fs");
+       const { parentPort } = require("node:worker_threads");
+       let n = 0;
+       process.on("beforeExit", () => {
+         writeSync(2, "W-BEFOREEXIT " + (++n) + "\\n");
+         if (n === 1) setImmediate(() => {
+           parentPort.postMessage("terminate-me");
+           // Stay inside the drain loop until terminate() lands; the loop
+           // safepoint between waits trips the termination trap.
+           const ia = new Int32Array(new SharedArrayBuffer(4));
+           for (let i = 0; i < 600; i++) Atomics.wait(ia, 0, 0, 50);
+         });
+       });`,
+      `w.on("message", () => w.terminate());`,
+    );
+    expect(stderr.trim()).toBe("W-BEFOREEXIT 1");
+    expect(stdout).toMatch(/^WORKER-EXIT [01]\n$/);
+    expect(exitCode).toBe(0);
+  });
+});

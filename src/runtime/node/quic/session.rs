@@ -521,8 +521,6 @@ impl QuicSession {
             // sending a bare close.
             if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
                 self.apply_graceful_close(app, code, reason);
-            } else if let Some(c) = self.conn() {
-                c.close();
             }
         }
     }
@@ -2089,7 +2087,12 @@ impl QuicSession {
                 return JSValue::from_uint64_no_truncate(global, id);
             }
             if let Some((dropped_id, _)) = self.datagram_queue.with_mut(VecDeque::pop_front) {
+                // Runs the user's `ondatagramstatus`, which can destroy this
+                // session or close the conn before we get back here.
                 self.report_datagram_abandoned(global, dropped_id);
+                if self.destroyed.get() || self.conn.get().is_null() {
+                    return Ok(JSValue::js_number(0.0));
+                }
             }
         }
         self.datagram_queue.with_mut(|q| q.push_back((id, payload)));

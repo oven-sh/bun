@@ -347,7 +347,8 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.adopted = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
-    s->fatal_send_errno = 0;
+    s->pending_action = US_PENDING_ACTION_NONE;
+    s->pending_code = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -492,7 +493,8 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
-    s->fatal_send_errno = 0;
+    s->pending_action = US_PENDING_ACTION_NONE;
+    s->pending_code = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

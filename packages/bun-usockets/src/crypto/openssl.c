@@ -526,7 +526,8 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
    * whatever BoringSSL tries to flush (typically the fatal alert). The bytes
    * are reported as written so the SSL state machine completes its error
    * path instead of retrying. */
-  if (loop_ssl_data->ssl_socket && loop_ssl_data->ssl_socket->ssl_pending_detach) {
+  if (loop_ssl_data->ssl_socket &&
+      loop_ssl_data->ssl_socket->pending_action == US_PENDING_ACTION_DETACH) {
     BIO_clear_retry_flags(bio);
     return length;
   }
@@ -1334,13 +1335,10 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_read_wants_write = 0;
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
-  s->ssl_shutdown_after_spill = 0;
-  s->ssl_close_after_spill = 0;
   s->ssl_end_delivered = 0;
   s->ssl_in_use = 0;
-  s->ssl_pending_detach = 0;
-  s->ssl_pending_close_code = 0;
-  s->ssl_is_server = is_client ? 0 : 1;
+  /* pending_action is deliberately not reset: adopt_tls attaches to a live
+   * socket, and a CLOSE_RAW parked by a fatal send must still fire. */
 }
 
 void us_internal_ssl_detach(struct us_socket_t *s) {
@@ -1354,8 +1352,9 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from
        * inside it destroyed the socket); freeing now would leave BoringSSL
        * working on freed memory when control returns. The driver frees it
-       * when the call unwinds. */
-      s->ssl_pending_detach = 1;
+       * when the call unwinds; keep any close code already parked. */
+      us_internal_socket_set_pending(s, US_PENDING_ACTION_DETACH,
+          s->pending_action == US_PENDING_ACTION_DETACH ? s->pending_code : 0);
       return;
     }
     SSL_free(s_ssl(s));
@@ -1615,18 +1614,17 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
      * driver's epilogue (the same protocol close_raw and ssl_detach honor),
      * releasing the spill now so the re-issued close cannot itself defer. */
     ssl_release_spill(s->group->loop, s);
-    s->ssl_pending_detach = 1;
-    s->ssl_pending_close_code = (unsigned char) code;
+    us_internal_socket_set_pending(s, US_PENDING_ACTION_DETACH, (unsigned char) code);
     return s;
   }
   /* node's `_handle.close()` (FAST_SHUTDOWN, no reason) must not cut off spilled
    * ciphertext already reported as written: SSL sealed it, so it can only be
-   * delivered, never re-sent. Mirror ssl_shutdown_after_spill; defer at most once. */
+   * delivered, never re-sent. Mirror the deferred shutdown; defer at most once. */
   if (code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN && !reason
-      && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
+      && s->pending_action != US_PENDING_ACTION_CLOSE && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
-      s->ssl_close_after_spill = 1;
+      us_internal_socket_set_pending(s, US_PENDING_ACTION_CLOSE, 0);
       return s;
     }
   }
@@ -1696,11 +1694,11 @@ static void ssl_update_handshake(struct us_socket_t *s) {
   s->ssl_in_use = 1;
   int result = SSL_do_handshake(s_ssl(s));
   s->ssl_in_use = ssl_was_in_use;
-  if (!ssl_was_in_use && s->ssl_pending_detach) {
+  if (!ssl_was_in_use && s->pending_action == US_PENDING_ACTION_DETACH) {
     /* A callback run from inside the handshake destroyed this socket; perform
      * the deferred close now and do not touch the SSL again. */
-    s->ssl_pending_detach = 0;
-    us_socket_close(s, s->ssl_pending_close_code, NULL);
+    s->pending_action = US_PENDING_ACTION_NONE;
+    us_socket_close(s, s->pending_code, NULL);
     return;
   }
 
@@ -1824,13 +1822,13 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
       return s;
     }
-    if (s->ssl_shutdown_after_spill) {
-      s->ssl_shutdown_after_spill = 0;
+    if (s->pending_action == US_PENDING_ACTION_SHUTDOWN) {
+      s->pending_action = US_PENDING_ACTION_NONE;
       us_internal_ssl_shutdown(s);
       if (ssl_gone(s)) return s;
     }
-    if (s->ssl_close_after_spill) {
-      s->ssl_close_after_spill = 0;
+    if (s->pending_action == US_PENDING_ACTION_CLOSE) {
+      s->pending_action = US_PENDING_ACTION_NONE;
       return us_internal_ssl_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
     }
   }
@@ -1909,11 +1907,11 @@ restart:
                              loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
-    if (!ssl_was_in_use && s->ssl_pending_detach) {
+    if (!ssl_was_in_use && s->pending_action == US_PENDING_ACTION_DETACH) {
       /* A callback run from inside this read destroyed the socket; perform
        * the deferred close now and stop processing. */
-      s->ssl_pending_detach = 0;
-      return us_socket_close(s, s->ssl_pending_close_code, NULL);
+      s->pending_action = US_PENDING_ACTION_NONE;
+      return us_socket_close(s, s->pending_code, NULL);
     }
 
     if (just_read <= 0) {
@@ -2182,7 +2180,7 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
       if (!ssl_drain_spill(loop_ssl_data, s)) {
-        s->ssl_shutdown_after_spill = 1;
+        us_internal_socket_set_pending(s, US_PENDING_ACTION_SHUTDOWN, 0);
         return;
       }
     }
@@ -2266,8 +2264,7 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
      * the handshake_failure alert BoringSSL queues for select_cert_error and
      * the epilogue closes the socket; the client just sees the connection go
      * away ("disconnected before secure TLS connection was established"). */
-    s->ssl_pending_detach = 1;
-    s->ssl_pending_close_code = 0;
+    us_internal_socket_set_pending(s, US_PENDING_ACTION_DETACH, 0);
   } else {
     pending->state = 2;
     pending->resolved_ctx = ctx; /* may be NULL = default ctx */
@@ -2452,8 +2449,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
      * deferred-close + BIO-swallow path, same as sni_cb). */
     struct loop_ssl_data *lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
     if (lsd && lsd->ssl_socket) {
-      lsd->ssl_socket->ssl_pending_detach = 1;
-      lsd->ssl_socket->ssl_pending_close_code = 0;
+      us_internal_socket_set_pending(lsd->ssl_socket, US_PENDING_ACTION_DETACH, 0);
     }
     return ssl_select_cert_error;
   }

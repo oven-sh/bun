@@ -273,8 +273,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
      * releases context state BoringSSL is still reading on the stack; defer
      * the close to the SSL driver's epilogue instead, preserving the close
      * code so a requested reset still resets. */
-    s->ssl_pending_detach = 1;
-    s->ssl_pending_close_code = (unsigned char) code;
+    us_internal_socket_set_pending(s, US_PENDING_ACTION_DETACH, (unsigned char) code);
     return s;
   }
     if (!us_socket_is_closed(s)) {
@@ -460,20 +459,20 @@ static int us_internal_classify_send_error(struct us_socket_t *s) {
 #endif
 
 /* Common tail for the us_socket_*write* helpers after a short write. On POSIX
- * a -1 is routed through errno classification so a fatal errno latches
- * fatal_send_errno (loop.c closes the socket after the writable dispatch)
- * instead of re-arming for a retry that can never succeed. A partial write,
- * would-block, transient exhaustion, or a still-bounded unclassified errno
- * re-arms for a retry like before. The fatal path still re-arms once: the
- * write may have been issued outside the writable dispatch, and loop.c's
- * fatal_send_errno check runs there, so one more writable event is what
- * delivers the close. It does not spin because the check precedes the retry. */
+ * a -1 is routed through errno classification so a fatal errno parks
+ * US_PENDING_ACTION_CLOSE_RAW (loop.c closes the socket after the writable
+ * dispatch) instead of re-arming for a retry that can never succeed. A
+ * partial write, would-block, transient exhaustion, or a still-bounded
+ * unclassified errno re-arms for a retry like before. The fatal path still
+ * re-arms once: the write may have been issued outside the writable
+ * dispatch, and loop.c's pending-action check runs there, so one more
+ * writable event delivers the close. No spin: the check precedes the retry. */
 static void us_internal_on_short_write(struct us_socket_t *s, int written) {
 #ifndef _WIN32
     if (written < 0) {
         int fatal = us_internal_classify_send_error(s);
         if (fatal) {
-            s->fatal_send_errno = (unsigned char)fatal;
+            us_internal_socket_set_pending(s, US_PENDING_ACTION_CLOSE_RAW, (unsigned char)fatal);
             us_internal_rearm_writable(s);
             return;
         }
@@ -528,7 +527,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
-    s->fatal_send_errno = 0;
+    s->pending_action = US_PENDING_ACTION_NONE;
+    s->pending_code = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */

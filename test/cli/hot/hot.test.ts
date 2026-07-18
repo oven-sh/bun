@@ -846,10 +846,17 @@ it(
     // (which never drains timers) and this never resolves.
     await waitFor(() => countTicks(2) >= 3, "gen 2 ticks after fix");
 
-    // One more good edit to confirm recovery is durable.
-    writeFileSync(root, src(3));
-    await waitFor(() => out.includes("EVAL 3"), "EVAL 3");
-    await waitFor(() => countTicks(3) >= 3, "gen 3 ticks");
+    // on_before_exit() on the wedged path armed exit_on_uncaught_exception;
+    // without the matching reset the next uncaught exception would exit the
+    // process instead of surviving like a fresh --hot run.
+    writeFileSync(root, src(3) + `setTimeout(() => { throw new Error("post-recovery-throw"); }, 0);\n`);
+    await waitFor(() => err.includes("post-recovery-throw"), "post-recovery uncaught exception on stderr");
+    expect(exited).toBe(false);
+
+    // Recovery is durable: one more good edit's timers fire.
+    writeFileSync(root, src(4));
+    await waitFor(() => out.includes("EVAL 4"), "EVAL 4");
+    await waitFor(() => countTicks(4) >= 3, "gen 4 ticks");
 
     runner.kill();
   },

@@ -1172,7 +1172,7 @@ pub mod testing_apis {
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);
-            return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+            return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
         }
 
         let mut test_tokens: Vec<test::TestToken> = Vec::with_capacity(lex_result.tokens.len());
@@ -1248,12 +1248,12 @@ pub mod testing_apis {
                 // `out_lex_result` is populated by `parse()` only on lex errors.
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));

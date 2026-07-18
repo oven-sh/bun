@@ -46,6 +46,9 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cargo: undefined,
     cargoHome: undefined,
     rustupHome: undefined,
+    bindgen: undefined,
+    hostCc: undefined,
+    hostCxx: undefined,
     msvcLinker: undefined,
     rc: undefined,
     mt: undefined,
@@ -88,10 +91,13 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(() => resolveDarwin({}, mockToolchain({ llvmStrip: undefined }))).toThrow(/llvm-strip/);
   });
 
-  test("rust-only mode skips SDK resolution (no Mach-O tools needed)", () => {
+  test("rust-only mode resolves the SDK for bindgen but skips Mach-O tool checks", () => {
+    // bindgen parses the BoringSSL headers with --target=<darwin-triple> and
+    // needs -isysroot even though no C/C++ is compiled in this mode; but
+    // ld64.lld/llvm-strip are link-time tools rust-only never reaches.
     const cfg = resolveDarwin({ mode: "rust-only" }, mockToolchain({ ld64Lld: undefined, llvmStrip: undefined }));
     expect(cfg.crossTarget).toBe("arm64-apple-macosx");
-    expect(cfg.osxSysroot).toBeUndefined();
+    expect(typeof cfg.osxSysroot).toBe("string");
   });
 
   test("deployment target is overridable", () => {

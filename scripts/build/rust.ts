@@ -26,6 +26,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { boringsslBindgenRs } from "./codegen.ts";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
@@ -402,6 +403,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // ─── rustflags ───
   // CARGO_ENCODED_RUSTFLAGS: U+001F-separated so multi-arg flags survive.
   const rustflags: string[] = [];
+  // Route `vendor/boringssl/rust/bssl-sys` to the bindgen output our codegen
+  // step produced (see codegen.ts emitBoringsslBindgen) instead of looking
+  // for a CMake-generated `wrapper_<target>.rs`. bssl-sys's own `lib.rs`
+  // gates the `include!(env!("BINDGEN_RS_FILE"))` arm on this cfg.
+  rustflags.push("--cfg", "bindgen_rs_file");
   // Match the C/C++ side's `-fno-pic` / `-Wl,-no-pie` (flags.ts:929,1001) on
   // the targets where bun links as a position-dependent ET_EXEC. With the
   // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
@@ -660,6 +666,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // is also `include!()`'d from here — its values come from
     // `buildOptionsRs.ts` (written at configure time), not env vars.
     BUN_CODEGEN_DIR: cfg.codegenDir,
+
+    // ── bssl-sys (vendor/boringssl/rust/bssl-sys) ──
+    // BUN_BSSL_SYS_NO_LINK makes its patched build.rs skip the
+    // `wrapper_<target>.rs` CMake-dir lookup and the
+    // `rustc-link-lib=static=crypto/ssl/rust_wrapper` directives (Bun's own
+    // link step supplies those objects). BINDGEN_RS_FILE is what
+    // `include!(env!("BINDGEN_RS_FILE"))` in bssl-sys's lib.rs reads under
+    // `--cfg bindgen_rs_file` (pushed into rustflags above).
+    BUN_BSSL_SYS_NO_LINK: "1",
+    BINDGEN_RS_FILE: boringsslBindgenRs(cfg),
 
     // ── toolchain forwarding (cc-rs / build scripts) ──
     // build.rs of crates in the dep graph (anything using `cc`) and rustc's

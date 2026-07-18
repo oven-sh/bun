@@ -349,6 +349,16 @@ typed-arena = "2"
 itoa = "1"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
+# BoringSSL's upstream Rust crates, built against the in-tree oven-sh/boringssl
+# headers. bindgen runs as a `scripts/build/codegen.ts` step and the output is
+# fed to `bssl-sys` via `--cfg bindgen_rs_file` + `BINDGEN_RS_FILE` (see
+# `scripts/build/rust.ts`); a patch on `bssl-sys/build.rs` disables its own
+# CMake-lookup/link directives under `BUN_BSSL_SYS_NO_LINK`.
+bssl-sys = { path = "vendor/boringssl/rust/bssl-sys" }
+bssl-macros = { path = "vendor/boringssl/rust/bssl-macros" }
+bssl-crypto = { path = "vendor/boringssl/rust/bssl-crypto", features = ["std"] }
+bssl-x509 = { path = "vendor/boringssl/rust/bssl-x509" }
+bssl-tls = { path = "vendor/boringssl/rust/bssl-tls" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }

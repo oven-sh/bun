@@ -1191,9 +1191,11 @@ install_llvm() {
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
+			"clang$(llvm_version)-dev" \
 			"scudo-malloc" \
 			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+		# clangN-dev: libclang.so for rust-bindgen (boringssl_bindgen codegen step)
 		;;
 	esac
 }
@@ -1337,6 +1339,15 @@ install_rust() {
 		execute_as_user "$rustup" component add rust-src
 		;;
 	esac
+
+	# rust-bindgen CLI for the boringssl_bindgen codegen step
+	# (scripts/build/codegen.ts). The build self-heals via `cargo install` if
+	# this is missing, but preinstalling keeps the first configure off the
+	# network.
+	cargo="$rust_home/bin/cargo"
+	if [ -x "$cargo" ]; then
+		execute_as_user "$cargo" install bindgen-cli --locked --version 0.72.1
+	fi
 }
 
 android_ndk_version() {

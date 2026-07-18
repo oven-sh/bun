@@ -52,7 +52,7 @@ impl PBKDF2 {
         let rc = unsafe {
             boringssl::PKCS5_PBKDF2_HMAC(
                 if !password.is_empty() {
-                    password.as_ptr()
+                    password.as_ptr().cast()
                 } else {
                     core::ptr::null()
                 },

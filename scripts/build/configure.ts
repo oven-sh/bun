@@ -28,7 +28,7 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { findBindgen, findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -79,6 +79,10 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
   const jsRuntime =
     process.versions.bun !== undefined ? q(process.execPath) : `${q(process.execPath)} --experimental-strip-types`;
 
+  // bindgen — required for the boringssl Rust bindings codegen step. Not
+  // needed in link-only mode; resolveConfig handles the undefined there.
+  const bindgen = findBindgen(rust?.cargo, rust?.cargoHome);
+
   return {
     ...llvm,
     cmake,
@@ -88,6 +92,7 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
     rustupHome: rust?.rustupHome,
+    bindgen,
     msvcLinker,
   };
 }

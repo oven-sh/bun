@@ -22,6 +22,7 @@
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { boringsslBindgenRs } from "./codegen.ts";
 import type { Config } from "./config.ts";
 import { writeIfChanged } from "./fs.ts";
 import { allRustTargets, rustTarget } from "./rust.ts";
@@ -95,8 +96,29 @@ export function generateCargoConfig(cfg: Config): string {
     // `cargo build`/`cargo check`, rust-analyzer); real linker errors still
     // fail the link.
     lines.push(
-      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]`,
+      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages", "--cfg", "bindgen_rs_file"]`,
     );
+  }
+
+  // bssl-sys (vendor/boringssl/rust/bssl-sys) is a path dep of the workspace
+  // whose patched build.rs looks for a CMake BoringSSL build dir unless
+  // BUN_BSSL_SYS_NO_LINK is set, and whose lib.rs reads BINDGEN_RS_FILE under
+  // --cfg bindgen_rs_file. The ninja cargo edge (rust.ts) sets all three; emit
+  // them here so plain `cargo check` / rust-analyzer work too. Pointing at the
+  // debug codegen dir matches the BUN_CODEGEN_DIR fallback in the per-crate
+  // build.rs files: one `bun bd` populates it.
+  lines.push("");
+  lines.push("[env]");
+  lines.push(`BUN_BSSL_SYS_NO_LINK = "1"`);
+  lines.push(`BINDGEN_RS_FILE = ${JSON.stringify(boringsslBindgenRs(cfg))}`);
+
+  // Windows-msvc targets were skipped in the loop above (no clang driver link
+  // entry); they still need --cfg bindgen_rs_file for cargo check / rust-analyzer.
+  for (const triple of allRustTargets) {
+    if (tripleOs(triple) !== "windows") continue;
+    lines.push("");
+    lines.push(`[target.${triple}]`);
+    lines.push(`rustflags = ["--cfg", "bindgen_rs_file"]`);
   }
   lines.push("");
 

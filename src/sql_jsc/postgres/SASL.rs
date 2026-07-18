@@ -84,7 +84,7 @@ impl SASL {
                 if password.is_empty() {
                     core::ptr::null()
                 } else {
-                    password.as_ptr()
+                    password.as_ptr().cast()
                 },
                 password.len(),
                 salt_bytes.as_ptr(),

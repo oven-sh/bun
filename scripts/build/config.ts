@@ -253,6 +253,8 @@ export interface Config {
   cargoHome: string | undefined;
   /** RUSTUP_HOME — passed to cargo invocations for reproducibility. */
   rustupHome: string | undefined;
+  /** rust-bindgen CLI; see `Toolchain.bindgen`. */
+  bindgen: string | undefined;
   /**
    * RUSTUP_TOOLCHAIN — the `channel` from this repo's `rust-toolchain.toml`.
    * Passed explicitly to every cargo invocation so the dep build and the
@@ -444,6 +446,13 @@ export interface Toolchain {
   cargo: string | undefined;
   /** CARGO_HOME. Set alongside cargo; undefined when cargo is unavailable. */
   cargoHome: string | undefined;
+  /**
+   * rust-bindgen CLI, used by the boringssl_bindgen codegen step to generate
+   * `bssl-sys`'s FFI bindings from `vendor/boringssl/include`. Discovered in
+   * `$CARGO_HOME/bin` first (cargo install bindgen-cli), then PATH. undefined
+   * in link-only mode (no codegen there).
+   */
+  bindgen: string | undefined;
   /** RUSTUP_HOME. Set alongside cargo; undefined when cargo is unavailable. */
   rustupHome: string | undefined;
   /**
@@ -1063,11 +1072,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (darwinCross) {
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
-    // rust-only mode never compiles C/C++ or links, so it doesn't need the
-    // SDK — skip resolution to keep the shared CI rust box from downloading
-    // a ~730 MB sysroot it never reads.
+    // rust-only mode runs bindgen (codegen.ts emitBoringsslBindgen) against the
+    // BoringSSL headers with --target=<darwin-triple>, so libclang needs the SDK
+    // headers even though no C/C++ is compiled in this mode. The SDK is cached
+    // in cacheDir across runs so the ~730 MB fetch is one-time per agent.
+    osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
     if ((partial.mode ?? "full") !== "rust-only") {
-      osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
       if (toolchain.ld64Lld === undefined) {
         throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
           hint: "Install lld for the same LLVM version as clang: apt install lld-21 (or equivalent).",
@@ -1175,6 +1185,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargo: toolchain.cargo,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
+    bindgen: toolchain.bindgen,
     rustToolchain: readRustToolchainChannel(cwd),
     // Cargo-driven links (the bun_shim_impl.exe edge, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/

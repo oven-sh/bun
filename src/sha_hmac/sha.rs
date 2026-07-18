@@ -121,8 +121,8 @@ macro_rules! new_evp {
                 // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
                 let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
 
-                // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
-                ffi::EVP_MD_CTX_init(&mut this.ctx);
+                // SAFETY: ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
+                unsafe { ffi::EVP_MD_CTX_init(&mut this.ctx) };
 
                 // SAFETY: ctx initialised by EVP_MD_CTX_init above; md is non-null.
                 let rc: c_int = unsafe { ffi::EVP_DigestInit(&mut this.ctx, md) };

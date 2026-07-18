@@ -93,6 +93,37 @@ function msArchName(arch: Arch): string {
 }
 
 /**
+ * Include dirs inside an xwin-style Windows sysroot, for tools that don't
+ * understand `/winsysroot` themselves (llvm-rc, bindgen's libclang). Layout:
+ *   <root>/VC/Tools/MSVC/<ver>/include
+ *   <root>/Windows Kits/10/Include/<sdkver>/{ucrt,shared,um}
+ * The SDK "Include" dir is title-case in a real VS/SDK copy and lowercase
+ * in an xwin winsysroot-style splat — accept either. Version subdirectories
+ * are enumerated, not hardcoded, so a user-provisioned sysroot at a different
+ * SDK/CRT version (or a real VS install with a four-component dir like
+ * `10.0.26100.0`) still works.
+ */
+export function windowsSysrootIncludeDirs(winsysroot: string): string[] {
+  const dirs: string[] = [];
+  const msvcRoot = join(winsysroot, "VC", "Tools", "MSVC");
+  for (const ver of listDir(msvcRoot)) {
+    const d = join(msvcRoot, ver, "include");
+    if (existsSync(d)) dirs.push(d);
+  }
+  const sdkRoot = join(winsysroot, "Windows Kits", "10");
+  const sdkInclude = joinIgnoreCase(sdkRoot, "Include");
+  if (sdkInclude !== undefined) {
+    for (const ver of listDir(sdkInclude)) {
+      for (const sub of ["ucrt", "shared", "um"]) {
+        const d = join(sdkInclude, ver, sub);
+        if (existsSync(d)) dirs.push(d);
+      }
+    }
+  }
+  return dirs;
+}
+
+/**
  * Does `dir` look like a winsysroot usable for an `arch` build? Checks the
  * SDK include tree, the kernel32 import lib for the target arch, and the ATL
  * headers so an interrupted or pre-ATL splat isn't treated as complete.

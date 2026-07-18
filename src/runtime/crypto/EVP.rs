@@ -174,8 +174,11 @@ impl EVP {
     ) -> EVP {
         bun_boringssl::load();
 
-        let mut ctx: boringssl::EVP_MD_CTX = bun_core::ffi::zeroed();
-        boringssl::EVP_MD_CTX_init(&mut ctx);
+        // SAFETY: `EVP_MD_CTX` is `#[repr(C)]` POD (byte-array union + three raw
+        // pointers); all-zero is exactly the state `EVP_MD_CTX_init` writes.
+        let mut ctx: boringssl::EVP_MD_CTX = unsafe { bun_core::ffi::zeroed_unchecked() };
+        // SAFETY: ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
+        unsafe { boringssl::EVP_MD_CTX_init(&mut ctx) };
         // SAFETY: FFI into BoringSSL; ctx is initialised above. md/engine are
         // caller-validated (md is a static singleton, engine may be null).
         unsafe {

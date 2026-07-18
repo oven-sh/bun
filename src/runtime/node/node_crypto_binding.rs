@@ -1052,7 +1052,7 @@ mod _impl {
             // SAFETY: password/salt/key are valid slices for the given lengths.
             let res = unsafe {
                 boringssl::c::EVP_PBE_scrypt(
-                    password.as_ptr(),
+                    password.as_ptr().cast(),
                     password.len(),
                     salt.as_ptr(),
                     salt.len(),
@@ -1286,7 +1286,10 @@ mod _impl {
         // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
         // for the duration of the call.
         unsafe {
-            boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
+            boringssl::c::EVP_MD_do_all_sorted(
+                Some(for_each_hash),
+                (&raw mut hashes).cast::<c_void>(),
+            );
         }
 
         let array = JSValue::create_empty_array(global, hashes.count())?;

@@ -607,6 +607,59 @@ export function findSystemTool(name: string, opts?: { required?: boolean; hint?:
   return findTool(spec)?.path;
 }
 
+/**
+ * The exact rust-bindgen release the boringssl_bindgen step is validated
+ * against. bssl-sys's `--wrap-static-fns` output has shifted between bindgen
+ * releases, so a different version on PATH is treated as "not found" and
+ * re-installed.
+ */
+const BINDGEN_VERSION = "0.72.1";
+
+/**
+ * Locate the `bindgen` CLI (rust-lang/rust-bindgen), used by the
+ * boringssl_bindgen codegen step. Searched in `$CARGO_HOME/bin` first
+ * (where `cargo install bindgen-cli` puts it), then PATH.
+ *
+ * Self-heals via `cargo install bindgen-cli --version <pinned>` when missing
+ * or on a different version, mirroring the `rustup component add` pattern in
+ * rust-lto-fix-cli.ts — CI images do not ship bindgen, and `$CARGO_HOME/bin`
+ * persists across agent runs so the install cost is one-time per agent.
+ */
+export function findBindgen(cargo: string | undefined, cargoHome: string | undefined): string | undefined {
+  const paths: string[] = [];
+  if (cargoHome !== undefined) paths.push(join(cargoHome, "bin"));
+  const found = findTool({ names: ["bindgen"], paths, required: false });
+  if (found !== undefined) {
+    // `bindgen --version` prints exactly `bindgen X.Y.Z\n`; exact match so a
+    // hypothetical 0.72.10 doesn't satisfy a 0.72.1 pin via substring.
+    const ver = spawnSync(found.path, ["--version"], { encoding: "utf8" });
+    if (ver.status === 0 && ver.stdout.trim() === `bindgen ${BINDGEN_VERSION}`) return found.path;
+    console.log(`bindgen found (${ver.stdout.trim()}) but version ${BINDGEN_VERSION} required; reinstalling`);
+  }
+
+  // Not found / wrong version: install it. link-only mode never needs bindgen
+  // (no codegen), so only install when cargo is available; otherwise leave
+  // undefined and let the codegen emitter fail with a clear message if it
+  // turns out to be required for this mode.
+  if (cargo === undefined) return undefined;
+  console.log(`bindgen not found; running cargo install bindgen-cli --locked --version ${BINDGEN_VERSION}`);
+  const res = spawnSync(cargo, ["install", "bindgen-cli", "--locked", "--version", BINDGEN_VERSION], {
+    stdio: "inherit",
+  });
+  if (res.error !== undefined || res.status !== 0) {
+    throw new BuildError("cargo install bindgen-cli failed", {
+      hint: `Install manually: cargo install bindgen-cli --locked --version ${BINDGEN_VERSION}`,
+      cause: res.error,
+    });
+  }
+  return findTool({
+    names: ["bindgen"],
+    paths,
+    required: true,
+    hint: "cargo install bindgen-cli reported success but the binary is not on PATH",
+  })?.path;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Rust toolchain (cargo) — needed for lolhtml only
 // ───────────────────────────────────────────────────────────────────────────

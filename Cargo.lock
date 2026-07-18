@@ -118,6 +118,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "bssl-crypto"
+version = "0.2.0"
+dependencies = [
+ "bssl-sys",
+]
+
+[[package]]
+name = "bssl-macros"
+version = "0.1.0"
+
+[[package]]
+name = "bssl-sys"
+version = "0.1.0"
+dependencies = [
+ "bssl-macros",
+]
+
+[[package]]
+name = "bssl-tls"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "bssl-crypto",
+ "bssl-macros",
+ "bssl-sys",
+ "bssl-x509",
+ "libc",
+ "once_cell",
+]
+
+[[package]]
+name = "bssl-x509"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "bssl-crypto",
+ "bssl-macros",
+ "bssl-sys",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -278,6 +319,8 @@ name = "bun_boringssl"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bssl-tls",
+ "bssl-x509",
  "bstr",
  "bun_alloc",
  "bun_boringssl_sys",
@@ -295,16 +338,9 @@ dependencies = [
 name = "bun_boringssl_sys"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
+ "bssl-crypto",
+ "bssl-sys",
  "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -2496,6 +2532,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3001,6 +3043,10 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+]
 
 [[package]]
 name = "oorandom"
@@ -3100,6 +3146,12 @@ checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
 ]
+
+[[package]]
+name = "portable-atomic"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "precomputed-hash"

@@ -730,15 +730,15 @@ trait NameScopes {
     }
 }
 
-/// `name` made a valid identifier (`let` → `_let`, non-ASCII escapes), or
-/// `None` when it already is one.
+/// `name` made a valid identifier (`let` → `_let`, `if` → `_if`, non-ASCII
+/// escapes), or `None` when it already is one.
 fn valid_identifier_for(name: &[u8]) -> Option<Box<[u8]>> {
     // `MutableString::ensure_valid_identifier` always heap-allocates, even
-    // when the input is already a valid ASCII identifier; the strict-mode
+    // when the input is already a valid ASCII identifier; the binding
     // reserved-word remap is the only transform that fires for an
     // otherwise-valid ASCII name.
     if is_simple_ascii_identifier(name)
-        && !bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
+        && !bun_ast::lexer_tables::is_binding_reserved_word(name)
     {
         debug_assert!(js_lexer::is_identifier(name));
         return None;
@@ -1148,7 +1148,7 @@ impl<'r> NestedRenamer<'r> {
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`), for which
-/// that function returns the input unchanged (modulo the strict-mode reserved
+/// that function returns the input unchanged (modulo the binding reserved
 /// word remap, handled by the caller) but still allocates.
 #[inline]
 fn is_simple_ascii_identifier(s: &[u8]) -> bool {

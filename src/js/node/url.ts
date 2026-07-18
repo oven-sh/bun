@@ -29,7 +29,7 @@ const { URL, URLSearchParams } = globalThis;
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
+let querystringParse: typeof import("node:querystring").parse | undefined;
 
 function Url() {
   this.protocol = null;
@@ -204,7 +204,8 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       if (simplePath[2]) {
         this.search = simplePath[2];
         if (parseQueryString) {
-          this.query = ObjectSetPrototypeOf(new URLSearchParams(this.search.slice(1)).toJSON(), null);
+          querystringParse ??= require("node:querystring").parse;
+          this.query = querystringParse(this.search.slice(1));
         } else {
           this.query = this.search.slice(1);
         }
@@ -402,8 +403,8 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     this.search = rest.substring(qm);
     this.query = rest.substring(qm + 1);
     if (parseQueryString) {
-      const query = this.query;
-      this.query = ObjectSetPrototypeOf(new URLSearchParams(query).toJSON(), null);
+      querystringParse ??= require("node:querystring").parse;
+      this.query = querystringParse(this.query);
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {

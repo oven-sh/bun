@@ -135,7 +135,13 @@ delete console.timeEnd;
 delete console.trace;
 delete console.timeLog;
 delete console.assert;
+// Stub out heap snapshots so the fuzzer doesn't burn minutes serialising the
+// heap, but put the real one back for test files batched after us.
+const realGenerateHeapSnapshot = Bun.generateHeapSnapshot;
 Bun.generateHeapSnapshot = () => {};
+afterAll(() => {
+  Bun.generateHeapSnapshot = realGenerateHeapSnapshot;
+});
 
 const ignoreList = [
   Object.prototype,

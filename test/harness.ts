@@ -1828,47 +1828,64 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind to 0.0.0.0: verdaccio's bare-port `-l` default is `localhost`, which on
-    // IPv4-only hosts binds ::1 while Bun's AI_ADDRCONFIG client resolves 127.0.0.1.
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `0.0.0.0:${this.port}`], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
-      },
-    });
+    // randomPort() does not probe availability; verdaccio's listen-'error' path
+    // is process.exit(2) (bootstrap.js), so an EADDRINUSE collision kills the
+    // child pre-handshake. Re-roll the port and retry a few times.
+    const maxAttempts = 5;
+    for (let attempt = 1; ; attempt++) {
+      // Bind to 0.0.0.0: verdaccio's bare-port `-l` default is `localhost`, which on
+      // IPv4-only hosts binds ::1 while Bun's AI_ADDRCONFIG client resolves 127.0.0.1.
+      this.process = fork(
+        require.resolve("verdaccio/bin/verdaccio"),
+        ["-c", this.configPath, "-l", `0.0.0.0:${this.port}`],
+        {
+          silent,
+          // Prefer using a release build of Bun since it's faster
+          execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+          env: {
+            ...(bunEnv as any),
+            NODE_NO_WARNINGS: "1",
+          },
+        },
+      );
 
-    this.process.stderr?.on("data", data => {
-      console.error(`[verdaccio] stderr: ${data}`);
-    });
+      this.process.stderr?.on("data", data => {
+        console.error(`[verdaccio] stderr: ${data}`);
+      });
 
-    const started = Promise.withResolvers();
+      const started = Promise.withResolvers<true | { code: number | null; signal: NodeJS.Signals | null }>();
 
-    this.process.on("error", error => {
-      console.error(`Failed to start verdaccio: ${error}`);
-      started.reject(error);
-    });
+      this.process.on("error", error => {
+        console.error(`Failed to start verdaccio: ${error}`);
+        started.reject(error);
+      });
 
-    this.process.on("exit", (code, signal) => {
-      if (code !== 0) {
-        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
-      } else {
-        console.log("Verdaccio exited successfully");
+      this.process.on("exit", (code, signal) => {
+        if (code !== 0) {
+          console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
+        } else {
+          console.log("Verdaccio exited successfully");
+        }
+        // If the child dies before sending verdaccio_started, unblock the caller
+        // so a top-level `await start()` fails fast instead of hanging the suite.
+        started.resolve({ code, signal });
+      });
+
+      this.process.on("message", (message: { verdaccio_started: boolean }) => {
+        if (message.verdaccio_started) {
+          started.resolve(true);
+        }
+      });
+
+      const result = await started.promise;
+      if (result === true) return;
+      if (result.code === 2 && attempt < maxAttempts) {
+        console.error(`[verdaccio] port ${this.port} unavailable (exit 2), retrying (${attempt}/${maxAttempts})`);
+        this.port = randomPort();
+        continue;
       }
-      // If the child dies before sending verdaccio_started, unblock the caller
-      // so a top-level `await start()` fails fast instead of hanging the suite.
-      started.reject(new Error(`Verdaccio exited before startup completed (code ${code}, signal ${signal})`));
-    });
-
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
-      }
-    });
-
-    await started.promise;
+      throw new Error(`Verdaccio exited before startup completed (code ${result.code}, signal ${result.signal})`);
+    }
   }
 
   registryUrl() {

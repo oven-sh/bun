@@ -163,9 +163,11 @@ it("echo server 1 on 1", async () => {
       },
     } as SocketHandler<any>;
 
+    // 127.0.0.1, not "localhost": on v6-preferring hosts listen() binds ::1
+    // while connect()'s resolver picks 127.0.0.1 (or vice versa) → ECONNREFUSED.
     using server: TCPSocketListener<any> | undefined = listen({
       socket: handlers,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
 
       data: {
@@ -175,7 +177,7 @@ it("echo server 1 on 1", async () => {
     });
     const clientProm = connect({
       socket: handlers,
-      hostname: "localhost",
+      hostname: server.hostname,
       port: server.port,
       data: {
         counter: 0,
@@ -270,9 +272,10 @@ describe("tcp socket binaryType", () => {
           binaryType: type,
         } as SocketHandler<any>;
 
+        // 127.0.0.1, not "localhost": avoid v4/v6 resolver mismatch → ECONNREFUSED.
         using server: TCPSocketListener<any> | undefined = listen({
           socket: handlers,
-          hostname: "localhost",
+          hostname: "127.0.0.1",
           port: 0,
           data: {
             isServer: true,
@@ -282,7 +285,7 @@ describe("tcp socket binaryType", () => {
 
         const clientProm = connect({
           socket: handlers,
-          hostname: "localhost",
+          hostname: server.hostname,
           port: server.port,
           data: {
             counter: 0,

@@ -21,6 +21,7 @@ use bun_core::{
 };
 use bun_core::http_types::MimeType::MimeType;
 use crate::StringJsc as _;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};

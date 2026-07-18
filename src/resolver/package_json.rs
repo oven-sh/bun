@@ -1291,7 +1291,9 @@ pub type EntryDataMapList = Vec<MapEntry>;
 const ENTRY_MAP_INDEX_THRESHOLD: usize = 16;
 
 impl EntryDataMap {
-    fn build_index(list: &EntryDataMapList) -> Option<Box<bun_collections::hashbrown::HashTable<u32>>> {
+    fn build_index(
+        list: &EntryDataMapList,
+    ) -> Option<Box<bun_collections::hashbrown::HashTable<u32>>> {
         if list.len() <= ENTRY_MAP_INDEX_THRESHOLD {
             return None;
         }
@@ -1299,7 +1301,10 @@ impl EntryDataMap {
         for (i, entry) in list.iter().enumerate() {
             let h = bun_wyhash::hash(&entry.key);
             // First occurrence wins, matching the linear scan's behavior on duplicate keys.
-            if table.find(h, |&j| strings::eql(&list[j as usize].key, &entry.key)).is_none() {
+            if table
+                .find(h, |&j| strings::eql(&list[j as usize].key, &entry.key))
+                .is_none()
+            {
                 table.insert_unique(h, i as u32, |&j| bun_wyhash::hash(&list[j as usize].key));
             }
         }

@@ -4304,8 +4304,12 @@ class ServerHttp2Session extends Http2Session {
           stream.destroy();
         }
         if (self.#connections === 0 && self.#closed) {
-          captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-          self.destroy();
+          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
+            scheduleSettingsAckGraceNT(self);
+          } else {
+            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+            setImmediate(destroyIfNotDestroyedNT, self);
+          }
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
@@ -4377,6 +4381,22 @@ class ServerHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      // This ACK may be the only thing a gracefully closed, idle session was waiting for.
+      const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
+      if (self.#pendingSettingsAckCount === 0 && pingsDrained && self[kSettingsAckGraceTimer] !== undefined) {
+        clearTimeout(self[kSettingsAckGraceTimer]);
+        self[kSettingsAckGraceTimer] = undefined;
+      }
+      if (
+        self.#closed &&
+        self.#connections === 0 &&
+        self.#pendingSettingsAckCount === 0 &&
+        pingsDrained &&
+        !self.destroyed
+      ) {
+        captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+        setImmediate(destroyIfNotDestroyedNT, self);
+      }
       const queued = self.#pendingSettingsCallbacks.shift();
       // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
       // callback first and emits 'localSettings' after it.
@@ -4862,7 +4882,14 @@ class ServerHttp2Session extends Http2Session {
     this[kGoawaySent] = true;
     this.#parser?.flush?.();
     if (this.#connections === 0) {
-      setImmediate(destroyIfNotDestroyedNT, this);
+      // Same bounded grace the client applies: an unACKed SETTINGS or ping still
+      // reaches its callback/'localSettings' before the session is destroyed.
+      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+        scheduleSettingsAckGraceNT(this);
+      } else {
+        captureHttp2PerfFrameSnapshot(this, this.#parser);
+        setImmediate(destroyIfNotDestroyedNT, this);
+      }
     }
   }
 

@@ -436,10 +436,22 @@ function connectionListenerHTTP1(server, socket, options) {
   function onHttp1SocketErrorListener(err) {
     onHttp1SocketError(err, undefined);
   }
-  // Node's socketOnEnd: let llhttp detect a message cut short by EOF.
+  // Node's socketOnEnd: let llhttp detect a message cut short by EOF, then end
+  // the connection the way Node does (httpAllowHalfOpen / _last / idle end).
   function onHttp1SocketEnd() {
     const ret = parser.finish();
-    if (ret instanceof Error) onHttp1SocketError(ret, undefined);
+    if (ret instanceof Error) {
+      onHttp1SocketError(ret, undefined);
+      return;
+    }
+    if (!server.httpAllowHalfOpen) {
+      if (req && !req.complete) req.destroy();
+      if (socket.writable) socket.end();
+    } else if (socket._httpMessage) {
+      socket._httpMessage._last = true;
+    } else if (socket.writable) {
+      socket.end();
+    }
   }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);

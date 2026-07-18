@@ -161,7 +161,7 @@ it("console.log %j prints [Circular] for self-referencing objects", async () => 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.replaceAll("\r\n", "\n"), exitCode }).toEqual({
     stdout: "pre [Circular] post\nctl-tojson:Error:tj\nctl-bigint:TypeError:true\n",
     exitCode: 0,

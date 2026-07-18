@@ -2707,8 +2707,8 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                // `OwnedString` releases the
-                                // +1 WTF ref on every exit (incl. the `?` below).
+                                // `OwnedString` releases the +1 WTF ref on
+                                // every exit (incl. the early-return arms).
                                 let mut str = OwnedString::new(BunString::empty());
                                 match next_value.json_stringify_fast(global, &mut str) {
                                     Ok(()) => {
@@ -2725,6 +2725,19 @@ pub mod formatter {
                                         let err = exception.to_error().unwrap_or(exception);
                                         let is_circular = 'c: {
                                             if !err.is_object() {
+                                                break 'c false;
+                                            }
+                                            let Some(name) =
+                                                err.fast_get(global, jsc::BuiltinName::name)?
+                                            else {
+                                                break 'c false;
+                                            };
+                                            if !name.is_string() {
+                                                break 'c false;
+                                            }
+                                            let name =
+                                                OwnedString::new(name.to_bun_string(global)?);
+                                            if !name.eql_comptime(b"TypeError") {
                                                 break 'c false;
                                             }
                                             let Some(msg) =

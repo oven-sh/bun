@@ -33,6 +33,7 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     );
 
     child.on("error", err => {
+      clearTimeout(killTimer);
       reject(err);
     });
 
@@ -67,6 +68,7 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
             } else {
               // Script is asking for more input, but we have none. This is an error.
               child.kill(); // Ensure the process is terminated
+              clearTimeout(killTimer);
               reject(new Error(`[${cmd}] No more stdin to send, but script requested more.`));
               return; // Prevent further processing
             }

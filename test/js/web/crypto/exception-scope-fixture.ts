@@ -10,6 +10,8 @@ const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, tr
 ]);
 const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
 const hm = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign", "verify"]);
+const hmVerifyOnly = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+const hmNonExtractable = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 const pb = await crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", false, ["deriveKey", "deriveBits"]);
 // 16 bytes (AES-KW needs a multiple of 8) that are not valid JSON once unwrapped.
 const raw16 = await crypto.subtle.importKey(
@@ -39,9 +41,13 @@ const cases: Record<string, () => Promise<unknown>> = {
 
   "decrypt ok": () => crypto.subtle.decrypt({ name: "AES-GCM", iv }, aes, ct),
   "decrypt bogus": () => crypto.subtle.decrypt(bad, aes, ct),
+  // Normalization succeeds; AES-GCM rejects 3 bytes (shorter than the auth tag) via the
+  // synchronous exceptionCallback, with the caller's throw scope still live.
+  "decrypt op failure": () => crypto.subtle.decrypt({ name: "AES-GCM", iv }, aes, new Uint8Array(3)),
 
   "sign ok": () => crypto.subtle.sign("HMAC", hm, new Uint8Array(8)),
   "sign bogus": () => crypto.subtle.sign(bad, hm, new Uint8Array(8)),
+  "sign usage missing": () => crypto.subtle.sign("HMAC", hmVerifyOnly, new Uint8Array(8)),
 
   "verify ok": () => crypto.subtle.verify("HMAC", hm, sig, new Uint8Array(8)),
   "verify bogus": () => crypto.subtle.verify(bad, hm, sig, new Uint8Array(8)),
@@ -79,6 +85,7 @@ const cases: Record<string, () => Promise<unknown>> = {
   "wrapKey via encrypt": () => crypto.subtle.wrapKey("raw", hm, aes, { name: "AES-GCM", iv }),
   "wrapKey bogus": () => crypto.subtle.wrapKey("raw", hm, kw, bad),
   "wrapKey thrower": () => crypto.subtle.wrapKey("raw", hm, kw, thrower),
+  "wrapKey non-extractable": () => crypto.subtle.wrapKey("raw", hmNonExtractable, kw, "AES-KW"),
   // wrapKey("jwk", ...) serializes the exported JWK with JSON.stringify, which invokes an
   // inherited Object.prototype.toJSON. That throw lands between the synchronous export
   // callback's toJS<IDLDictionary<JsonWebKey>> and the AES-KW wrap.
@@ -121,6 +128,12 @@ const cases: Record<string, () => Promise<unknown>> = {
     crypto.subtle.unwrapKey("raw", new Uint8Array(40), kw, bad, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]),
   "unwrapKey bogus unwrapped type": () =>
     crypto.subtle.unwrapKey("raw", new Uint8Array(40), kw, "AES-KW", bad, false, ["sign"]),
+  // AES-KW rejects an all-zero payload via the synchronous exceptionCallback: normalization
+  // succeeded, so this reaches the post-normalize reject path.
+  "unwrapKey bad integrity": () =>
+    crypto.subtle.unwrapKey("raw", new Uint8Array(24), kw, "AES-KW", { name: "HMAC", hash: "SHA-256" }, false, [
+      "sign",
+    ]),
 };
 
 for (const [name, run] of Object.entries(cases)) {

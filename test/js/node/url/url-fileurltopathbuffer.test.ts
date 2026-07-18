@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fileURLToPathBuffer, pathToFileURL } from "node:url";
+import { fileURLToPathBuffer, parse as urlParse, pathToFileURL } from "node:url";
 
 // Behavior verified against node v26.3.0: fileURLToPathBuffer decodes the URL
 // pathname's percent-escapes literally into bytes, so non-UTF-8 sequences
@@ -46,7 +46,7 @@ describe("fileURLToPathBuffer", () => {
   });
 
   test("rejects legacy url.parse objects (auth/path present)", () => {
-    const legacy = require("node:url").parse("file:///tmp/x.txt");
+    const legacy = urlParse("file:///tmp/x.txt");
     // @ts-expect-error intentionally passing a legacy Url object
     expect(() => fileURLToPathBuffer(legacy)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
   });

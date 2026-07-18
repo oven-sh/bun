@@ -266,7 +266,12 @@ const exports = {
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
   futimes: asyncWrap(fs.futimes, "futimes"),
   glob,
-  lchmod: asyncWrap(fs.lchmod, "lchmod"),
+  lchmod:
+    constants.O_SYMLINK !== undefined
+      ? asyncWrap(fs.lchmod, "lchmod")
+      : async function lchmod(_path, _mode) {
+          throw $ERR_METHOD_NOT_IMPLEMENTED("lchmod()");
+        },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
   lstat: asyncWrap(fs.lstat, "lstat"),

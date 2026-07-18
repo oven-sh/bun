@@ -2138,3 +2138,82 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(err).not.toContain("updated");
   expect(out).toContain("no changes");
 });
+
+test.concurrent("bun.lock and yarn.lock round-trip a large workspace set", async () => {
+  // Exercise the per-workspace bun.lock parse loops and the yarn printer's
+  // requested-versions map with a non-trivial number of workspace packages.
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+
+  const N = 60;
+  const pad = (i: number) => String(i).padStart(3, "0");
+
+  const writes: Promise<number>[] = [
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "many-workspaces-root",
+        workspaces: ["packages/*"],
+      }),
+    ),
+  ];
+  for (let i = 0; i < N; i++) {
+    const deps: Record<string, string> = {};
+    // Each package depends on the next three (wrapping), so every package
+    // is requested from several others.
+    for (let j = 1; j <= 3; j++) {
+      deps[`pkg-${pad((i + j) % N)}`] = "workspace:*";
+    }
+    writes.push(
+      write(
+        join(packageDir, "packages", `pkg-${pad(i)}`, "package.json"),
+        JSON.stringify({
+          name: `pkg-${pad(i)}`,
+          version: "1.0.0",
+          dependencies: deps,
+        }),
+      ),
+    );
+  }
+  await Promise.all(writes);
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--yarn"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  let [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(err).toContain("Saved yarn.lock");
+  expect(exitCode).toBe(0);
+
+  const bunLock = await file(join(packageDir, "bun.lock")).text();
+  const yarnLock = await file(join(packageDir, "yarn.lock")).text();
+
+  // yarn.lock should list every workspace package once, each with three
+  // requesters collapsed to a single "workspace:*" key and three deps.
+  for (let i = 0; i < N; i++) {
+    const name = `pkg-${pad(i)}`;
+    expect(yarnLock).toContain(`"${name}@workspace:*":\n`);
+    expect(yarnLock).toContain(`  version "workspace:packages/${name}"\n`);
+  }
+  const depLines = yarnLock.split("\n").filter(l => /^ {4}pkg-\d{3} "workspace:\*"$/.test(l));
+  expect(depLines.length).toBe(N * 3);
+
+  // Second install reparses bun.lock with N workspace rows and should see
+  // no diff.
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(bunLock);
+});

@@ -2142,77 +2142,79 @@ pub fn parse_into_binary_lockfile(
         // `append_package_dedupe`) without conflicting with the
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
         let workspace_path_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
-        'workspaces: for workspace_path in &workspace_path_snapshot {
-            for row in object_rows(&workspaces_obj) {
-                let path = row.key.slice();
-                if !strings::eql_long(
-                    path,
-                    workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
-                    true,
-                ) {
-                    continue;
-                }
-                let value = Expr::from_json_value(&row.value, row.key_loc);
+        let workspace_rows = object_rows(&workspaces_obj);
+        let mut row_by_path: HashMap<&[u8], usize> = HashMap::default();
+        row_by_path.reserve(workspace_rows.len());
+        for (idx, row) in workspace_rows.iter().enumerate().rev() {
+            row_by_path.insert(row.key.slice(), idx);
+        }
+        for workspace_path in &workspace_path_snapshot {
+            let Some(&row_idx) = row_by_path
+                .get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
+            else {
+                continue;
+            };
+            let row = &workspace_rows[row_idx];
+            let path = row.key.slice();
+            let value = Expr::from_json_value(&row.value, row.key_loc);
 
-                let mut pkg = Package {
-                    resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
-                        sbuf!(lockfile).append(path)?,
-                    )),
-                    ..Default::default()
-                };
+            let mut pkg = Package {
+                resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
+                    sbuf!(lockfile).append(path)?,
+                )),
+                ..Default::default()
+            };
 
-                let name_expr = value.get(b"name").unwrap();
-                let name = name_expr
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
-                let name_hash = StringBuilder::string_hash(name);
+            let name_expr = value.get(b"name").unwrap();
+            let name = name_expr
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
+            let name_hash = StringBuilder::string_hash(name);
 
-                pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
-                pkg.name_hash = name_hash;
+            pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
+            pkg.name_hash = name_hash;
 
-                let (off, len) = parse_append_dependencies::<false, false>(
-                    lockfile,
-                    &value,
-                    &mut *log,
-                    source,
-                    &mut optional_peers_buf,
-                    None,
-                    None,
-                    None,
+            let (off, len) = parse_append_dependencies::<false, false>(
+                lockfile,
+                &value,
+                &mut *log,
+                source,
+                &mut optional_peers_buf,
+                None,
+                None,
+                None,
+            )?;
+
+            pkg.dependencies = DependencySlice::new(off, len);
+            pkg.resolutions = PackageIDSlice::new(off, len);
+
+            if let Some(bin_expr) = value.get(b"bin") {
+                pkg.bin = Bin::parse_append(
+                    &bin_expr,
+                    &mut sbuf!(lockfile),
+                    &mut lockfile.buffers.extern_strings,
                 )?;
-
-                pkg.dependencies = DependencySlice::new(off, len);
-                pkg.resolutions = PackageIDSlice::new(off, len);
-
-                if let Some(bin_expr) = value.get(b"bin") {
-                    pkg.bin = Bin::parse_append(
-                        &bin_expr,
-                        &mut sbuf!(lockfile),
-                        &mut lockfile.buffers.extern_strings,
-                    )?;
-                } else if let Some(bin_dir_expr) = value.get(b"binDir") {
-                    pkg.bin =
-                        Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
-                }
-
-                // there should be no duplicates
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
-
-                let entry = pkg_map.get_or_put(name)?;
-                if entry.found_existing {
-                    log.add_error_fmt(
-                        source,
-                        row.key_loc,
-                        format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
-                    );
-                    return Err(ParseError::InvalidWorkspaceObject);
-                }
-
-                *entry.value_ptr = pkg_id;
-
-                workspace_pkgs_len += 1;
-                continue 'workspaces;
+            } else if let Some(bin_dir_expr) = value.get(b"binDir") {
+                pkg.bin =
+                    Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
             }
+
+            // there should be no duplicates
+            let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+
+            let entry = pkg_map.get_or_put(name)?;
+            if entry.found_existing {
+                log.add_error_fmt(
+                    source,
+                    row.key_loc,
+                    format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
+                );
+                return Err(ParseError::InvalidWorkspaceObject);
+            }
+
+            *entry.value_ptr = pkg_id;
+
+            workspace_pkgs_len += 1;
         }
     }
 
@@ -3363,43 +3365,45 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     if IS_ROOT {
         let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
-        'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for row in object_rows(workspaces_obj) {
-                let path = row.key.slice();
-                if !strings::eql_long(
-                    path,
-                    workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
-                    true,
-                ) {
-                    continue;
-                }
-                let value = Expr::from_json_value(&row.value, row.key_loc);
+        let workspace_rows = object_rows(workspaces_obj);
+        let mut row_by_path: HashMap<&[u8], usize> = HashMap::default();
+        row_by_path.reserve(workspace_rows.len());
+        for (idx, row) in workspace_rows.iter().enumerate().rev() {
+            row_by_path.insert(row.key.slice(), idx);
+        }
+        for workspace_path in lockfile.workspace_paths.values() {
+            let Some(&row_idx) = row_by_path
+                .get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
+            else {
+                continue;
+            };
+            let row = &workspace_rows[row_idx];
+            let path = row.key.slice();
+            let value = Expr::from_json_value(&row.value, row.key_loc);
 
-                let name_expr = value.get(b"name").unwrap();
-                let name = name_expr
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
-                let name_hash = StringBuilder::string_hash(name);
+            let name_expr = value.get(b"name").unwrap();
+            let name = name_expr
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
+            let name_hash = StringBuilder::string_hash(name);
 
-                let dep = Dependency {
-                    name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
-                    name_hash,
-                    behavior: Behavior::WORKSPACE,
-                    version: DependencyVersion {
-                        tag: DependencyVersionTag::Workspace,
-                        value: DependencyVersionValue {
-                            workspace: sbuf!(lockfile).append(path)?,
-                        },
-                        literal: String::default(),
+            let dep = Dependency {
+                name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
+                name_hash,
+                behavior: Behavior::WORKSPACE,
+                version: DependencyVersion {
+                    tag: DependencyVersionTag::Workspace,
+                    value: DependencyVersionValue {
+                        workspace: sbuf!(lockfile).append(path)?,
                     },
-                };
+                    literal: String::default(),
+                },
+            };
 
-                // after parseAppendDependencies has been called for each package the
-                // size of lockfile.buffers.resolutions is set to the length of dependencies
-                // and values set to invalid_package_id before mapping.
-                lockfile.buffers.dependencies.push(dep);
-                continue 'workspaces;
-            }
+            // after parseAppendDependencies has been called for each package the
+            // size of lockfile.buffers.resolutions is set to the length of dependencies
+            // and values set to invalid_package_id before mapping.
+            lockfile.buffers.dependencies.push(dep);
         }
     }
 

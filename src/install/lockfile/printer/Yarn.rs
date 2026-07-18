@@ -62,38 +62,48 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
     // overlapping &mut [Version] slices.
     let mut requested_versions: HashMap<PackageID, (usize, usize)> = HashMap::default();
 
-    // We push into a pre-reserved Vec — set_len would drop uninit tail elements
-    // (and index-assign would drop uninit old values). Profile if hot.
-    let mut all_requested_versions_buf: Vec<dependency::Version> =
-        Vec::with_capacity(resolutions_buffer.len());
-
     let package_count = names.len() as PackageID;
     let mut alphabetized_names: Vec<PackageID> = vec![0; (package_count - 1) as usize];
 
     let string_buf: &[u8] = this.lockfile.buffers.string_bytes.as_slice();
 
     // First, we need to build a map of all requested versions
-    // This is so we can print requested versions
+    // This is so we can print requested versions.
+    // Bucket the resolution buffer by package id in one pass instead of
+    // rescanning it once per package.
+    let mut starts: Vec<usize> = vec![0; package_count as usize + 1];
+    for &r in resolutions_buffer {
+        if r > 0 && r < package_count {
+            starts[r as usize + 1] += 1;
+        }
+    }
+    for i in 2..=package_count as usize {
+        starts[i] += starts[i - 1];
+    }
+    let total = starts[package_count as usize];
+
+    let mut all_requested_versions_buf: Vec<dependency::Version> = Vec::with_capacity(total);
+    all_requested_versions_buf.resize_with(total, dependency::Version::default);
+
+    {
+        let mut cursors = starts.clone();
+        for (dep, &r) in dependencies_buffer.iter().zip(resolutions_buffer.iter()) {
+            if r > 0 && r < package_count {
+                let slot = cursors[r as usize];
+                cursors[r as usize] = slot + 1;
+                all_requested_versions_buf[slot] = dep.version.clone();
+            }
+        }
+    }
+
     {
         let mut i: PackageID = 1;
         while i < package_count {
             alphabetized_names[(i - 1) as usize] = i;
 
-            let mut resolutions = resolutions_buffer;
-            let mut dependencies = dependencies_buffer;
-
-            let mut j: usize = 0;
-            let requested_version_start = all_requested_versions_buf.len();
-            while let Some(k) = resolutions.iter().position(|&r| r == i) {
-                j += 1;
-
-                all_requested_versions_buf.push(dependencies[k].version.clone());
-
-                dependencies = &dependencies[k + 1..];
-                resolutions = &resolutions[k + 1..];
-            }
-
-            let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
+            let start = starts[i as usize];
+            let end = starts[i as usize + 1];
+            let dependency_versions = &mut all_requested_versions_buf[start..end];
             if dependency_versions.len() > 1 {
                 dependency_versions.sort_by(|a, b| {
                     if dependency::Version::is_less_than_with_tag(string_buf, a, b) {
@@ -105,7 +115,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                     }
                 });
             }
-            requested_versions.insert(i, (requested_version_start, j));
+            requested_versions.insert(i, (start, end - start));
 
             i += 1;
         }

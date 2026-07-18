@@ -1,7 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::cmp::Ordering;
 
-use bun_collections::HashMap;
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
@@ -58,10 +57,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 
-    // Store (start, len) into `all_requested_versions_buf` instead of
-    // overlapping &mut [Version] slices.
-    let mut requested_versions: HashMap<PackageID, (usize, usize)> = HashMap::default();
-
     let package_count = names.len() as PackageID;
     let mut alphabetized_names: Vec<PackageID> = vec![0; (package_count - 1) as usize];
 
@@ -115,7 +110,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                     }
                 });
             }
-            requested_versions.insert(i, (start, end - start));
 
             i += 1;
         }
@@ -142,8 +136,9 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
         // "@babel/core@7.9.0":
         {
             writer.write_all(b"\n")?;
-            let (rv_start, rv_len) = *requested_versions.get(&i).unwrap();
-            let dependency_versions = &all_requested_versions_buf[rv_start..rv_start + rv_len];
+            let rv_start = starts[i as usize];
+            let rv_end = starts[i as usize + 1];
+            let dependency_versions = &all_requested_versions_buf[rv_start..rv_end];
 
             // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
             let always_needs_quote = strings::must_escape_yaml_string(name);

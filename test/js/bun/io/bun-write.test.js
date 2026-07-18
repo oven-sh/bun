@@ -7,6 +7,13 @@ let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
+// describe.concurrent kicks off ~30 tests at once and ~50 of their steps are
+// `await gcTick()` — a full synchronous Bun.gc(true). When the whole suite
+// shares one process the heap is large (and the 256 MiB copyFileRange buffer
+// below is live), so those GCs serialize and push the gcTick-heavy tests past
+// the default 5 s. Give them real headroom; the work itself is milliseconds.
+const GC_HEAVY_TIMEOUT = 30_000;
+
 (isWindows ? describe : describe.concurrent)("Bun.write", () => {
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
@@ -27,7 +34,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       new Uint32Array(1024).byteLength,
     );
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   describe("large file", () => {
     it("write large file (text)", async () => {
@@ -91,7 +98,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exception.code).toBe("ENOENT");
     }
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.write file not found returns ENOENT, issue#6336", async () => {
     using tmpbase = tempDir("bun-write-enoent", {});
@@ -125,7 +132,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     } finally {
       fs.unlinkSync(src.name);
     }
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.write('out.txt', 'string')", async () => {
     using tmpbase = tempDir("bun-write-string", {});
@@ -146,7 +153,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(await out.text()).toBe(fs.readFileSync(outpath, "utf8"));
       await gcTick();
     }
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.file -> Bun.file", async () => {
     using tmpbase = tempDir("bun-file-to-file", {});
@@ -184,14 +191,14 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
       expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
     }
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();
     expect(await Bun.file(file).text()).toBe(fs.readFileSync(file, "utf8"));
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.file empty file", async () => {
     const file = path.join(import.meta.dir, "emptyFile");
@@ -199,7 +206,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     const buffer = await Bun.file(file).arrayBuffer();
     expect(buffer.byteLength).toBe(0);
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.file lastModified update", async () => {
     using tmpbase = tempDir("bun-file-lastmodified", {});
@@ -217,7 +224,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     // ensure the last modified timestamp is updated.
     expect(lastModified1).toBeGreaterThan(lastModified0);
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.file as a Blob", async () => {
     const filePath = path.join(import.meta.path, "../fetch.js.txt");
@@ -257,7 +264,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await new Promise(resolve => setTimeout(resolve, 1));
     var blob = Bun.file(filePath);
     expect(blob.size).toBe(fixture.length);
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Response -> Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
@@ -269,7 +276,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
     expect(await response.text()).toBe(text);
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.file -> Response", async () => {
     using tmpbase = tempDir("bun-file-to-response", {});
@@ -286,7 +293,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(await Bun.write(tmpbase + "fetch.js.out", resp)).toBe(exampleHtml.length);
     expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Response -> Bun.file -> Response -> text", async () => {
     await gcTick();
@@ -300,7 +307,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
     expect(await response2.text()).toBe(text);
     await gcTick();
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   it("Bun.write('output.html', '')", async () => {
     using tmpbase = tempDir("bun-write-output-html", {});
@@ -341,7 +348,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
       expect(Bun.inspect(f)).toContain("FileRef (fd: 0)");
     }
-  });
+  }, GC_HEAVY_TIMEOUT);
 
   // FLAKY TEST
   // Since Bun.file is resolved lazily, this needs to specifically be checked

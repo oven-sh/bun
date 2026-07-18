@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1054,3 +1055,41 @@ test("decorator and declare", () => {
   new A();
   expect(counter).toBe(1);
 });
+
+test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
+  // The lowered `this.fN = N` initializers are spliced into the existing constructor
+  // body after the `super()` call. That splice used to be a per-item `insert()` loop,
+  // memmoving the whole tail on every iteration (O(M*N) for M fields and N statements).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const M = 80000;
+        const N = 1000000;
+        let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
+        for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
+        src += "constructor() {\\nsuper();\\n";
+        src += Buffer.alloc(N * 2, "{}").toString();
+        src += "\\n}\\n}\\n";
+        const t = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+        });
+        const out = t.transformSync(src);
+        if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
+          throw new Error("instance-field initializers missing from lowered constructor");
+        console.log("DONE " + out.length);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toStartWith("DONE ");
+  expect(exitCode).toBe(0);
+}, 90_000);

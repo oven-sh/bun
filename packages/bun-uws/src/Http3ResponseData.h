@@ -21,7 +21,7 @@ struct Http3ResponseData {
 
     /* Same bit values as HttpResponseData so uws_res_state() consumers
      * (Zig's State enum) work unchanged. */
-    enum : uint8_t {
+    enum : uint16_t {
         HTTP_STATUS_CALLED = 1,
         HTTP_WRITE_CALLED = 2,
         HTTP_END_CALLED = 4,
@@ -29,6 +29,9 @@ struct Http3ResponseData {
         HTTP_CONNECTION_CLOSE = 16,
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
         HTTP_WROTE_DATE_HEADER = 64,
+        /* 1xx/204: no Content-Length (RFC 9110 8.6). Same bit as
+         * HttpResponseData<SSL>::HTTP_NO_BODY_STATUS. */
+        HTTP_NO_BODY_STATUS = 1 << 9,
     };
 
     void *userData = nullptr;
@@ -61,7 +64,7 @@ struct Http3ResponseData {
 
     uint64_t offset = 0;
     uint64_t totalSize = 0;
-    uint8_t state = 0;
+    uint16_t state = 0;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
         size_t off = hdrBuf.size();

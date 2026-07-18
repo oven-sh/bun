@@ -26,6 +26,12 @@ struct Http3Response {
         d->state |= Http3ResponseData::HTTP_STATUS_CALLED;
         /* Zig hands us "200 OK"; HTTP/3 wants only the 3-digit code. */
         std::string_view code = status.size() >= 3 ? status.substr(0, 3) : std::string_view{"200"};
+        /* RFC 9110 8.6: a 1xx/204 MUST NOT carry Content-Length. Mirrors
+         * HttpResponse<SSL>::writeStatus so internalEnd's auto content-length
+         * skips the same statuses HTTP/1 does. */
+        if (code[0] == '1' || (code[0] == '2' && code[1] == '0' && code[2] == '4')) {
+            d->state |= Http3ResponseData::HTTP_NO_BODY_STATUS;
+        }
         appendHeader(d, ":status", code);
         return this;
     }
@@ -99,14 +105,15 @@ struct Http3Response {
 
     void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool /*closeConnection*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
+        writeStatus("200 OK");
         if (reportedContentLength.has_value() &&
-            !(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+            !(d->state & (Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER
+                          | Http3ResponseData::HTTP_NO_BODY_STATUS))) {
             writeHeader("content-length", (uint64_t) *reportedContentLength);
         }
         if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
             us_quic_stream_shutdown((us_quic_stream_t *) this);
         } else {
-            writeStatus("200 OK");
             sendBufferedHeaders(d, true);
         }
         markDone(d);
@@ -228,7 +235,8 @@ private:
 
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {
             writeStatus("200 OK");
-            if (!(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER) && totalSize) {
+            if (!(d->state & (Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER
+                              | Http3ResponseData::HTTP_NO_BODY_STATUS))) {
                 writeHeader("content-length", totalSize);
                 d->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
             }

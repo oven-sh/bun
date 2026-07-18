@@ -244,6 +244,48 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
+  // Http3Response::internalEnd gated the auto content-length on `totalSize`,
+  // so a zero-length body lost the header while HTTP/1 sent `Content-Length: 0`.
+  test("content-length matches HTTP/1 at the zero-length boundary", async () => {
+    const script = `
+      const server = Bun.serve({
+        port: 0, tls: ${JSON.stringify(tls)}, http3: true,
+        fetch(req) {
+          const u = new URL(req.url);
+          if (u.pathname === "/204") return new Response(null, { status: 204 });
+          const n = Number(u.searchParams.get("n") ?? 0);
+          return new Response(Buffer.alloc(n, "x").toString(), { status: 404 });
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async port => {
+      const cl = async (path: string, proto: "h1" | "h3") => {
+        const res = await fetch(`https://127.0.0.1:${port}${path}`, {
+          ...(proto === "h3" ? { protocol: "http3" } : {}),
+          tls: { rejectUnauthorized: false },
+        } as RequestInit);
+        await res.arrayBuffer();
+        return { status: res.status, cl: res.headers.get("content-length") };
+      };
+      expect({
+        "h1 n=0": await cl("/?n=0", "h1"),
+        "h3 n=0": await cl("/?n=0", "h3"),
+        "h1 n=1": await cl("/?n=1", "h1"),
+        "h3 n=1": await cl("/?n=1", "h3"),
+        "h3 204": await cl("/204", "h3"),
+      }).toEqual({
+        "h1 n=0": { status: 404, cl: "0" },
+        "h3 n=0": { status: 404, cl: "0" },
+        "h1 n=1": { status: 404, cl: "1" },
+        "h3 n=1": { status: 404, cl: "1" },
+        "h3 204": { status: 204, cl: null },
+      });
+    });
+  });
+
   test("query string is preserved", async () => {
     await withServer(async port => {
       const res = await fetchH3(port, "/query?q=hello%20world&x=1");

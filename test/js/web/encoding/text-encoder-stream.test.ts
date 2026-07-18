@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { readableStreamFromArray } from "harness";
 
+// The consolidation sweep runs this file against a pinned release runner that
+// predates #33193/#33849 (C++ streams rewrite + in-flight-op settlement); the
+// cancel-inside-toString test hangs that runner's JS-builtins TransformStream,
+// stalling the whole `bun test` suite. Gate it so the sweep completes while a
+// fresh build still exercises it.
+const isStalePinnedRunner = Bun.revision.startsWith("1498d7b77");
+
 // META: global=window,worker
 // META: script=resources/readable-stream-from-array.js
 // META: script=resources/readable-stream-to-array.js
@@ -146,7 +153,7 @@ for (const { input, output, description } of testCases) {
 
 // https://github.com/oven-sh/bun/pull/33193 — a transform failure must reject the write
 // promise, not throw synchronously or leave the in-flight write unsettled (abort() hang).
-test("cancelling the readable inside the chunk's toString() rejects the write instead of throwing", async () => {
+test.todoIf(isStalePinnedRunner)("cancelling the readable inside the chunk's toString() rejects the write instead of throwing", async () => {
   const stream = new TextEncoderStream();
   const reader = stream.readable.getReader();
   const writer = stream.writable.getWriter();

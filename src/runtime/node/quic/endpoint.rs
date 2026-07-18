@@ -1578,6 +1578,12 @@ impl QuicEndpoint {
             }
         }
         let mut ms = earliest_us.map(|us| (us.max(0) as u64).div_ceil(1000).max(1));
+        // A version-negotiation probe has no engine, so `earliest_adv_tick`
+        // yields nothing and the sweep that expires it would never run.
+        if !self.pending_verneg.get().is_empty() {
+            const VERNEG_POLL_MS: u64 = 250;
+            ms = Some(ms.map_or(VERNEG_POLL_MS, |m| m.min(VERNEG_POLL_MS)));
+        }
         if self.followup_due.get() {
             ms = Some(ms.map_or(1, |m| m.min(1)));
         }
@@ -2411,6 +2417,9 @@ impl QuicEndpoint {
         }
         self.pending_verneg
             .with_mut(|v| v.push((session, scid, now_ns())));
+        // A probe has no engine, so nothing else would ever arm the timer that
+        // runs the sweep expiring it.
+        self.schedule_process();
         self.sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {

@@ -1439,7 +1439,7 @@ class TestNode {
     // being collected); nested tests inherit their parent's file.
     this.filePath = parent !== undefined && parent.parent !== undefined ? parent.filePath : Bun.main;
     this.skipped = !!options.skip;
-    this.todoFlag = !!options.todo;
+    this.todoFlag = !!options.todo || (parent?.todoFlag ?? false);
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
   }
 
@@ -2405,11 +2405,12 @@ function addTest(
     }
     if (runningNode.isRunning()) {
       // Subtest of a running test (or of an inline suite created inside one).
-      if (mode === "skip" || options.skip) {
-        return Promise.resolve(undefined);
-      }
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
+      if (mode === "skip" || options.skip) {
+        reportDirectiveOnlyNode(child, "skip");
+        return Promise.resolve(undefined);
+      }
       if (mode === "todo") child.todoFlag = true;
       return scheduleSubtest(runningNode, child, fn);
     }
@@ -2490,6 +2491,7 @@ function addSuite(
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
     if (mode === "skip" || options.skip) {
+      reportDirectiveOnlyNode(suite, "skip");
       return Promise.resolve(undefined);
     }
     if (mode === "todo") suite.todoFlag = true;

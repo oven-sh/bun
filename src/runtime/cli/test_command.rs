@@ -3272,12 +3272,10 @@ impl TestCommand {
                 // Node parity: a node test file exits only when the event loop
                 // drains, so in-flight async work (fs I/O, workers, sockets)
                 // completes before process 'exit' handlers verify mustCall()
-                // counts. Opt-in so bun's own suites keep exit-after-tests.
+                // counts. on_before_exit() drains and dispatches 'beforeExit',
+                // matching `bun run`. Opt-in so bun suites keep exit-after-tests.
                 if should_drain_event_loop() {
-                    while vm.is_event_loop_alive() {
-                        vm.tick();
-                        vm.auto_tick_active();
-                    }
+                    vm.on_before_exit();
                 }
                 drop(buntest_strong);
             }

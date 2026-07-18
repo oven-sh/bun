@@ -1869,8 +1869,13 @@ impl QuicEndpoint {
             }
             Err(e) => {
                 // As in `on_remote_stream`: never return to lsquic with a
-                // pending exception.
+                // pending exception. Abort like the sibling null-return
+                // branches, or the conn lingers with no session behind it.
                 global.report_uncaught_exception_from_error(e);
+                // SAFETY: `conn` is the live conn lsquic just created.
+                if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
+                    c.abort_silent();
+                }
                 null_mut()
             }
         }

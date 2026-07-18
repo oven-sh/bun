@@ -1938,6 +1938,10 @@ impl QuicSession {
                         .with_mut(|p| *p = Some((app, code, reason)));
                     self.close_when_bound.set(true);
                 } else {
+                    // Read the arguments even with no conn: `parse_close_options`
+                    // can throw on a bad `{type, code, reason}`, and node
+                    // validates regardless of whether a conn exists.
+                    self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
                     self.report_close(global);
                 }
             } else {
@@ -2091,7 +2095,7 @@ impl QuicSession {
                 // session or close the conn before we get back here.
                 self.report_datagram_abandoned(global, dropped_id);
                 if self.destroyed.get() || self.conn.get().is_null() {
-                    return Ok(JSValue::js_number(0.0));
+                    return JSValue::from_uint64_no_truncate(global, 0);
                 }
             }
         }

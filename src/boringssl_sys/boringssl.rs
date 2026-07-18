@@ -921,7 +921,6 @@ unsafe extern "C" {
         ctx: *mut SSL_CTX,
         cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: *const c_char)>,
     );
-    pub fn SSL_CTX_set_num_tickets(ctx: *mut SSL_CTX, num_tickets: usize) -> c_int;
     pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
     pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
@@ -1092,11 +1091,8 @@ unsafe extern "C" {
     pub fn SSL_CTX_set_max_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
     pub fn SSL_CTX_set_verify(ctx: *mut SSL_CTX, mode: c_int, callback: SSL_verify_cb);
     pub fn SSL_CTX_use_certificate(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
-    pub fn SSL_CTX_add_extra_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
     pub fn SSL_CTX_use_PrivateKey(ctx: *mut SSL_CTX, pkey: *mut EVP_PKEY) -> c_int;
-    pub fn SSL_CTX_check_private_key(ctx: *const SSL_CTX) -> c_int;
 
-    pub fn SSL_set1_host(ssl: *mut SSL, hostname: *const c_char) -> c_int;
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
     pub fn SSL_get_current_cipher(ssl: *const SSL) -> *const SSL_CIPHER;
     pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
@@ -1119,7 +1115,6 @@ unsafe extern "C" {
 
     pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
-    pub fn X509_STORE_new() -> *mut X509_STORE;
     pub fn X509_STORE_free(store: *mut X509_STORE);
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
@@ -1138,11 +1133,6 @@ unsafe extern "C" {
     /// Returns a BORROWED reference to the local certificate, or null.
     pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
 
-    pub fn SSL_CTX_set_session_cache_mode(ctx: *mut SSL_CTX, mode: c_int) -> c_int;
-    pub fn SSL_CTX_sess_set_new_cb(
-        ctx: *mut SSL_CTX,
-        cb: Option<unsafe extern "C" fn(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int>,
-    );
     pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
     pub fn d2i_SSL_SESSION(
         a: *mut *mut SSL_SESSION,

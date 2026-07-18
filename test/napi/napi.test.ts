@@ -1155,6 +1155,36 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(stderr).toBe("");
   });
 
+  it("a finalizer can observe and rethrow an exception thrown by JS it ran during env cleanup (#34663)", async () => {
+    // The node-sqlite3 shape of #34663: a Statement wrap finalizer running
+    // at env teardown emits 'error' on an EventEmitter with no listener,
+    // so the emit throws. node-addon-api then checks
+    // napi_is_exception_pending, fetches the exception with
+    // napi_get_and_clear_last_exception, and rethrows it with napi_throw,
+    // aborting the process (NAPI FATAL ERROR: Error::New
+    // napi_create_error) if any of those disagree. Before the fix the
+    // exception stayed on the JSC VM where napi_is_exception_pending
+    // (which skips the VM check during cleanup) could not see it, and the
+    // rethrow was rejected.
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
+      globalThis.keep = addon.setupRethrow(() => { throw new Error("from js"); });
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // call fails with napi_pending_exception (10); the exception is visible
+    // to napi_is_exception_pending; get/ref/rethrow all succeed. Before the
+    // fix this printed is_pending=0 pending=0 ... throw=10.
+    expect(stdout.trim()).toBe("rethrow: call=10 is_pending=0 pending=1 get=0 ref=0 throw=0");
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+  });
+
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.

@@ -146,10 +146,19 @@ using namespace Zig;
         napi_set_last_error((_env), napi_object_expected))
 
 // Return an error code if an exception was thrown after NAPI_PREAMBLE
-#define NAPI_RETURN_IF_VM_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception))
+// During env cleanup, first move any VM exception into the env's pending
+// slot (see NapiEnv::stashExceptionDuringCleanup); for pure value producers
+// this also means they keep working while that exception is pending,
+// matching Node, whose equivalents never check the exception state.
+#define NAPI_RETURN_IF_VM_EXCEPTION(_env)                                                                          \
+    do {                                                                                                           \
+        (_env)->stashExceptionDuringCleanup();                                                                     \
+        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception));     \
+    } while (0)
 
 #define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope)                                   \
     do {                                                                                    \
+        (_env)->stashExceptionDuringCleanup();                                              \
         RETURN_IF_EXCEPTION((_scope), napi_set_last_error((_env), napi_pending_exception)); \
         if ((_env)->hasPendingException()) {                                                \
             return napi_set_last_error((_env), napi_pending_exception);                     \
@@ -1357,9 +1366,12 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     auto globalObject = toJS(env);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     if (scope.exception()) [[unlikely]] {
-        *result = toNapi(JSValue(scope.exception()->value()), globalObject);
+        JSValue value = JSValue(scope.exception()->value());
+        *result = toNapi(value, globalObject);
+        env->noteExceptionHandedToAddonDuringCleanup(value);
     } else if (std::optional<JSValue> pending = env->pendingException()) {
         *result = toNapi(pending.value(), globalObject);
+        env->noteExceptionHandedToAddonDuringCleanup(pending.value());
         env->clearPendingException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -1387,6 +1399,17 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     if (env->isFinishingFinalizers()) {
+        // Bun (unlike Node) lets finalizers run JS during env cleanup. If
+        // that JS threw, the addon received the exception from
+        // napi_get_and_clear_last_exception and may rethrow it here;
+        // node-addon-api's Error::ThrowAsJavaScriptException aborts the
+        // process if this call fails (#34663), so accept the rethrow. New
+        // exceptions still fail, matching Node, which cannot run JS during
+        // teardown at all.
+        if (error && env->isExceptionHandedToAddonDuringCleanup(toJS(error))) {
+            env->scheduleException(toJS(error));
+            return napi_set_last_error(env, napi_ok);
+        }
         return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
     }
     NAPI_CHECK_ARG(env, error);
@@ -3150,7 +3173,10 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     const napi_value* argv,
     napi_value* result)
 {
-    if (env->throwPendingException()) {
+    // During cleanup, keep a scheduled exception in the env slot instead of
+    // promoting it onto the VM (the preamble below still refuses the call);
+    // a VM exception would be invisible to napi_is_exception_pending there.
+    if (env->isFinishingFinalizers() ? env->hasPendingException() : env->throwPendingException()) {
         return napi_set_last_error(env, napi_pending_exception);
     }
 
@@ -3371,4 +3397,16 @@ void NapiEnv::clearExceptionsBetweenFinalizers()
     // from one finalizer does not trip debug asserts in the next.
     DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
     m_pendingException.clear();
+    m_cleanupExceptionHandedToAddon.clear();
+}
+
+void NapiEnv::stashExceptionDuringCleanupSlow()
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+    JSC::Exception* exception = scope.exception();
+    if (!exception || m_vm.hasPendingTerminationException()) {
+        return;
+    }
+    m_pendingException.set(m_vm, exception->value());
+    scope.clearException();
 }

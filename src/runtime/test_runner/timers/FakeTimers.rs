@@ -5,6 +5,7 @@ use bun_sys::threading::RwLock;
 use bun_core::Environment;
 use bun_core::Timespec;
 use crate::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::timer::{
     ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
     TimerObjectInternals, TimeoutObject, TimerHeap,

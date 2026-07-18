@@ -2665,7 +2665,6 @@ function formatWithOptionsInternal(inspectOptions, args) {
   }
   return str;
 }
-const stripANSI = Bun.stripANSI;
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
@@ -2676,9 +2675,22 @@ function getStringWidth(str, removeControlChars = true) {
   return internalGetStringWidth(str);
 }
 
+// Matches Node.js's `ansi` pattern (originally from the `ansi-regex` npm package).
+// Anything this regex does not match is treated as data and preserved verbatim.
+const ansi = new RegExp(
+  "[\\u001B\\u009B][[\\]()#;?]*" +
+    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+    "[\\dA-PR-TZcf-nq-uy=><~]))",
+  "g",
+);
+
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw new codes.ERR_INVALID_ARG_TYPE("str", "string", str);
-  return stripANSI(str);
+  if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) return str;
+  return RegExpPrototypeSymbolReplace(ansi, str, "");
 }
 
 // utils

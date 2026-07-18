@@ -436,3 +436,35 @@ describe("util.parseEnv", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
   });
 });
+
+describe("util.stripVTControlCharacters", () => {
+  // Node.js implements this as a regex match-and-remove (ansi-regex). Input that the
+  // regex does not match is preserved verbatim; in particular, unterminated or
+  // malformed escape sequences must not swallow trailing data.
+  describe.each([
+    ["unterminated OSC consumes only the regex match, not to end-of-string", "a\x1b]0;titleXYZ", "aitleXYZ"],
+    ["unterminated DCS consumes only the introducer", "a\x1bPdata no end", "adata no end"],
+    ["lone ESC followed by a non-sequence letter is preserved", "a\x1bbcd", "a\x1bbcd"],
+    ["trailing lone ESC is preserved", "abc\x1b", "abc\x1b"],
+    ["incomplete C1 CSI with no valid final byte is preserved", "a\x9bxyz", "a\x9bxyz"],
+    ["APC (ESC _) is preserved verbatim", "a\x1b_payload\x1b\\b", "a\x1b_payload\x1b\\b"],
+    ["C1 OSC/ST bytes are preserved verbatim", "a\x9d0;t\x9cb", "a\x9d0;t\x9cb"],
+    ["CSI SGR is stripped", "\x1b[31mred\x1b[39m", "red"],
+    ["complete C1 CSI is stripped", "a\x9b31mb", "ab"],
+    ["OSC hyperlink terminated by BEL is stripped", "\x1b]8;;http://example.com\x07text\x1b]8;;\x07", "text"],
+    ["OSC hyperlink terminated by ESC \\ is stripped", "\x1b]8;;http://example.com\x1b\\text\x1b]8;;\x1b\\", "text"],
+    ["OSC terminated by C1 ST is stripped", "\x1b]0;title\x9cafter", "after"],
+    ["ESC ( B charset designator is stripped", "a\x1b(Bb", "ab"],
+    ["truecolor SGR is stripped", "\x1b[38;2;255;100;0mtruecolor\x1b[0m", "truecolor"],
+    ["string with no escapes is returned unchanged", "plain text", "plain text"],
+    ["empty string", "", ""],
+  ])("%s", (_label, input, expected) => {
+    it(`${JSON.stringify(input)} -> ${JSON.stringify(expected)}`, () => {
+      expect(util.stripVTControlCharacters(input)).toBe(expected);
+    });
+  });
+
+  it("throws ERR_INVALID_ARG_TYPE for non-string input", () => {
+    expect(() => util.stripVTControlCharacters(123)).toThrow(/"str" argument must be of type string/);
+  });
+});

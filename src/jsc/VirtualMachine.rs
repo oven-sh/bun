@@ -1059,6 +1059,14 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// True once a termination-class signal (SIGHUP/SIGINT/SIGQUIT/SIGTERM) has
+    /// been delivered to a user handler. The `--watch`/`--hot` run-loop exits
+    /// once the event loop drains after such a signal, matching a plain
+    /// `bun run`.
+    pub fn termination_signal_requested(&self) -> bool {
+        self.event_loop_shared().termination_signal_requested()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }

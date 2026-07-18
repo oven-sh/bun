@@ -466,6 +466,22 @@ impl EventLoop {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
     }
 
+    /// True once a termination-class signal (SIGHUP/SIGINT/SIGQUIT/SIGTERM) has
+    /// been delivered to a user handler via the POSIX signal ring. The
+    /// `--watch`/`--hot` run-loop reads this to exit once the event loop drains.
+    pub fn termination_signal_requested(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.signal_handler
+                .map(|h| h.termination_requested())
+                .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     pub fn run_imminent_gc_timer(&mut self) {
         // The real `WTFTimer` lives in `bun_runtime` (cycle), so the body
         // dispatches through `__bun_run_wtf_timer` (link-time extern).

@@ -1570,6 +1570,16 @@ impl Run {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
+                // A termination signal (SIGINT/SIGTERM/SIGHUP/SIGQUIT) was
+                // routed to a user handler and the event loop has since drained
+                // (the `while` above only exits when nothing keeps it alive).
+                // Exit like a plain `bun run` instead of blocking in the watcher
+                // keep-alive below. Otherwise a handler that cleans up (e.g.
+                // `server.stop()`) could never let the process exit under
+                // --watch/--hot.
+                if vm.termination_signal_requested() && !vm.is_event_loop_alive() {
+                    break;
+                }
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads.

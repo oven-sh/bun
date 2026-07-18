@@ -200,7 +200,7 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
   const checkIfWritableOrOutgoingMessage =
     streamWritable && typeof streamWritable?.write === "function" && typeof streamWritable?.on === "function";
   if (!checkIfWritableOrOutgoingMessage) {
-    throw $ERR_INVALID_ARG_TYPE("streamWritable", "stream.Writable", streamWritable);
+    throw $ERR_INVALID_ARG_TYPE("streamWritable", ["stream.Writable"], streamWritable);
   }
 
   if (isDestroyed(streamWritable) || !isWritable(streamWritable)) {
@@ -464,7 +464,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   // whose readable option is false. For a Duplex that is not readable,
   // we want it to pass this check but return a closed ReadableStream.
   if (typeof streamReadable?._readableState !== "object") {
-    throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
+    throw $ERR_INVALID_ARG_TYPE("streamReadable", ["stream.Readable"], streamReadable);
   }
   validateObject(options, "options");
   const optionsType = options.type;
@@ -600,7 +600,7 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
   // and return closed WritableStream or closed ReadableStream as
   // necessary.
   if (typeof duplex?._writableState !== "object" || typeof duplex?._readableState !== "object") {
-    throw $ERR_INVALID_ARG_TYPE("duplex", "stream.Duplex", duplex);
+    throw $ERR_INVALID_ARG_TYPE("duplex", ["stream.Duplex"], duplex);
   }
 
   validateObject(options, "options");

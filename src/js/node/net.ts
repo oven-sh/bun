@@ -1590,7 +1590,7 @@ function Socket(options?) {
   const optsBlockList = opts.blockList;
   if (optsBlockList) {
     if (!BlockList.isBlockList(optsBlockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optsBlockList);
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", ["net.BlockList"], optsBlockList);
     }
     this.blockList = optsBlockList;
   }
@@ -3269,7 +3269,7 @@ function Server(options?, connectionListener?) {
   const optionsBlockList = options.blockList;
   if (optionsBlockList) {
     if (!BlockList.isBlockList(optionsBlockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optionsBlockList);
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", ["net.BlockList"], optionsBlockList);
     }
     this.blockList = optionsBlockList;
   }

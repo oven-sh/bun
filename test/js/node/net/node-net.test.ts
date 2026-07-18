@@ -1131,3 +1131,14 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+it("createServer/connect options.blockList validation error matches Node.js", () => {
+  // Node renders dotted type names via its "other" category: "an net.BlockList",
+  // not "of type net.BlockList".
+  const expected = {
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "options.blockList" property must be an net.BlockList. Received an instance of Object',
+  };
+  expect(() => createServer({ blockList: {} } as any)).toThrow(expect.objectContaining(expected));
+  expect(() => connect({ port: 1, blockList: {} } as any)).toThrow(expect.objectContaining(expected));
+});

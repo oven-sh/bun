@@ -1149,12 +1149,15 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
-            return true;
-
-        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+            // throws on a detached ArrayBuffer; match that contract.
+            throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
             return false;
         }
+
+        if (byteLength == 0)
+            return true;
 
         const void* vector = left->data();
         const void* rightVector = right->data();

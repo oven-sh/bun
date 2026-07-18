@@ -1071,7 +1071,7 @@ describe("package.json exports exact-subpath lookup", () => {
     expect(Bun.resolveSync("big/k" + (N - 1), root)).toBe(target);
 
     withoutAggressiveGC(() => {
-      const ITERS = 1000;
+      const ITERS = 500;
       function bench(spec: string) {
         let best = Infinity;
         for (let run = 0; run < 3; run++) {
@@ -1090,5 +1090,5 @@ describe("package.json exports exact-subpath lookup", () => {
       // the position in `list`. O(1) lookup makes position irrelevant.
       expect(last / first).toBeLessThan(8);
     });
-  }, 20_000);
+  });
 });

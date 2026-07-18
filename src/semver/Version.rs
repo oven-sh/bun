@@ -945,6 +945,16 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
+    /// The lowest possible prerelease identifier (`-0`). node-semver appends this to every
+    /// derived exclusive upper bound so that `^1.2.3` desugars to `<2.0.0-0` and a prerelease
+    /// of the bound tuple (e.g. `2.0.0-rc.1`) is excluded.
+    pub fn zero_pre() -> Tag {
+        Tag {
+            pre: SlicedString::init(b"0", b"0").external(),
+            build: ExternalString::default(),
+        }
+    }
+
     pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);

@@ -754,6 +754,58 @@ describe("Bun.semver.satisfies()", () => {
     }
   });
 
+  test("desugared upper bounds exclude prereleases of the bound tuple", () => {
+    // node-semver desugars ^1.2.3 to ">=1.2.3 <2.0.0-0" (not "<2.0.0"), so a
+    // prerelease of the bound tuple (e.g. 2.0.0-rc.1) is excluded.
+    // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L306
+    const excludes = [
+      // caret
+      [">=2.0.0-rc.0 ^1.2.3", "2.0.0-rc.1"],
+      [">=0.2.0-rc.0 ^0.1.2", "0.2.0-rc.1"],
+      [">=0.0.2-rc.0 ^0.0.1", "0.0.2-rc.1"],
+      [">=2.0.0-rc.0 ^1", "2.0.0-rc.1"],
+      // tilde
+      ["~1.5.0 >=1.6.0-beta", "1.6.0-beta.2"],
+      [">=2.0.0-rc.0 ~1", "2.0.0-rc.1"],
+      // bare x-range / partial
+      ["1.5.x >=1.6.0-beta", "1.6.0-beta.2"],
+      ["1.5 >=1.6.0-beta", "1.6.0-beta.2"],
+      // <N.x / <N.M.x
+      [">=1.0.0-rc.0 <1.x", "1.0.0-rc.1"],
+      [">=1.2.0-rc.0 <1.2.x", "1.2.0-rc.1"],
+      // hyphen range with partial/x upper
+      ["1.0.0 - 1.5 >=1.6.0-beta", "1.6.0-beta.2"],
+      ["1.0.0 - 1.x >=2.0.0-rc.0", "2.0.0-rc.1"],
+      ["1.0.0 - 1.5.x >=1.6.0-beta", "1.6.0-beta.2"],
+    ];
+    for (const [range, version] of excludes) {
+      testSatisfies(range, version, false);
+    }
+
+    // the "-0" floor must not start rejecting things npm accepts
+    const includes = [
+      ["^1.2.3", "1.9.0"],
+      ["~1.2.3", "1.2.4"],
+      ["^1.2.3-alpha", "1.2.3-pre"],
+      ["1.5.x", "1.5.9"],
+      ["1.0.0 - 1.5", "1.5.9"],
+    ];
+    for (const [range, version] of includes) {
+      testSatisfies(range, version, true);
+    }
+
+    // unchanged controls: the single-comparator prerelease gate already handled these
+    for (const [range, version] of [
+      ["^1.2.3", "2.0.0-0"],
+      ["^1.2.3", "1.5.0-beta"],
+      ["^1.2.3-alpha", "2.0.0-alpha"],
+      ["~1.5.0", "1.6.0-beta.2"],
+      [">=1.6.0-beta <1.6.0-0", "1.6.0-beta.2"],
+    ]) {
+      testSatisfies(range, version, false);
+    }
+  });
+
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });

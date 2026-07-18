@@ -697,8 +697,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
                     while let Some(query) = curr {
-                        if group.satisfies(query.range.left.version, buf, buf)
-                            || group.satisfies(query.range.right.version, buf, buf)
+                        // Derived `Lt` upper bounds carry a synthetic `-0` prerelease (see
+                        // `Tag::zero_pre`); strip it so the probe takes the release path in
+                        // `Group::satisfies`. Other ops keep any user-written prerelease.
+                        let probe = |c: &Semver::range::Comparator| {
+                            let mut v = c.version;
+                            if c.op == Semver::range::Op::Lt {
+                                v.tag = Default::default();
+                            }
+                            v
+                        };
+                        if group.satisfies(probe(&query.range.left), buf, buf)
+                            || group.satisfies(probe(&query.range.right), buf, buf)
                         {
                             name = aliased.npm().name;
                             name_hash =

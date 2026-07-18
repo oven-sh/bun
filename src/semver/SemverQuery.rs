@@ -6,6 +6,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::strings;
 
 use crate::range::{Comparator, Op as RangeOp};
+use crate::version::Tag;
 use crate::{Range, SlicedString, Version, version};
 
 // Re-export sub-namespace so
@@ -633,7 +634,10 @@ impl Token {
                     };
                     range.right = Comparator {
                         op: RangeOp::Lt,
-                        ..Default::default()
+                        version: Version {
+                            tag: Tag::zero_pre(),
+                            ..Default::default()
+                        },
                     };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
@@ -673,7 +677,10 @@ impl Token {
                     };
                     range.right = Comparator {
                         op: RangeOp::Lt,
-                        ..Default::default()
+                        version: Version {
+                            tag: Tag::zero_pre(),
+                            ..Default::default()
+                        },
                     };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
@@ -742,6 +749,7 @@ impl Token {
                             major: version.major.unwrap_or(0),
                             minor: 0,
                             patch: 0,
+                            tag: Tag::zero_pre(),
                             ..Default::default()
                         },
                     },
@@ -793,6 +801,7 @@ impl Token {
                             major: version.major.unwrap_or(0),
                             minor: version.minor.unwrap_or(0),
                             patch: 0,
+                            tag: Tag::zero_pre(),
                             ..Default::default()
                         },
                     },
@@ -1030,10 +1039,11 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         }
                     }
                     Wildcard::Minor => {
-                        // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
+                        // "1.0.0 - 1.x" --> ">=1.0.0 <2.0.0-0"
                         second_version.major = second_version.major.saturating_add(1);
                         second_version.minor = 0;
                         second_version.patch = 0;
+                        second_version.tag = Tag::zero_pre();
 
                         Range {
                             left: Comparator {
@@ -1047,9 +1057,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         }
                     }
                     Wildcard::Patch => {
-                        // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
+                        // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0-0"
                         second_version.minor = second_version.minor.saturating_add(1);
                         second_version.patch = 0;
+                        second_version.tag = Tag::zero_pre();
 
                         Range {
                             left: Comparator {

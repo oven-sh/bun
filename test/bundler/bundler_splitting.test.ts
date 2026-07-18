@@ -1,5 +1,7 @@
-import { describe } from "bun:test";
-import { bunEnv } from "harness";
+import { describe, test, expect } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -325,4 +327,85 @@ describe("bundler", () => {
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
   });
+
+  // ExportRenamer::next_renamed_name used to re-scan every previously handed
+  // out suffix on each collision, making N same-named cross-chunk exports cost
+  // O(N^2). Debug builds need far fewer files to blow past the threshold than
+  // release, so scale N accordingly; both settings used to take >30s and now
+  // finish in a couple of seconds.
+  test(
+    "splitting/ManyCrossChunkExportAliasCollisions",
+    async () => {
+      const N = isDebug ? 2500 : 20000;
+      const THRESHOLD_MS = 15000;
+
+      const files: Record<string, string> = {};
+      let imports = "";
+      let uses = "";
+      for (let i = 0; i < N; i++) {
+        files[`s${i}.js`] = `export const shared = ${i};\n`;
+        imports += `import { shared as s${i} } from "./s${i}.js";\n`;
+        uses += `t += s${i};\n`;
+      }
+      // Flat statement list keeps every import live without building a deep AST.
+      const entryBody = imports + "let t = 0;\n" + uses + `console.log(t, s0, s${N - 1});\n`;
+      files["e1.js"] = entryBody;
+      files["e2.js"] = entryBody;
+
+      using dir = tempDir("splitting-export-alias-collisions", files);
+      const root = String(dir);
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--splitting", "--format=esm", "--outdir", "out", "./e1.js", "./e2.js"],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: THRESHOLD_MS,
+        killSignal: "SIGKILL",
+      });
+      const [buildOut, buildErr, buildExit] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      if (buildExit !== 0) {
+        throw new Error(
+          `bun build did not finish within ${THRESHOLD_MS}ms for ${N} colliding cross-chunk export names ` +
+            `(exit ${buildExit}, killed=${build.killed})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
+        );
+      }
+
+      // The shared chunk's export clause must hand out a unique alias for every
+      // `shared` symbol; verify by inspecting the generated chunk and by running
+      // the output.
+      const outDir = join(root, "out");
+      const chunkName = readdirSync(outDir).find(f => f !== "e1.js" && f !== "e2.js" && f.endsWith(".js"));
+      expect(chunkName).toBeDefined();
+      const chunk = readFileSync(join(outDir, chunkName!), "utf8");
+      const clause = chunk.match(/export\s*\{([^}]*)\}/)?.[1] ?? "";
+      const aliases = clause
+        .split(",")
+        .map(part => {
+          const bits = part.trim().split(/\s+as\s+/);
+          return bits[bits.length - 1];
+        })
+        .filter(Boolean);
+      expect(aliases.length).toBe(N);
+      expect(new Set(aliases).size).toBe(N);
+      for (const a of aliases) expect(a).toMatch(/^shared\d*$/);
+
+      await using run = Bun.spawn({
+        cmd: [bunExe(), join(outDir, "e1.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
+      expect(runExit).toBe(0);
+    },
+    60_000,
+  );
 });

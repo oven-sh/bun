@@ -16,8 +16,17 @@ const fired = Object.create(null);
 for (const n of names) dc.subscribe(n, m => (fired[n] ??= []).push(m));
 
 // APM instrumentations inject propagation headers during undici:request:create
+let addHeaderRejected = 0, validated = false;
 dc.subscribe("undici:request:create", ({ request }) => {
   request.addHeader("traceparent", "00-abc-def-01");
+  if (validated) return;
+  validated = true;
+  // addHeader must reject names/values that would bypass header validation.
+  for (const [k, v] of [["", "v"], ["bad name", "v"], ["x", "a\\r\\nX-Injected: 1"],
+                        ["x", "\\x01"], ["x", "\\x7f"], ["x", "\\u0100"]]) {
+    try { request.addHeader(k, v); } catch { addHeaderRejected++; }
+  }
+  request.addHeader("x-tab", "a\\tb"); // TAB is allowed
 });
 
 let gotTraceparent;
@@ -27,6 +36,10 @@ await using srv = Bun.serve({
 });
 const res = await fetch("http://127.0.0.1:" + srv.port + "/p?q=1", { headers: { "x-custom": "1" } });
 await res.text();
+
+// URL userinfo must not leak into request.origin
+await fetch("http://user:secret@127.0.0.1:" + srv.port + "/cred").then(r => r.text());
+const credOrigin = fired["undici:request:create"][1].request.origin;
 const trailersCountOk = (fired["undici:request:trailers"] ?? []).length;
 
 // error path: trailers must NOT fire, only error
@@ -59,6 +72,8 @@ process.stdout.write(JSON.stringify({
   errorFired: fired["undici:request:error"]?.length > 0 && errRequest?.aborted === true && errRequest?.completed === false,
   errorIsError: fired["undici:request:error"]?.[0]?.error instanceof Error,
   trailersOnErrorPath: (fired["undici:request:trailers"] ?? []).length - trailersCountOk,
+  addHeaderRejected,
+  credOriginHasUserinfo: credOrigin.includes("@") || credOrigin.includes("secret"),
 }));
 `;
 
@@ -98,6 +113,8 @@ describe("fetch()", () => {
     expect(out.errorFired).toBe(true);
     expect(out.errorIsError).toBe(true);
     expect(out.trailersOnErrorPath).toBe(0);
+    expect(out.addHeaderRejected).toBe(6);
+    expect(out.credOriginHasUserinfo).toBe(false);
 
     expect(exitCode).toBe(0);
   });

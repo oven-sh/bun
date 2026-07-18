@@ -1556,8 +1556,9 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
 
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
-        if (wasConnecting && isConnectionError) {
+        if (isConnectionError)
             Bun::UndiciDiagnostics::publishWebSocketError(context->jsGlobalObject(), reason);
+        if (wasConnecting && isConnectionError) {
             auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
             dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
         }

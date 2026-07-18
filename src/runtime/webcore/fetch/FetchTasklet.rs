@@ -47,7 +47,7 @@ use boringssl::c::{X509_free, d2i_X509};
 /// undici-compatible diagnostics_channel events so APM tooling (dd-trace,
 /// OpenTelemetry) can trace the built-in fetch() client.
 pub(crate) mod undici_diagnostics {
-    use super::{FetchTasklet, HTTPResponseMetadata, Headers, JSGlobalObject, JSValue, ZigURL};
+    use super::{FetchTasklet, Headers, JSGlobalObject, JSValue, ZigURL};
     use bun_http_types::ETag::HeaderEntryColumns as _;
     use bun_jsc::bun_string_jsc::create_utf8_for_js;
     use bun_jsc::{self as jsc, ArrayBuffer, JsResult, StrongOptional};
@@ -147,64 +147,57 @@ pub(crate) mod undici_diagnostics {
         }
     }
 
-    pub(crate) fn on_resolve(
-        this: &FetchTasklet,
-        global: &JSGlobalObject,
-        metadata: &HTTPResponseMetadata,
-    ) {
-        let Some(request) = this.diagnostics_request.get() else {
-            return;
-        };
-        request.ensure_still_alive();
-        let (host, hostname, protocol, port) = if let Some(http_) = this.http.as_ref() {
-            let url = &http_.url;
-            (
-                js_str(global, url.host),
-                js_str(global, url.hostname),
-                js_str(global, url.protocol),
-                js_str(global, url.port),
-            )
-        } else {
-            (
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-            )
-        };
-        jsc::cpp::Bun__undiciDiagnosticsOnConnected(
-            global, request, host, hostname, protocol, port,
-        );
-        let resp = &metadata.response;
-        let status_text = js_str(global, resp.status);
-        let headers_js =
-            response_headers_to_js_array(global, resp.headers.list).unwrap_or(JSValue::UNDEFINED);
-        jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
-            global,
-            request,
-            resp.status_code as i32,
-            status_text,
-            headers_js,
-        );
+    /// Stash an error to publish on `undici:request:error` once the tasklet
+    /// mutex is released. Publishing synchronously runs user subscribers,
+    /// which must not happen under the lock (self-deadlock via
+    /// `on_start_streaming_http_response_body_callback`, and head-of-line
+    /// blocking of the HTTP thread's `callback()`).
+    pub(crate) fn stash_error(this: &mut FetchTasklet, global: &JSGlobalObject, error: JSValue) {
+        if this.diagnostics_request.has() && !this.diagnostics_error_value.has() {
+            this.diagnostics_error_value.set(global, error);
+        }
     }
 
-    pub(crate) fn on_error(this: &mut FetchTasklet, global: &JSGlobalObject, error: JSValue) {
+    /// Called after `mutex.unlock()` from `on_progress_update`'s cleanup.
+    /// Publishes whatever is pending: response-head events (connected /
+    /// sendHeaders / bodySent / headers) and/or the terminal event
+    /// (error / trailers).
+    pub(crate) fn publish_pending(this: &mut FetchTasklet, global: &JSGlobalObject, is_done: bool) {
         let Some(request) = this.diagnostics_request.get() else {
+            this.diagnostics_error_value.deinit();
             return;
         };
         request.ensure_still_alive();
-        jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, error);
-        this.diagnostics_request.deinit();
-    }
 
-    /// Terminal dispatch: publish `trailers` on a clean finish, `error` on any
-    /// failure (including post-headers body errors and aborts), matching
-    /// undici's `Request#onComplete`/`Request#onError` split.
-    pub(crate) fn on_done(this: &mut FetchTasklet, global: &JSGlobalObject) {
-        let Some(request) = this.diagnostics_request.get() else {
+        if core::mem::take(&mut this.diagnostics_headers_ready) {
+            if let Some(metadata) = this.metadata.as_ref() {
+                let resp = &metadata.response;
+                let status_text = js_str(global, resp.status);
+                let headers_js = response_headers_to_js_array(global, resp.headers.list)
+                    .unwrap_or(JSValue::UNDEFINED);
+                jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request);
+                jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
+                    global,
+                    request,
+                    resp.status_code as i32,
+                    status_text,
+                    headers_js,
+                );
+            }
+        }
+
+        if let Some(err) = this.diagnostics_error_value.get() {
+            err.ensure_still_alive();
+            this.diagnostics_error_value.deinit();
+            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, err);
+            this.diagnostics_request.deinit();
             return;
-        };
-        request.ensure_still_alive();
+        }
+
+        if !is_done {
+            return;
+        }
+
         let aborted = this
             .signal_store
             .aborted
@@ -293,6 +286,13 @@ pub struct FetchTasklet {
     // `undici:*` channel has a subscriber. Same instance is published across
     // create/headers/trailers so instrumentation can correlate spans.
     pub diagnostics_request: StrongOptional,
+    // Stashed error to publish on undici:request:error after the mutex is
+    // released (subscribers run user JS; publishing under the lock can
+    // self-deadlock via on_start_streaming_http_response_body_callback).
+    pub diagnostics_error_value: StrongOptional,
+    // Set by FetchTasklet::on_resolve(); consumed by cleanup to publish
+    // connected/sendHeaders/bodySent/headers after the mutex is released.
+    pub diagnostics_headers_ready: bool,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
     // Custom Hostname
@@ -668,6 +668,7 @@ impl FetchTasklet {
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
         self.diagnostics_request.deinit();
+        self.diagnostics_error_value.deinit();
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -847,7 +848,7 @@ impl FetchTasklet {
             if self.diagnostics_request.has() {
                 js_err = err.to_js(&global_this);
                 js_err.ensure_still_alive();
-                undici_diagnostics::on_error(self, &global_this, js_err);
+                undici_diagnostics::stash_error(self, &global_this, js_err);
             }
             // if we are streaming update with error
             if let Some(readable) = self.readable_stream_ref.get(&global_this) {
@@ -1018,11 +1019,15 @@ impl FetchTasklet {
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
             this.mutex.unlock();
+            // Publish to diagnostics_channel only after the mutex is released:
+            // subscribers run user JS that may re-enter this tasklet via
+            // `on_start_streaming_http_response_body_callback` (self-deadlock)
+            // or simply run slowly (blocks the HTTP thread's callback()).
+            if this.diagnostics_request.has() {
+                undici_diagnostics::publish_pending(this, &global_this, is_done);
+            }
             // if we are not done we wait until the next call
             if is_done {
-                if this.diagnostics_request.has() {
-                    undici_diagnostics::on_done(this, &global_this);
-                }
                 // Same GC hint Bun.serve fires per request, for the outbound direction: an
                 // agent loop only makes fetches, so nothing else nudges the heuristic.
                 // SAFETY: process-static VM (checked non-shutting-down above); JS thread.
@@ -1146,9 +1151,7 @@ impl FetchTasklet {
 
                 promise_value.ensure_still_alive();
                 let err_js = result.to_js(&global_this);
-                if self.diagnostics_request.has() {
-                    undici_diagnostics::on_error(self, &global_this, err_js);
-                }
+                undici_diagnostics::stash_error(self, &global_this, err_js);
                 let r = promise.reject_with_async_stack(&global_this, err_js);
                 result.reset();
 
@@ -1211,9 +1214,7 @@ impl FetchTasklet {
             let mut err = self.get_abort_error().unwrap();
             promise_value.ensure_still_alive();
             let err_js = err.to_js(&global_this);
-            if self.diagnostics_request.has() {
-                undici_diagnostics::on_error(self, &global_this, err_js);
-            }
+            undici_diagnostics::stash_error(self, &global_this, err_js);
             let r = promise.reject_with_async_stack(&global_this, err_js);
             err.reset();
             tracker.did_dispatch(&global_this);
@@ -1250,9 +1251,7 @@ impl FetchTasklet {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();
             let err_js = value.to_js(&global_this);
-            if self.diagnostics_request.has() {
-                undici_diagnostics::on_error(self, &global_this, err_js);
-            }
+            undici_diagnostics::stash_error(self, &global_this, err_js);
             if let Some(sink) = self.sink_mut() {
                 sink.cancel(err_js);
             }
@@ -2042,15 +2041,10 @@ impl FetchTasklet {
 
     pub(crate) fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
-        if self.diagnostics_request.has() {
-            if let Some(metadata) = self.metadata.as_ref() {
-                let global_this = self.global_this;
-                undici_diagnostics::on_resolve(self, &global_this, metadata);
-            }
-            if !self.result.has_more {
-                let global_this = self.global_this;
-                undici_diagnostics::on_done(self, &global_this);
-            }
+        if self.diagnostics_request.has() && self.metadata.is_some() {
+            // Defer publishing until after mutex.unlock() in cleanup; running
+            // subscriber JS under the lock can self-deadlock.
+            self.diagnostics_headers_ready = true;
         }
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
         // The fetch() promise is about to resolve; from here the paused
@@ -2115,6 +2109,8 @@ impl FetchTasklet {
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             diagnostics_request: StrongOptional::empty(),
+            diagnostics_error_value: StrongOptional::empty(),
+            diagnostics_headers_ready: false,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,

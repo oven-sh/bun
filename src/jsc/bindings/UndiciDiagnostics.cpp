@@ -165,14 +165,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__undiciDiagnosticsGe
     return JSValue::encode(added);
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__undiciDiagnosticsOnConnected(Zig::GlobalObject* globalObject, EncodedJSValue request, EncodedJSValue host, EncodedJSValue hostname, EncodedJSValue protocol, EncodedJSValue port)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__undiciDiagnosticsOnConnected(Zig::GlobalObject* globalObject, EncodedJSValue request)
 {
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(request));
-    args.append(JSValue::decode(host));
-    args.append(JSValue::decode(hostname));
-    args.append(JSValue::decode(protocol));
-    args.append(JSValue::decode(port));
     Bun::UndiciDiagnostics::callHelperNoThrow(globalObject, "onConnected"_s, args);
 }
 

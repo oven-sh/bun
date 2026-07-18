@@ -50,6 +50,7 @@ class DiagnosticsRequest {
   aborted: boolean;
   // populated by addHeader(); read back by native after `undici:request:create`
   _added: string[] | undefined;
+  _connectParams: any;
 
   constructor(origin: string, method: string, path: string, headers: string[]) {
     this.origin = origin;
@@ -124,26 +125,22 @@ function buildConnectParams(
 function onCreate(origin, method, path, host, hostname, protocol, port, headers) {
   if (!anyFetchSubscriber()) return null;
   const request = new DiagnosticsRequest(origin, method, path, $isJSArray(headers) ? headers : []);
+  // Stash the hop-0 connectParams so beforeConnect and connected publish a
+  // self-consistent pair even across redirects.
+  request._connectParams = buildConnectParams(request, host, hostname, protocol, port);
   if (requestCreateChannel.hasSubscribers) {
     requestCreateChannel.publish({ request });
   }
   if (clientBeforeConnectChannel.hasSubscribers) {
-    clientBeforeConnectChannel.publish({
-      connectParams: buildConnectParams(request, host, hostname, protocol, port),
-      connector,
-    });
+    clientBeforeConnectChannel.publish({ connectParams: request._connectParams, connector });
   }
   return request;
 }
 
-function onConnected(request, host, hostname, protocol, port) {
+function onConnected(request) {
   if (!request) return;
   if (clientConnectedChannel.hasSubscribers) {
-    clientConnectedChannel.publish({
-      connectParams: buildConnectParams(request, host, hostname, protocol, port),
-      connector,
-      socket: null,
-    });
+    clientConnectedChannel.publish({ connectParams: request._connectParams, connector, socket: null });
   }
   if (clientSendHeadersChannel.hasSubscribers) {
     const h = request.headers;

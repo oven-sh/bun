@@ -32,6 +32,7 @@ use bun_core::{FeatureFlags, ZBox};
 use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_loop::KeepAlive;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::{JSGlobalObject, VirtualMachineRef};
 use bun_core::picohttp as picohttp;
 use bun_core::ptr::ThisPtr;

@@ -18,6 +18,7 @@ use bun_core::collections::linear_fifo::DynamicBuffer;
 use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_loop::KeepAlive;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::event_loop::EventLoop;
 use crate::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_core::ptr::{AsCtxPtr, ThisPtr};

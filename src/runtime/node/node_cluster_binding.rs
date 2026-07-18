@@ -5,6 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_core::String as BunString;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 

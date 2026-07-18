@@ -1857,6 +1857,9 @@ export class VerdaccioRegistry {
       } else {
         console.log("Verdaccio exited successfully");
       }
+      // If the child dies before sending verdaccio_started, unblock the caller
+      // so a top-level `await start()` fails fast instead of hanging the suite.
+      started.reject(new Error(`Verdaccio exited before startup completed (code ${code}, signal ${signal})`));
     });
 
     this.process.on("message", (message: { verdaccio_started: boolean }) => {

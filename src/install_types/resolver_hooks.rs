@@ -556,18 +556,6 @@ impl Dependency {
     /// Lives here so the lockfile
     /// stringifier (`bun.lock.rs`) can sort `&[Dependency]` without an upward
     /// `bun_install` edge or an extension trait.
-    pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        bun_core::strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by`. Same key as
-    /// [`is_less_than`](Self::is_less_than).
     pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {

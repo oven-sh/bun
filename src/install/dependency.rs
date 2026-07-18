@@ -72,7 +72,6 @@ pub trait DependencyExt {
         log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
     fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering;
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
@@ -164,19 +163,6 @@ impl DependencyExt for Dependency {
     /// 2. name ASC
     /// "name" must be ASC so that later, when we rebuild the lockfile
     /// we insert it back in reverse order without an extra sorting pass
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by`. Same key as
-    /// `is_less_than`: behavior group, then name ASC.
     fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -610,8 +596,6 @@ pub trait VersionExt {
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Version, crate::Error>;
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
-    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn cmp_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> Ordering;
     fn to_version(
         alias: String,
@@ -640,19 +624,6 @@ impl VersionExt for Version {
             literal: builder.append_string(self.literal.slice(buf)),
             value: self.value.clone_in(self.tag, buf, builder)?,
         })
-    }
-
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
-    }
-
-    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        Self::cmp_with_tag(string_buf, lhs, rhs) == Ordering::Less
     }
 
     fn cmp_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> Ordering {

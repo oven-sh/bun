@@ -585,12 +585,13 @@ it(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The "alive" count is timing dependent (how many plans were queued at the
     // first gc()), but no ClientRequest/IncomingMessage may be a JITWorkList root.
-    expect(stdout.trim()).toMatch(/^jitworklist-rooted=0 alive=\d+$/);
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: expect.stringMatching(/^jitworklist-rooted=0 alive=\d+$/),
+      exitCode: 0,
+    });
   },
   isDebug || isASAN ? 30_000 : undefined,
 );

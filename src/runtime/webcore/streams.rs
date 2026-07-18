@@ -35,8 +35,8 @@ pub mod bun_s3 {
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
-// alias the canonical `webcore::BlobSizeType` so `SignalVTable.ready`'s
-// fn-pointer signature is structurally identical to callers that name the public
+// alias the canonical `webcore::BlobSizeType` so `SignalHandler::on_ready`'s
+// signature is structurally identical to callers that name the public
 // re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
 
@@ -913,7 +913,7 @@ impl StreamResult {
 #[derive(Default)]
 pub struct Signal {
     pub ptr: Option<NonNull<c_void>>,
-    pub vtable: SignalVTable,
+    pub kind: SignalKind,
 }
 
 // Layout guarantees the FFI cast `*mut Option<NonNull<c_void>>` → `*mut *mut
@@ -944,7 +944,7 @@ impl Signal {
         // this is nullable when used as a JSValue
         Signal {
             ptr: NonNull::new(handler.cast::<c_void>()),
-            vtable: SignalVTable::wrap::<T>(),
+            kind: T::KIND,
         }
     }
 
@@ -957,84 +957,157 @@ impl Signal {
         if self.is_dead() {
             return;
         }
-        (self.vtable.close)(self.ptr.unwrap().as_ptr(), err);
+        self.kind.close(self.ptr.unwrap().as_ptr(), err);
     }
 
     pub fn ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
         if self.is_dead() {
             return;
         }
-        (self.vtable.ready)(self.ptr.unwrap().as_ptr(), amount, offset);
+        self.kind.ready(self.ptr.unwrap().as_ptr(), amount, offset);
     }
 
     pub fn start(&mut self) {
         if self.is_dead() {
             return;
         }
-        (self.vtable.start)(self.ptr.unwrap().as_ptr());
+        self.kind.start(self.ptr.unwrap().as_ptr());
     }
 }
 
-pub type SignalOnCloseFn = fn(this: *mut c_void, err: Option<SysError>);
-pub type SignalOnReadyFn =
-    fn(this: *mut c_void, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>);
-pub type SignalOnStartFn = fn(this: *mut c_void);
-
-#[derive(Copy, Clone)]
-pub struct SignalVTable {
-    pub close: SignalOnCloseFn,
-    pub ready: SignalOnReadyFn,
-    pub start: SignalOnStartFn,
+/// Closed-set tag of every `Signal` target. Replaces the former hand-rolled
+/// fn-ptr `SignalVTable`: dispatch is a `match` that either casts `ptr` back to
+/// the owning Rust handler or bitcasts it to the stashed `JSValue` controller.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum SignalKind {
+    /// Sentinel for `Signal::default()`; all dispatch arms are no-ops.
+    #[default]
+    Dead,
+    /// `ptr` = `*mut crate::shell::subproc::Writable`.
+    ShellWritable,
+    /// `ptr` = `*mut crate::api::bun_subprocess::Subprocess<'_>`.
+    Subprocess,
+    /// `ptr` = encoded `JSValue` bits; routes to `${abi}__onClose/onReady`.
+    JsSinkFileSink,
+    JsSinkArrayBufferSink,
+    JsSinkNetworkSink,
+    JsSinkHTTPResponseSink,
+    JsSinkHTTPSResponseSink,
+    JsSinkH3ResponseSink,
 }
 
-impl Default for SignalVTable {
-    fn default() -> Self {
-        fn dead_close(_: *mut c_void, _: Option<SysError>) {}
-        fn dead_ready(_: *mut c_void, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-        fn dead_start(_: *mut c_void) {}
-        SignalVTable {
-            close: dead_close,
-            ready: dead_ready,
-            start: dead_start,
-        }
-    }
-}
-
-/// Implementors provide the `on_close`/`on_ready`/`on_start` callbacks.
+/// Implementors provide the `on_close`/`on_ready`/`on_start` callbacks and the
+/// `SignalKind` discriminant that routes back to them.
 pub trait SignalHandler {
+    const KIND: SignalKind;
     fn on_close(&mut self, err: Option<SysError>);
     fn on_ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>);
     fn on_start(&mut self);
 }
 
-impl SignalVTable {
-    pub fn wrap<W: SignalHandler>() -> SignalVTable {
-        fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
-            // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_core::ptr::callback_ctx::<W>(this) }.on_close(err);
-        }
-        fn on_ready<W: SignalHandler>(
-            this: *mut c_void,
-            amount: Option<BlobSizeType>,
-            offset: Option<BlobSizeType>,
-        ) {
-            // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_core::ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
-        }
-        fn on_start<W: SignalHandler>(this: *mut c_void) {
-            // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_core::ptr::callback_ctx::<W>(this) }.on_start();
-        }
+/// Dispatch helper for the Rust-handler arms: recover `&mut $T` from the erased
+/// `*mut c_void` and forward to `SignalHandler::$method`.
+macro_rules! signal_handler_arm {
+    ($T:ty, $ptr:expr, $method:ident($($arg:expr),*)) => {
+        // SAFETY: `$ptr` was stored from `*mut $T` in `Signal::init_with_type`;
+        // the `SignalKind` tag was set to `<$T>::KIND` at the same site, so the
+        // tag ↔ type pairing is invariant.
+        SignalHandler::$method(
+            unsafe { bun_core::ptr::callback_ctx::<$T>($ptr) },
+            $($arg),*
+        )
+    };
+}
 
-        // Rust cannot const-promote a generic-dependent struct literal to
-        // `&'static`, so the vtable is stored by-value in `Signal` instead
-        // (three fn pointers — same size as the pointed-to payload a
-        // `&'static VTable` would dereference to anyway).
-        SignalVTable {
-            close: on_close::<W>,
-            ready: on_ready::<W>,
-            start: on_start::<W>,
+impl SignalKind {
+    fn close(self, ptr: *mut c_void, err: Option<SysError>) {
+        match self {
+            SignalKind::Dead => {}
+            SignalKind::ShellWritable => {
+                signal_handler_arm!(crate::shell::subproc::Writable, ptr, on_close(err))
+            }
+            SignalKind::Subprocess => {
+                signal_handler_arm!(
+                    crate::api::bun_subprocess::Subprocess<'_>,
+                    ptr,
+                    on_close(err)
+                )
+            }
+            SignalKind::JsSinkFileSink => {
+                Self::js_sink_close::<crate::webcore::file_sink::FileSink>(ptr)
+            }
+            SignalKind::JsSinkArrayBufferSink => {
+                Self::js_sink_close::<crate::webcore::sink::ArrayBufferSink>(ptr)
+            }
+            SignalKind::JsSinkNetworkSink => Self::js_sink_close::<NetworkSink>(ptr),
+            SignalKind::JsSinkHTTPResponseSink => Self::js_sink_close::<HTTPResponseSink>(ptr),
+            SignalKind::JsSinkHTTPSResponseSink => Self::js_sink_close::<HTTPSResponseSink>(ptr),
+            SignalKind::JsSinkH3ResponseSink => Self::js_sink_close::<H3ResponseSink>(ptr),
         }
+    }
+
+    fn ready(self, ptr: *mut c_void, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
+        match self {
+            SignalKind::Dead => {}
+            SignalKind::ShellWritable => {
+                signal_handler_arm!(crate::shell::subproc::Writable, ptr, on_ready(amount, offset))
+            }
+            SignalKind::Subprocess => {
+                signal_handler_arm!(
+                    crate::api::bun_subprocess::Subprocess<'_>,
+                    ptr,
+                    on_ready(amount, offset)
+                )
+            }
+            SignalKind::JsSinkFileSink => {
+                Self::js_sink_ready::<crate::webcore::file_sink::FileSink>(ptr)
+            }
+            SignalKind::JsSinkArrayBufferSink => {
+                Self::js_sink_ready::<crate::webcore::sink::ArrayBufferSink>(ptr)
+            }
+            SignalKind::JsSinkNetworkSink => Self::js_sink_ready::<NetworkSink>(ptr),
+            SignalKind::JsSinkHTTPResponseSink => Self::js_sink_ready::<HTTPResponseSink>(ptr),
+            SignalKind::JsSinkHTTPSResponseSink => Self::js_sink_ready::<HTTPSResponseSink>(ptr),
+            SignalKind::JsSinkH3ResponseSink => Self::js_sink_ready::<H3ResponseSink>(ptr),
+        }
+    }
+
+    fn start(self, ptr: *mut c_void) {
+        match self {
+            SignalKind::Dead
+            | SignalKind::JsSinkFileSink
+            | SignalKind::JsSinkArrayBufferSink
+            | SignalKind::JsSinkNetworkSink
+            | SignalKind::JsSinkHTTPResponseSink
+            | SignalKind::JsSinkHTTPSResponseSink
+            | SignalKind::JsSinkH3ResponseSink => {}
+            SignalKind::ShellWritable => {
+                signal_handler_arm!(crate::shell::subproc::Writable, ptr, on_start())
+            }
+            SignalKind::Subprocess => {
+                signal_handler_arm!(crate::api::bun_subprocess::Subprocess<'_>, ptr, on_start())
+            }
+        }
+    }
+
+    /// `ptr` is the encoded `JSValue` bits stashed by `SinkSignal::<T>::init`;
+    /// bitcast back and fire the C++ `${abi}__onClose` callback.
+    fn js_sink_close<T: crate::webcore::sink::JsSinkAbi>(ptr: *mut c_void) {
+        let cpp = JSValue::from_encoded(ptr as usize);
+        // TODO: this should be got from a parameter / properly propagate exception upwards.
+        let global = VirtualMachine::get().global();
+        let _ = ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
+    }
+
+    /// See [`Self::js_sink_close`]; `${abi}__onReady` side.
+    fn js_sink_ready<T: crate::webcore::sink::JsSinkAbi>(ptr: *mut c_void) {
+        let cpp = JSValue::from_encoded(ptr as usize);
+        // TODO: this should be got from a parameter / properly propagate exception upwards.
+        let global = VirtualMachine::get().global();
+        let _ = ::bun_jsc::call_check_slow(global, || {
+            T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+        });
     }
 }
 
@@ -1183,6 +1256,13 @@ macro_rules! http_sink_dispatch {
 impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     for HTTPServerWritable<SSL, HTTP3>
 {
+    const SIGNAL_KIND: SignalKind = if HTTP3 {
+        SignalKind::JsSinkH3ResponseSink
+    } else if SSL {
+        SignalKind::JsSinkHTTPSResponseSink
+    } else {
+        SignalKind::JsSinkHTTPResponseSink
+    };
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
@@ -1892,7 +1972,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // no reference into the allocation may be live across the call.
         let mut signal = Signal {
             ptr: sink.signal.ptr,
-            vtable: sink.signal.vtable,
+            kind: sink.signal.kind,
         };
         signal.close(None);
     }
@@ -2429,7 +2509,7 @@ impl NetworkSink {
 }
 
 crate::impl_sink_handler!(NetworkSink = crate::webcore::sink::SinkKind::NetworkSink);
-crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
+crate::impl_js_sink_abi!(NetworkSink, "NetworkSink", SignalKind::JsSinkNetworkSink);
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;

@@ -1598,7 +1598,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
         // (whole-allocation provenance), so `Writable::on_close` can raw-project
         // `stdin` instead of doing out-of-provenance pointer arithmetic. The
-        // vtable only dereferences this pointer later on the JS thread, after
+        // signal only dereferences this pointer later on the JS thread, after
         // the local `subprocess` borrow has ended.
         // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
         // `heap::alloc` above) and `stdin` was just confirmed to be the

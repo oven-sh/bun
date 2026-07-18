@@ -1178,7 +1178,11 @@ pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
 crate::impl_sink_handler!(FileSink = crate::webcore::sink::SinkKind::FileSink);
-crate::impl_js_sink_abi!(FileSink, "FileSink");
+crate::impl_js_sink_abi!(
+    FileSink,
+    "FileSink",
+    crate::webcore::streams::SignalKind::JsSinkFileSink
+);
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
 // `JSSink::<Self>::js_*`) into the inherent streaming methods. Mirrors

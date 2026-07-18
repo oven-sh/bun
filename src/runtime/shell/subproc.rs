@@ -999,6 +999,7 @@ impl Writable {
 }
 
 impl webcore::streams::SignalHandler for Writable {
+    const KIND: webcore::streams::SignalKind = webcore::streams::SignalKind::ShellWritable;
     fn on_close(&mut self, err: Option<bun_sys::Error>) {
         Writable::on_close(self, err)
     }

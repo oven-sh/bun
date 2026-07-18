@@ -552,10 +552,11 @@ impl<'a> Writable<'a> {
 
 // Note: registering the `*mut Writable` and recovering the parent inside the
 // callback would be out-of-provenance (the `&mut Writable` formed by the
-// vtable thunk only carries provenance for the `stdin` field). Register the
-// `*mut Subprocess` instead — `signal.ptr` carries whole-allocation provenance
-// and `on_close`/`finalize`/`to_js` raw-project `stdin` from it.
+// `SignalKind` dispatch only carries provenance for the `stdin` field). Register
+// the `*mut Subprocess` instead — `signal.ptr` carries whole-allocation
+// provenance and `on_close`/`finalize`/`to_js` raw-project `stdin` from it.
 impl<'a> SignalHandler for Subprocess<'a> {
+    const KIND: crate::webcore::streams::SignalKind = crate::webcore::streams::SignalKind::Subprocess;
     fn on_close(&mut self, err: Option<bun_sys::Error>) {
         Writable::on_close(self, err)
     }

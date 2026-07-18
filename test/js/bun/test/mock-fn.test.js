@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -881,7 +882,6 @@ describe("mock()", () => {
 
     if (isBun) {
       test("cross-realm newTarget with a primitive prototype uses the newTarget realm's Object.prototype", () => {
-        const vm = require("node:vm");
         const ctx = vm.createContext({});
         const Target = vm.runInContext("(function Target() {})", ctx);
         const otherObjectPrototype = vm.runInContext("Object.prototype", ctx);

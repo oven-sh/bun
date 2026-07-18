@@ -2456,7 +2456,9 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // accessed here (no overlapping `&mut EventLoop`).
+            // Watch mode survives errors (the outer loop in `Run::start` keeps
+            // ticking via `tick_possibly_forever` regardless of
+            // `unhandled_error_counter`), so no bail-out on it here.
             self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {

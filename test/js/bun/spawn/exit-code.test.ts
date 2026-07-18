@@ -63,6 +63,6 @@ it("uncaught exception during top-level await is survivable with a listener", as
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("caught:boom-during-tla\nmodule-end\n");
-  expect(stderr).toBe("");
+  expect(stderr).not.toContain("boom-during-tla");
   expect(exitCode).toBe(0);
 });

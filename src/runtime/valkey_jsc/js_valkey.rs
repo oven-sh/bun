@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};

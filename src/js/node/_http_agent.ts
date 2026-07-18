@@ -283,17 +283,22 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options.encoding = null;
 
   const oncreate = once((err, s) => {
+    // This closure's scope keeps `cb` (= onSocketCreated.bind(this, req))
+    // reachable for its own lifetime; null it so a lingering arrow cannot
+    // pin the ClientRequest once the call below has taken ownership.
+    const done = cb;
+    cb = undefined;
     // Pass the socket along with the error: proxy-tunnel failures with a
     // statusCode deliberately skip destroy in cleanupAndPropagate so
     // req.onSocket can destroy the connection - dropping it here would leak
     // a proxy socket that holds its end open after a non-200 CONNECT.
-    if (err) return cb(err, s);
+    if (err) return done(err, s);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
     this.totalSocketCount++;
     $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
     installListeners(this, s, options);
-    cb(null, s);
+    done(null, s);
   });
   const keepAlive = this.keepAlive;
   if (keepAlive) {

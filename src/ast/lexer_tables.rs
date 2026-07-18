@@ -168,7 +168,8 @@ pub fn keyword(s: &[u8]) -> Option<T> {
 // `STRICT_MODE_RESERVED_WORDS` is now `[&[u8]; 9]` — `.len()`/`.iter()`-
 // compatible with the former `phf::Set` callers (renamer.rs).
 pub use bun_core::lexer_tables::{
-    STRICT_MODE_RESERVED_WORDS, is_strict_mode_reserved_word, strict_mode_reserved_word_remap,
+    STRICT_MODE_RESERVED_WORDS, binding_reserved_word_remap, is_binding_reserved_word,
+    is_strict_mode_reserved_word, strict_mode_reserved_word_remap,
 };
 
 bun_core::comptime_string_map! {

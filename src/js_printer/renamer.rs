@@ -871,7 +871,7 @@ pub enum UnusedName {
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
 /// a sufficient condition for `MutableString::ensure_valid_identifier` to
-/// return the input unchanged (modulo the strict-mode-reserved-word remap,
+/// return the input unchanged (modulo the binding-reserved-word remap,
 /// handled by the caller). That function currently always allocates
 /// a `Box<[u8]>` even on the borrow path, so hoisting
 /// this check into the renamer keeps zero-alloc behaviour for the
@@ -900,14 +900,14 @@ impl NumberScope {
         // (Box<[u8]>), even when the input is already a valid ASCII
         // identifier. Skip the call entirely for the common case so this
         // stays alloc-free.
-        // The strict-mode-reserved-word remap (`let` → `_let`, etc.) is the
-        // only transform that fires for an otherwise-valid ASCII name, so
-        // gate on that too and fall through to the full normalizer when it
-        // would apply.
+        // The binding-reserved-word remap (`let` → `_let`, `if` → `_if`,
+        // ...) is the only transform that fires for an otherwise-valid ASCII
+        // name, so gate on that too and fall through to the full normalizer
+        // when it would apply.
         let owned_name;
         let normalized;
         let mut name: &[u8] = if is_simple_ascii_identifier(input_name)
-            && !bun_ast::lexer_tables::is_strict_mode_reserved_word(input_name)
+            && !bun_ast::lexer_tables::is_binding_reserved_word(input_name)
         {
             normalized = false;
             input_name

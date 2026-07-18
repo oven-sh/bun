@@ -184,7 +184,7 @@ impl MutableString {
         }
 
         if !needs_gap {
-            let remapped = js_lexer_tables::strict_mode_reserved_word_remap(str).unwrap_or(str);
+            let remapped = js_lexer_tables::binding_reserved_word_remap(str).unwrap_or(str);
             return Ok(Box::<[u8]>::from(remapped));
         }
 

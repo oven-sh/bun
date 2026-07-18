@@ -2387,6 +2387,84 @@ pub mod lexer_tables {
     pub fn strict_mode_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
         STRICT_MODE_RESERVED_WORD_REMAP.get(s).copied()
     }
+
+    crate::comptime_string_map! {
+        /// Every identifier-shaped name that is invalid as a `BindingIdentifier`
+        /// in module (strict-mode) code, mapped to an underscore-prefixed
+        /// replacement. Superset of [`STRICT_MODE_RESERVED_WORD_REMAP`]; also
+        /// covers the ES keywords (`if`, `class`, `var`, ...), module-reserved
+        /// `await`, and the strict-mode binding restrictions `arguments`/`eval`.
+        /// Used by `MutableString::ensure_valid_identifier` so that JSON/TOML
+        /// top-level keys (and path-derived names) never emit `var if = ...`.
+        static BINDING_RESERVED_WORD_REMAP: &'static [u8] = {
+            // ES keywords (ES2015 §11.6.2.1)
+            b"break" => b"_break",
+            b"case" => b"_case",
+            b"catch" => b"_catch",
+            b"class" => b"_class",
+            b"const" => b"_const",
+            b"continue" => b"_continue",
+            b"debugger" => b"_debugger",
+            b"default" => b"_default",
+            b"delete" => b"_delete",
+            b"do" => b"_do",
+            b"else" => b"_else",
+            b"enum" => b"_enum",
+            b"export" => b"_export",
+            b"extends" => b"_extends",
+            b"false" => b"_false",
+            b"finally" => b"_finally",
+            b"for" => b"_for",
+            b"function" => b"_function",
+            b"if" => b"_if",
+            b"import" => b"_import",
+            b"in" => b"_in",
+            b"instanceof" => b"_instanceof",
+            b"new" => b"_new",
+            b"null" => b"_null",
+            b"return" => b"_return",
+            b"super" => b"_super",
+            b"switch" => b"_switch",
+            b"this" => b"_this",
+            b"throw" => b"_throw",
+            b"true" => b"_true",
+            b"try" => b"_try",
+            b"typeof" => b"_typeof",
+            b"var" => b"_var",
+            b"void" => b"_void",
+            b"while" => b"_while",
+            b"with" => b"_with",
+            // strict-mode future reserved words (ES2015 §11.6.2.2)
+            b"implements" => b"_implements",
+            b"interface" => b"_interface",
+            b"let" => b"_let",
+            b"package" => b"_package",
+            b"private" => b"_private",
+            b"protected" => b"_protected",
+            b"public" => b"_public",
+            b"static" => b"_static",
+            b"yield" => b"_yield",
+            // reserved in module code
+            b"await" => b"_await",
+            // disallowed as a BindingIdentifier in strict mode
+            b"arguments" => b"_arguments",
+            b"eval" => b"_eval",
+        };
+    }
+
+    /// Membership check for [`BINDING_RESERVED_WORD_REMAP`].
+    #[inline]
+    pub fn is_binding_reserved_word(s: &[u8]) -> bool {
+        BINDING_RESERVED_WORD_REMAP.contains_key(s)
+    }
+
+    /// Underscore-prefixed replacement for any name that cannot be a
+    /// `BindingIdentifier` in module code (`b"if"` → `b"_if"`); `None` for
+    /// any other input.
+    #[inline]
+    pub fn binding_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
+        BINDING_RESERVED_WORD_REMAP.get(s).copied()
+    }
 }
 
 /// `jsc::VirtualMachine::string_allocation_limit` —

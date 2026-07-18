@@ -1746,6 +1746,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &self.blob.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
+        let store_max_size = file.max_size;
         let mut file_buf = PathBuffer::uninit();
         let auto_close = !matches!(
             file.pathlike,
@@ -1826,7 +1827,22 @@ where
             AnyBlob::Blob(b) => b.size.get(),
             _ => unreachable!(),
         };
+        let blob_offset = match &self.blob {
+            AnyBlob::Blob(b) => b.offset.get(),
+            _ => unreachable!(),
+        };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+        // An unsliced blob has offset 0 and either the unset-size sentinel or,
+        // if JS touched `.size`, the value `resolve_size` cached on the store
+        // (`file.max_size`). Comparing against the fresh `stat_size` here is
+        // wrong: when the file grew after `.size` was read, a stale cached
+        // size would be mistaken for a slice bound and the response truncated
+        // with an unsolicited 206. `.slice(0, store_max_size)` is
+        // indistinguishable from an unsliced blob (same store, same size) and
+        // is served as the whole file; any other `.slice()` differs in offset
+        // or size.
+        let is_whole_file = blob_offset == 0
+            && (original_size == crate::webcore::blob::MAX_SIZE || original_size == store_max_size);
         if let AnyBlob::Blob(b) = &mut self.blob {
             b.size.set(if is_regular {
                 stat_size
@@ -1836,16 +1852,16 @@ where
         }
 
         self.flags.set_needs_content_length(true);
-        let blob_offset = match &self.blob {
-            AnyBlob::Blob(b) => b.offset.get(),
-            _ => unreachable!(),
-        };
         self.sendfile = SendfileContext {
-            remain: blob_offset + original_size,
+            remain: if is_regular && is_whole_file {
+                stat_size
+            } else {
+                blob_offset + original_size
+            },
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
+        if is_regular && auto_close && !is_whole_file {
             self.flags.set_needs_content_range(
                 self.sendfile.remain.saturating_sub(self.sendfile.offset) != stat_size,
             );
@@ -1863,13 +1879,9 @@ where
         // Honor an incoming Range: header for whole-file responses. We
         // don't compose Range with a user-supplied .slice() because the
         // Content-Range arithmetic gets ambiguous; the slice path keeps
-        // its existing slice-as-range behavior. `offset == 0` alone is
-        // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
-        // also check the size: an unsliced blob has either the unset-size
-        // sentinel or, if JS already read `.size`, the stat'd size; a
-        // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
-        // already set Content-Range or a non-200 status — they're
-        // managing partial responses themselves.
+        // its existing slice-as-range behavior. Skip if the user already
+        // set Content-Range or a non-200 status — they're managing
+        // partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
@@ -1878,8 +1890,6 @@ where
         } else {
             false
         };
-        let is_whole_file = blob_offset == 0
-            && (original_size == crate::webcore::blob::MAX_SIZE || original_size == stat_size);
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
         let method_allows_range = self.method == Method::GET || self.method == Method::HEAD;
         if is_regular

@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[cfg_attr(target_env = "ohos", allow(unused_imports))]
 use bun_core::Global;
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
@@ -1750,9 +1751,11 @@ mod spawn_process_body {
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     struct AutoCloseFd(Fd);
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     impl AutoCloseFd {
         #[inline]
         const fn new(fd: Fd) -> Self {
@@ -2919,9 +2922,11 @@ mod spawn_process_body {
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg_attr(target_env = "ohos", allow(dead_code))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg_attr(target_env = "ohos", allow(dead_code))]
             safe fn raise(sig: c_int) -> c_int;
             safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
@@ -2932,6 +2937,7 @@ mod spawn_process_body {
         #[cfg(unix)]
         impl JobControl {
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg_attr(target_env = "ohos", allow(dead_code))]
             pub(crate) fn is_active(&self) -> bool {
                 self.prev > 0
             }
@@ -2969,7 +2975,7 @@ mod spawn_process_body {
             /// returns, and on resume gives the terminal back to the script (only
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(all(any(target_os = "linux", target_os = "android", target_os = "macos"), not(target_env = "ohos")))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
                     return; // non-TTY: never asked for stop reports
@@ -3231,7 +3237,7 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
@@ -3246,6 +3252,11 @@ mod spawn_process_body {
                         target_os = "android",
                         target_os = "macos"
                     )))]
+                    let r: Option<Maybe<Status>> = {
+                        let _ = ppid;
+                        None
+                    };
+                    #[cfg(target_env = "ohos")]
                     let r: Option<Maybe<Status>> = {
                         let _ = ppid;
                         None
@@ -3623,7 +3634,7 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,

@@ -493,19 +493,6 @@ extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int ar
 
 #endif // linux
 
-// C-linkage wrapper for Rust FFI: forwards to ScriptExecutionContext::markTerminating()
-// (defined as inline in ScriptExecutionContext.h)
-#if !defined(WIN32)
-#include "ScriptExecutionContext.h"
-extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* globalObject)
-{
-    auto* ctx = WebCore::ScriptExecutionContext::from(globalObject);
-    if (ctx) {
-        ctx->markTerminating();
-    }
-}
-#endif
-
 // macOS
 #if defined(__APPLE__)
 
@@ -552,3 +539,10 @@ void std::__libcpp_verbose_abort(char const* format, ...) BUN_VERBOSE_ABORT_NOEX
 #endif
 
 extern "C" __attribute__((weak)) void mi_thread_set_in_threadpool() {}
+
+
+
+// Bun's source calls mi_on_thread_idle() to hint mimalloc the thread is idle.
+// Our mimalloc fork (oven-sh/mimalloc, v3.3.2) doesn't provide this symbol
+// on all platforms; provide a weak no-op so the binary loads everywhere.
+extern "C" __attribute__((weak)) void mi_on_thread_idle(void) noexcept {}

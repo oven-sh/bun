@@ -153,4 +153,12 @@ Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, v
     return JustVoid();
 }
 
+// Alias for Rust musl target which expects libstdc++ mangling of std::function.
+// The function above is compiled with libc++ (NSt3__1 mangling); this alias
+// provides the St8function (libstdc++) name so the Rust keep_symbols macro
+// resolves at link time. Both names refer to the same implementation.
+extern "C++" void _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE()
+    asm("_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE")
+    __attribute__((alias("_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE")));
+
 } // namespace v8

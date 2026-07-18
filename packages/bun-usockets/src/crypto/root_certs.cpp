@@ -158,7 +158,7 @@ static void us_internal_init_root_certs(
   });
 }
 
-extern "C" int us_internal_raw_root_certs(struct us_cert_der_t **out) {
+extern "C" int us_internal_raw_root_certs(const struct us_cert_der_t **out) {
   *out = root_certs;
   return root_certs_size;
 }

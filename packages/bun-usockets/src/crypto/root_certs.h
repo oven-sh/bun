@@ -8664,7 +8664,7 @@ static const unsigned char root_cert_der_120[] = {
 0xb9,0x65,0x8b,
 };
 
-static struct us_cert_der_t root_certs[] = {
+static const struct us_cert_der_t root_certs[] = {
   {root_cert_der_0, sizeof(root_cert_der_0)},
   {root_cert_der_1, sizeof(root_cert_der_1)},
   {root_cert_der_2, sizeof(root_cert_der_2)},

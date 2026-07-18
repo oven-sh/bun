@@ -56,8 +56,9 @@ describe("NodeTLS.cpp", () => {
     }
 
     const tableEntries =
-      header.match(/static struct us_cert_der_t root_certs\[\] = \{\n([\s\S]*?)\};/)?.[1].match(/\{root_cert_der_\d+,/g)
-        ?.length ?? 0;
+      header
+        .match(/static const struct us_cert_der_t root_certs\[\] = \{\n([\s\S]*?)\};/)?.[1]
+        .match(/\{root_cert_der_\d+,/g)?.length ?? 0;
 
     const runtimeFingerprints = rootCertificates.map(pem => new X509Certificate(pem).fingerprint256);
 

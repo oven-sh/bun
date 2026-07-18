@@ -404,7 +404,7 @@ struct us_internal_callback_t {
 #if __cplusplus
 extern "C" {
 #endif
-int us_internal_raw_root_certs(struct us_cert_der_t **out);
+int us_internal_raw_root_certs(const struct us_cert_der_t **out);
 
 #if __cplusplus
 }
@@ -443,7 +443,7 @@ struct us_listen_socket_t {
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 
-int us_raw_root_certs(struct us_cert_der_t **out);
+int us_raw_root_certs(const struct us_cert_der_t **out);
 
 /* Save/restore the per-loop BIO routing state around in-handshake JS
  * callbacks (SNI / ALPN). Defined in crypto/openssl.c. */

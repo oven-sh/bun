@@ -48,7 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
 {
     VM& vm = globalObject->vm();
 
-    struct us_cert_der_t* out;
+    const struct us_cert_der_t* out;
     auto size = us_raw_root_certs(&out);
     if (size < 0) {
         return JSValue::encode(jsUndefined());

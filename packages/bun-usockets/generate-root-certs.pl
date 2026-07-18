@@ -355,7 +355,7 @@ while (<TXT>) {
     }
   }
 }
-print CRT "\nstatic struct us_cert_der_t root_certs[] = {\n";
+print CRT "\nstatic const struct us_cert_der_t root_certs[] = {\n";
 print CRT join("\n", @cert_entries) . "\n";
 print CRT "};\n";
 close(TXT) or die "Couldn't close $txt: $!\n";

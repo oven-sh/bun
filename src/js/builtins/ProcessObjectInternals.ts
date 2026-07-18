@@ -551,6 +551,21 @@ export function windowsEnv(
   });
 }
 
+export function loadEnvFile() {
+  let path: any = $argument(0);
+  if (path != null) {
+    path = require("internal/validators").getValidatedFsPath(path);
+  } else {
+    path = ".env";
+  }
+  const parsed = require("node:util").parseEnv(require("node:fs").readFileSync(path, "utf8"));
+  const env = process.env;
+  for (const key of Object.keys(parsed)) {
+    // Node's Dotenv::SetEnvironment only assigns keys that are not already set.
+    if (env[key] === undefined) env[key] = parsed[key];
+  }
+}
+
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);

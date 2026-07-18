@@ -3515,31 +3515,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSC::EncodedJSValue constructCpuUsageResult(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, JSC::ThrowScope& throwScope, double user, double system)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-#if !OS(WINDOWS)
-    struct rusage rusage;
-    if (getrusage(RUSAGE_SELF, &rusage) != 0) {
-        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "getrusage"_s, errno);
-        return {};
-    }
-#else
-    uv_rusage_t rusage;
-    int err = uv_getrusage(&rusage);
-    if (err) {
-        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, err);
-        return {};
-    }
-#endif
-
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
 
     Structure* cpuUsageStructure = process->cpuUsageStructure();
-
-    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
@@ -3595,7 +3576,78 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     result->putDirectOffset(vm, 0, JSC::jsNumber(user));
     result->putDirectOffset(vm, 1, JSC::jsNumber(system));
 
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+    return JSC::JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+#if !OS(WINDOWS)
+    struct rusage rusage;
+    if (getrusage(RUSAGE_SELF, &rusage) != 0) {
+        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "getrusage"_s, errno);
+        return {};
+    }
+#else
+    uv_rusage_t rusage;
+    int err = uv_getrusage(&rusage);
+    if (err) {
+        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, err);
+        return {};
+    }
+#endif
+
+    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+
+    RELEASE_AND_RETURN(throwScope, constructCpuUsageResult(globalObject, callFrame, throwScope, user, system));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    double user = 0;
+    double system = 0;
+#if OS(WINDOWS)
+    uv_rusage_t rusage;
+    int err = uv_getrusage_thread(&rusage);
+    if (err) {
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "uv_getrusage_thread"_s, err);
+        return {};
+    }
+    user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+#elif defined(__APPLE__)
+    // Darwin has no RUSAGE_THREAD; use mach thread_info for the calling thread.
+    mach_port_t machThread = mach_thread_self();
+    thread_basic_info_data_t tinfo;
+    mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
+    kern_return_t kr = thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount);
+    mach_port_deallocate(mach_task_self(), machThread);
+    if (kr != KERN_SUCCESS) {
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "thread_info"_s, EINVAL);
+        return {};
+    }
+    user = static_cast<double>(tinfo.user_time.seconds) * std::chrono::microseconds::period::den + tinfo.user_time.microseconds;
+    system = static_cast<double>(tinfo.system_time.seconds) * std::chrono::microseconds::period::den + tinfo.system_time.microseconds;
+#else
+    struct rusage rusage;
+#if defined(RUSAGE_THREAD)
+    int who = RUSAGE_THREAD;
+#else
+    int who = RUSAGE_SELF;
+#endif
+    if (getrusage(who, &rusage) != 0) {
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "getrusage"_s, errno);
+        return {};
+    }
+    user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+#endif
+
+    RELEASE_AND_RETURN(throwScope, constructCpuUsageResult(globalObject, callFrame, throwScope, user, system));
 }
 
 extern "C" int getRSS(size_t* rss)
@@ -3874,6 +3926,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processSourceMapsEnabled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    return JSValue::encode(jsBoolean(defaultGlobalObject(lexicalGlobalObject)->processObject()->m_sourceMapsEnabled));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessSourceMapsEnabled, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    // Node exposes this as a getter-only accessor; assignment is a no-op.
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
@@ -3899,6 +3962,32 @@ static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSSet* result = JSSet::create(vm, globalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSFunction* fn = JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
+    // Reify the lazy name first so the subsequent putDirect is not overwritten
+    // by JSFunction's on-demand name reification.
+    fn->get(globalObject, vm.propertyNames->name);
+    scope.assertNoException();
+    fn->putDirect(vm, vm.propertyNames->name, jsString(vm, String("loadEnvFile"_s)), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    return fn;
+}
+
+static JSValue constructFinalization(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalProcessFinalization);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
     return result;
 }
 
@@ -4470,12 +4559,14 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback
+  finalization                     constructFinalization                               PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
+  loadEnvFile                      constructLoadEnvFile                                PropertyCallback
   mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
@@ -4494,9 +4585,11 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
+  sourceMapsEnabled                processSourceMapsEnabled                            CustomAccessor
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
+  threadCpuUsage                   Process_functionThreadCpuUsage                      Function 1
   throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1

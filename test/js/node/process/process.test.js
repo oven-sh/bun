@@ -766,6 +766,179 @@ describe.concurrent(() => {
     });
   });
 
+  describe("process.threadCpuUsage", () => {
+    it("works", () => {
+      expect(process.threadCpuUsage()).toEqual({
+        user: expect.any(Number),
+        system: expect.any(Number),
+      });
+    });
+
+    it("throws for negative input", () => {
+      expect(() => process.threadCpuUsage({ user: -1, system: 100 })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", name: "RangeError" }),
+      );
+      expect(() => process.threadCpuUsage({ user: 100, system: -1 })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", name: "RangeError" }),
+      );
+    });
+
+    it("throws on non-object prevValue", () => {
+      expect(() => process.threadCpuUsage(123)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
+      );
+    });
+
+    it.skipIf(process.platform === "win32")("works with diff", () => {
+      const init = process.threadCpuUsage();
+      init.user = 0;
+      init.system = 0;
+      const delta = process.threadCpuUsage(init);
+      expect(delta.user).toBeGreaterThan(0);
+      expect(delta.system).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe("process.sourceMapsEnabled", () => {
+    it("reflects setSourceMapsEnabled", async () => {
+      // Run in a subprocess so toggling the global does not leak into other tests.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const out = [];
+            out.push(typeof process.sourceMapsEnabled);
+            out.push(process.sourceMapsEnabled);
+            process.setSourceMapsEnabled(true);
+            out.push(process.sourceMapsEnabled);
+            process.sourceMapsEnabled = false;
+            out.push(process.sourceMapsEnabled);
+            process.setSourceMapsEnabled(false);
+            out.push(process.sourceMapsEnabled);
+            console.log(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["boolean", false, true, true, false]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("process.loadEnvFile", () => {
+    it("loads a .env file into process.env without overwriting existing keys", async () => {
+      using dir = tempDir("process-loadenv", {
+        "my.env": 'A=1\nB="two words"\nexport C=3\nPATH=should-not-overwrite\n',
+        "index.js": `
+          process.loadEnvFile("my.env");
+          console.log(JSON.stringify({
+            A: process.env.A,
+            B: process.env.B,
+            C: process.env.C,
+            PATH: process.env.PATH === "should-not-overwrite" ? "overwritten" : "kept",
+            name: process.loadEnvFile.name,
+            length: process.loadEnvFile.length,
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: { ...bunEnv, A: undefined, B: undefined, C: undefined },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        A: "1",
+        B: "two words",
+        C: "3",
+        PATH: "kept",
+        name: "loadEnvFile",
+        length: 0,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("defaults to './.env'", async () => {
+      using dir = tempDir("process-loadenv-default", {
+        ".env": "DEFAULT_ENV_KEY=default-value\n",
+        "index.js": `
+          process.loadEnvFile();
+          console.log(process.env.DEFAULT_ENV_KEY);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--no-env-file", "index.js"],
+        env: { ...bunEnv, DEFAULT_ENV_KEY: undefined },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("default-value");
+      expect(exitCode).toBe(0);
+    });
+
+    it("throws ERR_INVALID_ARG_TYPE for a non-path", () => {
+      expect(() => process.loadEnvFile(123)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
+      );
+    });
+
+    it("throws ENOENT for a missing file", () => {
+      expect(() => process.loadEnvFile(join(tmpdirSync(), "does-not-exist.env"))).toThrow(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+    });
+  });
+
+  describe("process.finalization", () => {
+    it("exposes register/registerBeforeExit/unregister", () => {
+      expect(typeof process.finalization.register).toBe("function");
+      expect(typeof process.finalization.registerBeforeExit).toBe("function");
+      expect(typeof process.finalization.unregister).toBe("function");
+      expect(process.finalization.register.length).toBe(2);
+      expect(process.finalization.registerBeforeExit.length).toBe(2);
+      expect(process.finalization.unregister.length).toBe(1);
+    });
+
+    it("validates the obj argument", () => {
+      for (const bad of [123, null, "str", true, []]) {
+        expect(() => process.finalization.register(bad, () => {})).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
+        expect(() => process.finalization.registerBeforeExit(bad, () => {})).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      }
+    });
+
+    it("unregister with nothing registered is a no-op", () => {
+      expect(() => process.finalization.unregister({})).not.toThrow();
+    });
+
+    it.concurrent.each([
+      ["close.mjs", ""],
+      ["unregister.mjs", ""],
+      ["before-exit.mjs", ""],
+    ])("fixture %s", async (fixture, expectedStdout) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "..", "test", "fixtures", "process", fixture)],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expectedStdout);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   if (process.platform !== "win32") {
     it("process.getegid", () => {
       expect(typeof process.getegid()).toBe("number");

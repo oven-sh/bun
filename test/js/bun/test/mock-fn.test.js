@@ -871,6 +871,28 @@ describe("mock()", () => {
       expect(fn.mock.instances[0]).toBe(instance);
     });
 
+    test("newTarget.prototype that is a primitive falls back to Object.prototype", () => {
+      function Target() {}
+      Target.prototype = 1;
+      const fn = jest.fn();
+      const instance = Reflect.construct(fn, [], Target);
+      expect(Object.getPrototypeOf(instance)).toBe(Object.prototype);
+    });
+
+    if (isBun) {
+      test("cross-realm newTarget with a primitive prototype uses the newTarget realm's Object.prototype", () => {
+        const vm = require("node:vm");
+        const ctx = vm.createContext({});
+        const Target = vm.runInContext("(function Target() {})", ctx);
+        const otherObjectPrototype = vm.runInContext("Object.prototype", ctx);
+        Target.prototype = 1;
+        const fn = jest.fn();
+        const instance = Reflect.construct(fn, [], Target);
+        expect(Object.getPrototypeOf(instance)).toBe(otherObjectPrototype);
+        expect(Object.getPrototypeOf(instance)).not.toBe(Object.prototype);
+      });
+    }
+
     test("a throwing implementation propagates and is recorded", () => {
       const fn = jest.fn(() => {
         throw new Error("boom");

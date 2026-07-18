@@ -4,7 +4,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDir } from "harness";
-import { spawnSync } from "node:child_process";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -95,16 +94,19 @@ const TRUSTED = [
 
 const script = readFileSync(join(usocketsDir, "generate-root-certs.pl"), "utf8");
 
-function runGenerator(certdata: string) {
+async function runGenerator(certdata: string) {
   using dir = tempDir("root-certs-parser", {
     "generate-root-certs.pl": script,
     "certdata.txt": certdata,
   });
-  const { status, stderr } = spawnSync(perl!, ["generate-root-certs.pl", "root_certs.h"], {
-    cwd: String(dir),
+  await using proc = Bun.spawn({
+    cmd: [perl!, "generate-root-certs.pl", "root_certs.h"],
     env: bunEnv,
-    encoding: "utf8",
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  const [, stderr, status] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = status === 0 ? readFileSync(join(String(dir), "root_certs.h"), "utf8") : "";
   const emitted = new Map<string, Buffer>();
   // Emitted certs are `/* <label> */` then a PEM body as a wrapped C string.
@@ -117,7 +119,7 @@ function runGenerator(certdata: string) {
 
 // Unit check on the checked-in generator: feed it a fixture shaped like
 // Izenpe.com's trust object (inline comment before CKA_TRUST_SERVER_AUTH).
-test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-object comment (Izenpe.com)", () => {
+test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-object comment (Izenpe.com)", async () => {
   const certdata = joinObjects(
     `# Minimal certdata.txt fixture\nCVS_ID "fixture"`,
     // Control: trust bits appear directly, no inline comment.
@@ -148,7 +150,7 @@ test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-obje
     ),
   );
 
-  const { status, emitted } = runGenerator(certdata);
+  const { status, emitted } = await runGenerator(certdata);
 
   // Control root + inline-comment root must both survive.
   expect([...emitted.keys()]).toEqual(["DirectTrustRoot", "DistrustAfterRoot"]);
@@ -161,8 +163,8 @@ test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-obje
 describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malformed certdata", () => {
   // Face 1: cert A has no trust object; cert B is trusted. The old scan-forward
   // loop swallowed B entirely and attributed B's trust bits to A's DER.
-  test("cert without a CKO_NSS_TRUST object is a hard error, not a silent swallow", () => {
-    const { status, stderr } = runGenerator(
+  test("cert without a CKO_NSS_TRUST object is a hard error, not a silent swallow", async () => {
+    const { status, stderr } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
@@ -176,8 +178,8 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
 
   // Face 2: trust-before-cert ordering. Previously the orphan trust was
   // ignored and A's scan-forward then swallowed B just like face 1.
-  test("orphan CKO_NSS_TRUST before its cert is a hard error", () => {
-    const { status, stderr } = runGenerator(
+  test("orphan CKO_NSS_TRUST before its cert is a hard error", async () => {
+    const { status, stderr } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         trustObject("Repro Root A", String.raw`\001\002`, TRUSTED),
@@ -193,8 +195,8 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
   // Face 4: blank line inside the trust object before the CKA_TRUST_* lines.
   // The Izenpe fix's own `last if /^\s*$/` ends the scan early with zero
   // trust bits read, which previously skipped the cert silently.
-  test("trust object that ends before any CKA_TRUST_* line is a hard error", () => {
-    const { status, stderr } = runGenerator(
+  test("trust object that ends before any CKA_TRUST_* line is a hard error", async () => {
+    const { status, stderr } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
@@ -217,8 +219,8 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
   // Adjacent certs with their trust objects swapped: each trust object exists
   // and is well-formed, so none of the structural guards fire, but applying
   // B's policy to A's DER is exactly the Izenpe-class silent misattribution.
-  test("trust object with a mismatched CKA_LABEL is a hard error", () => {
-    const { status, stderr } = runGenerator(
+  test("trust object with a mismatched CKA_LABEL is a hard error", async () => {
+    const { status, stderr } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
@@ -234,8 +236,8 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
   // Cross-check tripwire: a stray CKO_NSS_TRUST line the inline guards do not
   // see (consumed inside the trust-scan loop as an unrecognised attribute).
   // Only the final re-read count check can catch this.
-  test("final trust-object count must equal processed cert count", () => {
-    const { status, stderr } = runGenerator(
+  test("final trust-object count must equal processed cert count", async () => {
+    const { status, stderr } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
@@ -250,8 +252,8 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
 describe.concurrent.skipIf(!perl)("generate-root-certs.pl tolerates benign certdata formatting drift", () => {
   // Face 3: leading whitespace on the CKA_TRUST_SERVER_AUTH line. The
   // ^-anchored regex used to miss it and silently skip the cert.
-  test("leading whitespace on CKA_TRUST_* lines", () => {
-    const { status, emitted } = runGenerator(
+  test("leading whitespace on CKA_TRUST_* lines", async () => {
+    const { status, emitted } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
@@ -272,10 +274,10 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl tolerates benign certd
   // Face 5: a '#' comment inside the MULTILINE_OCTAL block that happens to
   // contain backslash-escapes. split(/\\/) would decode those into junk bytes
   // in the emitted DER; the line must be skipped entirely.
-  test("'#' comments inside CKA_VALUE MULTILINE_OCTAL do not inject bytes into DER", () => {
+  test("'#' comments inside CKA_VALUE MULTILINE_OCTAL do not inject bytes into DER", async () => {
     const lines = CERT_OCTAL_A.split("\n");
     const withComment = [...lines.slice(0, 3), String.raw`#\101\102\103 stray escapes`, ...lines.slice(3)].join("\n");
-    const { status, emitted } = runGenerator(
+    const { status, emitted } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", withComment),
@@ -288,8 +290,8 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl tolerates benign certd
   });
 
   // Control: well-formed input still emits both roots with the right DER.
-  test("well-formed two-root input", () => {
-    const { status, emitted } = runGenerator(
+  test("well-formed two-root input", async () => {
+    const { status, emitted } = await runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),

@@ -529,6 +529,11 @@ impl FileSystemRouter {
             }
         }
 
+        if log.errors + log.warnings > 0 {
+            let err_value = log.to_js(global_this, "loading routes");
+            return Err(global_this.throw_value(err_value?));
+        }
+
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
         // Note: order matters — old router borrows slices from old arena, so it must drop
         // first.

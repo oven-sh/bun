@@ -549,7 +549,7 @@ pub(crate) fn braces(
     // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
     const MAX_BRACE_EXPANSIONS: u32 = 65536;
     if expansion_count > MAX_BRACE_EXPANSIONS {
-        return Err(global.throw_pretty(format_args!(
+        return Err(global.throw(format_args!(
             "Too many brace expansions ({} > {})",
             expansion_count, MAX_BRACE_EXPANSIONS
         )));
@@ -571,12 +571,10 @@ pub(crate) fn braces(
         Ok(()) => {}
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
-            return Err(
-                global.throw_pretty(format_args!("Unexpected token while expanding braces"))
-            );
+            return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
         Err(Braces::ParserError::TooManyBraces) => {
-            return Err(global.throw_pretty(format_args!("Too many braces in brace expansion")));
+            return Err(global.throw(format_args!("Too many braces in brace expansion")));
         }
     }
 

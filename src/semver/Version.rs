@@ -664,49 +664,10 @@ impl<T: VersionInt> VersionType<T> {
     }
 
     fn parse_version_number(input: &[u8]) -> Option<T> {
-        // max decimal u64 is 18446744073709551615
-        let mut bytes = [0u8; 20];
-        let mut byte_i: u8 = 0;
-
-        debug_assert!(input[0] != b'.');
-
-        for &char in input {
-            match char {
-                b'X' | b'x' | b'*' => return None,
-                b'0'..=b'9' => {
-                    // out of bounds
-                    if (byte_i as usize) + 1 > bytes.len() {
-                        return None;
-                    }
-                    bytes[byte_i as usize] = char;
-                    byte_i += 1;
-                }
-                b' ' | b'.' => break,
-                // ignore invalid characters
-                _ => {}
-            }
-        }
-
-        // If there are no numbers
-        if byte_i == 0 {
-            return None;
-        }
-
-        if bun_core::env::IS_DEBUG {
-            return match T::parse_ascii(&bytes[0..byte_i as usize]) {
-                Some(v) => Some(v),
-                None => {
-                    bun_core::pretty_errorln!(
-                        "ERROR parsing version: \"{}\", bytes: {}",
-                        bstr::BStr::new(input),
-                        bstr::BStr::new(&bytes[0..byte_i as usize]),
-                    );
-                    Some(T::ZERO)
-                }
-            };
-        }
-
-        Some(T::parse_ascii(&bytes[0..byte_i as usize]).unwrap_or(T::ZERO))
+        // Callers slice `input` from the first digit to the first non-digit,
+        // so every byte is already `b'0'..=b'9'` and the slice is non-empty.
+        debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
+        Some(T::parse_ascii(input).unwrap_or(T::ZERO))
     }
 }
 

@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::throw;
 
 // Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
 // u8::is_ascii_whitespace does not.
@@ -100,23 +101,21 @@ pub(crate) fn to_equal_ignoring_whitespace(
 
     if not {
         let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!("\n\n", "Expected: not <green>{}<r>\n", "Received: <red>{}<r>\n"),
-                expected_fmt, value_fmt
-            ),
+            concat!("\n\n", "Expected: not <green>{}<r>\n", "Received: <red>{}<r>\n"),
+            expected_fmt, value_fmt
         );
     }
 
     let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            concat!("\n\n", "Expected: <green>{}<r>\n", "Received: <red>{}<r>\n"),
-            expected_fmt, value_fmt
-        ),
+        concat!("\n\n", "Expected: <green>{}<r>\n", "Received: <red>{}<r>\n"),
+        expected_fmt, value_fmt
     )
 }

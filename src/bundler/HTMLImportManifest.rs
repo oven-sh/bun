@@ -327,7 +327,8 @@ pub fn write<W: Write + ?Sized>(
 
                 // `dest_path` comes from `PathTemplate::print` (native separators);
                 // rewrite to `/` so it matches the posix `final_rel_path`s above.
-                let dest_path = platform_to_posix_buf::<u8>(&output_file.dest_path, &mut **dest_buf);
+                let dest_path =
+                    platform_to_posix_buf::<u8>(&output_file.dest_path, &mut **dest_buf);
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);

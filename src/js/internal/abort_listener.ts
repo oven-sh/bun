@@ -21,8 +21,10 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
     const algorithmId = $addAbortAlgorithmToSignal(signal, function () {
       removeEventListener = undefined;
       const event = new Event("abort");
-      Object.defineProperty(event, "target", { value: signal, configurable: true });
-      Object.defineProperty(event, "currentTarget", { value: signal, configurable: true });
+      // @ts-ignore
+      Object.defineProperty(event, "target", { __proto__: null, value: signal, configurable: true });
+      // @ts-ignore
+      Object.defineProperty(event, "currentTarget", { __proto__: null, value: signal, configurable: true });
       listener.$call(signal, event);
     });
     removeEventListener = () => {

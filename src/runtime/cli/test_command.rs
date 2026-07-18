@@ -2955,7 +2955,7 @@ impl TestCommand {
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
         }
-        vm.is_shutting_down = true;
+        // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`

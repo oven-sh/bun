@@ -386,7 +386,7 @@ async function runOneFile(
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), [kRunChildEnv]: kRunChildEnvValue },
+    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
     stdout: "pipe",
     stderr: "pipe",
   });

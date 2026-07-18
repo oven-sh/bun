@@ -92,6 +92,9 @@ describe("MIME API", () => {
       const clonedParams = structuredClone(p);
       expect(Object.getPrototypeOf(clonedParams)).toBe(Object.prototype);
       expect(Object.getOwnPropertyNames(clonedParams)).toEqual([]);
+
+      expect(structuredClone(MIMEType.prototype)).toEqual({});
+      expect(structuredClone(MIMEParams.prototype)).toEqual({});
     });
   });
 

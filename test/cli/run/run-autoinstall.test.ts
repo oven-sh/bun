@@ -209,9 +209,12 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
     mkdirSync(cache, { recursive: true });
 
     const r1 = await runImport(String(dir), cache);
-    expect(r1.stderr).toBe("");
-    expect(r1.stdout).toBe("IMPORT_OK OK");
-    expect(tarballRequests).toBe(1);
+    expect({ ...r1, tarballRequests }).toEqual({
+      stdout: "IMPORT_OK OK",
+      stderr: "",
+      exitCode: 0,
+      tarballRequests: 1,
+    });
 
     // Evict everything except the `.npm` manifest cache file.
     const kept: string[] = [];
@@ -226,10 +229,12 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
 
     // Fresh process: the disk-loaded manifest must trigger a tarball download.
     const r2 = await runImport(String(dir), cache);
-    expect(r2.stderr).toBe("");
-    expect(r2.stdout).toBe("IMPORT_OK OK");
-    expect(tarballRequests).toBe(2);
-    expect(r2.exitCode).toBe(0);
+    expect({ ...r2, tarballRequests }).toEqual({
+      stdout: "IMPORT_OK OK",
+      stderr: "",
+      exitCode: 0,
+      tarballRequests: 2,
+    });
   });
 
   test.concurrent("after an integrity failure on the first download", async () => {
@@ -280,15 +285,16 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
     // The `.npm` manifest cache was written (with the good integrity).
     expect(readdirSync(cache).some(f => f.endsWith(".npm"))).toBe(true);
 
-    // CDN healed.
+    // CDN healed. The second run must re-download the tarball rather than
+    // failing with zero network I/O against the cached manifest.
     serveBad = false;
 
     const r2 = await runImport(String(dir), cache);
-    expect(r2.stderr).toBe("");
-    expect(r2.stdout).toBe("IMPORT_OK OK");
-    // The second run must re-download the tarball rather than failing with
-    // zero network I/O against the cached manifest.
-    expect(tarballRequests).toBe(2);
-    expect(r2.exitCode).toBe(0);
+    expect({ ...r2, tarballRequests }).toEqual({
+      stdout: "IMPORT_OK OK",
+      stderr: "",
+      exitCode: 0,
+      tarballRequests: 2,
+    });
   });
 });

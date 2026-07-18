@@ -517,7 +517,11 @@ impl QuicSession {
         }
         self.cache_sockaddrs(conn);
         if self.close_when_bound.get() {
-            if let Some(c) = self.conn() {
+            // Carry the user's {type, code, reason} through rather than
+            // sending a bare close.
+            if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
+                self.apply_graceful_close(app, code, reason);
+            } else if let Some(c) = self.conn() {
                 c.close();
             }
         }
@@ -1923,6 +1927,12 @@ impl QuicSession {
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
+                    // Parse now: the arguments are the user's and must not be
+                    // dropped just because the conn is not bound yet.
+                    let (app, code, reason) =
+                        self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
+                    self.pending_graceful
+                        .with_mut(|p| *p = Some((app, code, reason)));
                     self.close_when_bound.set(true);
                 } else {
                     self.report_close(global);

@@ -893,7 +893,6 @@ unsafe extern "C" {
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
-    pub fn SSL_alert_desc_string_long(value: c_int) -> *const c_char;
     pub fn SSL_CTX_set_default_verify_paths(ctx: *mut SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_alpn_protos(
         ctx: *mut SSL_CTX,

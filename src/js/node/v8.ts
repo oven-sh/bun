@@ -9,6 +9,8 @@ const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler } = $cpp(
   "Bun::createNodeV8Binding",
 );
 
+const DateNow = Date.now;
+
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
 }
@@ -67,7 +69,7 @@ class GCProfiler {
 
   start() {
     if (this[kGCProfilerSession] !== null) return;
-    this[kGCProfilerStartTime] = Date.now();
+    this[kGCProfilerStartTime] = DateNow();
     this[kGCProfilerSession] = startGCProfiler();
   }
 
@@ -80,7 +82,7 @@ class GCProfiler {
     const statistics = [];
     for (let i = 0; i < events.length; i++) {
       const event = events[i];
-      statistics.push({
+      $arrayPush(statistics, {
         // A JavaScriptCore eden collection only scans newly allocated objects,
         // and a full collection sweeps the whole heap, so they line up with
         // V8's minor and major collection types.
@@ -94,7 +96,7 @@ class GCProfiler {
     return {
       version: 1,
       startTime: this[kGCProfilerStartTime],
-      endTime: Date.now(),
+      endTime: DateNow(),
       statistics,
     };
   }

@@ -88,10 +88,9 @@ public:
         }
         record.capacityAfter = heap.capacity();
         record.externalAfter = heap.extraMemorySize();
-        // For a full collection Heap::willStartCollection() zeroes
-        // m_extraMemorySize before notifying observers, so the prologue sample
-        // under-reports. Reuse the epilogue value rather than report a number
-        // that makes external memory appear to grow across a sweep.
+        // For a full collection Heap::willStartCollection() zeroes m_extraMemorySize
+        // before notifying observers, so the prologue sample under-reports; reuse the
+        // epilogue value so external memory doesn't appear to grow across a sweep.
         record.capacityBefore = record.isFullCollection ? record.capacityAfter : m_capacityBefore;
         record.externalBefore = record.isFullCollection ? record.externalAfter : m_externalBefore;
 

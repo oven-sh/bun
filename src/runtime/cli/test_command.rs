@@ -776,7 +776,9 @@ pub(crate) fn should_drain_event_loop() -> bool {
 /// reporter output is suppressed (verdicts and exit codes unaffected).
 /// Matches node:test's exact value so a foreign env var can't silence us.
 pub(crate) fn is_node_test_child() -> bool {
-    env_var::NODE_TEST_CONTEXT.get().is_some_and(|value| value == b"child-v8")
+    env_var::NODE_TEST_CONTEXT
+        .get()
+        .is_some_and(|value| value == b"child-v8")
 }
 
 pub struct CommandLineReporter {

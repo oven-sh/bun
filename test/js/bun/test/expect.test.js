@@ -679,12 +679,13 @@ describe("expect()", () => {
     });
 
     test("strict deepEquals propagates a throwing Proxy get trap like loose mode", () => {
+      const trapErr = new RangeError("trapG");
       const thr = () =>
         new Proxy(
           {},
           {
             get() {
-              throw new RangeError("trapG");
+              throw trapErr;
             },
             ownKeys() {
               return ["a"];
@@ -694,14 +695,22 @@ describe("expect()", () => {
             },
           },
         );
+      const caught = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("expected throw");
+      };
 
       // loose already propagated; strict used to short-circuit on calculatedClassName and return false.
-      expect(() => Bun.deepEquals(thr(), { a: 1 })).toThrow("trapG");
-      expect(() => Bun.deepEquals(thr(), { a: 1 }, true)).toThrow("trapG");
+      expect(caught(() => Bun.deepEquals(thr(), { a: 1 }))).toBe(trapErr);
+      expect(caught(() => Bun.deepEquals(thr(), { a: 1 }, true))).toBe(trapErr);
       // toEqual / toStrictEqual surface the trap throw (previously aborted on assert builds).
-      expect(() => expect(thr()).toEqual({ a: 1 })).toThrow("trapG");
-      expect(() => expect(thr()).toStrictEqual({ a: 1 })).toThrow("trapG");
-      expect(() => expect({ a: 1 }).toStrictEqual(thr())).toThrow("trapG");
+      expect(caught(() => expect(thr()).toEqual({ a: 1 }))).toBe(trapErr);
+      expect(caught(() => expect(thr()).toStrictEqual({ a: 1 }))).toBe(trapErr);
+      expect(caught(() => expect({ a: 1 }).toStrictEqual(thr()))).toBe(trapErr);
 
       // A transparent Proxy now passes the strict type gate (Node's util.isDeepStrictEqual agrees).
       expect(Bun.deepEquals(new Proxy({ a: 1 }, {}), { a: 1 }, true)).toBe(true);
@@ -716,15 +725,24 @@ describe("expect()", () => {
       // Array target vs object: deepEquals returns false at the isArray gate, so the
       // diff renderer is what touches the proxy. Previously aborted on assert builds
       // with "Unexpected exception observed"; the trap throw should surface instead.
+      const trapErr = new RangeError("trapG");
       const thrArr = () =>
         new Proxy([1], {
           get() {
-            throw new RangeError("trapG");
+            throw trapErr;
           },
         });
-      expect(() => expect(thrArr()).toStrictEqual({ a: 1 })).toThrow("trapG");
-      expect(() => expect({ a: 1 }).toStrictEqual(thrArr())).toThrow("trapG");
-      expect(() => expect(thrArr()).toEqual({ a: 1 })).toThrow("trapG");
+      const caught = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("expected throw");
+      };
+      expect(caught(() => expect(thrArr()).toStrictEqual({ a: 1 }))).toBe(trapErr);
+      expect(caught(() => expect({ a: 1 }).toStrictEqual(thrArr()))).toBe(trapErr);
+      expect(caught(() => expect(thrArr()).toEqual({ a: 1 }))).toBe(trapErr);
 
       // this.utils.matcherHint goes through the same DiffFormatter with user-supplied
       // received/expected; it should propagate the trap throw rather than panic.
@@ -740,8 +758,7 @@ describe("expect()", () => {
         },
       });
       expect(0).toHitThrowingProxy();
-      expect(hintErr).toBeInstanceOf(RangeError);
-      expect(hintErr.message).toBe("trapG");
+      expect(hintErr).toBe(trapErr);
     });
   }
 

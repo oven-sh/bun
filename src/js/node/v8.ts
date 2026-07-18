@@ -2,8 +2,13 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateString } = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
+const { validateString } = require("internal/validators");
+const {
+  isStringOneByteRepresentation,
+  startGCProfiler,
+  stopGCProfiler,
+} = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -21,9 +26,82 @@ class Serializer {
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
+// JSC manages one undivided heap, so a record carries a single space instead
+// of V8's thirteen, and counters JSC does not track are reported as 0 rather
+// than invented.
+function gcHeapSnapshot(used, capacity, external) {
+  const available = capacity > used ? capacity - used : 0;
+  return {
+    heapStatistics: {
+      totalHeapSize: capacity,
+      totalHeapSizeExecutable: 0,
+      totalPhysicalSize: capacity,
+      totalAvailableSize: available,
+      usedHeapSize: used,
+      heapSizeLimit: 0,
+      mallocedMemory: 0,
+      peakMallocedMemory: 0,
+      externalMemory: external,
+      totalGlobalHandlesSize: 0,
+      usedGlobalHandlesSize: 0,
+    },
+    heapSpaceStatistics: [
+      {
+        spaceName: "heap",
+        spaceSize: capacity,
+        spaceUsedSize: used,
+        spaceAvailableSize: available,
+        physicalSpaceSize: capacity,
+      },
+    ],
+  };
+}
+
+const kGCProfilerSession = Symbol("kGCProfilerSession");
+const kGCProfilerStartTime = Symbol("kGCProfilerStartTime");
+
 class GCProfiler {
   constructor() {
-    notimpl("GCProfiler");
+    this[kGCProfilerSession] = null;
+    this[kGCProfilerStartTime] = 0;
+  }
+
+  start() {
+    if (this[kGCProfilerSession] !== null) return;
+    this[kGCProfilerStartTime] = Date.now();
+    this[kGCProfilerSession] = startGCProfiler();
+  }
+
+  stop() {
+    const session = this[kGCProfilerSession];
+    if (session === null) return undefined;
+    this[kGCProfilerSession] = null;
+
+    const events = stopGCProfiler(session);
+    const statistics = [];
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+      statistics.push({
+        // A JavaScriptCore eden collection only scans newly allocated objects,
+        // and a full collection sweeps the whole heap, so they line up with
+        // V8's minor and major collection types.
+        gcType: event.isFullCollection ? "MarkSweepCompact" : "Scavenge",
+        cost: event.cost,
+        beforeGC: gcHeapSnapshot(event.usedBefore, event.capacityBefore, event.externalBefore),
+        afterGC: gcHeapSnapshot(event.usedAfter, event.capacityAfter, event.externalAfter),
+      });
+    }
+
+    return {
+      version: 1,
+      startTime: this[kGCProfilerStartTime],
+      endTime: Date.now(),
+      statistics,
+    };
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
   }
 }
 
@@ -181,6 +259,8 @@ const promiseHooks = {
 
 export default {
   cachedDataVersionTag,
+  GCProfiler,
+  isStringOneByteRepresentation,
   getHeapSnapshot,
   getHeapStatistics,
   getHeapSpaceStatistics,

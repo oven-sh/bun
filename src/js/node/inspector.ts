@@ -1006,22 +1006,23 @@ class Session extends EventEmitter {
   // completes its post() callback, an event is emitted (method-specific first).
   // A throw from user code becomes a process warning, never a swallowed error.
   #onClientMessage(parsed: any) {
+    const { id, error, method } = parsed;
     try {
-      if (parsed.id !== undefined) {
-        const done = this.#pendingResults.$get(parsed.id);
+      if (id !== undefined) {
+        const done = this.#pendingResults.$get(id);
         if (done === undefined) return;
-        this.#pendingResults.$delete(parsed.id);
-        if (parsed.error) done({ code: parsed.error.code, message: parsed.error.message });
+        this.#pendingResults.$delete(id);
+        if (error) done({ code: error.code, message: error.message });
         else done(null, parsed.result ?? {});
         return;
       }
-      if (typeof parsed.method === "string") {
-        const message = { method: parsed.method, params: parsed.params ?? {} };
-        this.emit(parsed.method, message);
+      if (typeof method === "string") {
+        const message = { method, params: parsed.params ?? {} };
+        this.emit(method, message);
         this.emit("inspectorNotification", message);
       }
-    } catch (error) {
-      process.emitWarning(error);
+    } catch (thrown) {
+      process.emitWarning(thrown);
     }
   }
 

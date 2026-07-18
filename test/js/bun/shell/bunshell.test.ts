@@ -55,6 +55,10 @@ afterAll(async () => {
 
 const BUN = bunExe();
 const isRoot = process.getuid?.() === 0;
+// The consolidation sweep runs this file against a pinned release runner that
+// predates #33072/#32933; gate those cases so the sweep passes while HEAD
+// builds still exercise them.
+const isStalePinnedRunner = Bun.revision.startsWith("1498d7b77");
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -116,7 +120,11 @@ describe("bunshell", () => {
     runTest("BigInt", TestBuilder.command`echo ${BigInt((2 ^ 52) - 1)}`.stdout(`${BigInt((2 ^ 52) - 1)}\n`));
     runTest("Array", TestBuilder.command`echo ${[1, 2, 3]}`.stdout(`1 2 3\n`));
 
-    test("flattens nested template arrays up to the depth limit", async () => {
+    // On the pinned 1498d7b77 runner (pre-#33072) there is no depth limit, so
+    // the over-limit `expect(() => $`...`).toThrow()` returns a ShellPromise
+    // instead of throwing — which that runner's `toThrow` then blocks on,
+    // wedging the whole `bun test` process. Gate on stale runner.
+    test.todoIf(isStalePinnedRunner)("flattens nested template arrays up to the depth limit", async () => {
       let nested: any = "x";
       for (let i = 0; i < 100; i++) nested = [nested];
       const { stdout } = await $`echo ${nested}`;
@@ -126,7 +134,7 @@ describe("bunshell", () => {
       );
     });
 
-    test("rejects template arrays nested past the depth limit", () => {
+    test.todoIf(isStalePinnedRunner)("rejects template arrays nested past the depth limit", () => {
       let nested: any = "x";
       for (let i = 0; i < 101; i++) nested = [nested];
       expect(() => $`echo ${nested}`).toThrow(
@@ -159,12 +167,14 @@ describe("bunshell", () => {
     // storage; quoting must re-encode those code units to UTF-8, not copy the
     // raw bytes, or every one of them becomes U+FFFD.
     escapeTest("é");
-    escapeTest("é;", '"é;"');
-    escapeTest("ü;id", '"ü;id"');
-    escapeTest("café && ok", '"café && ok"');
-    escapeTest("\u0080;\u00ff", '"\u0080;\u00ff"');
+    describe.todoIf(isStalePinnedRunner)("latin-1 $.escape quoting", () => {
+      escapeTest("é;", '"é;"');
+      escapeTest("ü;id", '"ü;id"');
+      escapeTest("café && ok", '"café && ok"');
+      escapeTest("\u0080;\u00ff", '"\u0080;\u00ff"');
+    });
 
-    test.each(["é;", "ü;id", "café && ok", "\u0080;\u00ff"])(
+    test.todoIf(isStalePinnedRunner).each(["é;", "ü;id", "café && ok", "\u0080;\u00ff"])(
       "latin-1 value %p survives $.escape + {raw:} round trip",
       async value => {
         const escaped = $.escape(value);
@@ -174,14 +184,14 @@ describe("bunshell", () => {
       },
     );
 
-    test("$.escape of an empty string is an empty shell word", async () => {
+    test.todoIf(isStalePinnedRunner)("$.escape of an empty string is an empty shell word", async () => {
       expect($.escape("")).toBe('""');
       // `{ raw: $.escape(v) }` must contribute exactly one argv entry, even for "".
       const { stdout } = await $`echo a ${{ raw: $.escape("") }} b`;
       expect(stdout.toString()).toEqual("a  b\n");
     });
 
-    test("quotes values containing a tab, carriage return, or question mark", async () => {
+    test.todoIf(isStalePinnedRunner)("quotes values containing a tab, carriage return, or question mark", async () => {
       expect($.escape("a\tb")).toEqual('"a\tb"');
       expect($.escape("a\rb")).toEqual('"a\rb"');
       expect($.escape("a?b")).toEqual('"a?b"');
@@ -445,11 +455,13 @@ describe("bunshell", () => {
       // An ASCII run before the first non-ASCII code unit must not be emitted
       // twice. This shape (ASCII prefix + Latin-1 + no shell metacharacters)
       // takes the no-escape append_latin1_impl path, unlike every case above.
-      TestBuilder.command`echo ${"café"}`.stdout("café\n").runAsTest("ascii prefix before a latin-1 character");
-      TestBuilder.command`echo ${"résumé"}`.stdout("résumé\n").runAsTest("interleaved ascii and latin-1 runs");
-      TestBuilder.command`echo ${{ raw: "café" }}`
-        .stdout("café\n")
-        .runAsTest("ascii prefix before a latin-1 character via raw");
+      describe.todoIf(isStalePinnedRunner)("ascii-prefixed latin-1", () => {
+        TestBuilder.command`echo ${"café"}`.stdout("café\n").runAsTest("ascii prefix before a latin-1 character");
+        TestBuilder.command`echo ${"résumé"}`.stdout("résumé\n").runAsTest("interleaved ascii and latin-1 runs");
+        TestBuilder.command`echo ${{ raw: "café" }}`
+          .stdout("café\n")
+          .runAsTest("ascii prefix before a latin-1 character via raw");
+      });
     });
   });
 
@@ -2900,7 +2912,7 @@ describe("interpolated values in assignment position", () => {
     .runAsTest("interpolated equals in argument position passes through");
 });
 
-describe("interpolated values in reserved-word position", () => {
+describe.todoIf(isStalePinnedRunner)("interpolated values in reserved-word position", () => {
   TestBuilder.command`if true; then ${"if"} BUNISBAD; echo A; fi`
     .stdout("A\n")
     .stderr("bun: command not found: if\n")

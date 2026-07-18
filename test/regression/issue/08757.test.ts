@@ -15,7 +15,9 @@ if (process.env.IS_SUBPROCESS) {
 test("absolute path to a file that is symlinked has import.meta.main", () => {
   const root = tmpdirSync();
   try {
-    symlinkSync(process.argv[1], root + "/main.js");
+    // process.argv[1] is not this file when the runner loads multiple test
+    // files in one process — import.meta.path is module-scoped and stable.
+    symlinkSync(import.meta.path, root + "/main.js");
   } catch (e) {
     if (process.platform == "win32") {
       console.log("symlinkSync failed on Windows, skipping test");

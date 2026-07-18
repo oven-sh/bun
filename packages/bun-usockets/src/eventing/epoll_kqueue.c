@@ -436,13 +436,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 
     if (will_idle_inside_event_loop) {
-        /* Zero entry BEFORE folding into idle_ns so a cross-thread reader between
-         * the two under-counts (bounded, monotonic) instead of double-counting.
-         * seq_cst on both: a release store alone would not order the later add
-         * before it on ARM, and this path only runs on ticks that park. */
+        /* Clock read first so the zero+add are adjacent seq_cst ops: a reader
+         * between them under-counts (bounded by one park) rather than
+         * double-counting. seq_cst on both — release alone would not order the
+         * later add before the store on ARM. Only runs on parking ticks. */
+        uint64_t now = us_internal_monotonic_ns();
         __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_SEQ_CST);
-        __atomic_add_fetch(&loop->data.idle_ns, us_internal_monotonic_ns() - idle_start_ns,
-                           __ATOMIC_SEQ_CST);
+        __atomic_add_fetch(&loop->data.idle_ns, now - idle_start_ns, __ATOMIC_SEQ_CST);
     }
 
     /* Before anything can allocate again. */

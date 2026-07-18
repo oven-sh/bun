@@ -3676,6 +3676,12 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
             return nullptr;
         }
         if (!stmt) {
+            // Deliberate divergence from Node v26.3.0: for empty/comment-only
+            // SQL sqlite3_prepare* returns SQLITE_OK with a NULL stmt. Node
+            // forwards it: get``/all`` throw ERR_SQLITE_ERROR errcode 0 "not
+            // an error" and run`` reports a fake {changes:0,lastInsertRowid:0}
+            // having executed nothing. Bun rejects the empty template up front
+            // so all four tag methods fail the same way.
             throwNodeState(globalObject, scope, "The supplied SQL string contains no statements"_s);
             return nullptr;
         }

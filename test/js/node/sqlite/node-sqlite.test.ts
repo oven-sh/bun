@@ -1530,6 +1530,31 @@ describe("serialize() / deserialize()", () => {
 });
 
 describe("createTagStore()", () => {
+  test("empty tagged template throws ERR_INVALID_STATE on every method", () => {
+    // Deliberate divergence from Node v26.3.0: sqlite3_prepare_v2 on empty
+    // SQL returns SQLITE_OK with a NULL stmt. Node forwards that NULL, so
+    // get``/all``/iterate`` throw ERR_SQLITE_ERROR with errcode 0 "not an
+    // error", and run`` reports a fake {changes:0, lastInsertRowid:0} having
+    // executed nothing. Bun rejects the empty template up front so all four
+    // tag methods fail uniformly.
+    const db = new DatabaseSync(":memory:");
+    const sql = db.createTagStore(4);
+    const err = expect.objectContaining({
+      code: "ERR_INVALID_STATE",
+      message: expect.stringContaining("contains no statements"),
+    });
+    expect(() => sql.get``).toThrow(err);
+    expect(() => sql.run``).toThrow(err);
+    expect(() => sql.all``).toThrow(err);
+    expect(() => sql.iterate``).toThrow(err);
+    // Whitespace / comment-only SQL hits the same SQLITE_OK+NULL-stmt path.
+    expect(() => sql.get`  `).toThrow(err);
+    expect(() => sql.run`/* noop */`).toThrow(err);
+    // None of these should land in the LRU cache.
+    expect(sql.size).toBe(0);
+    db.close();
+  });
+
   test("reusing the same SQL while a tag.iterate() iterator is live invalidates the iterator", () => {
     // Deliberate divergence: Node's SQLTagStore resets the cached statement
     // without bumping reset_generation_, so the iterator silently re-yields

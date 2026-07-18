@@ -356,9 +356,10 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
-        // Only mirror the server wrapper while it is strongly rooted —
-        // `js_value()` would return a weak (potentially dead-but-unswept)
-        // address once the server has gone idle and downgraded.
+        // `on_upgrade` refuses once `handler.server` is cleared (idle
+        // downgrade), so this is always `Some` on the `server.upgrade()`
+        // path. The node:http `NodeHTTPResponse::upgrade` path reaches here
+        // without that guard, so keep the `and_then` chain.
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(this_value, global_object, server_js);
         }

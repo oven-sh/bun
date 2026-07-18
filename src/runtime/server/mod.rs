@@ -1106,8 +1106,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
         // Idle keep-alive sockets aren't counted in pending_requests, so the
-        // wrapper can have downgraded before this fires. Refuse and close
-        // rather than dispatching with a stale wrapper.
+        // wrapper can have been finalized before this fires. Refuse and close
+        // rather than dispatching with a stale handler shadow.
         // SAFETY: `this` is the live server backref for this request.
         let Some(js_value) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
@@ -3716,10 +3716,7 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
-    /// The server's JS wrapper object, or `None` once the server has gone idle
-    /// and the `JsRef` downgraded — same gate as
-    /// [`NewServer::js_value_for_dispatch`], closing the dead-but-unswept
-    /// window where a `Weak` may hold a stale address.
+    /// Same gate as [`NewServer::js_value_for_dispatch`].
     #[inline]
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())

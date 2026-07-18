@@ -405,13 +405,15 @@ impl RespLike for uws_sys::h3::Response {
     }
 }
 
-/// Answer a request that arrived after the server's JS wrapper was downgraded
-/// (idle keep-alive sockets aren't counted in `pending_requests`, so the
-/// wrapper can be gone before the next request fires). 503 instead of
+/// Answer a request that arrived after `finalize()` set the wrapper's
+/// `JsRef` to `Finalized` (idle keep-alive sockets aren't counted in
+/// `pending_requests`, so `self` can outlive the wrapper between the
+/// finalizer and the next-tick `schedule_deinit`). 503 instead of
 /// dispatching into a dead handler shadow. One helper so every dispatch
-/// trampoline gets the same guard. H1 closes the connection; H3 ends only this
-/// stream (`!R::IS_H3`) so sibling streams on the same QUIC connection survive
-/// — same per-protocol close treatment as the other reject fast paths.
+/// trampoline gets the same guard. H1 closes the connection; H3 ends only
+/// this stream (`!R::IS_H3`) so sibling streams on the same QUIC connection
+/// survive — same per-protocol close treatment as the other reject fast
+/// paths.
 #[inline]
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
@@ -1758,6 +1760,25 @@ where
         }
 
         if self.flags.contains(ServerFlags::TERMINATED) {
+            return Ok(JSValue::FALSE);
+        }
+
+        // After a graceful stop() has drained to idle, `deinit_if_we_can`
+        // downgrades the wrapper and clears `handler.server` / `handler.app`.
+        // `js_value_for_dispatch` still lets a late keep-alive request reach
+        // `fetch()` while the wrapper is `Weak`, but accepting a new websocket
+        // there would create a `ServerWebSocket` whose `init`/`on_open` skip
+        // the `m_server` trace edge and `on_websocket_opened()` (because
+        // `handler.server` is `None`), so `has_active_web_sockets()` would
+        // stay false and the next idle pass could free the `NewServer` box
+        // under a live socket. Refuse the upgrade once idle; the caller sees
+        // `false` and can fall through to a regular response.
+        if self
+            .config
+            .websocket
+            .as_ref()
+            .is_some_and(|ws| ws.handler.server.is_none())
+        {
             return Ok(JSValue::FALSE);
         }
 

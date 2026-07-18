@@ -774,6 +774,82 @@ test("late keep-alive request to a route after stop() dispatches while the wrapp
   );
 });
 
+test("late keep-alive WebSocket upgrade after stop()+idle is refused by server.upgrade()", async () => {
+  // Sibling of the HTTP late-keep-alive test for the WebSocket upgrade path.
+  // After `deinit_if_we_can` downgrades the wrapper AND clears
+  // `handler.server`/`handler.app`, `js_value_for_dispatch()` still lets the
+  // pipelined request reach `fetch()` while the wrapper is Weak, but
+  // `server.upgrade()` must return false: accepting would create a
+  // `ServerWebSocket` whose open/close accounting is skipped (`handler.server`
+  // is None), so `has_active_web_sockets()` would stay false and the next idle
+  // pass could free the `NewServer` box under a live socket.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const release = Promise.withResolvers();
+        const inflight = Promise.withResolvers();
+        let upgraded;
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1",
+          async fetch(req, server) {
+            if (req.headers.get("x-hold")) {
+              inflight.resolve();
+              await release.promise;
+              return new Response("held", { headers: { "content-length": "4" } });
+            }
+            upgraded = server.upgrade(req);
+            if (upgraded) return;
+            return new Response("426 no-upgrade", { status: 426, headers: { "content-length": "14" } });
+          },
+          websocket: { open() {}, message() {}, close() {} },
+        });
+        const port = server.port;
+        let received = "";
+        let sockClosed = false;
+        let waiter = Promise.withResolvers();
+        globalThis.sock = await Bun.connect({
+          hostname: "127.0.0.1", port,
+          socket: {
+            data(_s, d) { received += d.toString("latin1"); waiter.resolve(); },
+            close() { sockClosed = true; waiter.resolve(); },
+            error() { sockClosed = true; waiter.resolve(); },
+          },
+        });
+        // Hold one request so stop() can't downgrade yet.
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nx-hold: 1\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await inflight.promise;
+        // Pipeline the upgrade behind it.
+        const key = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("base64");
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: " + key + "\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
+        server.stop();
+        release.resolve();
+        // Wait for both responses.
+        while (!sockClosed && (received.match(/\\r\\n\\r\\n/g) || []).length < 2) {
+          await waiter.promise; waiter = Promise.withResolvers();
+        }
+        // Response bodies are not CRLF-terminated, so the next status line is
+        // glued to the previous body; match status lines by pattern.
+        const statuses = [...received.matchAll(/HTTP\\/1\\.1 \\d{3} [^\\r\\n]*/g)].map(m => m[0]);
+        sock.end();
+        console.log(JSON.stringify({ statuses, upgraded }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim() || "{}");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  // First request 200 (held handler), pipelined upgrade refused → 426 body.
+  expect(out.upgraded).toBe(false);
+  expect(out.statuses?.[0]).toMatch(/^HTTP\/1\.1 200\b/);
+  expect(out.statuses?.[1]).toMatch(/^HTTP\/1\.1 426\b/);
+});
+
 test("late keep-alive request to a node:http server after close() dispatches while the wrapper is Weak", async () => {
   // Same shape but through node:http so the request dispatches via
   // on_node_http_request_with_upgrade_ctx — the trampoline that would panic

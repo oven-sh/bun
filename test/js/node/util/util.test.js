@@ -517,5 +517,6 @@ describe("util.debuglog", () => {
       aliased: true,
     });
     expect(off.exitCode).toBe(0);
+    // Two ASAN-debug child startups exceed the 5s default under CI load.
   }, 20_000);
 });

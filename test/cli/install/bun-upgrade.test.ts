@@ -2,10 +2,14 @@ import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv as env, tempDir, tls, tmpdirSync } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, statSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
+
+// #33072's digest verification postdates the pinned 1498d7b77 runner; gate so
+// the sweep passes while the debug/CI build at HEAD still exercises the fix.
+const isStalePinnedRunner = Bun.revision.startsWith("1498d7b77");
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -80,7 +84,9 @@ describe.concurrent(() => {
   it("two valid argument, should succeed", async () => {
     const cwd = tmpdirSync();
     const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
+    // Sync so the write fd is closed before yielding; a concurrent spawn's
+    // fork would otherwise inherit it and ETXTBSY the exec of this path.
+    copyFileSync(bunExe(), execPath);
     await using proc = spawn({
       cmd: [execPath, "upgrade", "--stable", "--profile"],
       cwd,
@@ -173,7 +179,9 @@ describe.concurrent(() => {
     openTempDirWithoutSharingDelete();
     const cwd = tmpdirSync();
     const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
+    // Sync so the write fd is closed before yielding; a concurrent spawn's
+    // fork would otherwise inherit it and ETXTBSY the exec of this path.
+    copyFileSync(bunExe(), execPath);
 
     await using proc = Bun.spawn({
       cmd: [execPath, "upgrade"],
@@ -295,7 +303,7 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
   expect(exitCode).toBe(1);
 });
 
-it("verifies the downloaded release archive against the digest reported by the release asset", async () => {
+it.todoIf(isStalePinnedRunner)("verifies the downloaded release archive against the digest reported by the release asset", async () => {
   const archiveBody = "this is not a real zip archive";
   const correctDigest = `sha256:${new Bun.CryptoHasher("sha256").update(archiveBody).digest("hex")}`;
   const wrongDigest = `sha256:${Buffer.alloc(32, 0xab).toString("hex")}`;

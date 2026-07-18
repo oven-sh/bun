@@ -2,6 +2,12 @@ import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { parseHeapSnapshot, summarizeByType } from "./heap";
 
+// Each test below calls Bun.generateHeapSnapshot() in-process and then walks
+// the result in JS. When the full suite shares one process the heap is already
+// large (fuzzy-wuzzy, bcrypt/argon2 loops, etc. ran first), so a single
+// snapshot+parse is ~3s and the 12 MB FormData case ~6s — past the default 5s.
+const SNAPSHOT_TIMEOUT = 30_000;
+
 describe("Native types report their size correctly", () => {
   it("FormData", () => {
     var formData = new FormData();
@@ -28,7 +34,7 @@ describe("Native types report their size correctly", () => {
     );
 
     delete globalThis.formData;
-  });
+  }, SNAPSHOT_TIMEOUT);
 
   it("Request", () => {
     var request = new Request("https://example.com", {
@@ -45,7 +51,7 @@ describe("Native types report their size correctly", () => {
     expect(summariesMap.get("Request")?.size).toBeLessThan(1024 * 1024 * 4);
 
     delete globalThis.request;
-  });
+  }, SNAPSHOT_TIMEOUT);
 
   it("Response", () => {
     var response = new Response(Buffer.alloc(1024 * 1024 * 4, "yoo"), {
@@ -63,7 +69,7 @@ describe("Native types report their size correctly", () => {
     expect(summariesMap.get("Response")?.size).toBeGreaterThan(1024 * 1024 * 4);
 
     delete globalThis.response;
-  });
+  }, SNAPSHOT_TIMEOUT);
 
   it("URL (heap size reporting bug)", () => {
     for (let i = 0; i < 500; i++) {
@@ -97,7 +103,7 @@ describe("Native types report their size correctly", () => {
     expect(summariesMap.get("URL")?.size).toBeGreaterThan(searchParams.toString().length);
 
     delete globalThis.url;
-  });
+  }, SNAPSHOT_TIMEOUT);
 
   it("URLSearchParams", () => {
     const searchParams = new URLSearchParams();
@@ -120,7 +126,7 @@ describe("Native types report their size correctly", () => {
     );
 
     delete globalThis.searchParams;
-  });
+  }, SNAPSHOT_TIMEOUT);
 
   it("Headers", () => {
     const headers = new Headers();
@@ -142,7 +148,7 @@ describe("Native types report their size correctly", () => {
     expect(summariesMap.get("Headers")?.size).toBeGreaterThan([...headers.keys(), ...headers.values()].join("").length);
 
     delete globalThis.headers;
-  });
+  }, SNAPSHOT_TIMEOUT);
 
   it("WebSocket + ServerWebSocket + Request", async () => {
     using server = Bun.serve({
@@ -197,5 +203,5 @@ describe("Native types report their size correctly", () => {
     expect(summariesMap.get("WebSocket")?.size).toBeGreaterThan(1024 * 128);
 
     delete globalThis.ws;
-  });
+  }, SNAPSHOT_TIMEOUT);
 });

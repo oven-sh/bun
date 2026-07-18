@@ -152,10 +152,7 @@ impl<'a> TreeDepsSortCtx<'a> {
     pub(crate) fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> core::cmp::Ordering {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
-        strings::order(
-            l.name.slice(self.string_buf),
-            r.name.slice(self.string_buf),
-        )
+        strings::order(l.name.slice(self.string_buf), r.name.slice(self.string_buf))
     }
 }
 

@@ -657,10 +657,7 @@ impl VersionExt for Version {
 
     fn cmp_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> Ordering {
         lhs.tag.cmp(rhs.tag).then_with(|| {
-            strings::order(
-                lhs.literal.slice(string_buf),
-                rhs.literal.slice(string_buf),
-            )
+            strings::order(lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
         })
     }
 

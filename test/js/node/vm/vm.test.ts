@@ -922,6 +922,54 @@ describe("DONT_CONTEXTIFY", () => {
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
   });
+
+  test("script-level this === globalThis and var/function declarations land on the real global", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+
+    expect(runInContext("this === globalThis", ctx)).toBe(true);
+    expect(runInContext("this", ctx)).toBe(ctx);
+
+    runInContext("var vv = 3; function ff() { return 99; }", ctx);
+    expect({
+      varPersists: runInContext("typeof vv", ctx),
+      fnPersists: runInContext("typeof ff", ctx),
+      varValue: runInContext("vv", ctx),
+      fnCall: runInContext("ff()", ctx),
+      handleVar: ctx.vv,
+      handleFnType: typeof ctx.ff,
+      sameScript: runInContext("var zz = 9; typeof zz", ctx),
+      indirectEvalVar: runInContext("(0, eval)('var ie = 7'); typeof ie", ctx),
+    }).toEqual({
+      varPersists: "number",
+      fnPersists: "function",
+      varValue: 3,
+      fnCall: 99,
+      handleVar: 3,
+      handleFnType: "function",
+      sameScript: "number",
+      indirectEvalVar: "number",
+    });
+
+    // Script#runInContext goes through the same path.
+    const script = new Script("var sv = 42; sv");
+    expect(script.runInContext(ctx)).toBe(42);
+    expect(runInContext("sv", ctx)).toBe(42);
+    expect(ctx.sv).toBe(42);
+  });
+
+  test("var/function declarations work via runInNewContext", () => {
+    expect(
+      runInNewContext(
+        "var a = 1; function b(){}; [this === globalThis, typeof a, typeof b]",
+        constants.DONT_CONTEXTIFY,
+      ),
+    ).toEqual([true, "number", "function"]);
+    expect(
+      new Script("var a = 1; function b(){}; [this === globalThis, typeof a, typeof b]").runInNewContext(
+        constants.DONT_CONTEXTIFY,
+      ),
+    ).toEqual([true, "number", "function"]);
+  });
 });
 
 test("Loader is not defined in vm context", () => {

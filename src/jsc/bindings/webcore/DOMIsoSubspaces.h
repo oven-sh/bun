@@ -42,7 +42,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
-    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSpecialSandbox;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSourceTextModule;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSyntheticModule;

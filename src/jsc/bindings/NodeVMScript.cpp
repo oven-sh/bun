@@ -345,8 +345,12 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         }
     }
 
-    // Set the contextified object before evaluating
-    globalObject->setContextifiedObject(contextifiedObject);
+    // Set the contextified object before evaluating. A DONT_CONTEXTIFY context
+    // runs against the bare global (no sandbox interception), so leave
+    // m_sandbox unset there.
+    if (!globalObject->isNotContextified()) {
+        globalObject->setContextifiedObject(contextifiedObject);
+    }
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
@@ -603,6 +607,15 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
+    // vm.runInNewContext(code, DONT_CONTEXTIFY) hands us the vanilla context's
+    // global proxy (via createContext); run in that context rather than
+    // wrapping it as a contextified sandbox around a second global.
+    if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(contextObjectValue)) {
+        if (auto* existing = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); existing && existing->isNotContextified()) {
+            RELEASE_AND_RETURN(scope, runInContext(existing, script, proxy, callFrame->argument(1)));
+        }
+    }
+
     JSValue contextOptionsArg = callFrame->argument(1);
     NodeVMContextOptions contextOptions {};
     JSValue importer;
@@ -621,10 +634,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));
+        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->globalThis(), callFrame->argument(1)));
     }
 
     RELEASE_AND_RETURN(scope, runInContext(targetContext, script, context, callFrame->argument(1)));

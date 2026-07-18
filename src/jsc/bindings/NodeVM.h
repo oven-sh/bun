@@ -79,33 +79,6 @@ public:
     bool ownMicrotaskQueue = false;
 };
 
-class NodeVMGlobalObject;
-
-class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
-
-    static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
-
-    DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
-
-    NodeVMGlobalObject* parentGlobal() const { return m_parentGlobal.get(); }
-
-private:
-    WriteBarrier<NodeVMGlobalObject> m_parentGlobal;
-
-    NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject);
-
-    void finishCreation(VM&);
-};
-
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
@@ -135,8 +108,6 @@ public:
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
-    NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
@@ -151,8 +122,6 @@ public:
 private:
     // The contextified object that acts as the global proxy
     WriteBarrier<JSObject> m_sandbox;
-    // A special object used when the context is not contextified.
-    WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
 

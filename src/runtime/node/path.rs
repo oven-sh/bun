@@ -161,6 +161,72 @@ fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
     }
 }
 
+/// True iff every code unit is ASCII.
+#[inline]
+fn is_all_ascii_t<T: PathCharCwd>(s: &[T]) -> bool {
+    if T::IS_U16 {
+        return s.iter().all(|c| c.as_u32() < 0x80);
+    }
+    strings::is_all_ascii(bytemuck::cast_slice::<T, u8>(s))
+}
+
+/// Unicode-lowercase a path segment for case-insensitive comparison, matching
+/// JS `String.prototype.toLowerCase` (including the Final_Sigma Σ→ς rule) as
+/// used by Node's `path.win32.relative`.
+fn lowercase_windows_path_t<T: PathCharCwd>(src: &[T]) -> Vec<T> {
+    if T::IS_U16 {
+        // The u16 instantiation is unreachable at runtime (all JS entry
+        // points convert to UTF-8 and use T = u8); fold ASCII so the
+        // generic body type-checks and behaves soundly if ever exercised.
+        return src.iter().map(|c| to_lower_t(*c)).collect();
+    }
+    let bytes: &[u8] = bytemuck::cast_slice::<T, u8>(src);
+    // Valid UTF-8: str::to_lowercase implements Final_Sigma like JS.
+    if let Some(s) = strings::str_utf8(bytes) {
+        return s
+            .to_lowercase()
+            .into_bytes()
+            .into_iter()
+            .map(T::from_u8)
+            .collect();
+    }
+    // WTF-8 with an unpaired surrogate: fall back to per-codepoint fold.
+    let mut out: Vec<T> = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            out.push(T::from_u8(b.to_ascii_lowercase()));
+            i += 1;
+            continue;
+        }
+        let seq_len = strings::wtf8_byte_sequence_length(b) as usize;
+        let avail = (bytes.len() - i).min(4);
+        let mut quad = [0u8; 4];
+        quad[..avail].copy_from_slice(&bytes[i..i + avail]);
+        let cp = strings::decode_wtf8_rune_t::<u32>(quad, seq_len as u8, 0);
+        let consumed = seq_len.min(avail).max(1);
+        match char::from_u32(cp).filter(|_| cp != 0) {
+            Some(ch) => {
+                let mut enc = [0u8; 4];
+                for lc in ch.to_lowercase() {
+                    let n = strings::encode_wtf8_rune(&mut enc, lc as u32);
+                    for &eb in &enc[..n] {
+                        out.push(T::from_u8(eb));
+                    }
+                }
+            }
+            None => {
+                for &rb in &bytes[i..i + consumed] {
+                    out.push(T::from_u8(rb));
+                }
+            }
+        }
+        i += consumed;
+    }
+    out
+}
+
 // `jsc.Node.Maybe([]T, Syscall.Error)` → bun_sys::Result<&mut [T]>
 type MaybeBuf<'a, T> = bun_sys::Result<&'a mut [T]>;
 // `jsc.Node.Maybe([:0]const T, Syscall.Error)` → bun_sys::Result<&[T]>
@@ -2553,7 +2619,6 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
 
     // Backed by expandable buf2 because fromOrig may be long.
     let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
-    let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
     // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
@@ -2571,9 +2636,87 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         len
     };
 
-    if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
+    if from_orig == &buf[0..to_orig_len] {
         return Ok(&[]);
     }
+
+    // Node lowercases the resolved paths with StringPrototypeToLowerCase before
+    // comparing. For non-ASCII input that fold can shift '\' byte offsets, so
+    // route any non-ASCII path through per-segment comparison (as Node does).
+    if !is_all_ascii_t(from_orig) || !is_all_ascii_t(&buf[0..to_orig_len]) {
+        let bslash = T::from_u8(CHAR_BACKWARD_SLASH);
+        let out: Vec<T> = {
+            let to_orig_slice = &buf[0..to_orig_len];
+            let mut from_segs: Vec<&[T]> = from_orig.split(|c| *c == bslash).collect();
+            let mut to_segs: Vec<&[T]> = to_orig_slice.split(|c| *c == bslash).collect();
+            // Drop leading empties (UNC '\\' prefix) so different UNC roots
+            // hit the i==0 guard, and drop a trailing empty (root '\').
+            for segs in [&mut from_segs, &mut to_segs] {
+                if matches!(segs.last(), Some(s) if s.is_empty()) {
+                    segs.pop();
+                }
+                let skip = segs.iter().take_while(|s| s.is_empty()).count();
+                segs.drain(0..skip);
+            }
+            let from_seg_count = from_segs.len();
+            let to_seg_count = to_segs.len();
+            let length = from_seg_count.min(to_seg_count);
+            let mut i = 0usize;
+            while i < length {
+                if lowercase_windows_path_t(from_segs[i]) != lowercase_windows_path_t(to_segs[i]) {
+                    break;
+                }
+                i += 1;
+            }
+            let dot = T::from_u8(CHAR_DOT);
+            let dotdots = |n: usize, trailing_sep: bool| -> Vec<T> {
+                let mut v = Vec::with_capacity(n * 3);
+                for k in 0..n {
+                    v.push(dot);
+                    v.push(dot);
+                    if trailing_sep || k + 1 < n {
+                        v.push(bslash);
+                    }
+                }
+                v
+            };
+            let join_tail = |segs: &[&[T]]| -> Vec<T> {
+                let mut v = Vec::new();
+                for (k, seg) in segs.iter().enumerate() {
+                    if k > 0 {
+                        v.push(bslash);
+                    }
+                    v.extend_from_slice(seg);
+                }
+                v
+            };
+            if i == length {
+                if to_seg_count > length {
+                    join_tail(&to_segs[i..])
+                } else if from_seg_count > length {
+                    dotdots(from_seg_count - i, false)
+                } else {
+                    Vec::new()
+                }
+            } else if i == 0 {
+                to_orig_slice.to_vec()
+            } else {
+                let mut v = dotdots(from_seg_count - i, true);
+                v.extend_from_slice(&join_tail(&to_segs[i..]));
+                v
+            }
+        };
+        let n = out.len();
+        buf[0..n].copy_from_slice(&out);
+        buf[n] = T::default();
+        return Ok(&buf[0..n]);
+    }
+
+    // Both paths are all-ASCII: the per-byte ASCII fold below is exact.
+    if eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
+        return Ok(&[]);
+    }
+    let from_orig_len = from_orig.len();
 
     // Trim leading backslashes
     let mut from_start: usize = 0;

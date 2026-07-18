@@ -2059,8 +2059,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
-    safe fn JSC__JSValue__fastGetOwn(this: JSValue, global: &JSGlobalObject, builtin: u8)
-    -> JSValue;
+    safe fn JSC__JSValue__fastGetOwn(
+        this: JSValue,
+        global: &JSGlobalObject,
+        builtin: u8,
+    ) -> JSValue;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,

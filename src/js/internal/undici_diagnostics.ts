@@ -177,7 +177,6 @@ function onComplete(request) {
 function onError(request, error) {
   if (!request) return;
   request.aborted = true;
-  request.completed = true;
   if (requestErrorChannel.hasSubscribers) {
     requestErrorChannel.publish({ request, error });
   }

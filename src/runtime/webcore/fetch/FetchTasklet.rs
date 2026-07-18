@@ -92,7 +92,13 @@ pub(crate) mod undici_diagnostics {
         method: bun_http::Method,
         headers: &mut Headers,
     ) -> JsResult<Option<JSValue>> {
-        let origin = js_str(global, url.origin);
+        // WHATWG URL.origin never includes userinfo; bun_url's origin does, so
+        // rebuild from protocol + host to avoid leaking credentials to APM sinks.
+        let mut origin_buf = Vec::with_capacity(url.protocol.len() + 3 + url.host.len());
+        origin_buf.extend_from_slice(url.protocol);
+        origin_buf.extend_from_slice(b"://");
+        origin_buf.extend_from_slice(url.host);
+        let origin = js_str(global, &origin_buf);
         let method_js = js_str(global, method.as_str().as_bytes());
         // ZigURL.pathname already includes the query string (unlike WHATWG URL).
         let path_js = js_str(global, url.pathname);

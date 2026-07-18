@@ -56,7 +56,7 @@ process.stdout.write(JSON.stringify({
                protocol: connected.connectParams.protocol },
   sendHeaders: { keys: Object.keys(sendHeaders).sort(), hasRequestLine: sendHeaders.headers.startsWith("GET /p?q=1 HTTP/1.1") },
   bodySent: !!fired["undici:request:bodySent"],
-  errorFired: fired["undici:request:error"]?.length > 0 && errRequest?.completed === true,
+  errorFired: fired["undici:request:error"]?.length > 0 && errRequest?.aborted === true && errRequest?.completed === false,
   errorIsError: fired["undici:request:error"]?.[0]?.error instanceof Error,
   trailersOnErrorPath: (fired["undici:request:trailers"] ?? []).length - trailersCountOk,
 }));

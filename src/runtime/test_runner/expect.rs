@@ -8,6 +8,7 @@ use crate::{
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use crate::{JsClass as _, StringJsc as _};
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::ZigString;
 use crate::js_promise;
 use crate::vm::virtual_machine::VirtualMachine;

@@ -11,6 +11,8 @@ use bun_jsc::{
 
 use bun_lsquic_sys as lsquic;
 
+use super::OrReport;
+
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
 use super::ffi::lsquic_callback;
@@ -852,7 +854,7 @@ impl QuicSession {
             if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
                 continue;
             }
-            let buf = ArrayBuffer::create_buffer(global, &blob).unwrap_or(JSValue::UNDEFINED);
+            let buf = ArrayBuffer::create_buffer(global, &blob).or_report(global);
             if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref()
@@ -1016,7 +1018,7 @@ impl QuicSession {
                         continue;
                     }
                     let buf =
-                        ArrayBuffer::create_buffer(global, &token).unwrap_or(JSValue::UNDEFINED);
+                        ArrayBuffer::create_buffer(global, &token).or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref()
@@ -1048,7 +1050,7 @@ impl QuicSession {
                         continue;
                     }
                     let buf =
-                        ArrayBuffer::create_buffer(global, &blob).unwrap_or(JSValue::UNDEFINED);
+                        ArrayBuffer::create_buffer(global, &blob).or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref()
@@ -1063,7 +1065,8 @@ impl QuicSession {
                         continue;
                     };
                     let handle = stream.handle();
-                    if let Ok(err) = make_application_error(global, code) {
+                    let err = make_application_error(global, code).or_report(global);
+                    {
                         if let Some(cb) = callbacks::get(global, "onStreamReset") {
                             let vm = global.bun_vm().as_mut();
                             vm.event_loop_ref().run_callback(cb, global, handle, &[err]);
@@ -1116,9 +1119,10 @@ impl QuicSession {
                     let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
                         Ok(bun_core::String::clone_latin1(s)
                             .to_js(global)
-                            .unwrap_or(JSValue::UNDEFINED))
+                            .or_report(global))
                     });
-                    if let Ok(js_arr) = js_arr {
+                    let js_arr = js_arr.or_report(global);
+                    {
                         if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
                             let vm = global.bun_vm().as_mut();
                             vm.event_loop_ref().run_callback(
@@ -1172,9 +1176,7 @@ impl QuicSession {
                     if !self.has_listener(LISTENER_FLAG_DATAGRAM) {
                         continue;
                     }
-                    let Ok(buf) = ArrayBuffer::create_buffer(global, &payload) else {
-                        continue;
-                    };
+                    let buf = ArrayBuffer::create_buffer(global, &payload).or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionDatagram") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
@@ -1282,23 +1284,20 @@ impl QuicSession {
                     let Some((requested, min)) = self.verneg.get() else {
                         continue;
                     };
-                    let Ok(requested_arr) =
+                    let requested_arr =
                         JSValue::create_array_from_iter(global, server_versions.into_iter(), |v| {
                             Ok(JSValue::js_number(v as f64))
                         })
-                    else {
-                        continue;
-                    };
+                        .or_report(global);
                     // Node passes the locally-configured range as
                     // `[min_version, version]` (session.cc
                     // EmitVersionNegotiation).
-                    let Ok(supported_arr) = JSValue::create_array_from_iter(
+                    let supported_arr = JSValue::create_array_from_iter(
                         global,
                         [min, requested].into_iter(),
                         |v| Ok(JSValue::js_number(v as f64)),
-                    ) else {
-                        continue;
-                    };
+                    )
+                    .or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
@@ -1331,13 +1330,11 @@ impl QuicSession {
                         ranges.push((off, n));
                         off += n;
                     }
-                    let Ok(array) =
+                    let array =
                         JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
                             bun_core::String::clone_utf8(&payload[o..o + n]).to_js(global)
                         })
-                    else {
-                        continue;
-                    };
+                        .or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref()
@@ -1544,7 +1541,7 @@ impl QuicSession {
             .unwrap_or(JSValue::UNDEFINED);
         let cipher_version = bun_core::String::static_(b"TLSv1.3")
             .to_js(global)
-            .unwrap_or(JSValue::UNDEFINED);
+            .or_report(global);
         // Node reports both fields only on failure -- the JS 'auto' rejection
         // gates on `validationErrorReason !== undefined` -- and a server with
         // no client certificate reports X509_V_ERR_UNSPECIFIED.
@@ -1559,10 +1556,10 @@ impl QuicSession {
             Some((code, reason)) => (
                 bun_core::String::static_(reason.as_bytes())
                     .to_js(global)
-                    .unwrap_or(JSValue::UNDEFINED),
+                    .or_report(global),
                 bun_core::String::static_(code.as_bytes())
                     .to_js(global)
-                    .unwrap_or(JSValue::UNDEFINED),
+                    .or_report(global),
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
@@ -2276,7 +2273,7 @@ impl QuicSession {
             } else {
                 bun_core::String::clone_utf8(s.as_bytes())
                     .to_js(global)
-                    .unwrap_or(JSValue::UNDEFINED)
+                    .or_report(global)
             };
             obj.put(global, name, v);
         };
@@ -2291,7 +2288,7 @@ fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
         Some(b) => bun_core::String::clone_utf8(b)
             .to_js(global)
-            .unwrap_or(JSValue::UNDEFINED),
+            .or_report(global),
         None => JSValue::UNDEFINED,
     }
 }

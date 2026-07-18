@@ -16,6 +16,26 @@ pub(crate) fn now_ns() -> u64 {
     bun_core::util::Timespec::now_allow_mocked_time().ns()
 }
 
+/// Turns a fallible JS-value construction into a value at a boundary that
+/// cannot propagate, reporting the exception instead of leaving it pending —
+/// a pending exception makes the next `callbacks::get()` return `None` and
+/// silently drops later events.
+pub(crate) trait OrReport {
+    fn or_report(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
+}
+
+impl OrReport for bun_jsc::JsResult<bun_jsc::JSValue> {
+    fn or_report(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                global.report_uncaught_exception_from_error(e);
+                bun_jsc::JSValue::UNDEFINED
+            }
+        }
+    }
+}
+
 pub(crate) mod callbacks {
     use bun_jsc::{JSGlobalObject, JSValue};
 

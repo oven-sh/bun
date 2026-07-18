@@ -356,10 +356,11 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
-        // `on_upgrade` refuses once `handler.server` is cleared (idle
-        // downgrade), so this is always `Some` on the `server.upgrade()`
-        // path. The node:http `NodeHTTPResponse::upgrade` path reaches here
-        // without that guard, so keep the `and_then` chain.
+        // Both callers route through `on_upgrade`'s `handler.server.is_none()`
+        // refusal, so this is normally `Some`; keep the `and_then` as
+        // defense-in-depth (option getters between that guard and here can
+        // re-enter JS and `stop(true)`, and `js_value_for_dispatch` still
+        // returns `None` on `Finalized`).
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(this_value, global_object, server_js);
         }

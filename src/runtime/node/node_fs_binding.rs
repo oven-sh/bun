@@ -2,6 +2,7 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::ArgumentsSlice;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 

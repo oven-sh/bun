@@ -1493,7 +1493,6 @@ impl QuicSession {
         if !ok {
             return;
         }
-        self.capture_hsk_snapshot();
         let (snap_sni, snap_cipher, alpn_bytes, snap_validation, early_data, have_peer_cert) = {
             let s = self.hsk_snapshot.get();
             match s.as_ref() {

@@ -140,6 +140,26 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(plain.cxxflags).not.toContain("-fno-split-lto-unit");
   });
 
+  test("release builds disable clang-cl's default stack buffer security check; debug keeps it", () => {
+    // clang-cl turns /GS on by its own driver default while plain clang turns
+    // it off, so the Linux and macOS release binaries have never carried a
+    // stack canary. /GS- makes the Windows release binary match. Only the
+    // /GS- spelling works: clang-cl silently ignores `-fno-stack-protector`
+    // and still emits `-stack-protector 2` on the cc1 line, so that spelling
+    // must never appear here.
+    const release = computeFlags(resolveWindowsCross());
+    expect(release.cflags).toContain("/GS-");
+    expect(release.cxxflags).toContain("/GS-");
+    expect(release.cflags).not.toContain("-fno-stack-protector");
+    expect(release.cxxflags).not.toContain("-fno-stack-protector");
+
+    // Debug keeps the driver default: the canary is a useful crash-detection
+    // net during development, where its size does not matter.
+    const debug = computeFlags(resolveWindowsCross({ buildType: "Debug", ci: false }));
+    expect(debug.cflags).not.toContain("/GS-");
+    expect(debug.cxxflags).not.toContain("/GS-");
+  });
+
   test("the link uses rustc's lld-link sibling when rustc's LLVM is newer than clang's", () => {
     // resolveConfig swaps cfg.ld so lld-link can read the LLVM-22 bitcode
     // rustc emits under -Clinker-plugin-lto (bitcode is forward-compatible

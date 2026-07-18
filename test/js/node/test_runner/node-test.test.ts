@@ -224,11 +224,11 @@ describe("node:test", () => {
 
   test("should not run a skipped suite's callback", async () => {
     const { exitCode, stdout, stderr } = await runTests(["26-skipped-suite-body.js"]);
-    expect(stdout).not.toContain("SKIPPED SUITE BODY RAN");
+    expect(stdout).not.toContain("[suite body ran: skip-only]");
     // { skip: true, todo: true } is a skip in Node, so this body is skipped too.
-    expect(stdout).not.toContain("SKIP+TODO SUITE BODY RAN");
+    expect(stdout).not.toContain("[suite body ran: both-flags]");
     // A todo suite's callback does run.
-    expect(stdout).toContain("TODO SUITE BODY RAN");
+    expect(stdout).toContain("[suite body ran: pending-only]");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

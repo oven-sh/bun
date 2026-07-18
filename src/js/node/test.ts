@@ -844,7 +844,9 @@ class TestNode {
   // of all scheduled tasks (see scheduleSubtask).
   subtestChain: Promise<void> = Promise.resolve();
   concurrency: number = 1;
-  #subtestSlot: { active: number; queue: Array<() => void>; seed: Promise<void> } | undefined;
+  #subtestSlot:
+    | { active: number; queue: { push(v: () => void): void; shift(): (() => void) | undefined }; seed: Promise<void> }
+    | undefined;
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
@@ -925,7 +927,7 @@ class TestNode {
     if (this.concurrency <= 1) {
       return (this.subtestChain = this.subtestChain.then(run));
     }
-    const slot = (this.#subtestSlot ??= { active: 0, queue: [], seed: this.subtestChain });
+    const slot = (this.#subtestSlot ??= { active: 0, queue: $createFIFO(), seed: this.subtestChain });
     let acquired: Promise<void>;
     if (slot.active < this.concurrency) {
       slot.active++;

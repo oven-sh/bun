@@ -113,7 +113,8 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 
         depend() {
           need net
-          use dns logger
+          use dns logger docker
+          after docker
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
@@ -251,6 +252,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
         Description=Buildkite Agent
         After=syslog.target
         After=network-online.target
+        After=docker.service
 
         [Service]
         Type=simple

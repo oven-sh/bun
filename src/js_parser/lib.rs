@@ -504,8 +504,7 @@ pub mod defines {
     /// reads are case-insensitive at runtime, so the bundle-time lookup must
     /// be too; on other platforms it stays case-sensitive.
     #[cfg(windows)]
-    pub type EnvDotsMap =
-        bun_collections::CaseInsensitiveAsciiStringArrayHashMap<DefineData>;
+    pub type EnvDotsMap = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<DefineData>;
     #[cfg(not(windows))]
     pub type EnvDotsMap = StringArrayHashMap<DefineData>;
 

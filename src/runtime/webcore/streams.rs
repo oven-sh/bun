@@ -1396,23 +1396,25 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         );
         // `pin()` prevents `transfer()` from detaching the backing store;
         // `protect()` GC-roots the cell. Both are released together on drain,
-        // spill, abort or destroy.
-        if input_value
-            .as_pinned_arraybuffer(self.global_this())
-            .is_none()
-        {
-            // Not ArrayBuffer-backed after all; copy the tail so it outlives
-            // this call.
-            res.spill_body(&bytes[consumed..]);
-            self.wrote += (len - consumed) as BlobSizeType;
-            self.has_backpressure = true;
-            return Some(self.writable_result(len as BlobSizeType));
+        // spill, abort or destroy. Resizable / growable-shared buffers are
+        // excluded: resize() keeps the base pointer but mprotect()s trimmed
+        // pages PROT_NONE, so a retained raw slice would fault.
+        match input_value.as_pinned_arraybuffer(self.global_this()) {
+            Some(ab) if !ab.resizable => {
+                input_value.protect();
+                self.pending_pinned_write = PendingPinnedWrite {
+                    remaining: core::ptr::from_ref(&bytes[consumed..]),
+                    pinned_value: input_value,
+                };
+            }
+            pinned => {
+                if pinned.is_some() {
+                    input_value.unpin_array_buffer();
+                }
+                res.spill_body(&bytes[consumed..]);
+                self.wrote += (len - consumed) as BlobSizeType;
+            }
         }
-        input_value.protect();
-        self.pending_pinned_write = PendingPinnedWrite {
-            remaining: core::ptr::from_ref(&bytes[consumed..]),
-            pinned_value: input_value,
-        };
         self.has_backpressure = true;
         Some(self.writable_result(len as BlobSizeType))
     }

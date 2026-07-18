@@ -66,6 +66,9 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
                   controller.end();
                 } catch (e) {
                   handlerError = e;
+                  try {
+                    controller.end();
+                  } catch {}
                   serverReady.resolve();
                 }
               },
@@ -155,6 +158,42 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
     expect(body.length).toBe(first.length + second.length);
     expect(sha1(body.subarray(0, first.length))).toBe(firstHash);
     expect(Buffer.compare(body.subarray(first.length), second)).toBe(0);
+  });
+
+  test("a resizable ArrayBuffer is spilled, not pinned", async () => {
+    // Resizable buffers reserve maxByteLength virtually; resize() down
+    // mprotect()s the trimmed pages PROT_NONE, so the pinned path must not
+    // retain a raw slice into one. The tail is copied into backpressure
+    // instead, so resizing mid-flight is safe.
+    const ab = new ArrayBuffer(CHUNK_SIZE, { maxByteLength: CHUNK_SIZE });
+    const payload = new Uint8Array(ab);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    const expectedHash = sha1(payload);
+
+    let detached: boolean | undefined;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller: any) {
+              controller.write(payload);
+              // Not pinned: transfer() detaches immediately (the tail was
+              // copied into uWS backpressure).
+              ab.transfer();
+              detached = ab.detached;
+              controller.end();
+            },
+          } as any),
+        );
+      },
+    });
+
+    const body = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expectedHash);
+    expect(detached).toBe(true);
   });
 
   test("readStreamIntoSink: a large enqueue() delivers the exact bytes", async () => {

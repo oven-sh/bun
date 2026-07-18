@@ -337,4 +337,21 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       expect(e.cause.code).toBe(e.code);
     }
   });
+
+  // DecompressionStream rejects trailing bytes after the compressed data. Concatenated
+  // gzip members are a single valid stream per RFC 1952 section 2.2, not trailing junk,
+  // so they must still decode in full.
+  test("gzip decodes concatenated members rather than stopping at the first", async () => {
+    const gzip = async (text: string) =>
+      new Uint8Array(
+        await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
+      );
+    const concatenated = Buffer.concat([await gzip("hello "), await gzip("world")]);
+
+    const decoded = await new Response(
+      new Blob([concatenated]).stream().pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+
+    expect(decoded).toBe("hello world");
+  });
 });

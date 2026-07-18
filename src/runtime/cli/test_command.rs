@@ -769,10 +769,7 @@ impl JunitReporter {
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
 pub(crate) fn should_drain_event_loop() -> bool {
-    static DRAIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *DRAIN.get_or_init(|| {
-        std::env::var_os("BUN_TEST_DRAIN_EVENT_LOOP").is_some_and(|value| value == "1")
-    })
+    env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
 pub struct CommandLineReporter {

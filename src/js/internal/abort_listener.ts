@@ -11,11 +11,13 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
   if (signal.aborted) {
     queueMicrotask(() => listener());
   } else {
-    // The native EventTarget drops node's [kResistStopPropagation] listener
-    // option, so an earlier listener's stopImmediatePropagation() would
-    // silence this one. A native abort algorithm runs in runAbortSteps()
-    // before the 'abort' event dispatch and cannot be suppressed; algorithms
-    // are one-shot, preserving the `once` semantics.
+    // The native EventTarget drops node's [kResistStopPropagation] option, so an
+    // earlier listener's stopImmediatePropagation() would silence a plain
+    // addEventListener. The abort algorithm runs in runAbortSteps() before
+    // dispatch and cannot be suppressed; the paired once-listener keeps
+    // events.listenerCount(signal, 'abort') observable like node's addEventListener.
+    const counted = () => {};
+    signal.addEventListener("abort", counted, { __proto__: null, once: true } as AddEventListenerOptions);
     const algorithmId = $addAbortAlgorithmToSignal(signal, function () {
       removeEventListener = undefined;
       const event = new Event("abort");
@@ -24,6 +26,7 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
       listener.$call(signal, event);
     });
     removeEventListener = () => {
+      signal.removeEventListener("abort", counted);
       $removeAbortAlgorithmFromSignal(signal, algorithmId);
     };
   }

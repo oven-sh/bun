@@ -249,6 +249,7 @@ function validateRunOptions(options: Record<string, unknown>) {
     globalSetupPath,
     only,
     testNamePatterns,
+    testSkipPatterns,
     testTagFilterExpressions,
     concurrency: (options as any).concurrency,
     timeout: (options as any).timeout,
@@ -269,13 +270,17 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   }
 
   // Options whose semantics we cannot honor yet must fail loudly rather than be
-  // silently ignored — a silent no-op is worse than an explicit throw.
+  // silently ignored. testTagFilters is the deliberate exception: validated for
+  // node's error contract but not yet forwarded, pending the native reporter hook.
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
   if (opts.isolation === "none") throwNotImplemented("run({ isolation: 'none' })", 5090);
   if (opts.globPatterns?.length > 0) throwNotImplemented("run({ globPatterns })", 5090);
   if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
+  if (opts.only) throwNotImplemented("run({ only: true })", 5090);
+  if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
+  if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
 
   runFiles(opts, reporter);
   return reporter;
@@ -1731,6 +1736,7 @@ type TestOptions = {
   timeout?: number;
   plan?: number;
   tags?: string[];
+  expectFailure?: unknown;
 };
 
 type HookOptions = {

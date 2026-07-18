@@ -94,7 +94,7 @@ function Certificate(): void {
   this.exportPublicKey = exportPublicKey;
   this.exportChallenge = exportChallenge;
 }
-Certificate.prototype = {};
+$toClass(Certificate, "Certificate");
 Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;

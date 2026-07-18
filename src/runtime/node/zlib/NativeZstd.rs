@@ -46,7 +46,6 @@ mod _impl {
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
         /// External-allocation footprint reported to the GC, fixed at
@@ -111,7 +110,6 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
                 // CompressionStream::write before scheduling; placeholder here.

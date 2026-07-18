@@ -275,12 +275,10 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
     }
 }
 
-// Node derives validity from start/end only (lib/internal/perf/usertiming.js
-// calculateStartDuration), so `measure(name, { detail })` and
-// `measure(name, { duration })` fall through to start = 0, end = now() instead
-// of throwing. User Timing L3 counts `detail` toward a non-empty dictionary;
-// node-compat wins here.
-static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions)
+// Node (lib/internal/perf/usertiming.js calculateStartDuration) only treats
+// start/end as supplying timing; User Timing L3 also counts detail/duration,
+// but node-compat wins here.
+static bool hasStartOrEnd(const PerformanceMeasureOptions& measureOptions)
 {
     return measureOptions.start || measureOptions.end;
 }
@@ -291,7 +289,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
         return std::visit(
             WTF::makeVisitor(
                 [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
-                    if (isNonEmptyDictionary(measureOptions)) {
+                    if (hasStartOrEnd(measureOptions)) {
                         if (!endMark.isNull())
                             return Exception { TypeError };
                         if (measureOptions.start && measureOptions.duration && measureOptions.end)

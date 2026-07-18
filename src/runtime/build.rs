@@ -67,4 +67,21 @@ fn main() {
     println!("cargo:rerun-if-changed={}", gen_jssink_rs.display());
     println!("cargo:rerun-if-changed={}", gen_host_exports_rs.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
+
+    // §8 Step 13.3: `#[path]`-mounted source dirs live outside CARGO_MANIFEST_DIR.
+    for dir in [
+        "sql_jsc",
+        "http_jsc",
+        "css_jsc",
+        "bundler_jsc",
+        "install_jsc",
+        "js_parser_jsc",
+        "sourcemap_jsc",
+        "patch_jsc",
+        "semver_jsc",
+        "sys_jsc",
+        "ast_jsc",
+    ] {
+        println!("cargo:rerun-if-changed=../{dir}/");
+    }
 }

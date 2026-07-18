@@ -40,4 +40,30 @@ fn main() {
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", build_options.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
+
+    // §8 Step 13.3: `#[path]`-mounted source dirs live outside CARGO_MANIFEST_DIR.
+    for dir in [
+        "io",
+        "bun_alloc",
+        "mimalloc_sys",
+        "simdutf_sys",
+        "wyhash",
+        "highway",
+        "hash",
+        "ptr",
+        "safety",
+        "collections",
+        "base64",
+        "errno",
+        "paths",
+        "libuv_sys",
+        "url",
+        "semver",
+        "http_types",
+        "analytics",
+        "picohttp",
+        "valkey",
+    ] {
+        println!("cargo:rerun-if-changed=../{dir}/");
+    }
 }

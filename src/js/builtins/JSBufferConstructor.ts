@@ -13,15 +13,14 @@ export function from(value, encodingOrOffset, length) {
       return Buffer.from(valueOf, encodingOrOffset, length);
     }
 
-    const valueLength = value.length;
-    if (valueLength !== undefined || $inheritsArrayBuffer(value.buffer)) {
-      if (typeof valueLength !== "number") return new $Buffer(0);
-      if (valueLength <= 0) return new $Buffer(0);
+    if (value.length !== undefined || $inheritsArrayBuffer(value.buffer)) {
+      if (typeof value.length !== "number") {
+        return new $Buffer(0);
+      }
       return new $Buffer(value);
     }
     const { type, data } = value;
     if (type === "Buffer" && $isArray(data)) {
-      if (data.length <= 0) return new $Buffer(0);
       return new $Buffer(data);
     }
 

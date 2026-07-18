@@ -304,7 +304,11 @@ describe("InternalSourceMap round-trip", () => {
     let prevOrigCol = 0;
     const emit = (genCol: number, origLine: number, origCol: number) => {
       if (vlqIn.length && !vlqIn.endsWith(";")) vlqIn += ",";
-      vlqIn += encodeVLQ(genCol - prevGenCol) + encodeVLQ(0) + encodeVLQ(origLine - prevOrigLine) + encodeVLQ(origCol - prevOrigCol);
+      vlqIn +=
+        encodeVLQ(genCol - prevGenCol) +
+        encodeVLQ(0) +
+        encodeVLQ(origLine - prevOrigLine) +
+        encodeVLQ(origCol - prevOrigCol);
       prevGenCol = genCol;
       prevOrigLine = origLine;
       prevOrigCol = origCol;

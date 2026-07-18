@@ -1,8 +1,12 @@
 import { expect, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { isASAN } from "harness";
 
 const asanIsSlowMultiplier = isASAN ? 0.2 : 1;
 const count = Math.floor(10000 * asanIsSlowMultiplier);
+
+// 10k fresh module records + a Bun.gc(true) on the whole-suite heap is seconds
+// of work when every test shares one process — give both loops real headroom.
+const IMPORT_HEAVY_TIMEOUT = 60_000;
 
 test(
   `load the same file ${count} times`,
@@ -31,16 +35,20 @@ test(
     Bun.gc(true);
     Bun.unsafe.gcAggressionLevel(prev);
   },
-  isDebug || isASAN ? 20_000 : 5000,
+  IMPORT_HEAVY_TIMEOUT,
 );
 
-test(`load the same empty JS file ${count} times`, async () => {
-  const prev = Bun.unsafe.gcAggressionLevel();
-  Bun.unsafe.gcAggressionLevel(0);
-  for (let i = 0; i < count; i++) {
-    const { default: obj } = await import("./load-same-empty-js-file-a-lot.js?i=" + i);
-    expect(obj).toEqual({});
-  }
-  Bun.gc(true);
-  Bun.unsafe.gcAggressionLevel(prev);
-});
+test(
+  `load the same empty JS file ${count} times`,
+  async () => {
+    const prev = Bun.unsafe.gcAggressionLevel();
+    Bun.unsafe.gcAggressionLevel(0);
+    for (let i = 0; i < count; i++) {
+      const { default: obj } = await import("./load-same-empty-js-file-a-lot.js?i=" + i);
+      expect(obj).toEqual({});
+    }
+    Bun.gc(true);
+    Bun.unsafe.gcAggressionLevel(prev);
+  },
+  IMPORT_HEAVY_TIMEOUT,
+);

@@ -1061,10 +1061,10 @@ fn parse_args_impl(
     bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
+    result.put(global, ZigString::static_("values"), state.values);
+    result.put(global, ZigString::static_("positionals"), state.positionals);
     if return_tokens {
         result.put(global, ZigString::static_("tokens"), state.tokens);
     }
-    result.put(global, ZigString::static_("values"), state.values);
-    result.put(global, ZigString::static_("positionals"), state.positionals);
     Ok(result)
 }

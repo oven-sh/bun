@@ -880,7 +880,7 @@ impl<'a> TransformTask<'a> {
                     }
                 }
 
-                break 'brk self.log.to_js(self.global, "Transform failed");
+                break 'brk self.log.to_js(self.global, "Parse error");
             };
 
             promise.reject_with_async_stack(self.global, error_value)?;

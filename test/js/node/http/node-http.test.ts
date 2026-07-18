@@ -3664,12 +3664,9 @@ const rawPost = (path: string, body: string) =>
 // Responses whose header block has fully arrived.
 const responsesIn = (raw: string) => Math.min(raw.split("HTTP/1.1 ").length - 1, raw.split("\r\n\r\n").length - 1);
 
-// Pipelines every request into one segment. `until` "responses" hangs up as
-// soon as they have all arrived; "serverClose" waits for the server to hang up
-// instead, so a test can assert it did. Resolving on "close" in either case
-// means a server that tears the connection down mid-pipeline yields the
-// truncated bytes (an assertion failure) rather than hanging until the test
-// times out.
+// Pipelines every request in one segment. "responses" hangs up once all arrive;
+// "serverClose" waits for the server to. Resolving on "close" either way turns
+// a mid-pipeline teardown into a truncated-bytes assertion instead of a hang.
 function sendRequests(
   port: number,
   requests: string[],

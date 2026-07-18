@@ -5,8 +5,9 @@ import { getSecret } from "harness";
 // S3Client resolves its proxy from the native env map without consulting
 // NO_PROXY, so a CI HTTP_PROXY would swallow requests to our localhost mock
 // endpoints. Blank the proxy vars for this file and restore afterwards.
-// NOTE: `delete process.env.X` removes the JS accessor but does NOT sync to the
-// native env map that S3 reads — assigning "" does (empty == no proxy).
+// NOTE: these keys are backed by native CustomAccessors on process.env that
+// sync writes into the env map S3 reads. `delete` strips the accessor for the
+// rest of the process, so we only ever assign (empty string == no proxy).
 const proxyEnvKeys = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
 const savedProxyEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
@@ -18,7 +19,6 @@ beforeAll(() => {
 afterAll(() => {
   for (const key of proxyEnvKeys) {
     process.env[key] = savedProxyEnv[key] ?? "";
-    if (savedProxyEnv[key] === undefined) delete process.env[key];
   }
 });
 

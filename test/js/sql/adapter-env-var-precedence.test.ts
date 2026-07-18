@@ -29,14 +29,28 @@ describe("SQL adapter environment variable precedence", () => {
     'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
   ];
 
+  // These process.env keys are backed by native CustomAccessors that sync
+  // writes into Bun's internal env map (read by fetch/S3 proxy resolution,
+  // TZ handling, etc.). `delete` removes the accessor permanently; a later
+  // `process.env.X = ...` then becomes a plain data property that no longer
+  // syncs, which breaks downstream tests run in the same process. They are
+  // unrelated to SQL adapter selection, so leave them alone entirely.
+  // prettier-ignore
+  const NATIVE_ACCESSOR_ENV_KEYS = new Set([
+    "TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH",
+    "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy",
+  ]);
+
   beforeEach(() => {
     for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
+      if (NATIVE_ACCESSOR_ENV_KEYS.has(key)) continue;
       delete process.env[key];
       delete Bun.env[key];
       delete import.meta.env[key];
     }
 
     for (const key in originalEnv) {
+      if (NATIVE_ACCESSOR_ENV_KEYS.has(key)) continue;
       process.env[key] = originalEnv[key];
       Bun.env[key] = originalEnv[key];
       import.meta.env[key] = originalEnv[key];
@@ -51,12 +65,14 @@ describe("SQL adapter environment variable precedence", () => {
 
   afterAll(() => {
     for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
+      if (NATIVE_ACCESSOR_ENV_KEYS.has(key)) continue;
       delete process.env[key];
       delete Bun.env[key];
       delete import.meta.env[key];
     }
 
     for (const key in originalEnv) {
+      if (NATIVE_ACCESSOR_ENV_KEYS.has(key)) continue;
       process.env[key] = originalEnv[key];
       Bun.env[key] = originalEnv[key];
       import.meta.env[key] = originalEnv[key];

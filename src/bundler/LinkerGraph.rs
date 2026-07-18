@@ -982,8 +982,7 @@ impl<'a> LinkerGraph<'a> {
                                 ImportKind::HtmlManifest | ImportKind::Internal => continue,
                             }
 
-                            let import_index: usize =
-                                import_record.source_index.get() as usize;
+                            let import_index: usize = import_record.source_index.get() as usize;
                             if import_index >= len {
                                 continue;
                             }

@@ -1811,9 +1811,9 @@ pub mod bv2_impl {
                 let mut has_redirect = false;
                 // when there are no import records, v index will be invalid
                 if (import_record_list_id.get() as usize) < self.all_import_records.len() {
-                    let import_records_len =
-                        self.all_import_records[import_record_list_id.get() as usize].len()
-                            as usize;
+                    let import_records_len = self.all_import_records
+                        [import_record_list_id.get() as usize]
+                        .len() as usize;
                     for ir_idx in 0..import_records_len {
                         let import_record = &mut self.all_import_records
                             [import_record_list_id.get() as usize]

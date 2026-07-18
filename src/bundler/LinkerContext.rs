@@ -1927,11 +1927,10 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     let mark = stack.len();
-                    for (import_record_index, record) in
-                        ast_import_records[source_index as usize]
-                            .as_slice()
-                            .iter()
-                            .enumerate()
+                    for (import_record_index, record) in ast_import_records[source_index as usize]
+                        .as_slice()
+                        .iter()
+                        .enumerate()
                     {
                         if Index::is_valid(record.source_index)
                             && (record.kind == ImportKind::Require

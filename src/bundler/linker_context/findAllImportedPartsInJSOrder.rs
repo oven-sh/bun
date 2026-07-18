@@ -266,8 +266,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     if source_index == Index::INVALID.value() {
                         continue;
                     }
-                    let visited_entry =
-                        bun_core::handle_oom(self.visited.get_or_put(source_index));
+                    let visited_entry = bun_core::handle_oom(self.visited.get_or_put(source_index));
                     if visited_entry.found_existing {
                         continue;
                     }

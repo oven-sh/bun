@@ -20,8 +20,16 @@ test("parent with concurrency: 2 interleaves subtests", { concurrency: 2 }, asyn
   await interleaved(t, "num");
 });
 
-test("parent with concurrency: true interleaves subtests", { concurrency: true }, async t => {
-  await interleaved(t, "true");
+// `true` is unbounded for a non-root test: three children must all be in
+// flight at once (a cap of 2 would leave the third waiting and fail here).
+test("parent with concurrency: true runs every subtest at once", { concurrency: true }, async t => {
+  let started = 0;
+  const body = async () => {
+    started++;
+    for (let n = 0; n < 200 && started < 3; n++) await tick();
+    assert.strictEqual(started, 3, "true: not all three siblings were running");
+  };
+  await Promise.all([t.test("a", body), t.test("b", body), t.test("c", body)]);
 });
 
 test("concurrency caps the number of subtests running at once", { concurrency: 2 }, async t => {
@@ -38,17 +46,19 @@ test("concurrency caps the number of subtests running at once", { concurrency: 2
   assert.strictEqual(max, 2);
 });
 
-// Default (no concurrency option): strictly serial, so the first subtest has
-// fully finished before the second body starts.
-test("default concurrency is serial", async t => {
+// A subtest's second body must not start before the first has finished.
+function serial(t) {
   let aDone = false;
   const a = t.test("a", async () => {
     await tick();
     aDone = true;
   });
   const b = t.test("b", () => assert.strictEqual(aDone, true));
-  await Promise.all([a, b]);
-});
+  return Promise.all([a, b]);
+}
+
+test("default concurrency is serial", t => serial(t));
+test("concurrency: false is serial", { concurrency: false }, t => serial(t));
 
 // An inline describe() inside a running test honors its own concurrency option.
 test("inline suite with concurrency interleaves its children", async t => {
@@ -68,5 +78,7 @@ test("inline suite with concurrency interleaves its children", async t => {
 // Bad values keep throwing Node's error codes.
 test("concurrency validation", () => {
   assert.throws(() => test("bad", { concurrency: "x" }, () => {}), { code: "ERR_INVALID_ARG_TYPE" });
-  assert.throws(() => test("bad", { concurrency: -1 }, () => {}), { code: "ERR_OUT_OF_RANGE" });
+  for (const v of [-1, 0, NaN, Infinity, 1.5]) {
+    assert.throws(() => test("bad", { concurrency: v }, () => {}), { code: "ERR_OUT_OF_RANGE" });
+  }
 });

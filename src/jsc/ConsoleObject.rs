@@ -8,6 +8,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_core::ZigString;
@@ -1240,7 +1241,7 @@ pub fn write_trace(writer: &mut dyn bun_loop::Write, global: &JSGlobalObject) {
 
     // `ZigStringSlice` frees on `Drop`.
     drop(source_code_slice);
-    holder.deinit(vm);
+    holder.deinit(|| crate::module_loader::ModuleLoader::reset_arena(vm));
 }
 
 // ───────────────────────────────────────────────────────────────────────────

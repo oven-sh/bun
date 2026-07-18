@@ -62,7 +62,7 @@ it("homedir", () => {
   expect(os.homedir() !== "unknown").toBe(true);
 });
 
-describe.skipIf(isWindows)("homedir honors $HOME", () => {
+it.skipIf(isWindows)("homedir honors $HOME; userInfo().homedir does not", async () => {
   const child = `
     const os = require("node:os");
     process.stdout.write(JSON.stringify({ homedir: os.homedir(), userInfo: os.userInfo().homedir }));
@@ -74,31 +74,25 @@ describe.skipIf(isWindows)("homedir honors $HOME", () => {
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    return { out: JSON.parse(stdout), exitCode };
   };
   const base = { ...bunEnv, HOME: undefined };
 
-  it.concurrent("returns $HOME verbatim when set", async () => {
-    const { homedir, userInfo } = await run({ ...base, HOME: "/bun-homedir-test" });
-    expect(homedir).toBe("/bun-homedir-test");
-    // os.userInfo().homedir comes from the passwd entry, not $HOME.
-    expect(userInfo).not.toBe("/bun-homedir-test");
-  });
+  const [unset, set, empty] = await Promise.all([
+    run({ ...base }),
+    run({ ...base, HOME: "/bun-homedir-test" }),
+    run({ ...base, HOME: "" }),
+  ]);
 
-  it.concurrent("returns $HOME verbatim when set to the empty string", async () => {
-    // uv_os_homedir: an empty-but-set $HOME is still "set"; Node returns "".
-    const { homedir, userInfo } = await run({ ...base, HOME: "" });
-    expect(homedir).toBe("");
-    expect(userInfo).not.toBe("");
+  // uv_os_homedir: $HOME whenever present (including ""), passwd only when absent.
+  // uv_os_get_passwd (os.userInfo().homedir): passwd regardless of $HOME.
+  const passwd = unset.out.userInfo;
+  expect({ unset: unset.out, set: set.out, empty: empty.out }).toEqual({
+    unset: { homedir: passwd, userInfo: passwd },
+    set: { homedir: "/bun-homedir-test", userInfo: passwd },
+    empty: { homedir: "", userInfo: passwd },
   });
-
-  it.concurrent("falls back to the passwd entry only when $HOME is unset", async () => {
-    const { homedir, userInfo } = await run({ ...base });
-    expect(typeof homedir).toBe("string");
-    expect(homedir).not.toBe("");
-    expect(homedir).toBe(userInfo);
-  });
+  expect([unset.exitCode, set.exitCode, empty.exitCode]).toEqual([0, 0, 0]);
 });
 
 it("tmpdir", () => {

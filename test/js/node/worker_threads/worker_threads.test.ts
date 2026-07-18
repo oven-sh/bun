@@ -1783,6 +1783,7 @@ test.skipIf(!isASAN || isWindows)(
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
       expect(stderr).not.toMatch(/h2::connection|h2_frame_parser|JSPropertyIterator|PropertyNameArray/);
       expect(stdout).toBe("");
       expect(exitCode).toBe(0);

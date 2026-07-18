@@ -102,8 +102,9 @@ class RunStoresScope {
     let taken = false;
 
     try {
-      if (activeChannel._stores) {
-        for (const entry of activeChannel._stores.entries()) {
+      const stores = activeChannel._stores;
+      if (stores) {
+        for (const entry of stores.entries()) {
           const store = entry[0];
           const transform = entry[1];
 
@@ -363,9 +364,10 @@ class BoundedChannel {
   subscribe(handlers) {
     for (let i = 0; i < boundedEvents.length; ++i) {
       const name = boundedEvents[i];
-      if (!handlers[name]) continue;
+      const handler = handlers[name];
+      if (!handler) continue;
 
-      this[name]?.subscribe(handlers[name]);
+      this[name]?.subscribe(handler);
     }
   }
 
@@ -374,9 +376,10 @@ class BoundedChannel {
 
     for (let i = 0; i < boundedEvents.length; ++i) {
       const name = boundedEvents[i];
-      if (!handlers[name]) continue;
+      const handler = handlers[name];
+      if (!handler) continue;
 
-      if (!this[name]?.unsubscribe(handlers[name])) {
+      if (!this[name]?.unsubscribe(handler)) {
         done = false;
       }
     }
@@ -415,19 +418,14 @@ class TracingChannel {
         end: channel(`tracing:${nameOrChannels}:asyncEnd`),
       });
     } else if (typeof nameOrChannels === "object" && nameOrChannels !== null) {
-      assertChannel(nameOrChannels.start, "nameOrChannels.start");
-      assertChannel(nameOrChannels.end, "nameOrChannels.end");
-      assertChannel(nameOrChannels.asyncStart, "nameOrChannels.asyncStart");
-      assertChannel(nameOrChannels.asyncEnd, "nameOrChannels.asyncEnd");
+      const { start, end, asyncStart, asyncEnd } = nameOrChannels;
+      assertChannel(start, "nameOrChannels.start");
+      assertChannel(end, "nameOrChannels.end");
+      assertChannel(asyncStart, "nameOrChannels.asyncStart");
+      assertChannel(asyncEnd, "nameOrChannels.asyncEnd");
 
-      this.#callWindow = new BoundedChannel({
-        start: nameOrChannels.start,
-        end: nameOrChannels.end,
-      });
-      this.#continuationWindow = new BoundedChannel({
-        start: nameOrChannels.asyncStart,
-        end: nameOrChannels.asyncEnd,
-      });
+      this.#callWindow = new BoundedChannel({ start, end });
+      this.#continuationWindow = new BoundedChannel({ start: asyncStart, end: asyncEnd });
     }
 
     ObjectDefineProperty(this, "error", {
@@ -457,52 +455,39 @@ class TracingChannel {
   }
 
   subscribe(handlers) {
-    if (handlers.start || handlers.end) {
-      this.#callWindow.subscribe({
-        start: handlers.start,
-        end: handlers.end,
-      });
+    const { start, end, asyncStart, asyncEnd, error } = handlers;
+
+    if (start || end) {
+      this.#callWindow.subscribe({ start, end });
     }
 
-    if (handlers.asyncStart || handlers.asyncEnd) {
-      this.#continuationWindow.subscribe({
-        start: handlers.asyncStart,
-        end: handlers.asyncEnd,
-      });
+    if (asyncStart || asyncEnd) {
+      this.#continuationWindow.subscribe({ start: asyncStart, end: asyncEnd });
     }
 
-    if (handlers.error) {
-      this.error.subscribe(handlers.error);
+    if (error) {
+      this.error.subscribe(error);
     }
   }
 
   unsubscribe(handlers) {
+    const { start, end, asyncStart, asyncEnd, error } = handlers;
     let done = true;
 
-    if (handlers.start || handlers.end) {
-      if (
-        !this.#callWindow.unsubscribe({
-          start: handlers.start,
-          end: handlers.end,
-        })
-      ) {
+    if (start || end) {
+      if (!this.#callWindow.unsubscribe({ start, end })) {
         done = false;
       }
     }
 
-    if (handlers.asyncStart || handlers.asyncEnd) {
-      if (
-        !this.#continuationWindow.unsubscribe({
-          start: handlers.asyncStart,
-          end: handlers.asyncEnd,
-        })
-      ) {
+    if (asyncStart || asyncEnd) {
+      if (!this.#continuationWindow.unsubscribe({ start: asyncStart, end: asyncEnd })) {
         done = false;
       }
     }
 
-    if (handlers.error) {
-      if (!this.error.unsubscribe(handlers.error)) {
+    if (error) {
+      if (!this.error.unsubscribe(error)) {
         done = false;
       }
     }

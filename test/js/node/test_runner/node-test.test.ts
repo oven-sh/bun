@@ -211,6 +211,15 @@ describe("node:test", () => {
     });
   });
 
+  test("should fail an expectFailure test whose error does not match the validator", async () => {
+    const { exitCode, stderr } = await runTests(["29-expect-failure-mismatch.js"]);
+    expect(stderr).toContain("the error did not match the expected validation");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
   test("should inherit expectFailure into subtests", async () => {
     // Matches node v26.3.0: the subtest inherits the expectation and passes, so
     // the parent is the one that fails for not failing.

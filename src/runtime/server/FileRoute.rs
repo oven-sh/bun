@@ -307,7 +307,7 @@ impl FileRoute {
     // `FileResponseStream`'s `ctx` userdata; the async `on_stream_complete`
     // may hold the last ref after a reload drops the route table's. Within
     // the body the route-table ref + the `ref_()` below keep `*this_ptr`
-    // alive, and the only per-request mutation (`stat_hash.hash`) goes
+    // alive, and every per-request mutation (`ref_count`, `stat_hash`) goes
     // through `Cell`, so a single `&FileRoute` is sound under Stacked
     // Borrows for the whole call.
     /// # Safety

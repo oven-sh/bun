@@ -4,6 +4,7 @@
 //! Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
 //! Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::collections::VecExt;
 use core::cell::Cell;
 

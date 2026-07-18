@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::alloc_impl::Arena;

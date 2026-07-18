@@ -1,3 +1,4 @@
+use crate::jsc_ext::{FetchHeadersExt as _, JSGlobalObjectExt as _};
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 

@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::{CStr, c_uint};
 
 use bun_core::alloc_impl::AllocError;

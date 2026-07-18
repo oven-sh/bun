@@ -1,5 +1,6 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use std::io::Write as _;

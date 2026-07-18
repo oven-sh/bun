@@ -1,6 +1,7 @@
 //! `Bun.CSRF.generate` / `Bun.CSRF.verify` host fns. The pure
 //! `generate()`/`verify()` halves stay in `src/csrf/`.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_boringssl_sys as boring;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_csrf as csrf;

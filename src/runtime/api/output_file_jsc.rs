@@ -6,6 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::{JSGlobalObject, JSValue, StrongOptional};
 
 use bun_bundler::options_impl::LoaderExt as _;

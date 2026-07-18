@@ -7,6 +7,7 @@
 //! `WorkTask`) — those go through the central `TaskTag` dispatch table, not
 //! the type-erased `AnyTask` path, and would need a per-instantiation tag.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 

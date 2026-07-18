@@ -13,6 +13,7 @@
 //! allocates one of these and one `SSL_CTX` total — `tls.ts` no longer hashes
 //! in JS.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};

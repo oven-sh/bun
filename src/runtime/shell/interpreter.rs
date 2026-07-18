@@ -27,6 +27,7 @@
 
 use bun_core::collections::VecExt;
 use bun_core::WTFStringImplExt as _;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::JsCell;
 use core::cell::Cell;
 use core::fmt;

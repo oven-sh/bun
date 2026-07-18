@@ -1,6 +1,7 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;

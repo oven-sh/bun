@@ -1,5 +1,6 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use std::ffi::CString;
 
 use crate::webcore::Blob;

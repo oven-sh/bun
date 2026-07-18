@@ -11,6 +11,7 @@
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;

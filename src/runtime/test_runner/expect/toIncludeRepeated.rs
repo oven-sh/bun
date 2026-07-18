@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSValueExt as _;
 use bstr::ByteSlice;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 

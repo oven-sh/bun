@@ -5,6 +5,7 @@
 //! `bun_transpiler` internals / gated bundler types (forward-dep cycle on
 //! `bun_jsc`).
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 

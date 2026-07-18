@@ -20,6 +20,7 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;

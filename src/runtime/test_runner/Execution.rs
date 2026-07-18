@@ -35,6 +35,7 @@
 //! ]
 //! ```
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};

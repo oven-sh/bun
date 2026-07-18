@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::{JSGlobalObject, JSValue};
 
 pub mod bun_install_js_bindings {

@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use std::sync::OnceLock;
 
 use bun_core::collections::HashMap;

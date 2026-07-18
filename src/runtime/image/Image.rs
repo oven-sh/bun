@@ -8,6 +8,7 @@
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 use core::mem;
 

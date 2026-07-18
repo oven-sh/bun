@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSValueExt as _;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;

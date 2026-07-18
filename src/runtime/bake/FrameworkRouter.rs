@@ -2,6 +2,7 @@
 //! configuration. Agnostic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_core::paths::strings;
 use core::fmt;

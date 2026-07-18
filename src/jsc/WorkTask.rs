@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_loop::{self as Async, KeepAlive};
 use bun_sys::threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};

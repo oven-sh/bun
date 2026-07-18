@@ -1,6 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so

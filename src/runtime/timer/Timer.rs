@@ -9,6 +9,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use crate::vm::virtual_machine::VirtualMachine;

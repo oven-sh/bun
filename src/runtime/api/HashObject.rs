@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::webcore::Blob;
 use bun_core::ZigStringSlice;
 use crate::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};

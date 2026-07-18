@@ -9,6 +9,7 @@
 //! - Downgrades to weak on EOF from master_fd
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 #[cfg(unix)]
 use core::ffi::c_ulong;

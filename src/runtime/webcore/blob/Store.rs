@@ -5,6 +5,7 @@
 //! this module re-exports them and layers the `bun_runtime`-tier behaviour
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::rc::Rc;

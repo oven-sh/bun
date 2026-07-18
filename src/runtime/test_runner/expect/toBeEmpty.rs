@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSValueExt as _;
 use core::ffi::c_void;
 
 use crate::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};

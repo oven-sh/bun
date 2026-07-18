@@ -2,6 +2,7 @@
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::c_int;
 
 use ::bstr::BStr;

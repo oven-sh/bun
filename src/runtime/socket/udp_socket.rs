@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 

@@ -1,5 +1,6 @@
 //! This implements the JavaScript SourceMap class from Node.js.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

@@ -11,6 +11,7 @@
 //! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
 //! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::c_char;
 
 use crate::vm::virtual_machine::VirtualMachine;

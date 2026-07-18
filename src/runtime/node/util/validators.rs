@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSValueExt as _;
 use core::fmt;
 
 use bun_core::ZigString;

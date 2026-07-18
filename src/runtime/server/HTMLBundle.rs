@@ -2,6 +2,7 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;

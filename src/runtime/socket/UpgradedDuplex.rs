@@ -12,6 +12,7 @@
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::{CStr, c_uint, c_void};
 use core::ptr::NonNull;
 

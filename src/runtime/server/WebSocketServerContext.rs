@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};

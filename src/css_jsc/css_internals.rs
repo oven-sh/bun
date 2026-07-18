@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
 use bun_core::{OwnedString, String as BunString};

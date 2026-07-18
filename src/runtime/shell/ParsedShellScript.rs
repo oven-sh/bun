@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;

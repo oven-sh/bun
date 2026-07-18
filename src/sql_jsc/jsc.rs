@@ -16,6 +16,7 @@
 
 #![warn(unused_must_use)]
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;

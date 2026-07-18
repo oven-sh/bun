@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 use core::sync::atomic::{AtomicI32, Ordering};

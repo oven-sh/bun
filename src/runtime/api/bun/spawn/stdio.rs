@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSValueExt as _;
 use bun_core::collections::VecExt;
 use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]

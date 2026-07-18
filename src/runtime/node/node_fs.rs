@@ -2,6 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;

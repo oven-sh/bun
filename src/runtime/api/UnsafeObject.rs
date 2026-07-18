@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::ZigStringJsc as _;
 use crate::vm::virtual_machine::GCLevel;
 use crate::zig_string::ZigString;

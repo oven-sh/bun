@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use std::io::Write as _;
 
 use bun_core::ZBox;

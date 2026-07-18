@@ -1,5 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::cell::Cell;
 use core::ffi::c_uint;
 use core::ptr::NonNull;

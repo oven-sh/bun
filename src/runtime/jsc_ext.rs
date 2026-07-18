@@ -21,6 +21,7 @@ pub trait JSGlobalObjectExt {
     fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind);
     fn bun_vm_concurrently(&self) -> *mut VirtualMachine;
     fn report_active_exception_as_unhandled(&self, err: JsError);
+    fn report_uncaught_exception_from_error(&self, proof: JsError);
 }
 
 impl JSGlobalObjectExt for JSGlobalObject {
@@ -78,6 +79,15 @@ impl JSGlobalObjectExt for JSGlobalObject {
                 .as_mut()
                 .uncaught_exception(self, exception, false);
         }
+    }
+
+    fn report_uncaught_exception_from_error(&self, proof: JsError) {
+        bun_jsc::mark_binding();
+        let exc = self
+            .take_exception(proof)
+            .as_exception(core::ptr::from_ref::<bun_jsc::VM>(self.vm()).cast_mut())
+            .expect("exception value must be an Exception cell");
+        let _ = VirtualMachine::report_uncaught_exception(self, bun_jsc::Exception::opaque_ref(exc));
     }
 }
 

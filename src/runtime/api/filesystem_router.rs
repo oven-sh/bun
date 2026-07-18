@@ -1,5 +1,6 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 pub mod kind_enum {
     pub(crate) const EXACT: &[u8] = b"exact";
     pub(crate) const CATCH_ALL: &[u8] = b"catch-all";

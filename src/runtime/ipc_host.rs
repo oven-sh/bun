@@ -8,6 +8,7 @@
 //! `emit_handle_ipc_message` for JS2Native) are link-time symbols, so which
 //! crate defines them is irrelevant to the C++ side.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::String as BunString;
 use crate::vm::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,

@@ -4,6 +4,7 @@
 //! role as a framework, Bake is tool for frameworks to build on top of.
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_core::alloc_impl::ArenaVecExt as _;
 use core::ptr::NonNull;
 

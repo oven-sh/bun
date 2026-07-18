@@ -8,6 +8,7 @@
 //! through the `bun_bundler::bundle_v2::CompletionStruct` trait
 //! (layout-agnostic).
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;

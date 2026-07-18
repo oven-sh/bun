@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::ffi::{c_int, c_void};
 
 use crate::webcore::Response;

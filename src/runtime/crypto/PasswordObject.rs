@@ -1,3 +1,4 @@
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;

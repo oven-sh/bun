@@ -36,13 +36,8 @@ describe("path.relative", () => {
           ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
           ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
           ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
-          // Slash-rooted (no drive letter) inputs where the shorter side has
-          // trimmed length 2 and is a proper prefix of the other. Node's JS
-          // falls through to String#slice with an inverted range, which
-          // yields ""; a naive Rust slice with the same indices panics.
-          // These resolve through process.cwd() for a device root, so the
-          // expected values below only hold on a POSIX host (where cwd has
-          // no drive letter and resolve("/x.") yields "\\x.").
+          // Slash-rooted (no drive letter) inputs that hit the last_common_sep=Some(3) overshoot.
+          // win32.resolve pulls a device root from cwd, so expected values only hold on a POSIX host.
           ...(isWindows
             ? []
             : [

@@ -73,31 +73,38 @@ describe("Bun.cron.parse — weekday 7 = Sunday in ranges", () => {
 describe("Bun.cron.parse — invalid `from` argument", () => {
   // Values outside the ECMAScript Date range (±8.64e15 ms) used to reach
   // WTF::msToGregorianDateTime's undefined int casts and panic in next().
-  test.each([
-    1e300,
-    -1e300,
-    4e18,
-    8.7e15,
-    -8.7e15,
-    8.64e15 + 1,
-    -8.64e15 - 1,
-    Number.MAX_VALUE,
-    Infinity,
-    -Infinity,
-    NaN,
-  ])("throws for out-of-range/non-finite ms: %p", from => {
-    expect(() => Bun.cron.parse("* * * * *", from)).toThrow("Invalid date value");
-    expect(() => Bun.cron.parse("* * * * *", new Date(from))).toThrow("Invalid date value");
-  });
-
-  test("accepts the Date range boundary", () => {
-    // from = +8.64e15 is +275760-09-13T00:00:00Z; the next occurrence falls
-    // past the representable range → null, not an Invalid Date.
-    expect(Bun.cron.parse("* * * * *", 8.64e15)).toBeNull();
-    // from = -8.64e15 is -271821-04-20T00:00:00Z; next minute is in range.
-    expect(Bun.cron.parse("* * * * *", -8.64e15)?.toISOString()).toBe("-271821-04-20T00:01:00.000Z");
-    // Just inside the upper boundary: next minute lands exactly on 8.64e15.
-    expect(Bun.cron.parse("* * * * *", 8.64e15 - 60_000)?.getTime()).toBe(8.64e15);
+  // Exercised in a subprocess so an unfixed binary fails this test instead
+  // of aborting the whole `bun test` process.
+  test("throws for out-of-range/non-finite ms and accepts the boundary", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { strict: assert } = require("node:assert");
+          for (const from of [
+            1e300, -1e300, 4e18, 8.7e15, -8.7e15,
+            8.64e15 + 1, -8.64e15 - 1, Number.MAX_VALUE,
+            Infinity, -Infinity, NaN,
+          ]) {
+            assert.throws(() => Bun.cron.parse("* * * * *", from), /Invalid date value/, String(from));
+            assert.throws(() => Bun.cron.parse("* * * * *", new Date(from)), /Invalid date value/, String(from));
+          }
+          // from = +8.64e15 is +275760-09-13T00:00:00Z; next occurrence falls
+          // past the representable range → null, not an Invalid Date.
+          assert.strictEqual(Bun.cron.parse("* * * * *", 8.64e15), null);
+          // from = -8.64e15 is -271821-04-20T00:00:00Z; next minute is in range.
+          assert.strictEqual(Bun.cron.parse("* * * * *", -8.64e15)?.toISOString(), "-271821-04-20T00:01:00.000Z");
+          // Just inside the upper boundary: next minute lands exactly on 8.64e15.
+          assert.strictEqual(Bun.cron.parse("* * * * *", 8.64e15 - 60_000)?.getTime(), 8.64e15);
+          process.stdout.write("ok");
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
   test("does not crash the process on 1e300", async () => {

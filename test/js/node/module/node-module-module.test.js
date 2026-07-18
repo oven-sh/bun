@@ -29,7 +29,9 @@ describe.concurrent("node-module-module", () => {
   test("module.enableCompileCache validates its argument", () => {
     expect(Module.enableCompileCache.length).toBe(1);
     for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {
-      expect(() => Module.enableCompileCache(invalid)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      expect(() => Module.enableCompileCache(invalid)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
     }
     expect(() => Module.enableCompileCache({ directory: 1 })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
@@ -48,7 +50,15 @@ describe.concurrent("node-module-module", () => {
     ).toThrow(RangeError);
     // Valid shapes: string | {directory?, portable?} | undefined. The empty-object shapes
     // exercise the getIfPropertyExists() empty-value guard in the options-bag branch.
-    for (const ok of [undefined, "/tmp/cache", {}, [], Object.create(null), { directory: "/tmp/cache" }, { directory: undefined }]) {
+    for (const ok of [
+      undefined,
+      "/tmp/cache",
+      {},
+      [],
+      Object.create(null),
+      { directory: "/tmp/cache" },
+      { directory: undefined },
+    ]) {
       expect(Module.enableCompileCache(ok)).toEqual({
         status: Module.constants.compileCacheStatus.FAILED,
         message: expect.any(String),

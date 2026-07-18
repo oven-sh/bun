@@ -1713,7 +1713,17 @@ describe("isReadable/isWritable/isErrored/isDisturbed on WHATWG web streams", ()
       },
     });
     Object.defineProperty(rs, Symbol.for("nodejs.stream.readable"), { value: false });
+    Object.defineProperty(rs, Symbol.for("nodejs.stream.errored"), { value: true });
+    Object.defineProperty(rs, Symbol.for("nodejs.stream.disturbed"), { value: true });
     expect(isReadable(rs)).toBe(false);
+    expect(isErrored(rs)).toBe(true);
+    expect(isDisturbed(rs)).toBe(true);
+
+    const ws = new WritableStream({ write() {} });
+    Object.defineProperty(ws, Symbol.for("nodejs.stream.writable"), { value: false });
+    Object.defineProperty(ws, Symbol.for("nodejs.stream.errored"), { value: true });
+    expect(isWritable(ws)).toBe(false);
+    expect(isErrored(ws)).toBe(true);
   });
 
   it("node Readable/Writable operands are unaffected", () => {

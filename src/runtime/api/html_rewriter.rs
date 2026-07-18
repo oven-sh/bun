@@ -22,6 +22,7 @@ use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
 use crate::ZigStringJsc as _;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::ArgumentsSlice;
 use crate::zig_string::ZigString;
 

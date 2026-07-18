@@ -4,6 +4,7 @@ use core::ffi::c_char;
 
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::zig_string::ZigString;
 use crate::{JSGlobalObject, JSValue, ZigStringJsc as _};
 
@@ -125,6 +126,7 @@ mod _impl {
     use bun_core::env_var;
     use bun_core::{String as BunString, strings};
     use crate::bun_string_jsc;
+    use crate::jsc_ext::JSGlobalObjectExt as _;
     use crate::zig_string::ZigString;
     use crate::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,

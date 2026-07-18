@@ -3387,12 +3387,12 @@ EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObj
     RETURN_IF_EXCEPTION(throwScope, {});
 
     if (length < halfPoolSize) {
-        auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, static_cast<size_t>(length));
+        // setFromArrayLike re-reads .length; if a getter shrinks between reads
+        // the tail is never written, so allocate zeroed rather than leak heap.
+        auto* uint8Array = allocBuffer(lexicalGlobalObject, static_cast<size_t>(length));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (!uint8Array) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        if (!uint8Array) [[unlikely]]
             return {};
-        }
         uint8Array->setFromArrayLike(lexicalGlobalObject, 0, arrayValue);
         RETURN_IF_EXCEPTION(throwScope, {});
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));

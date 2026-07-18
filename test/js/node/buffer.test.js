@@ -3864,6 +3864,16 @@ describe("Buffer.from(arrayLike) .length getter reads", () => {
     const { o } = makeArrayLike(() => seq[Math.min(calls++, seq.length - 1)], 5);
     expect(() => Buffer.from(o)).toThrow(RangeError);
   });
+
+  it("a .length getter that shrinks after allocation leaves the unwritten tail zeroed", () => {
+    let calls = 0;
+    const seq = [100, 100, 100, 1];
+    const { o } = makeArrayLike(() => seq[Math.min(calls++, seq.length - 1)], 1);
+    const b = Buffer.from(o);
+    expect(b.length).toBe(100);
+    expect(b[0]).toBe(97);
+    expect(b.subarray(1).every(x => x === 0)).toBe(true);
+  });
 });
 
 describe("Buffer.from(arrayBuffer, byteOffset, length) bounds", () => {

@@ -181,6 +181,11 @@ struct us_cert_string_t {
     size_t len;
 };
 
+struct us_cert_der_t {
+    const unsigned char* der;
+    size_t len;
+};
+
 /* Public interface for UDP sockets */
 
 /* Peeks data and length of UDP payload */
@@ -659,7 +664,7 @@ struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, 
 struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
-int us_raw_root_certs(struct us_cert_string_t **out);
+int us_raw_root_certs(struct us_cert_der_t **out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);

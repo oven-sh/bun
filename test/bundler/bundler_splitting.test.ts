@@ -328,11 +328,9 @@ describe("bundler", () => {
     },
   });
 
-  // ExportRenamer::next_renamed_name used to re-scan every previously handed
-  // out suffix on each collision, making N same-named cross-chunk exports cost
-  // O(N^2). Debug builds need far fewer files to blow past the threshold than
-  // release, so scale N accordingly; both settings used to take >30s and now
-  // finish in a couple of seconds.
+  // N same-named cross-chunk exports must get unique aliases in O(N) total
+  // (ExportRenamer::next_renamed_name). Debug builds blow past the 15s cap
+  // with far fewer files than release, hence the isDebug-scaled N.
   test("splitting/ManyCrossChunkExportAliasCollisions", async () => {
     const N = isDebug ? 2500 : 20000;
     const THRESHOLD_MS = 15000;
@@ -396,8 +394,9 @@ describe("bundler", () => {
       stderr: "pipe",
     });
     const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-    expect(runErr).toBe("");
+    if (runExit !== 0) {
+      throw new Error(`running e1.js exited ${runExit}\nstdout:\n${runOut}\nstderr:\n${runErr}`);
+    }
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
-    expect(runExit).toBe(0);
   }, 60_000);
 });

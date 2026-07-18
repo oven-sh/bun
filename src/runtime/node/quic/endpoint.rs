@@ -1579,11 +1579,13 @@ impl QuicEndpoint {
             }
         }
         let mut ms = earliest_us.map(|us| (us.max(0) as u64).div_ceil(1000).max(1));
-        // A version-negotiation probe has no engine, so `earliest_adv_tick`
-        // yields nothing and the sweep that expires it would never run.
-        if !self.pending_verneg.get().is_empty() {
-            const VERNEG_POLL_MS: u64 = 250;
-            ms = Some(ms.map_or(VERNEG_POLL_MS, |m| m.min(VERNEG_POLL_MS)));
+        // Both of these are settled only by `sweep_provisional`, and neither
+        // keeps an engine ticking on its own -- a probe has no engine at all,
+        // and an idle engine stops advising a tick -- so without a poll the
+        // sweep never runs and an announced session never settles.
+        const SWEEP_POLL_MS: u64 = 250;
+        if !self.pending_verneg.get().is_empty() || !self.provisional.get().is_empty() {
+            ms = Some(ms.map_or(SWEEP_POLL_MS, |m| m.min(SWEEP_POLL_MS)));
         }
         if self.followup_due.get() {
             ms = Some(ms.map_or(1, |m| m.min(1)));

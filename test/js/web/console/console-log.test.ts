@@ -143,6 +143,28 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.log %j prints [Circular] for self-referencing objects", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const c = { a: 1 }; c.self = c;
+        try { console.log("pre %j post", c); } catch (e) { console.log("THREW:" + e.constructor.name); }
+        try { console.log("%j", { toJSON() { throw new Error("tj"); } }); } catch { console.log("ctl-tojson:THREW"); }
+        try { console.log("%j", 10n); } catch { console.log("ctl-bigint:THREW"); }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.replaceAll("\r\n", "\n")).toBe("pre [Circular] post\nctl-tojson:THREW\nctl-bigint:THREW\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

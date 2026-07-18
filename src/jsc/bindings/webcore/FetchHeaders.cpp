@@ -225,11 +225,13 @@ ExceptionOr<void> FetchHeaders::remove(const StringView name)
     return {};
 }
 
-void FetchHeaders::clear()
+ExceptionOr<void> FetchHeaders::clear()
 {
-    ASSERT_WITH_MESSAGE(m_guard == FetchHeaders::Guard::None, "We don't use guards in Bun");
+    if (m_guard == FetchHeaders::Guard::Immutable)
+        return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     ++m_updateCounter;
     m_headers.clear();
+    return { };
 }
 
 size_t FetchHeaders::memoryCost() const

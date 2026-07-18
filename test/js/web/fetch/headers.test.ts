@@ -1,8 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
-
-beforeAll(() => {
-  // expect(Headers).toBeDefined();
-});
+import { describe, expect, test } from "bun:test";
 
 describe("Headers", () => {
   describe("constructor", () => {
@@ -266,6 +262,21 @@ describe("Headers", () => {
       headers.set("user-agent", "bun2");
       expect(headers.get("user-agent")).toBe("bun2");
     });
+    test("iterator invalidated after clear", () => {
+      const headers = new Headers({
+        "cache-control": "public",
+        "user-agent": "bun",
+        "x-custom": "value",
+      });
+      const iterator = headers.entries();
+      const first = iterator.next();
+      expect(first.done).toBe(false);
+
+      headers.clear();
+
+      const next = iterator.next();
+      expect(next.done).toBe(true);
+    });
   });
   describe("get()", () => {
     test("can get header", () => {
@@ -481,8 +492,8 @@ describe("Headers", () => {
         "Headers " +
           JSON.stringify(
             {
-              "user-agent": "bun",
               "cache-control": "public, immutable",
+              "user-agent": "bun",
               "x-custom-header": "1",
             },
             null,

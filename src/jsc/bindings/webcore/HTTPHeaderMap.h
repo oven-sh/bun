@@ -319,6 +319,7 @@ void HTTPHeaderMap::encode(Encoder &encoder) const
 {
     encoder << m_commonHeaders;
     encoder << m_uncommonHeaders;
+    encoder << m_setCookieHeaders;
 }
 
 template<class Decoder>
@@ -328,6 +329,9 @@ bool HTTPHeaderMap::decode(Decoder &decoder, HTTPHeaderMap &headerMap)
         return false;
 
     if (!decoder.decode(headerMap.m_uncommonHeaders))
+        return false;
+
+    if (!decoder.decode(headerMap.m_setCookieHeaders))
         return false;
 
     return true;

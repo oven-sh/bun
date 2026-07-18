@@ -60,6 +60,43 @@ const scanRoots = [
   { dir: path.join(repoRoot, "src", "jsc"), crate: "bun_jsc" },
 ];
 
+// §2.1 group-B files live on disk under `src/jsc/` but are `#[path]`-mounted
+// into `bun_runtime` (as `crate::vm::*`). Override the crate prefix for these
+// basenames so thunks emit `crate::…` (bun_runtime) instead of `bun_jsc::…`.
+const mountedIn: Record<string, "bun_runtime"> = {
+  "VirtualMachine.rs": "bun_runtime",
+  "ModuleLoader.rs": "bun_runtime",
+  "AsyncModule.rs": "bun_runtime",
+  "ConsoleObject.rs": "bun_runtime",
+  "Debugger.rs": "bun_runtime",
+  "event_loop.rs": "bun_runtime",
+  "hot_reloader.rs": "bun_runtime",
+  "ipc.rs": "bun_runtime",
+  "rare_data.rs": "bun_runtime",
+  "web_worker.rs": "bun_runtime",
+  "RuntimeTranspilerStore.rs": "bun_runtime",
+  "RuntimeTranspilerCache.rs": "bun_runtime",
+  "virtual_machine_exports.rs": "bun_runtime",
+  "btjs.rs": "bun_runtime",
+  "HTTPServerAgent.rs": "bun_runtime",
+  "GarbageCollectionController.rs": "bun_runtime",
+  "NodeModuleModule.rs": "bun_runtime",
+  "PluginRunner.rs": "bun_runtime",
+  "PosixSignalHandle.rs": "bun_runtime",
+  "ProcessAutoKiller.rs": "bun_runtime",
+  "SavedSourceMap.rs": "bun_runtime",
+  "WorkTask.rs": "bun_runtime",
+  "ConcurrentPromiseTask.rs": "bun_runtime",
+  "CppTask.rs": "bun_runtime",
+  "JSCScheduler.rs": "bun_runtime",
+  "Task.rs": "bun_runtime",
+  "EventLoopHandle.rs": "bun_runtime",
+  "any_task_job.rs": "bun_runtime",
+  "JSSecrets.rs": "bun_runtime",
+  "AbortSignal.rs": "bun_runtime",
+  "arguments_slice.rs": "bun_runtime",
+};
+
 // ───────────────────────── module-path resolver ─────────────────────────────
 // Same walk as generate-classes.ts::rustModuleResolver — map an absolute .rs
 // file to its `crate::a::b` path by following `mod foo;` declarations from
@@ -276,13 +313,15 @@ for (const { dir, crate } of scanRoots) {
       }
 
       const fm = fileToMod.get(path.resolve(file));
+      const override = mountedIn[path.basename(file)];
+      const effCrate = override ?? fm?.crate ?? crate;
       // Module path as seen from `bun_runtime::generated_host_exports`.
       // Files that the resolver didn't reach (gated mods, #[path] indirection
       // we missed) fall back to a path-derived guess; failure surfaces as a
       // compile error pointing at the thunk, which is the desired behaviour.
       let modPath: string;
       if (fm) {
-        modPath = fm.crate === "bun_jsc" ? fm.modPath.replace(/^crate/, "bun_jsc") : fm.modPath;
+        modPath = effCrate === "bun_jsc" ? fm.modPath.replace(/^crate/, "bun_jsc") : fm.modPath;
       } else {
         const rel = path.relative(path.join(repoRoot, "src", "runtime"), file);
         modPath =
@@ -305,7 +344,7 @@ for (const { dir, crate } of scanRoots) {
       // bun_jsc-sourced impl would resolve as `bun_runtime::` in the
       // generated module. Rewrite to the source crate's name so
       // `*mut crate::cpp_task::CppTask` etc. round-trip.
-      const cratePrefix = fm?.crate === "bun_jsc" ? "bun_jsc::" : "crate::";
+      const cratePrefix = effCrate === "bun_jsc" ? "bun_jsc::" : "crate::";
       const rewriteTy = (t: string) => t.replace(/\bcrate::/g, cratePrefix);
       for (const p of params) {
         p.cTy = rewriteTy(p.cTy);
@@ -500,10 +539,10 @@ const importCandidates: Array<[string, string]> = [
   ["bun_jsc", "JSObject"],
   ["bun_jsc", "JSPromise"],
   ["bun_jsc", "ZigStackFrame"],
-  ["crate::virtual_machine", "VirtualMachine"],
+  ["crate::vm", "VirtualMachine"],
   ["crate::bake::dev_server::inspector_agent", "InspectorBunFrontendDevServerAgentHandle"],
-  ["crate::debugger", "LifecycleHandle"],
-  ["crate::debugger", "TestReporterHandle"],
+  ["crate::vm::debugger", "LifecycleHandle"],
+  ["crate::vm::debugger", "TestReporterHandle"],
 ];
 const importLines: string[] = [];
 for (const [modPath, name] of importCandidates) {

@@ -111,6 +111,19 @@ describe("css tests", () => {
     minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
     // Non-minified output is unchanged.
     cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+
+    // Leading/trailing whitespace around a custom-property value is dropped.
+    minify_test(":root{--a: x}", ":root{--a:x}");
+    minify_test(":root{--a:x }", ":root{--a:x}");
+    minify_test(":root{--a: x }", ":root{--a:x}");
+    minify_test(":root{--a:x y}", ":root{--a:x y}");
+    minify_test(":root{--a: x y }", ":root{--a:x y}");
+    // A value that is only whitespace is preserved as a single space.
+    minify_test(":root{--a: }", ":root{--a: }");
+    minify_test(":root{--a:  }", ":root{--a: }");
+    // Same trimming applies inside function arguments.
+    minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
+    minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
   });
 
   describe("pseudo-class edge case", () => {

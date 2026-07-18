@@ -767,10 +767,6 @@ struct HttpResponseData;
             if(start == data)  [[unlikely]] {
                 return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
             }
-            if (data - start < 2) [[unlikely]] {
-                return ConsumeRequestLineResult::shortRead();
-            }
-
 
             /* RFC 9112 3: exactly one SP separates method and request-target */
             bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
@@ -834,26 +830,36 @@ struct HttpResponseData;
                             /*Indicates that the request line is ancient HTTP*/
                             return ConsumeRequestLineResult::success(nextPosition, true, isConnect);
                         }
-                        /* If we stand at the post padded CR, we have fragmented input so try again later */
-                        if (data[0] == '\r') {
-                            return ConsumeRequestLineResult::shortRead(false, isConnect);
-                        }
-                        /* This is an error */
+                        /* nextPosition < end here, so data < end: any CR is real input, not the
+                         * post-padding sentinel. Fall through to the version error. */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                     }
                 }
             }
 
-            /* If we stand at the post padded CR, we have fragmented input so try again later */
+            /* If we stand at the post padded CR, we have fragmented input so try again later.
+             * A real CR in the input here means the method was never followed by SP. */
             if (data[0] == '\r') {
+                if (data < end) {
+                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
+                }
                 return ConsumeRequestLineResult::shortRead(false, isConnect);
             }
 
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
                     // If we haven't received enough data to check if it's http:// or https://, let's try again later
-                    case -1:
+                    case -1: {
+                        /* -1 only means fewer than 8 bytes follow the SP. If one of them is a
+                         * terminator (<= 32), the target is already complete and can never
+                         * become http(s)://, so this is an invalid request, not a fragment. */
+                        for (char *p = data + 1; p < end; p++) {
+                            if (*(unsigned char *) p <= 32) {
+                                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
+                            }
+                        }
                         return ConsumeRequestLineResult::shortRead(false, isConnect);
+                    }
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);

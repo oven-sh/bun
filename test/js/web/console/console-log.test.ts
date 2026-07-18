@@ -143,6 +143,61 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.log %s uses Node's format semantics, not engine ToString", async () => {
+  const src = `
+    try { console.log("%s", Symbol("q")); } catch (e) { console.log("THREW:" + e.constructor.name); }
+    console.log("%s", Symbol());
+    console.log("%s", { a: 1 });
+    console.log("%s", [1, 2]);
+    console.log("%s", -0);
+    console.log("%s", 0);
+    console.log("%s", 1.5);
+    console.log("%s", NaN);
+    console.log("%s", Infinity);
+    console.log("%s", -Infinity);
+    console.log("%s", 42n);
+    console.log("%s", null);
+    console.log("%s", undefined);
+    console.log("%s", true);
+    console.log("%s", false);
+    console.log("%s", "plain");
+    console.log("%s", new Date(1700000000000));
+    console.log("%s %s", Symbol("a"), { x: 1 });
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toBe("");
+  expect(out.replaceAll("\r\n", "\n")).toBe(
+    [
+      "Symbol(q)",
+      "Symbol()",
+      "{ a: 1 }",
+      "[ 1, 2 ]",
+      "-0",
+      "0",
+      "1.5",
+      "NaN",
+      "Infinity",
+      "-Infinity",
+      "42n",
+      "null",
+      "undefined",
+      "true",
+      "false",
+      "plain",
+      "2023-11-14T22:13:20.000Z",
+      "Symbol(a) { x: 1 }",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

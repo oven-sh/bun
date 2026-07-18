@@ -2535,12 +2535,7 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
+                                self.print_percent_s(writer_, next_value, global)?;
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -3791,6 +3786,106 @@ pub mod formatter {
                 self.failed = true;
             }
             Ok(())
+        }
+
+        /// Node's `util.format` `%s` semantics: numbers/bigints keep their sign
+        /// and suffix, other primitives go through `String()`, objects are
+        /// inspected with `{ depth: 0, compact: 3, colors: false }`.
+        #[inline(never)]
+        fn print_percent_s(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            global: &'a JSGlobalObject,
+        ) -> JsResult<()> {
+            if value.is_string() || (value.is_cell() && value.is_callable()) {
+                return self.print_as::<false>(Tag::String, writer_, value, value.js_type());
+            }
+
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            macro_rules! done {
+                () => {{
+                    if writer.failed {
+                        self.failed = true;
+                    }
+                    return Ok(());
+                }};
+            }
+            macro_rules! write_lit {
+                ($bytes:expr) => {{
+                    writer.add_for_new_line($bytes.len());
+                    writer.write_all($bytes);
+                    done!();
+                }};
+            }
+
+            if value.is_undefined() {
+                write_lit!(b"undefined");
+            }
+            if value.is_null() {
+                write_lit!(b"null");
+            }
+            if value.is_boolean() {
+                if value.as_boolean() {
+                    write_lit!(b"true");
+                } else {
+                    write_lit!(b"false");
+                }
+            }
+            if value.is_int32() {
+                let int = value.as_int32();
+                writer.add_for_new_line(bun_core::fmt::digit_count(int));
+                writer.print(format_args!("{int}"));
+                done!();
+            }
+            if value.is_number() {
+                let num = value.as_number();
+                if num.is_nan() {
+                    write_lit!(b"NaN");
+                }
+                if num.is_infinite() {
+                    if num > 0.0 {
+                        write_lit!(b"Infinity");
+                    } else {
+                        write_lit!(b"-Infinity");
+                    }
+                }
+                let mut buf = [0u8; 124];
+                let s = bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
+                writer.add_for_new_line(s.len());
+                writer.write_all(s);
+                done!();
+            }
+            if value.is_big_int() {
+                drop(writer);
+                return self.print_bigint::<false>(writer_, value);
+            }
+            if value.is_symbol() {
+                let description = value.get_description(global);
+                writer.add_for_new_line("Symbol()".len() + description.len);
+                if description.len > 0 {
+                    writer.print(format_args!("Symbol({description})"));
+                } else {
+                    writer.write_all(b"Symbol()");
+                }
+                done!();
+            }
+
+            drop(writer);
+            let prev_quote = self.quote_strings;
+            let prev_single = self.single_line;
+            let prev_max_depth = self.max_depth;
+            let _r1 = defer_restore!(self.quote_strings, prev_quote);
+            let _r2 = defer_restore!(self.single_line, prev_single);
+            let _r3 = defer_restore!(self.max_depth, prev_max_depth);
+            self.quote_strings = true;
+            self.single_line = true;
+            self.max_depth = self.depth;
+            self.format::<false>(Tag::get(value, global)?, writer_, value, global)
         }
 
         #[inline(never)]

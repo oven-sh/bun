@@ -1,5 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -774,6 +775,135 @@ describe("EventEmitter captureRejections", () => {
     await sleep(5);
 
     expect(handled).toEqual(null);
+  });
+
+  test("it captures a thenable returned from a handler", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers<any>();
+    myEmitter.on("error", resolve);
+
+    myEmitter.on("action", () => ({
+      then(resolved: unknown, rejected: (err: unknown) => void) {
+        expect(resolved).toBeUndefined();
+        rejected(new Error("boom"));
+      },
+    }));
+    myEmitter.emit("action");
+
+    expect((await promise).message).toBe("boom");
+  });
+
+  test("a throwing `then` getter surfaces as an error event", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers<any>();
+    myEmitter.on("error", resolve);
+
+    myEmitter.on("action", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get() {
+          throw new Error("boom");
+        },
+      });
+      return obj;
+    });
+    myEmitter.emit("action");
+
+    expect((await promise).message).toBe("boom");
+  });
+
+  // `EventEmitter.captureRejections` is process-global, so each case below runs
+  // in its own process.
+  test("it captures rejections on an emitter whose constructor never ran", async () => {
+    // `inherits()` without a super() call leaves no own `emit`, so the capturing
+    // variant has to reach the instance through the prototype.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const EventEmitter = require("node:events");
+          const { inherits } = require("node:util");
+          function NoConstructor() {}
+          inherits(NoConstructor, EventEmitter);
+
+          EventEmitter.captureRejections = true;
+          const ee = new NoConstructor();
+          ee.on("error", err => console.log("error:" + err.message));
+          ee.on("action", async () => { throw new Error("boom"); });
+          ee.emit("action");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "error:boom", stderr: "", exitCode: 0 });
+  });
+
+  test("it does not capture on an emitter constructed before captureRejections was enabled", async () => {
+    // The emitter kept its own `captureRejections: false`, so flipping the
+    // global flag afterwards must not start capturing for it.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const EventEmitter = require("node:events");
+          const ee = new EventEmitter();
+          EventEmitter.captureRejections = true;
+
+          process.on("unhandledRejection", err => console.log("unhandled:" + err.message));
+          ee.on("error", () => console.log("error-handler"));
+          ee.on("action", async () => { throw new Error("boom"); });
+          ee.emit("action");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "unhandled:boom", stderr: "", exitCode: 0 });
+  });
+
+  test("toggling captureRejections leaves a userland prototype emit patch alone", async () => {
+    // node's setter only flips the flag, so a patched `EventEmitter.prototype.emit`
+    // (what APM/tracing libraries install) has to survive a toggle.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const EventEmitter = require("node:events");
+          const original = EventEmitter.prototype.emit;
+          const seen = [];
+          EventEmitter.prototype.emit = function patched(...args) {
+            seen.push(args[0]);
+            return original.apply(this, args);
+          };
+
+          EventEmitter.captureRejections = true;
+          EventEmitter.captureRejections = false;
+
+          const ee = new EventEmitter();
+          let handled = false;
+          ee.on("x", () => { handled = true; });
+          ee.emit("x");
+          console.log(JSON.stringify({ seen, handled }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `{"seen":["x"],"handled":true}`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

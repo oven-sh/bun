@@ -1138,6 +1138,12 @@ impl JSGlobalObject {
         });
     }
 
+    /// Whether [`Self::handle_rejected_promises`] still has `unhandledRejection`
+    /// notifications to deliver.
+    pub fn has_pending_rejected_promises(&self) -> bool {
+        JSC__JSGlobalObject__hasPendingRejectedPromises(self)
+    }
+
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
         ZigGlobalObject__readableStreamToArrayBuffer(self, value)
     }
@@ -1660,6 +1666,8 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 
     safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject);
+
+    safe fn JSC__JSGlobalObject__hasPendingRejectedPromises(this: &JSGlobalObject) -> bool;
 
     safe fn ZigGlobalObject__readableStreamToArrayBuffer(
         this: &JSGlobalObject,

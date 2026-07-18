@@ -1467,13 +1467,20 @@ impl VirtualMachine {
                 dispatch = true;
             }
 
+            // A `beforeExit` listener is user JS and can reject a promise. Run
+            // the `unhandledRejection` handler (and whatever it schedules)
+            // before concluding the loop has nothing left to do.
+            self.event_loop_mut().drain_rejected_promises();
+            if self.is_event_loop_alive() {
+                continue;
+            }
+
             if dispatch {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
-
-                if self.is_event_loop_alive() {
-                    continue;
-                }
+                // The listener we just ran may have scheduled work or rejected;
+                // both are picked up by the next pass.
+                continue;
             }
 
             break;
@@ -1687,9 +1694,9 @@ pub struct RuntimeHooks {
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    /// Separate slot because the body skips `runImminentGCTimer` and falls
+    /// through to `tickWithoutIdle` when idle — folding it into `auto_tick`
+    /// would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.

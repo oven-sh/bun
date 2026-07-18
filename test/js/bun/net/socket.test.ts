@@ -1,9 +1,21 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
+
+// heapStats().objectTypeCounts is process-global. When the full suite runs in
+// one process, earlier test files' Listener/TCPSocket/TLSSocket wrappers are
+// still on the heap when this file loads. Capture a baseline so the
+// end-of-file leak check asserts *this file's* wrappers were collected, not an
+// absolute count.
+const baselineCounts = heapStats().objectTypeCounts;
+const listenerBaseline = baselineCounts.Listener ?? 0;
+const tcpSocketBaseline = baselineCounts.TCPSocket ?? 0;
+const tlsSocketBaseline = baselineCounts.TLSSocket ?? 0;
+
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -798,19 +810,20 @@ it.skipIf(isWindows)("should not crash when a socket from a file descriptor is c
 });
 
 it("should not leak memory", async () => {
-  // assert we don't leak the sockets
-  // we expect 1 or 2 because that's the prototype / structure.
+  // Assert this file's sockets were collected. The bound is the module-load
+  // baseline (wrappers left by prior test files in the same process) plus 2
+  // for the prototype / structure that first use may have materialized.
   // FIXME(module-loader): the C++ module map keeps the test file's module
   // record (and thus its environment / closures) alive for the lifetime of
   // the process; on Windows this pins one extra TCPSocket past GC. Widen the
   // Windows threshold by one until we can reproduce locally.
-  await expectMaxObjectTypeCount(expect, "Listener", 2);
-  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 4 : 2);
-  await expectMaxObjectTypeCount(expect, "TLSSocket", isWindows ? 4 : 2);
+  await expectMaxObjectTypeCount(expect, "Listener", listenerBaseline + 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", tcpSocketBaseline + (isWindows ? 4 : 2));
+  await expectMaxObjectTypeCount(expect, "TLSSocket", tlsSocketBaseline + (isWindows ? 4 : 2));
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", tcpSocketBaseline + 5, 50);
 });
 
 it("should throw on empty hostname from truthy non-string value", () => {

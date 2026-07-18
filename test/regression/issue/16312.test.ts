@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/16312
@@ -23,6 +23,7 @@ test("expect extended", async () => {
 
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("0 fail");
-  expect(stdout).toBe("");
+  // `bun test` prints its version banner to stdout; nothing else should appear.
+  expect(normalizeBunSnapshot(stdout)).toBe("bun test <version> (<revision>)");
   expect(exitCode).toBe(0);
 });

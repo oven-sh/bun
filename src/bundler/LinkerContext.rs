@@ -987,6 +987,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 file_entry_bits,
                 css_reprs,
+                stack: Vec::new(),
             };
 
             // Code splitting: Determine which entry points can reach which files. This
@@ -1891,26 +1892,77 @@ impl<'a> LinkerContext<'a> {
         meta_flags: &mut [crate::js_meta::Flags],
         ast_import_records: &[bun_ast::import_record::List<'a>],
     ) -> Result<TlaCheck, AllocError> {
-        // Note: re-index `tla_checks` after each recursion — recursive calls also mutate it.
-        if tla_checks[source_index as usize].depth == 0 {
-            tla_checks[source_index as usize].depth = 1;
-            if tla_keywords[source_index as usize].len > 0 {
-                tla_checks[source_index as usize].parent = source_index;
-            }
+        let _ = import_records;
+        // Explicit-stack postorder DFS (was per-edge recursive). `Enter`
+        // seeds a file and queues each followed import paired with an
+        // `AfterChild` resume point; that resume reads the child's completed
+        // `tla_checks` entry. `Leave` sets the async flag once all children
+        // are settled. Successors are pushed in pop order then the tail is
+        // reversed so LIFO pop reproduces the original recursion order.
+        #[derive(Copy, Clone)]
+        enum Frame {
+            Enter(crate::IndexInt),
+            AfterChild {
+                source_index: crate::IndexInt,
+                import_record_index: u32,
+            },
+            Leave(crate::IndexInt),
+        }
 
-            for (import_record_index, record) in import_records.iter().enumerate() {
-                if Index::is_valid(record.source_index)
-                    && (record.kind == ImportKind::Require || record.kind == ImportKind::Stmt)
-                {
-                    let parent = self.validate_tla(
-                        record.source_index.get(),
-                        tla_keywords,
-                        tla_checks,
-                        input_files,
-                        ast_import_records[record.source_index.get() as usize].as_slice(),
-                        meta_flags,
-                        ast_import_records,
-                    )?;
+        if tla_checks[source_index as usize].depth != 0 {
+            return Ok(tla_checks[source_index as usize]);
+        }
+
+        let mut stack: Vec<Frame> = vec![Frame::Enter(source_index)];
+
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Enter(source_index) => {
+                    if tla_checks[source_index as usize].depth != 0 {
+                        continue;
+                    }
+                    tla_checks[source_index as usize].depth = 1;
+                    if tla_keywords[source_index as usize].len > 0 {
+                        tla_checks[source_index as usize].parent = source_index;
+                    }
+
+                    let mark = stack.len();
+                    for (import_record_index, record) in
+                        ast_import_records[source_index as usize]
+                            .as_slice()
+                            .iter()
+                            .enumerate()
+                    {
+                        if Index::is_valid(record.source_index)
+                            && (record.kind == ImportKind::Require
+                                || record.kind == ImportKind::Stmt)
+                        {
+                            stack.push(Frame::Enter(record.source_index.get()));
+                            stack.push(Frame::AfterChild {
+                                source_index,
+                                import_record_index: u32::try_from(import_record_index)
+                                    .expect("int cast"),
+                            });
+                        }
+                    }
+                    stack.push(Frame::Leave(source_index));
+                    stack[mark..].reverse();
+                }
+                Frame::Leave(source_index) => {
+                    // Make sure that if we wrap this module in a closure, the closure is also
+                    // async. This happens when you call "import()" on this module and code
+                    // splitting is off.
+                    if Index::is_valid(Index::init(tla_checks[source_index as usize].parent)) {
+                        meta_flags[source_index as usize].is_async_or_has_async_dependency = true;
+                    }
+                }
+                Frame::AfterChild {
+                    source_index,
+                    import_record_index,
+                } => {
+                    let record = &ast_import_records[source_index as usize].as_slice()
+                        [import_record_index as usize];
+                    let parent = tla_checks[record.source_index.get() as usize];
                     if Index::is_invalid(Index::init(parent.parent)) {
                         continue;
                     }
@@ -1924,8 +1976,7 @@ impl<'a> LinkerContext<'a> {
                     {
                         result_tla_check.depth = parent.depth + 1;
                         result_tla_check.parent = record.source_index.get();
-                        result_tla_check.import_record_index =
-                            u32::try_from(import_record_index).expect("int cast");
+                        result_tla_check.import_record_index = import_record_index;
                         continue;
                     }
 
@@ -2022,13 +2073,6 @@ impl<'a> LinkerContext<'a> {
                         );
                     }
                 }
-            }
-
-            // Make sure that if we wrap this module in a closure, the closure is also
-            // async. This happens when you call "import()" on this module and code
-            // splitting is off.
-            if Index::is_valid(Index::init(tla_checks[source_index as usize].parent)) {
-                meta_flags[source_index as usize].is_async_or_has_async_dependency = true;
             }
         }
 
@@ -2625,6 +2669,7 @@ pub struct CodeSplitCtx<'a, 'r> {
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub file_entry_bits: &'r mut [AutoBitSet],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub stack: Vec<(crate::IndexInt, u32)>,
 }
 
 impl<'a> LinkerContext<'a> {
@@ -2635,91 +2680,69 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distance: u32,
     ) {
-        if !self.graph.files_live.is_set(source_index as usize) {
-            return;
-        }
+        // Explicit-stack DFS (was per-edge recursive). Only bit/distance
+        // state is produced, so traversal order within an entry point does
+        // not affect the result; successors are pushed without reordering.
+        debug_assert!(ctx.stack.is_empty());
+        ctx.stack.push((source_index, distance));
 
-        let cur_dist = ctx.distances[source_index as usize];
-        let traverse_again = distance < cur_dist;
-        if traverse_again {
-            ctx.distances[source_index as usize] = distance;
-        }
-        let out_dist = distance + 1;
-
-        let bits = &mut ctx.file_entry_bits[source_index as usize];
-
-        // Don't mark this file more than once
-        if bits.is_set(entry_points_count) && !traverse_again {
-            return;
-        }
-
-        bits.set(entry_points_count);
-
-        #[cfg(feature = "debug_logs")]
-        {
-            let parse_graph = self.parse_graph();
-            debug_tree_shake!(
-                "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
-                entry_points_count,
-                bstr::BStr::new(
-                    &parse_graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .pretty
-                ),
-                <&'static str>::from(
-                    parse_graph.ast.items_target()[source_index as usize].bake_graph()
-                ),
-                out_dist,
-            );
-        }
-
-        if ctx.css_reprs[source_index as usize].is_some() {
-            for ri in 0..ctx.import_records[source_index as usize].len() {
-                let record = &ctx.import_records[source_index as usize][ri];
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                {
-                    let other = record.source_index.get();
-                    self.mark_file_reachable_for_code_splitting(
-                        ctx,
-                        other,
-                        entry_points_count,
-                        out_dist,
-                    );
-                }
+        while let Some((source_index, distance)) = ctx.stack.pop() {
+            if !self.graph.files_live.is_set(source_index as usize) {
+                continue;
             }
-            return;
-        }
 
-        for ri in 0..ctx.import_records[source_index as usize].len() {
-            let record = &ctx.import_records[source_index as usize][ri];
-            if record.source_index.is_valid()
-                && !self.is_external_dynamic_import(record, source_index)
+            let cur_dist = ctx.distances[source_index as usize];
+            let traverse_again = distance < cur_dist;
+            if traverse_again {
+                ctx.distances[source_index as usize] = distance;
+            }
+            let out_dist = distance + 1;
+
+            let bits = &mut ctx.file_entry_bits[source_index as usize];
+
+            // Don't mark this file more than once
+            if bits.is_set(entry_points_count) && !traverse_again {
+                continue;
+            }
+
+            bits.set(entry_points_count);
+
+            #[cfg(feature = "debug_logs")]
             {
-                let other = record.source_index.get();
-                self.mark_file_reachable_for_code_splitting(
-                    ctx,
-                    other,
+                let parse_graph = self.parse_graph();
+                debug_tree_shake!(
+                    "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
                     entry_points_count,
+                    bstr::BStr::new(
+                        &parse_graph.input_files.items_source()[source_index as usize]
+                            .path
+                            .pretty
+                    ),
+                    <&'static str>::from(
+                        parse_graph.ast.items_target()[source_index as usize].bake_graph()
+                    ),
                     out_dist,
                 );
             }
-        }
 
-        let part_count = ctx.parts[source_index as usize].len();
-        for pi in 0..part_count {
-            let deps_len = ctx.parts[source_index as usize].as_slice()[pi]
-                .dependencies
-                .len();
-            for di in 0..deps_len {
-                let dependency = ctx.parts[source_index as usize].as_slice()[pi].dependencies[di];
-                if dependency.source_index.get() != source_index {
-                    self.mark_file_reachable_for_code_splitting(
-                        ctx,
-                        dependency.source_index.get(),
-                        entry_points_count,
-                        out_dist,
-                    );
+            for record in ctx.import_records[source_index as usize].iter() {
+                if record.source_index.is_valid()
+                    && !self.is_external_dynamic_import(record, source_index)
+                {
+                    ctx.stack.push((record.source_index.get(), out_dist));
+                }
+            }
+
+            // CSS files only follow their import records.
+            if ctx.css_reprs[source_index as usize].is_some() {
+                continue;
+            }
+
+            for part in ctx.parts[source_index as usize].as_slice() {
+                for dependency in part.dependencies.iter() {
+                    if dependency.source_index.get() != source_index {
+                        ctx.stack.push((dependency.source_index.get(), out_dist));
+                    }
                 }
             }
         }

@@ -1536,6 +1536,79 @@ it("process.memoryUsage.arrayBuffers", () => {
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });
 
+it("process.memoryUsage.arrayBuffers counts typed arrays without a materialized ArrayBuffer", async () => {
+  const script = `
+    const MB = 1 << 20;
+    const held = [];
+
+    const baseline = process.memoryUsage().arrayBuffers;
+
+    for (let i = 0; i < 8; i++) held.push(Buffer.alloc(8 * MB));
+    const afterOversize = process.memoryUsage().arrayBuffers;
+
+    for (let i = 0; i < 8; i++) held.push(new ArrayBuffer(8 * MB));
+    const afterArrayBuffer = process.memoryUsage().arrayBuffers;
+
+    const beforePromote = process.memoryUsage().arrayBuffers;
+    for (let i = 0; i < 8; i++) held[i].buffer;
+    const afterPromote = process.memoryUsage().arrayBuffers;
+
+    // FastTypedArray: run hot so DFG/FTL inline-allocates, then full GC so the
+    // visit-based correction counts every live vector exactly.
+    for (let i = 0; i < 100000; i++) held.push(new Uint8Array(256));
+    for (let i = 0; i < 100000; i++) held.push(new Uint8Array(8));
+    Bun.gc(true);
+    const afterFastGC = process.memoryUsage().arrayBuffers;
+
+    held.length = 0;
+    Bun.gc(true);
+    Bun.gc(true);
+    const afterCollect = process.memoryUsage().arrayBuffers;
+
+    process.stdout.write(JSON.stringify({
+      oversize: afterOversize - baseline,
+      arrayBuffer: afterArrayBuffer - afterOversize,
+      promote: afterPromote - beforePromote,
+      fastAfterGC: afterFastGC - baseline,
+      afterCollect: afterCollect - baseline,
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout);
+
+  const OVERSIZE_TOTAL = 8 * 8 * (1 << 20);
+  const FAST_TOTAL = 100000 * 256 + 100000 * 8;
+
+  // OversizeTypedArray backing (Buffer.alloc with size > fastSizeLimit) is
+  // tracked exactly at allocation time.
+  expect(result.oversize).toBeGreaterThanOrEqual(OVERSIZE_TOTAL);
+  expect(result.oversize).toBeLessThan(OVERSIZE_TOTAL * 1.5);
+
+  // Explicit ArrayBuffer allocations were already counted and still are.
+  expect(result.arrayBuffer).toBeGreaterThanOrEqual(OVERSIZE_TOTAL);
+  expect(result.arrayBuffer).toBeLessThan(OVERSIZE_TOTAL * 1.5);
+
+  // Materializing .buffer must not double count the same bytes.
+  expect(result.promote).toBeLessThan(OVERSIZE_TOTAL * 0.25);
+
+  // After a full GC the counter reflects every live Fast/Oversize/ArrayBuffer
+  // vector including JIT inline-allocated FastTypedArrays.
+  expect(result.fastAfterGC).toBeGreaterThanOrEqual(2 * OVERSIZE_TOTAL + FAST_TOTAL);
+  expect(result.fastAfterGC).toBeLessThan((2 * OVERSIZE_TOTAL + FAST_TOTAL) * 1.25);
+
+  // After releasing everything the counter drops back.
+  expect(result.afterCollect).toBeLessThan(OVERSIZE_TOTAL * 0.5);
+
+  expect(exitCode).toBe(0);
+});
+
 it("should handle user assigned `default` properties", async () => {
   process.default = 1;
   process.hello = 2;

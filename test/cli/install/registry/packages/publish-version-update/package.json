@@ -1,0 +1,47 @@
+{
+	"name": "publish-version-update",
+	"versions": {
+		"9.9.9": {
+			"name": "publish-version-update",
+			"version": "9.9.9",
+			"scripts": {
+				"prepublishOnly": "/workspace/bun/build/release/bun update-version.js"
+			},
+			"dependencies": {
+				"publish-version-update": "9.9.9"
+			},
+			"_id": "publish-version-update@9.9.9",
+			"_integrity": "sha512-02VXvJbgy9lCQpVrOUBzHk4hff8W5uS0hnPW9WWyVWotI33BE+zx+R1X8H7HjVjy07qz1tfiF+XSvbs2jHTvZQ==",
+			"_nodeVersion": "26.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-02VXvJbgy9lCQpVrOUBzHk4hff8W5uS0hnPW9WWyVWotI33BE+zx+R1X8H7HjVjy07qz1tfiF+XSvbs2jHTvZQ==",
+			"shasum": "7deb94f08b2c942f6217381080b5f80f327f9b19",
+			"dist": {
+				"integrity": "sha512-02VXvJbgy9lCQpVrOUBzHk4hff8W5uS0hnPW9WWyVWotI33BE+zx+R1X8H7HjVjy07qz1tfiF+XSvbs2jHTvZQ==",
+				"shasum": "7deb94f08b2c942f6217381080b5f80f327f9b19",
+				"tarball": "http://http://localhost:28922/publish-version-update/-/publish-version-update-9.9.9.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2026-07-18T10:56:33.298Z",
+		"created": "2026-07-18T10:56:33.298Z",
+		"9.9.9": "2026-07-18T10:56:33.298Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "9.9.9"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"publish-version-update-9.9.9.tgz": {
+			"shasum": "7deb94f08b2c942f6217381080b5f80f327f9b19",
+			"version": "9.9.9"
+		}
+	},
+	"_rev": "",
+	"_id": "publish-version-update",
+	"readme": ""
+}

@@ -1,0 +1,41 @@
+{
+	"name": "republish-test-1",
+	"versions": {
+		"1.0.0": {
+			"name": "republish-test-1",
+			"version": "1.0.0",
+			"_id": "republish-test-1@1.0.0",
+			"_integrity": "sha512-K+CY7SU/5uFqMhdUtOVzl7EEEAPm5m++6ofOO3NDjJn4pitwr0Osj4KuZmKO4a/XJnw89oUBF6X3BFjW/pF64g==",
+			"_nodeVersion": "26.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-K+CY7SU/5uFqMhdUtOVzl7EEEAPm5m++6ofOO3NDjJn4pitwr0Osj4KuZmKO4a/XJnw89oUBF6X3BFjW/pF64g==",
+			"shasum": "14e517fb57bebcc582d1fe750752e2b1b3923f51",
+			"dist": {
+				"integrity": "sha512-K+CY7SU/5uFqMhdUtOVzl7EEEAPm5m++6ofOO3NDjJn4pitwr0Osj4KuZmKO4a/XJnw89oUBF6X3BFjW/pF64g==",
+				"shasum": "14e517fb57bebcc582d1fe750752e2b1b3923f51",
+				"tarball": "http://http://localhost:28922/republish-test-1/-/republish-test-1-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2026-07-18T10:56:34.929Z",
+		"created": "2026-07-18T10:56:34.929Z",
+		"1.0.0": "2026-07-18T10:56:34.929Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"republish-test-1-1.0.0.tgz": {
+			"shasum": "14e517fb57bebcc582d1fe750752e2b1b3923f51",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "republish-test-1",
+	"readme": ""
+}

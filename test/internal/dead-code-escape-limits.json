@@ -13,6 +13,7 @@
   "src/io/lib.rs": 2,
   "src/io/posix_event_loop.rs": 8,
   "src/jsc/PosixSignalHandle.rs": 6,
+  "src/jsc/ZigStackTrace.rs": 1,
   "src/jsc_macros/lib.rs": 2,
   "src/opaque/lib.rs": 5,
   "src/patch/lib.rs": 2,

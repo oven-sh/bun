@@ -1,0 +1,44 @@
+{
+	"name": "@scoped/pkg-1",
+	"versions": {
+		"1.1.1": {
+			"name": "@scoped/pkg-1",
+			"version": "1.1.1",
+			"dependencies": {
+				"@scoped/pkg-1": "1.1.1"
+			},
+			"_id": "@scoped/pkg-1@1.1.1",
+			"_integrity": "sha512-ZukE1diuSo8MITnpi03IfVcMXL9cUr4oxvGuuVnIga3ju9ctyntuWqJSi6BKdzyvvV1qpeRkduDDNZ6ZDtly2A==",
+			"_nodeVersion": "26.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-ZukE1diuSo8MITnpi03IfVcMXL9cUr4oxvGuuVnIga3ju9ctyntuWqJSi6BKdzyvvV1qpeRkduDDNZ6ZDtly2A==",
+			"shasum": "096b75abed5582b7c73a93578f891e588b82987a",
+			"dist": {
+				"integrity": "sha512-ZukE1diuSo8MITnpi03IfVcMXL9cUr4oxvGuuVnIga3ju9ctyntuWqJSi6BKdzyvvV1qpeRkduDDNZ6ZDtly2A==",
+				"shasum": "096b75abed5582b7c73a93578f891e588b82987a",
+				"tarball": "http://http://localhost:28922/@scoped/pkg-1/-/@scoped/pkg-1-1.1.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2026-07-18T10:56:31.145Z",
+		"created": "2026-07-18T10:56:31.145Z",
+		"1.1.1": "2026-07-18T10:56:31.145Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.1.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"pkg-1-1.1.1.tgz": {
+			"shasum": "096b75abed5582b7c73a93578f891e588b82987a",
+			"version": "1.1.1"
+		}
+	},
+	"_rev": "",
+	"_id": "@scoped/pkg-1",
+	"readme": ""
+}

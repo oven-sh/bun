@@ -8,12 +8,14 @@
 // Self-alias so Phase-A drafts written against `bun_install::…` resolve
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
-extern crate bun_sha_hmac as bun_sha;
+extern crate bun_crypto as bun_sha;
 extern crate self as bun_install;
 extern crate bun_js_parser as bun_js_printer;
 // `bun_core::declare_scope!` / `scoped_log!` — the macros live at
 // `bun_core` crate root (#[macro_export]); alias the crate so the
 // `bun_core::` path resolves.
+extern crate bun_crypto as bun_boringssl_sys;
+extern crate bun_crypto as bun_sha_hmac;
 use bun_core::analytics;
 extern crate bun_core as bun_output;
 

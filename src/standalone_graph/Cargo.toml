@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-bun_errno.workspace = true
 bun_opaque.workspace = true
 strum.workspace = true
 bstr.workspace = true
@@ -21,12 +20,10 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bun_alloc.workspace = true
 bun_core.workspace = true
 bun_bundler.workspace = true
-bun_collections.workspace = true
 bun_dotenv.workspace = true
-bun_exe_format.workspace = true
+bun_crypto.workspace = true
 bun_http.workspace = true
 bun_parsers.workspace = true
 bun_sys.workspace = true

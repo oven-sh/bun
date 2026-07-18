@@ -26,11 +26,7 @@ bitflags.workspace = true
 bumpalo.workspace = true
 smallvec = { workspace = true, features = ["const_generics", "union"] }
 typed-arena.workspace = true
-bun_alloc.workspace = true
-bun_base64.workspace = true
 bun_core.workspace = true
-bun_collections.workspace = true
-bun_highway.workspace = true
 # TODO(b2-blocked): bun_parsers — json::parse signature is live; wire in
 # once parse_json un-gates (currently blocked on bun_ast::Source lifetime,
 # not on bun_parsers).
@@ -42,6 +38,4 @@ bun_loop.workspace = true
 # quote_for_json moved down to bun_string, so Chunk::print_source_map_contents*
 # is now un-gated without the cycle.
 bun_ast.workspace = true
-bun_ptr.workspace = true
-bun_semver.workspace = true
 bun_sys.workspace = true

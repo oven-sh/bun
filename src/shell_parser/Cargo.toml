@@ -22,6 +22,4 @@ bumpalo.workspace = true
 typed-arena.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
-bun_alloc.workspace = true
 bun_core.workspace = true
-bun_collections.workspace = true

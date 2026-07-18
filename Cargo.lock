@@ -134,34 +134,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
-name = "bun_alloc"
-version = "0.0.0"
-dependencies = [
- "allocator-api2",
- "bitflags",
- "bstr",
- "bumpalo",
- "bun_core",
- "bun_mimalloc_sys",
- "bun_opaque",
- "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "typed-arena",
-]
-
-[[package]]
 name = "bun_api"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_install_types",
  "bun_options_types",
@@ -180,13 +157,9 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_macros",
- "bun_ptr",
  "bun_sys",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -199,71 +172,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_base64"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bumpalo",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bun_simdutf_sys",
- "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_bin"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_loop",
- "bun_mimalloc_sys",
  "bun_runtime",
  "bun_sys",
  "libc",
-]
-
-[[package]]
-name = "bun_boringssl"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_boringssl_sys",
- "bun_core",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "strum",
-]
-
-[[package]]
-name = "bun_boringssl_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -273,16 +190,10 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_collections",
  "bun_core",
  "bun_css",
  "bun_dotenv",
- "bun_errno",
- "bun_hash",
- "bun_http_types",
  "bun_js",
  "bun_loop",
  "bun_macros",
@@ -290,13 +201,11 @@ dependencies = [
  "bun_opaque",
  "bun_options_types",
  "bun_parsers",
- "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
  "bun_router",
  "bun_sourcemap",
  "bun_sys",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -315,12 +224,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_api",
  "bun_ast",
  "bun_bundler",
  "bun_clap",
- "bun_collections",
  "bun_core",
  "bun_install_types",
  "bun_js",
@@ -352,24 +259,6 @@ dependencies = [
  "enumset",
  "libc",
  "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
-name = "bun_collections"
-version = "0.0.0"
-dependencies = [
- "allocator-api2",
- "bun_alloc",
- "bun_core",
- "bun_ptr",
- "bun_simdutf_sys",
- "bun_wyhash",
- "hashbrown 0.15.5",
- "paste",
- "rustc-hash",
- "smallvec",
  "strum",
  "thiserror",
 ]
@@ -422,39 +311,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_csrf"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_base64",
- "bun_boringssl_sys",
- "bun_core",
- "bun_sha_hmac",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_css"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_collections",
  "bun_core",
  "bun_loop",
  "bun_macros",
- "bun_ptr",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -471,14 +337,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
- "bun_collections",
  "bun_core",
- "bun_errno",
  "bun_macros",
  "bun_sys",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -486,46 +348,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_errno"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_libuv_sys",
- "bun_windows_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
-name = "bun_hash"
-version = "0.0.0"
-dependencies = [
- "bun_core",
- "bun_highway",
-]
-
-[[package]]
-name = "bun_highway"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -534,23 +356,14 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_boringssl",
- "bun_boringssl_sys",
- "bun_collections",
  "bun_core",
+ "bun_crypto",
  "bun_dotenv",
- "bun_errno",
- "bun_http_types",
  "bun_loop",
  "bun_macros",
- "bun_picohttp",
- "bun_ptr",
  "bun_sys",
  "bun_uws",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -562,34 +375,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_http_types"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bytemuck",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_ini"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_api",
  "bun_ast",
- "bun_base64",
- "bun_collections",
  "bun_core",
  "bun_dotenv",
  "bun_install_types",
@@ -611,16 +403,12 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_boringssl_sys",
  "bun_bunfig",
  "bun_clap",
- "bun_collections",
  "bun_core",
+ "bun_crypto",
  "bun_dotenv",
- "bun_errno",
  "bun_http",
  "bun_ini",
  "bun_install_types",
@@ -628,16 +416,10 @@ dependencies = [
  "bun_loop",
  "bun_options_types",
  "bun_parsers",
- "bun_picohttp",
- "bun_ptr",
  "bun_resolver",
- "bun_semver",
- "bun_sha_hmac",
- "bun_simdutf_sys",
  "bun_sys",
  "bun_transpiler",
  "bun_uws",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -654,12 +436,8 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
- "bun_collections",
  "bun_core",
- "bun_semver",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -675,20 +453,14 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_collections",
  "bun_core",
- "bun_highway",
  "bun_loop",
  "bun_macros",
  "bun_options_types",
- "bun_ptr",
  "bun_react_compiler",
  "bun_sourcemap",
  "bun_sys",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "criterion",
@@ -709,37 +481,25 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
- "bun_api",
  "bun_ast",
- "bun_base64",
- "bun_boringssl",
  "bun_bundler",
  "bun_clap",
- "bun_collections",
  "bun_core",
  "bun_crypto",
  "bun_dotenv",
- "bun_errno",
- "bun_hash",
  "bun_http",
- "bun_http_types",
  "bun_install",
  "bun_js",
  "bun_loop",
  "bun_macros",
  "bun_opaque",
  "bun_options_types",
- "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
- "bun_sha_hmac",
- "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_sys",
  "bun_transpiler",
  "bun_uws",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -748,23 +508,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_libuv_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_windows_sys",
- "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -806,8 +549,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_sys",
  "const_format",
@@ -817,21 +558,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_mimalloc_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -845,14 +571,10 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_ast",
- "bun_collections",
  "bun_core",
  "bun_dotenv",
- "bun_errno",
  "bun_install_types",
- "bun_semver",
  "bun_sys",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -860,13 +582,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_output"
-version = "0.0.0"
-dependencies = [
- "bun_core",
 ]
 
 [[package]]
@@ -880,13 +595,8 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
  "bun_ast",
- "bun_collections",
  "bun_core",
- "bun_highway",
- "bun_simdutf_sys",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "criterion",
@@ -900,45 +610,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_picohttp"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_ptr"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_macros",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_react_compiler"
 version = "0.0.0"
 dependencies = [
- "bun_alloc",
  "bun_ast",
- "bun_collections",
  "bun_core",
  "enumset",
  "rustc-hash",
@@ -952,7 +627,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_ast",
- "bun_collections",
  "bun_core",
  "bun_options_types",
  "const_format",
@@ -970,24 +644,15 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_collections",
  "bun_core",
  "bun_dotenv",
- "bun_errno",
- "bun_hash",
- "bun_http_types",
  "bun_install_types",
  "bun_js",
  "bun_options_types",
  "bun_parsers",
- "bun_ptr",
  "bun_resolve_builtins",
- "bun_semver",
  "bun_sys",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -1003,18 +668,12 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
- "bun_collections",
  "bun_core",
- "bun_errno",
- "bun_http_types",
  "bun_js",
  "bun_options_types",
- "bun_ptr",
  "bun_resolver",
  "bun_sys",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -1032,49 +691,31 @@ dependencies = [
  "bitflags",
  "blake2",
  "bstr",
- "bun_alloc",
  "bun_api",
  "bun_ast",
- "bun_base64",
- "bun_boringssl",
- "bun_boringssl_sys",
  "bun_bundler",
  "bun_bunfig",
  "bun_clap",
- "bun_collections",
  "bun_core",
  "bun_crypto",
- "bun_csrf",
  "bun_css",
  "bun_dotenv",
- "bun_errno",
- "bun_hash",
- "bun_highway",
  "bun_http",
- "bun_http_types",
  "bun_ini",
  "bun_install",
  "bun_install_types",
  "bun_js",
  "bun_jsc",
- "bun_libuv_sys",
  "bun_loop",
  "bun_macros",
  "bun_md",
  "bun_opaque",
  "bun_options_types",
- "bun_output",
  "bun_parsers",
- "bun_picohttp",
- "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
  "bun_router",
- "bun_safety",
- "bun_semver",
- "bun_sha_hmac",
  "bun_shell_parser",
- "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_sql",
  "bun_standalone_graph",
@@ -1082,8 +723,6 @@ dependencies = [
  "bun_transpiler",
  "bun_uws",
  "bun_uws_sys",
- "bun_valkey",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -1099,67 +738,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_safety"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
-name = "bun_semver"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_sha_hmac"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_boringssl",
- "bun_boringssl_sys",
- "bun_core",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_shell_parser"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
- "bun_collections",
  "bun_core",
  "const_format",
  "enum-map",
@@ -1182,37 +766,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_simdutf_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_sourcemap"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_alloc",
  "bun_ast",
- "bun_base64",
- "bun_collections",
  "bun_core",
- "bun_highway",
  "bun_loop",
  "bun_opaque",
  "bun_parsers",
- "bun_ptr",
- "bun_semver",
  "bun_sys",
  "const_format",
  "enum-map",
@@ -1231,12 +795,8 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
- "bun_boringssl",
- "bun_collections",
  "bun_core",
- "bun_ptr",
- "bun_sha_hmac",
+ "bun_crypto",
  "bun_sys",
  "const_format",
  "enum-map",
@@ -1253,14 +813,11 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
  "bun_bundler",
- "bun_collections",
  "bun_core",
  "bun_crypto",
  "bun_dotenv",
- "bun_errno",
  "bun_http",
  "bun_js",
  "bun_loop",
@@ -1285,15 +842,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_core",
- "bun_errno",
- "bun_libuv_sys",
  "bun_macros",
  "bun_opaque",
- "bun_output",
  "bun_windows_sys",
- "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -1327,11 +879,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_boringssl",
  "bun_core",
+ "bun_crypto",
  "bun_macros",
  "bun_opaque",
- "bun_ptr",
  "bun_uws_sys",
  "const_format",
  "enum-map",
@@ -1347,12 +898,8 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
- "bun_boringssl_sys",
  "bun_core",
- "bun_errno",
- "bun_http_types",
- "bun_libuv_sys",
+ "bun_crypto",
  "bun_opaque",
  "bun_windows_sys",
  "const_format",
@@ -1365,37 +912,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_valkey"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_windows_sys"
 version = "0.0.0"
-
-[[package]]
-name = "bun_wyhash"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
 
 [[package]]
 name = "bytemuck"

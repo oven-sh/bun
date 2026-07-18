@@ -26,6 +26,10 @@ pub extern crate self as bun_semver_jsc;
 pub extern crate self as bun_sys_jsc;
 pub extern crate self as bun_ast_jsc;
 
+extern crate bun_crypto as bun_boringssl;
+extern crate bun_crypto as bun_boringssl_sys;
+extern crate bun_crypto as bun_s3_signing;
+extern crate bun_crypto as bun_sha_hmac;
 pub mod error;
 pub use error::{Error, Result};
 

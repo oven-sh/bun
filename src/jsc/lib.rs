@@ -31,6 +31,9 @@ extern crate alloc;
 // inside this crate (e.g. `#[JsClass]` on `BuildMessage`).
 extern crate self as bun_jsc;
 
+extern crate bun_crypto as bun_boringssl;
+extern crate bun_crypto as bun_s3_signing;
+extern crate bun_crypto as bun_sha_hmac;
 use core::ffi::{c_char, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────

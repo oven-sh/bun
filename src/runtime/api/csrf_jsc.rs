@@ -4,7 +4,7 @@
 use crate::jsc_ext::JSGlobalObjectExt as _;
 use bun_boringssl_sys as boring;
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_csrf as csrf;
+use bun_crypto::csrf;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;

@@ -1,6 +1,8 @@
 //! HTTP client.
 
 #![warn(unused_must_use)]
+extern crate bun_crypto as bun_boringssl;
+extern crate bun_crypto as bun_boringssl_sys;
 pub mod error;
 pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]

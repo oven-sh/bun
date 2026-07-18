@@ -18,9 +18,7 @@ workspace = true
 
 [dependencies]
 bun_ast = { path = "../ast" }
-bun_alloc.workspace = true
 bun_core.workspace = true
-bun_collections.workspace = true
 rustc-hash = "2"
 enumset.workspace = true
 smallvec.workspace = true

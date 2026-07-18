@@ -2045,9 +2045,8 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
-                // Resizable / growable-shared backing stores are never held by
-                // reference: `resize()` mprotect()s the trimmed pages PROT_NONE
-                // and `pin()` doesn't prevent it, so spill the tail instead.
+                // Resizable buffers are spilled: `resize()` mprotect()s the
+                // trimmed pages PROT_NONE and `pin()` doesn't prevent it.
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.resizable => {

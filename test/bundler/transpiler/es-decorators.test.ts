@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+// The consolidation sweep runs this file against a pinned release runner that
+// predates #34245 (`@ns!.dec`/`@a.#b`/`export @dec class` + parenthesize hints);
+// gate those cases so the sweep passes while HEAD still exercises them.
+const isStalePinnedRunner = Bun.revision.startsWith("1498d7b77");
+
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
 // We test using .js files in temp directories to avoid inheriting
@@ -406,7 +411,7 @@ describe("ES Decorators", () => {
       return { stdout, stderr: filterStderr(rawStderr), exitCode };
     }
 
-    test("non-null assertion in decorator member expression", async () => {
+    test.todoIf(isStalePinnedRunner)("non-null assertion in decorator member expression", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
         const ns = {
           dec(cls: any, ctx: any) {
@@ -452,7 +457,7 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.each(["ts", "js"])("private name in decorator member expression (.%s)", async ext => {
+    test.todoIf(isStalePinnedRunner).each(["ts", "js"])("private name in decorator member expression (.%s)", async ext => {
       const run = ext === "ts" ? runDecoratorTS : runDecorator;
       const { stdout, stderr, exitCode } = await run(`
         class Outer {
@@ -470,7 +475,7 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.each(["ts", "js"])("export before decorator (.%s)", async ext => {
+    test.todoIf(isStalePinnedRunner).each(["ts", "js"])("export before decorator (.%s)", async ext => {
       using dir = tempDir("es-dec-export", {
         "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
         [`dep.${ext}`]: `
@@ -497,7 +502,7 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("non-null assertion in decorator is rejected in JavaScript", async () => {
+    test.todoIf(isStalePinnedRunner)("non-null assertion in decorator is rejected in JavaScript", async () => {
       const { stderr, exitCode } = await runDecorator(`
         const ns = { dec(cls, ctx) { return cls; } };
         @ns!.dec class Foo {}
@@ -506,7 +511,7 @@ describe("ES Decorators", () => {
       expect(exitCode).not.toBe(0);
     });
 
-    test("optional chaining in decorator is rejected with a hint", async () => {
+    test.todoIf(isStalePinnedRunner)("optional chaining in decorator is rejected with a hint", async () => {
       const { stderr, exitCode } = await runDecoratorTS(`
         @x?.y class Foo {}
       `);
@@ -515,7 +520,7 @@ describe("ES Decorators", () => {
       expect(exitCode).not.toBe(0);
     });
 
-    test("property access after call in decorator is rejected", async () => {
+    test.todoIf(isStalePinnedRunner)("property access after call in decorator is rejected", async () => {
       const { stderr, exitCode } = await runDecoratorTS(`
         @x().y class Foo {}
       `);
@@ -531,7 +536,7 @@ describe("ES Decorators", () => {
       expect(exitCode).not.toBe(0);
     });
 
-    test("repeated export around a decorator is rejected", async () => {
+    test.todoIf(isStalePinnedRunner)("repeated export around a decorator is rejected", async () => {
       const { stderr, exitCode } = await runDecoratorTS(`
         export @dec export class Foo {}
       `);

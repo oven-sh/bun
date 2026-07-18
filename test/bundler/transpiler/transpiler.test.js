@@ -5347,13 +5347,13 @@ describe("json/toml loader with reserved-word top-level keys", () => {
   it("aliases reserved-word keys and preserves the exported name", () => {
     const t = new Bun.Transpiler();
     expect(t.transformSync('{"if":1,"ok":2}', "json")).toBe(
-      'var _if = 1, ok = 2;\n\nexport {\n  _if as if,\n  ok\n};\nexport default { if: _if, ok };\n',
+      "var _if = 1, ok = 2;\n\nexport {\n  _if as if,\n  ok\n};\nexport default { if: _if, ok };\n",
     );
     expect(t.transformSync('{"class":1}', "json")).toBe(
-      'var _class = 1;\n\nexport {\n  _class as class\n};\nexport default { class: _class };\n',
+      "var _class = 1;\n\nexport {\n  _class as class\n};\nexport default { class: _class };\n",
     );
     expect(t.transformSync("if = 1", "toml")).toBe(
-      'var _if = 1;\n\nexport {\n  _if as if\n};\nexport default {\n  if: _if\n};\n',
+      "var _if = 1;\n\nexport {\n  _if as if\n};\nexport default {\n  if: _if\n};\n",
     );
   });
 

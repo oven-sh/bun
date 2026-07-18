@@ -509,9 +509,10 @@ function republishChildEvent(
     const detailType = isSuite ? "suite" : "test";
     const serialized = data.error;
     if (serialized !== undefined) {
-      const { message, stack, code, failureType } = serialized;
+      const { message, stack, code, failureType, name } = serialized;
       const error = new Error(message);
       error.stack = stack;
+      if (name !== undefined && name !== "Error") error.name = name;
       if (code !== undefined) (error as any).code = code;
       if (failureType !== undefined) (error as any).failureType = failureType;
       data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };

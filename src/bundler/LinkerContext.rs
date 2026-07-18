@@ -774,8 +774,8 @@ impl<'a> LinkerContext<'a> {
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not
             // reallocate inside `validate_tla`; we cache raw column pointers
-            // and reborrow per call to satisfy borrowck (`&mut self` is held
-            // across the recursion).
+            // and reborrow once for the loop to satisfy borrowck alongside
+            // `&mut self`.
             let parse_graph: *mut Graph<'a> = self.parse_graph;
             let import_records_list: *const [bun_ast::import_record::List<'a>] =
                 self.graph.ast.items_import_records();
@@ -783,9 +783,9 @@ impl<'a> LinkerContext<'a> {
             let css_asts: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
             let files_len = self.graph.files.len();
             // SAFETY: see block comment above — `parse_graph` backref disjoint
-            // from `*self`, stable SoA slabs; the recursive `validate_tla` body
-            // neither reallocates the slabs nor forms a competing `&mut` to
-            // any read-only column. All seven derefs share that invariant.
+            // from `*self`, stable SoA slabs; `validate_tla` neither
+            // reallocates the slabs nor forms a competing `&mut` to any
+            // read-only column. All seven derefs share that invariant.
             let (tla_keywords, tla_checks, input_files, import_records_list, css_asts, flags) = unsafe {
                 (
                     (*parse_graph).ast.items_top_level_await_keyword(),
@@ -819,14 +819,14 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
 
-                let _ = self.validate_tla(
+                self.validate_tla(
                     source_index,
                     tla_keywords,
                     tla_checks,
                     input_files,
                     flags,
                     import_records_list,
-                )?;
+                );
 
                 source_index += 1;
             }
@@ -902,7 +902,8 @@ impl<'a> LinkerContext<'a> {
         // Note: these slices alias into self.graph.
         // The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
-        // cache raw column base pointers and reborrow at each recursive call.
+        // cache raw column base pointers and reborrow once for the
+        // worklist-driven passes below.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
         let parts_live: *mut [bun_collections::AutoBitSet] = self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
@@ -918,9 +919,9 @@ impl<'a> LinkerContext<'a> {
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
         // (no reallocation during tree-shaking). All column derefs share that
-        // invariant; reborrowing once here (rather than per-call) is sound
-        // because the recursive `mark_file_*` bodies neither reallocate the
-        // slabs nor form a competing `&mut` to any read-only column.
+        // invariant; reborrowing once here is sound because the
+        // worklist-driven `mark_file_*` steps neither reallocate the slabs
+        // nor form a competing `&mut` to any read-only column.
         let (
             entry_points,
             side_effects,
@@ -1888,7 +1889,7 @@ impl<'a> LinkerContext<'a> {
         input_files: &[Source],
         meta_flags: &mut [crate::js_meta::Flags],
         ast_import_records: &[bun_ast::import_record::List<'a>],
-    ) -> Result<TlaCheck, AllocError> {
+    ) {
         // Explicit-stack postorder DFS (was per-edge recursive). `Enter`
         // seeds a file and queues each followed import paired with an
         // `AfterChild` resume point; that resume reads the child's completed
@@ -1906,7 +1907,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         if tla_checks[source_index as usize].depth != 0 {
-            return Ok(tla_checks[source_index as usize]);
+            return;
         }
 
         let mut stack: Vec<Frame> = vec![Frame::Enter(source_index)];
@@ -2070,8 +2071,6 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
-
-        Ok(tla_checks[source_index as usize])
     }
 
     pub fn should_remove_import_export_stmt(

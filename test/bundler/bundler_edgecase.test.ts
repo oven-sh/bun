@@ -2747,41 +2747,41 @@ describe("bundler", () => {
   // The bundler's per-edge graph walks (reachable files, tree-shaking /
   // code-splitting liveness, chunk part ordering, CSS discovery, TLA
   // validation, async propagation, dependency wrapping) used to recurse once
-  // per import-graph edge, overflowing the stack on long linear chains.
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
   const deepChainDepth = 7000;
-  const deepChainLinks = Object.fromEntries(
-    Array.from({ length: deepChainDepth - 1 }, (_, i) => [
-      `/m${i}.js`,
-      `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
-    ]),
-  );
+  const deepChainFiles = {
+    ...Object.fromEntries(
+      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+        `/m${i}.js`,
+        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+      ]),
+    ),
+    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+  };
   itBundled("edgecase/DeepImportChain", {
     files: {
       "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
-      ...deepChainLinks,
-      [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+      ...deepChainFiles,
     },
     backend: "cli",
     run: { stdout: String(deepChainDepth) },
   });
-  itBundled("edgecase/DeepImportChainTLA", {
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; checking for the deepest wrapper is enough.
+  itBundled("edgecase/DeepImportChainWrappedTLA", {
     files: {
-      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
-      ...deepChainLinks,
-      [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = await Promise.resolve(1);`,
+      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      ...deepChainFiles,
     },
     backend: "cli",
-    run: { stdout: String(deepChainDepth) },
-  });
-  itBundled("edgecase/DeepImportChainWrapped", {
-    files: {
-      "/entry.cjs": `const { v0 } = require("./m0.js"); console.log(v0);`,
-      ...deepChainLinks,
-      [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toContain(`init_m${deepChainDepth - 2}`);
     },
-    entryPoints: ["/entry.cjs"],
-    backend: "cli",
-    run: { stdout: String(deepChainDepth) },
   });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {

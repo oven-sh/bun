@@ -58,10 +58,19 @@ class WeakRefMap extends SafeMap {
   }
 }
 
+const notifyNativeUndiciSubscribed = $newCppFunction("UndiciDiagnostics.cpp", "jsNotifyUndiciSubscribed", 0);
+let notifiedUndici = false;
+
 function markActive(channel) {
   ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
+  // Let native fetch()/WebSocket know it should start publishing. Monotonic:
+  // once flipped the native side keeps the cheap hasSubscribers check in JS.
+  if (!notifiedUndici && typeof channel.name === "string" && channel.name.startsWith("undici:")) {
+    notifiedUndici = true;
+    notifyNativeUndiciSubscribed();
+  }
 }
 
 function maybeMarkInactive(channel) {

@@ -43,6 +43,167 @@ type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
 
+/// Bridge to `src/js/internal/undici_diagnostics.ts`: publishes the
+/// undici-compatible diagnostics_channel events so APM tooling (dd-trace,
+/// OpenTelemetry) can trace the built-in fetch() client.
+pub(crate) mod undici_diagnostics {
+    use super::{FetchTasklet, HTTPResponseMetadata, Headers, JSGlobalObject, JSValue, ZigURL};
+    use bun_http_types::ETag::HeaderEntryColumns as _;
+    use bun_jsc::bun_string_jsc::create_utf8_for_js;
+    use bun_jsc::{self as jsc, ArrayBuffer, JsResult, StrongOptional};
+
+    #[inline]
+    pub(crate) fn has_subscriber() -> bool {
+        jsc::cpp::Bun__undiciDiagnosticsHasSubscriber()
+    }
+
+    fn js_str(global: &JSGlobalObject, s: &[u8]) -> JSValue {
+        create_utf8_for_js(global, s).unwrap_or(JSValue::UNDEFINED)
+    }
+
+    fn headers_to_js_array(global: &JSGlobalObject, headers: &Headers) -> JsResult<JSValue> {
+        let entries = headers.entries.slice();
+        let names = entries.items_name();
+        let values = entries.items_value();
+        JSValue::create_array_from_iter(global, 0..(names.len() * 2), |i| {
+            let ptr = if i & 1 == 0 { names[i >> 1] } else { values[i >> 1] };
+            create_utf8_for_js(global, headers.as_str(ptr))
+        })
+    }
+
+    fn response_headers_to_js_array(
+        global: &JSGlobalObject,
+        list: &[bun_picohttp::Header],
+    ) -> JsResult<JSValue> {
+        JSValue::create_array_from_iter(global, 0..(list.len() * 2), |i| {
+            let h = &list[i >> 1];
+            let bytes = if i & 1 == 0 { h.name() } else { h.value() };
+            ArrayBuffer::create_buffer(global, bytes)
+        })
+    }
+
+    fn publish_create(
+        global: &JSGlobalObject,
+        url: &ZigURL<'_>,
+        method: bun_http::Method,
+        headers: &mut Headers,
+    ) -> JsResult<Option<JSValue>> {
+        let origin = js_str(global, url.origin);
+        let method_js = js_str(global, method.as_str().as_bytes());
+        // ZigURL.pathname already includes the query string (unlike WHATWG URL).
+        let path_js = js_str(global, url.pathname);
+        let host = js_str(global, url.host);
+        let hostname = js_str(global, url.hostname);
+        let protocol = js_str(global, url.protocol);
+        let port = js_str(global, url.port);
+        let headers_js = headers_to_js_array(global, headers)?;
+        let request = jsc::cpp::Bun__undiciDiagnosticsOnCreate(
+            global, origin, method_js, path_js, host, hostname, protocol, port, headers_js,
+        )?;
+        if request.is_undefined_or_null() {
+            return Ok(None);
+        }
+        // Subscribers may have injected propagation headers via `request.addHeader()`.
+        let added = jsc::cpp::Bun__undiciDiagnosticsGetAddedHeaders(global, request)?;
+        if !added.is_undefined_or_null() {
+            let len = added.get_length(global)? as u32;
+            let mut i = 0u32;
+            while i + 1 < len {
+                let k = added.get_index(global, i)?.to_slice(global)?;
+                let v = added.get_index(global, i + 1)?.to_slice(global)?;
+                headers.append(k.slice(), v.slice());
+                i += 2;
+            }
+        }
+        Ok(Some(request))
+    }
+
+    pub(crate) fn on_create(
+        global: &JSGlobalObject,
+        url: &ZigURL<'_>,
+        method: bun_http::Method,
+        headers: &mut Headers,
+    ) -> StrongOptional {
+        if !has_subscriber() {
+            return StrongOptional::empty();
+        }
+        match publish_create(global, url, method, headers) {
+            Ok(Some(req)) => StrongOptional::create(req, global),
+            Ok(None) => StrongOptional::empty(),
+            Err(_) => {
+                let _ = global.try_take_exception();
+                StrongOptional::empty()
+            }
+        }
+    }
+
+    fn url_parts(
+        this: &FetchTasklet,
+        global: &JSGlobalObject,
+    ) -> (JSValue, JSValue, JSValue, JSValue) {
+        if let Some(http_) = this.http.as_ref() {
+            let url = &http_.url;
+            return (
+                js_str(global, url.host),
+                js_str(global, url.hostname),
+                js_str(global, url.protocol),
+                js_str(global, url.port),
+            );
+        }
+        (
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+        )
+    }
+
+    pub(crate) fn on_resolve(
+        this: &FetchTasklet,
+        global: &JSGlobalObject,
+        metadata: &HTTPResponseMetadata,
+    ) {
+        let Some(request) = this.diagnostics_request.get() else {
+            return;
+        };
+        request.ensure_still_alive();
+        let (host, hostname, protocol, port) = url_parts(this, global);
+        jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request, host, hostname, protocol, port);
+        let resp = &metadata.response;
+        let status_text = js_str(global, resp.status);
+        let headers_js =
+            response_headers_to_js_array(global, resp.headers.list).unwrap_or(JSValue::UNDEFINED);
+        jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
+            global,
+            request,
+            resp.status_code as i32,
+            status_text,
+            headers_js,
+        );
+    }
+
+    pub(crate) fn on_complete(this: &mut FetchTasklet, global: &JSGlobalObject) {
+        let Some(request) = this.diagnostics_request.get() else {
+            return;
+        };
+        request.ensure_still_alive();
+        jsc::cpp::Bun__undiciDiagnosticsOnComplete(global, request);
+        this.diagnostics_request.deinit();
+    }
+
+    pub(crate) fn on_error(this: &mut FetchTasklet, global: &JSGlobalObject, error: JSValue) {
+        let Some(request) = this.diagnostics_request.get() else {
+            return;
+        };
+        request.ensure_still_alive();
+        let (host, hostname, protocol, port) = url_parts(this, global);
+        jsc::cpp::Bun__undiciDiagnosticsOnError(
+            global, request, error, host, hostname, protocol, port,
+        );
+        this.diagnostics_request.deinit();
+    }
+}
+
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
 impl Taskable for FetchTasklet {
@@ -113,6 +274,10 @@ pub struct FetchTasklet {
 
     // custom checkServerIdentity
     pub check_server_identity: StrongOptional,
+    // undici-compatible diagnostics_channel request object, when any
+    // `undici:*` channel has a subscriber. Same instance is published across
+    // create/headers/trailers so instrumentation can correlate spans.
+    pub diagnostics_request: StrongOptional,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
     // Custom Hostname
@@ -487,6 +652,7 @@ impl FetchTasklet {
 
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
+        self.diagnostics_request.deinit();
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -834,6 +1000,9 @@ impl FetchTasklet {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
+                if this.diagnostics_request.has() {
+                    undici_diagnostics::on_complete(this, &global_this);
+                }
                 // Same GC hint Bun.serve fires per request, for the outbound direction: an
                 // agent loop only makes fetches, so nothing else nudges the heuristic.
                 // SAFETY: process-static VM (checked non-shutting-down above); JS thread.
@@ -1053,6 +1222,9 @@ impl FetchTasklet {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();
             let err_js = value.to_js(&global_this);
+            if self.diagnostics_request.has() {
+                undici_diagnostics::on_error(self, &global_this, err_js);
+            }
             if let Some(sink) = self.sink_mut() {
                 sink.cancel(err_js);
             }
@@ -1842,6 +2014,16 @@ impl FetchTasklet {
 
     pub(crate) fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
+        if self.diagnostics_request.has() {
+            if let Some(metadata) = self.metadata.as_ref() {
+                let global_this = self.global_this;
+                undici_diagnostics::on_resolve(self, &global_this, metadata);
+            }
+            if !self.result.has_more {
+                let global_this = self.global_this;
+                undici_diagnostics::on_complete(self, &global_this);
+            }
+        }
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
         // The fetch() promise is about to resolve; from here the paused
         // transport should not by itself keep the event loop alive. The body
@@ -1904,6 +2086,7 @@ impl FetchTasklet {
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
+            diagnostics_request: StrongOptional::empty(),
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
@@ -2300,13 +2483,23 @@ impl FetchTasklet {
 
     pub(crate) fn queue(
         global: &JSGlobalObject,
-        fetch_options: FetchOptions,
+        mut fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
+        // Publish `undici:request:create` (and `undici:client:beforeConnect`)
+        // before the request is handed to the HTTP thread so APM subscribers
+        // can inject propagation headers via `request.addHeader()`.
+        let diagnostics_request = undici_diagnostics::on_create(
+            global,
+            &fetch_options.url,
+            fetch_options.method,
+            &mut fetch_options.headers,
+        );
         let node = Self::get(global, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
+        node_ref.diagnostics_request = diagnostics_request;
         let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());

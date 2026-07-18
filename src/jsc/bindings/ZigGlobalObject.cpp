@@ -2598,6 +2598,15 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
     });
 
+    m_undiciDiagnosticsModule.initLater(
+        [](const LazyProperty<JSC::JSGlobalObject, JSObject>::Initializer& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            JSValue mod = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::InternalUndiciDiagnostics);
+            RETURN_IF_EXCEPTION(scope, );
+            RELEASE_ASSERT(mod.isObject());
+            init.set(mod.getObject());
+        });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);

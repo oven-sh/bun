@@ -511,11 +511,9 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    // Flush/schedule any network tasks that the enqueue above wrote into
-    // `network_task_fifo` but did not schedule. When the on-disk `.npm`
-    // manifest cache resolves a package synchronously, the tarball download
-    // task is queued here and `resolutions[dep_id]` is already valid, so we
-    // must drain before deciding whether to wait.
+    // Schedule anything the enqueue above left in `network_task_fifo`: a
+    // disk-cached `.npm` manifest resolves `resolutions[dep_id]` synchronously
+    // while only queuing (not scheduling) the tarball download.
     this.drain_dependency_list();
 
     let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {

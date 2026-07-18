@@ -3,6 +3,98 @@ import { bunExe } from "harness";
 import { MIMEParams, MIMEType } from "util";
 
 describe("MIME API", () => {
+  // In Node.js, MIMEType and MIMEParams are plain JS classes (private fields for state,
+  // no Symbol.toStringTag, non-enumerable prototype members). Match that shape here.
+  describe("class shape matches Node.js", () => {
+    test("no Symbol.toStringTag on prototypes", () => {
+      const m = new MIMEType("a/b;x=1");
+      expect(Object.prototype.toString.call(m)).toBe("[object Object]");
+      expect(Object.prototype.toString.call(m.params)).toBe("[object Object]");
+      expect(Symbol.toStringTag in MIMEType.prototype).toBe(false);
+      expect(Symbol.toStringTag in MIMEParams.prototype).toBe(false);
+    });
+
+    test("prototype members are non-enumerable (for-in yields nothing)", () => {
+      const m = new MIMEType("a/b;x=1");
+      const keys: string[] = [];
+      for (const k in m) keys.push(k);
+      expect(keys).toEqual([]);
+
+      const pkeys: string[] = [];
+      for (const k in m.params) pkeys.push(k);
+      expect(pkeys).toEqual([]);
+    });
+
+    test("prototype property descriptors match Node.js", () => {
+      for (const name of ["type", "subtype", "essence", "params"]) {
+        const d = Object.getOwnPropertyDescriptor(MIMEType.prototype, name)!;
+        expect({ name, enumerable: d.enumerable, configurable: d.configurable }).toEqual({
+          name,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      for (const name of ["toString", "toJSON"]) {
+        const d = Object.getOwnPropertyDescriptor(MIMEType.prototype, name)!;
+        expect({ name, enumerable: d.enumerable, configurable: d.configurable, writable: d.writable }).toEqual({
+          name,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+      for (const name of ["get", "has", "set", "delete", "entries", "keys", "values", "toString", "toJSON"]) {
+        const d = Object.getOwnPropertyDescriptor(MIMEParams.prototype, name)!;
+        expect({ name, enumerable: d.enumerable, configurable: d.configurable, writable: d.writable }).toEqual({
+          name,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+    });
+
+    test("brand-check throws plain TypeError with no .code", () => {
+      for (const fn of [
+        () => MIMEType.prototype.toString.call({}),
+        () => MIMEType.prototype.toJSON.call({}),
+        () => Reflect.get(MIMEType.prototype, "type", {}),
+        () => Reflect.get(MIMEType.prototype, "subtype", {}),
+        () => Reflect.get(MIMEType.prototype, "essence", {}),
+        () => Reflect.get(MIMEType.prototype, "params", {}),
+        () => Reflect.set(MIMEType.prototype, "type", "x", {}),
+        () => Reflect.set(MIMEType.prototype, "subtype", "x", {}),
+        () => MIMEParams.prototype.get.call({}, "x"),
+        () => MIMEParams.prototype.has.call({}, "x"),
+        () => MIMEParams.prototype.set.call({}, "x", "y"),
+        () => MIMEParams.prototype.delete.call({}, "x"),
+        () => MIMEParams.prototype.toString.call({}),
+        () => MIMEParams.prototype.toJSON.call({}),
+      ]) {
+        let err: any;
+        try {
+          fn();
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(TypeError);
+        expect(err.code).toBeUndefined();
+      }
+    });
+
+    test("structuredClone serializes instances as plain empty objects", () => {
+      const m = new MIMEType("a/b;x=1");
+      const cloned = structuredClone(m);
+      expect(Object.getPrototypeOf(cloned)).toBe(Object.prototype);
+      expect(Object.getOwnPropertyNames(cloned)).toEqual([]);
+
+      const p = m.params;
+      const clonedParams = structuredClone(p);
+      expect(Object.getPrototypeOf(clonedParams)).toBe(Object.prototype);
+      expect(Object.getOwnPropertyNames(clonedParams)).toEqual([]);
+    });
+  });
+
   const WHITESPACES = "\t\n\f\r ";
   const NOT_HTTP_TOKEN_CODE_POINT = ",";
   const NOT_HTTP_QUOTED_STRING_CODE_POINT = "\n";

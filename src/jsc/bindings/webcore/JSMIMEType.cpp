@@ -346,7 +346,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterType, (JSGlobalObject * globalObje
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot read private member #type from an object whose class did not declare it"_s);
         return {};
     }
 
@@ -360,7 +360,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterType, (JSGlobalObject * globalObje
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot write private member #type to an object whose class did not declare it"_s);
         return {};
     }
 
@@ -386,7 +386,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterSubtype, (JSGlobalObject * globalO
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot read private member #subtype from an object whose class did not declare it"_s);
         return {};
     }
 
@@ -400,7 +400,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterSubtype, (JSGlobalObject * globalO
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot write private member #subtype to an object whose class did not declare it"_s);
         return {};
     }
 
@@ -426,7 +426,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot read private member #type from an object whose class did not declare it"_s);
         return {};
     }
 
@@ -441,7 +441,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterParams, (JSGlobalObject * globalOb
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot read private member #parameters from an object whose class did not declare it"_s);
         return {};
     }
 
@@ -455,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
 
     auto* thisObject = dynamicDowncast<JSMIMEType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
+        throwTypeError(globalObject, scope, "Cannot read private member #type from an object whose class did not declare it"_s);
         return {};
     }
 
@@ -483,11 +483,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
 
 // Define the properties and functions on the prototype
 static const HashTableValue JSMIMETypePrototypeValues[] = {
-    { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterType, jsMIMETypeProtoSetterType } },
-    { "subtype"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterSubtype, jsMIMETypeProtoSetterSubtype } },
-    { "essence"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterEssence, 0 } },
-    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterParams, 0 } },
-    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMETypeProtoFuncToString, 0 } },
+    { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterType, jsMIMETypeProtoSetterType } },
+    { "subtype"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterSubtype, jsMIMETypeProtoSetterSubtype } },
+    { "essence"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterEssence, 0 } },
+    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMIMETypeProtoGetterParams, 0 } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMETypeProtoFuncToString, 0 } },
 };
 
 void JSMIMETypePrototype::finishCreation(VM& vm)
@@ -498,9 +498,7 @@ void JSMIMETypePrototype::finishCreation(VM& vm)
     reifyStaticProperties(vm, JSMIMEType::info(), JSMIMETypePrototypeValues, *this);
 
     // Set toJSON to toString
-    putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | 0);
-
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | PropertyAttribute::DontEnum | 0);
 }
 
 //-- JSMIMETypeConstructor Implementation --

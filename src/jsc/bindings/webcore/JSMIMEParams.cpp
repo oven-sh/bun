@@ -395,8 +395,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
     // 1. Get this value
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
 
     // 2. Get argument
@@ -425,8 +425,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncHas, (JSGlobalObject * globalObjec
 
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
 
     JSValue nameValue = callFrame->argument(0);
@@ -447,8 +447,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncSet, (JSGlobalObject * globalObjec
 
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
 
     // 1. Validate Arguments
@@ -489,8 +489,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncDelete, (JSGlobalObject * globalOb
 
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
 
     JSValue nameValue = callFrame->argument(0);
@@ -511,8 +511,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
 
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
 
     JSMap* map = thisObject->jsMap();
@@ -563,8 +563,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncEntries, (JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(JSMapIterator::create(vm, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Entries)));
 }
@@ -575,8 +575,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(JSMapIterator::create(vm, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Keys)));
 }
@@ -587,8 +587,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncValues, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSMIMEParams>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
-        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, "Receiver must be an instance of class MIMEParams"_s);
+        return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(JSMapIterator::create(vm, globalObject->mapIteratorStructure(), thisObject->jsMap(), IterationKind::Values)));
 }
@@ -599,14 +599,14 @@ JSC_DECLARE_HOST_FUNCTION(constructMIMEParams);
 
 // Define the properties and functions on the prototype
 static const HashTableValue JSMIMEParamsPrototypeTableValues[] = {
-    { "get"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncGet, 1 } },
-    { "has"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncHas, 1 } },
-    { "set"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncSet, 2 } },
-    { "delete"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncDelete, 1 } },
-    { "toString"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncToString, 0 } },
-    { "entries"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncEntries, 0 } },
-    { "keys"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncKeys, 0 } },
-    { "values"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncValues, 0 } },
+    { "get"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncGet, 1 } },
+    { "has"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncHas, 1 } },
+    { "set"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncSet, 2 } },
+    { "delete"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncDelete, 1 } },
+    { "toString"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncToString, 0 } },
+    { "entries"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncEntries, 0 } },
+    { "keys"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncKeys, 0 } },
+    { "values"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMEParamsProtoFuncValues, 0 } },
 };
 
 void JSMIMEParamsPrototype::finishCreation(VM& vm)
@@ -618,9 +618,7 @@ void JSMIMEParamsPrototype::finishCreation(VM& vm)
     putDirectWithoutTransition(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, Identifier::fromString(vm, "entries"_s)), PropertyAttribute::DontEnum | 0);
 
     // Set toJSON to toString
-    putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | 0);
-
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | PropertyAttribute::DontEnum | 0);
 }
 
 //-- JSMIMEParamsConstructor Implementation --

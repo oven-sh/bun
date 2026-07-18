@@ -828,7 +828,7 @@ test("no assertion failures 2", () => {
     testColorStyle("null", null);
     testColorStyle("string", "test string");
     testColorStyle("date", new Date());
-    testColorStyle("regexp", /regexp/);
+    // RegExp now uses token-level highlighting; verified in util-inspect-regexp.test.js.
   }
 
   // An object with "hasOwnProperty" overwritten should not throw.

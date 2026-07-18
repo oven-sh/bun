@@ -856,24 +856,247 @@ defineColorAlias("inverse", "swapColors");
 defineColorAlias("inverse", "swapcolors");
 defineColorAlias("doubleunderline", "doubleUnderline");
 
-// TODO(BridgeAR): Add function style support for more complex styles.
 // Don't use 'blue' not visible on cmd.exe
-inspect.styles = {
-  __proto__: null,
-  special: "cyan",
-  number: "yellow",
-  bigint: "yellow",
-  boolean: "yellow",
-  undefined: "grey",
-  null: "bold",
-  string: "green",
-  symbol: "green",
-  date: "magenta",
-  // "name": intentionally not styling
-  // TODO(BridgeAR): Highlight regular expressions properly.
-  regexp: "red",
-  module: "underline",
-};
+inspect.styles = ObjectAssign(
+  { __proto__: null },
+  {
+    special: "cyan",
+    number: "yellow",
+    bigint: "yellow",
+    boolean: "yellow",
+    undefined: "grey",
+    null: "bold",
+    string: "green",
+    symbol: "green",
+    date: "magenta",
+    // "name": intentionally not styling
+    regexp: highlightRegExp,
+    module: "underline",
+  },
+);
+
+// Define the palette for RegExp group depth highlighting. Can be changed by users.
+inspect.styles.regexp.colors = ["green", "red", "yellow", "cyan", "magenta"];
+
+const highlightRegExpColors = ArrayPrototypeSlice(inspect.styles.regexp.colors);
+
+// Colorize a JavaScript RegExp pattern per ECMAScript grammar. A tolerant
+// single-pass highlighter covering groups, assertions, alternation,
+// quantifiers, escapes (incl. Unicode properties), classes and backreferences.
+function highlightRegExp(regexpString) {
+  let out = "";
+  let i = 0;
+  let depth = 0;
+  let inClass = false;
+
+  const paletteNames = highlightRegExp.colors?.length > 0 ? highlightRegExp.colors : highlightRegExpColors;
+
+  const palette = [];
+  for (let j = 0; j < paletteNames.length; j++) {
+    const color = inspect.colors[paletteNames[j]];
+    if (color) ArrayPrototypePush.$call(palette, [`\u001b[${color[0]}m`, `\u001b[${color[1]}m`]);
+  }
+
+  function writeGroup(start, end, decreaseDepth = 1) {
+    let seq = "";
+    i++;
+    while (i < regexpString.length && regexpString[i] !== end) {
+      seq += regexpString[i++];
+    }
+    if (i < regexpString.length) {
+      depth -= decreaseDepth;
+      write(start);
+      writeDepth(seq, 1, 1);
+      write(end);
+      depth += decreaseDepth;
+    } else {
+      writeDepth(start, 1, -seq.length);
+    }
+  }
+
+  const write = str => {
+    const idx = depth % palette.length;
+    const color = palette[idx] ?? palette[0];
+    out += color[0] + str + color[1];
+    return idx;
+  };
+
+  function writeDepth(str, incDepth, incI) {
+    depth += incDepth;
+    write(str);
+    depth -= incDepth;
+    i += incI;
+  }
+
+  // Opening '/'
+  write("/");
+  depth++;
+  i = 1;
+
+  while (i < regexpString.length) {
+    const ch = regexpString[i];
+
+    if (inClass) {
+      if (ch === "\\") {
+        let seq = "\\";
+        i++;
+        if (i < regexpString.length) {
+          seq += regexpString[i++];
+          const next = seq[1];
+          if (next === "u" && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          } else if ((next === "p" || next === "P") && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          } else if (seq[1] === "x") {
+            seq += StringPrototypeSlice(regexpString, i, i + 2);
+            i += 2;
+          }
+        }
+        write(seq);
+      } else if (ch === "]") {
+        depth--;
+        write("]");
+        i++;
+        inClass = false;
+      } else if (ch === "-" && regexpString[i - 1] !== "[" && i + 1 < regexpString.length && regexpString[i + 1] !== "]") {
+        writeDepth("-", 1, 1);
+      } else {
+        write(ch);
+        i++;
+      }
+    } else if (ch === "[") {
+      write("[");
+      depth++;
+      i++;
+      inClass = true;
+    } else if (ch === "(") {
+      write("(");
+      depth++;
+      i++;
+      if (i < regexpString.length && regexpString[i] === "?") {
+        i++;
+        const a = i < regexpString.length ? regexpString[i] : "";
+        if (a === ":" || a === "=" || a === "!") {
+          writeDepth(`?${a}`, -1, 1);
+        } else {
+          const b = i + 1 < regexpString.length ? regexpString[i + 1] : "";
+          if (a === "<" && (b === "=" || b === "!")) {
+            writeDepth(`?<${b}`, -1, 2);
+          } else if (a === "<") {
+            i++;
+            const start = i;
+            while (i < regexpString.length && regexpString[i] !== ">") {
+              i++;
+            }
+            const name = StringPrototypeSlice(regexpString, start, i);
+            if (i < regexpString.length && regexpString[i] === ">") {
+              depth--;
+              write("?<");
+              writeDepth(name, 1, 0);
+              write(">");
+              depth++;
+              i++;
+            } else {
+              writeDepth("?<", -1, 0);
+              write(name);
+            }
+          } else {
+            write("?");
+          }
+        }
+      }
+    } else if (ch === ")") {
+      depth--;
+      write(")");
+      i++;
+    } else if (ch === "\\") {
+      let seq = "\\";
+      i++;
+      if (i < regexpString.length) {
+        seq += regexpString[i++];
+        const next = seq[1];
+        if (i < regexpString.length) {
+          if (next === "u" && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          } else if (next === "x") {
+            seq += StringPrototypeSlice(regexpString, i, i + 2);
+            i += 2;
+          } else if (next >= "0" && next <= "9") {
+            while (i < regexpString.length && regexpString[i] >= "0" && regexpString[i] <= "9") {
+              seq += regexpString[i++];
+            }
+          } else if (next === "k" && regexpString[i] === "<") {
+            writeGroup(`${seq}<`, ">");
+            continue;
+          } else if ((next === "p" || next === "P") && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          }
+        }
+      }
+      writeDepth(seq, 1, 0);
+    } else if (ch === "|" || ch === "+" || ch === "*" || ch === "?" || ch === "," || ch === "^" || ch === "$") {
+      writeDepth(ch, 3, 1);
+    } else if (ch === "{") {
+      i++;
+      let digits = "";
+      while (i < regexpString.length && regexpString[i] >= "0" && regexpString[i] <= "9") {
+        digits += regexpString[i++];
+      }
+      if (digits) {
+        write("{");
+        depth++;
+        writeDepth(digits, 1, 0);
+      }
+      if (i < regexpString.length) {
+        if (regexpString[i] === ",") {
+          if (!digits) {
+            write("{");
+            depth++;
+          }
+          write(",");
+          i++;
+        } else if (!digits) {
+          depth += 1;
+          write("{");
+          depth -= 1;
+          continue;
+        }
+      }
+      let digits2 = "";
+      while (i < regexpString.length && regexpString[i] >= "0" && regexpString[i] <= "9") {
+        digits2 += regexpString[i++];
+      }
+      if (digits2) {
+        writeDepth(digits2, 1, 0);
+      }
+      if (i < regexpString.length && regexpString[i] === "}") {
+        depth--;
+        write("}");
+        i++;
+      }
+      if (i < regexpString.length && regexpString[i] === "?") {
+        writeDepth("?", 3, 1);
+      }
+    } else if (ch === ".") {
+      writeDepth(ch, 2, 1);
+    } else if (ch === "/") {
+      break;
+    } else {
+      writeDepth(ch, 1, 1);
+    }
+  }
+
+  // Closing delimiter and flags
+  writeDepth("/", -1, 1);
+  if (i < regexpString.length) {
+    write(StringPrototypeSlice(regexpString, i));
+  }
+  return out;
+}
 
 function addQuotes(str, quotes) {
   if (quotes === -1) {
@@ -957,6 +1180,9 @@ function stylizeWithColor(str, styleType) {
   if (style !== undefined) {
     const color = inspect.colors[style];
     if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
+    if (typeof style === "function") {
+      return style(str);
+    }
   }
   return str;
 }
@@ -1357,8 +1583,9 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       base = RegExpPrototypeToString(constructor !== null ? value : new RegExp(value));
       const prefix = getPrefix(constructor, tag, "RegExp");
       if (prefix !== "RegExp ") base = `${prefix}${base}`;
+      base = ctx.stylize(base, "regexp");
       if ((keys.length === 0 && protoProps === undefined) || (recurseTimes > ctx.depth && ctx.depth !== null)) {
-        return ctx.stylize(base, "regexp");
+        return base;
       }
     } else if (isDate(value)) {
       // Make dates with properties first say the date

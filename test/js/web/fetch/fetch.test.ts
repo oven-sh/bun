@@ -2625,6 +2625,7 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   // to the keep-alive pool with the unread response bytes still in flight,
   // where they would be read as the response to the next request.
   await using server = net.createServer(socket => {
+    socket.on("error", () => {});
     socket.once("data", data => {
       const path = data.toString("utf8").split(" ")[1];
       if (path === "/invalid") {
@@ -2665,6 +2666,7 @@ it("combines duplicate response headers per the Fetch spec", async () => {
   // values exposed by getSetCookie(). Previously Bun overwrote duplicate
   // non-common header names with the last value, dropping earlier values.
   await using server = net.createServer(socket => {
+    socket.on("error", () => {});
     socket.once("data", () => {
       socket.end(
         "HTTP/1.1 200 OK\r\n" +

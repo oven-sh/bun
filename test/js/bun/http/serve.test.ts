@@ -2202,10 +2202,29 @@ describe("server.requestIP", () => {
       hostname: "::1",
     });
 
-    // [::1], not "localhost": the server bound to ::1 only, and on hosts whose
-    // resolver prefers 127.0.0.1 for "localhost" the fetch would ECONNREFUSED.
-    const response = await fetch(`http://[::1]:${server.port}`).then(x => x.json());
-    expect(response).toMatchObject({
+    // Raw TCP, not fetch(): ZigURL stores the bracketed "[::1]" as hostname,
+    // so an ambient NO_PROXY of "::1" never matches and HTTP_PROXY would
+    // swallow the request. Bun.connect goes straight to the ::1 listener.
+    const received: Buffer[] = [];
+    const { resolve, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "::1",
+      port: server.port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+          if (Buffer.concat(received).includes("\r\n\r\n{")) resolve();
+        },
+        close: () => resolve(),
+        error: () => resolve(),
+      },
+    });
+    connection.write(`GET / HTTP/1.1\r\nHost: [::1]\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect(JSON.parse(body)).toMatchObject({
       address: "::1",
       family: "IPv6",
       port: expect.any(Number),
@@ -3105,13 +3124,32 @@ it("only serves /bun:info to loopback clients in development mode", async () => 
     return;
   }
 
-  // proxy: "" so an ambient HTTP_PROXY doesn't intercept (and deny) the
-  // request to the local non-loopback interface.
-  const externalRes = await fetch(`http://${externalAddress}:${server.port}/bun:info`, { proxy: "" });
-  const externalText = await externalRes.text();
+  // Raw TCP, not fetch(): `proxy: ""` is ignored by fetch.rs (treated as
+  // absent), so an ambient HTTP_PROXY would still intercept a request to the
+  // machine's own non-loopback IP. Bun.connect dials it directly.
+  const received: Buffer[] = [];
+  const { resolve, promise } = Promise.withResolvers<void>();
+  await using connection = await Bun.connect({
+    hostname: externalAddress,
+    port: server.port,
+    socket: {
+      data(socket, data) {
+        received.push(data);
+        if (Buffer.concat(received).toString().endsWith("handled by fetch")) resolve();
+      },
+      close: () => resolve(),
+      error: () => resolve(),
+    },
+  });
+  connection.write(`GET /bun:info HTTP/1.1\r\nHost: ${externalAddress}\r\nConnection: close\r\n\r\n`);
+  connection.flush();
+  await promise;
+  const raw = Buffer.concat(received).toString();
+  const headerEnd = raw.indexOf("\r\n\r\n");
+  const externalText = raw.slice(headerEnd + 4);
   expect(externalText).toBe("handled by fetch");
   expect(externalText).not.toContain("bun_version");
-  expect(externalRes.status).toBe(200);
+  expect(raw.slice(0, raw.indexOf("\r\n"))).toContain("200");
 });
 
 it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {

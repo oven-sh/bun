@@ -239,11 +239,7 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
-        trustObject(
-          "Repro Root A",
-          String.raw`\001\002`,
-          `CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST\n` + TRUSTED,
-        ),
+        trustObject("Repro Root A", String.raw`\001\002`, `CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST\n` + TRUSTED),
       ),
     );
     expect(stderr).toContain("2 CKO_NSS_TRUST objects but 1 emitted + 0 skipped");

@@ -2998,8 +2998,17 @@ impl ExpectMatcherUtils {
         } else {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+        // DiffFormatter::fmt may return Err when pretty-printing user JS throws; use
+        // write! into a Vec (format! panics on Display errors) and propagate the throw.
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
+        let _ = core::fmt::Write::write_fmt(
+            &mut bun_core::fmt::VecWriter(&mut buf),
+            format_args!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n"),
+        );
+        if global_this.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &buf)
     }
 }
 

@@ -725,6 +725,23 @@ describe("expect()", () => {
       expect(() => expect(thrArr()).toStrictEqual({ a: 1 })).toThrow("trapG");
       expect(() => expect({ a: 1 }).toStrictEqual(thrArr())).toThrow("trapG");
       expect(() => expect(thrArr()).toEqual({ a: 1 })).toThrow("trapG");
+
+      // this.utils.matcherHint goes through the same DiffFormatter with user-supplied
+      // received/expected; it should propagate the trap throw rather than panic.
+      let hintErr;
+      expect.extend({
+        toHitThrowingProxy() {
+          try {
+            this.utils.matcherHint("toHitThrowingProxy", thrArr(), { a: 1 });
+          } catch (e) {
+            hintErr = e;
+          }
+          return { pass: true, message: () => "" };
+        },
+      });
+      expect(0).toHitThrowingProxy();
+      expect(hintErr).toBeInstanceOf(RangeError);
+      expect(hintErr.message).toBe("trapG");
     });
   }
 

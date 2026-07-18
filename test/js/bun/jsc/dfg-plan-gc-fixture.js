@@ -26,20 +26,24 @@ const server = http
 setImmediate(function check() {
   if (done < N) return setImmediate(check);
   Bun.gc(true);
-  // Count ClientRequest / IncomingMessage instances that the debugging heap
-  // snapshot attributes directly to the JIT worklist.
-  const snap = jsc.generateHeapSnapshotForDebugging();
-  const NF = 7;
-  const RF = 3;
-  const { nodes, nodeClassNames, roots, labels } = snap;
-  const classOf = new Map();
-  for (let i = 0; i < nodes.length; i += NF) classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]);
-  let rooted = 0;
-  for (let i = 0; i < roots.length; i += RF) {
-    const cn = classOf.get(roots[i]);
-    if ((cn === "ClientRequest" || cn === "IncomingMessage") && labels[roots[i + 1]] === "JITWorkList") rooted++;
-  }
   const alive = refs.filter(r => r.deref()).length;
+  // If nothing survived there cannot be a JITWorkList-rooted instance either;
+  // skip the (expensive under ASAN) heap snapshot.
+  let rooted = 0;
+  if (alive > 0) {
+    // Count ClientRequest / IncomingMessage instances that the debugging heap
+    // snapshot attributes directly to the JIT worklist.
+    const snap = jsc.generateHeapSnapshotForDebugging();
+    const NF = 7;
+    const RF = 3;
+    const { nodes, nodeClassNames, roots, labels } = snap;
+    const classOf = new Map();
+    for (let i = 0; i < nodes.length; i += NF) classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+    for (let i = 0; i < roots.length; i += RF) {
+      const cn = classOf.get(roots[i]);
+      if ((cn === "ClientRequest" || cn === "IncomingMessage") && labels[roots[i + 1]] === "JITWorkList") rooted++;
+    }
+  }
   console.log("jitworklist-rooted=" + rooted + " alive=" + alive);
   server.close();
 });

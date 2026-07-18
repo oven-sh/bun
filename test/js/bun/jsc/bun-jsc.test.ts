@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isWindows } from "harness";
 import path from "node:path";
 
 describe("bun:jsc", () => {
@@ -571,8 +571,14 @@ it("gc() does not root user objects from a concurrent DFG plan's OSR-entry snaps
   // flow all tier up during the first burst of responses). The fixture reports
   // how many ClientRequest/IncomingMessage instances the debugging heap
   // snapshot attributes directly to the JIT worklist; that count must be zero.
+  // One compiler thread so plans queue instead of draining in parallel.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "dfg-plan-gc-fixture.js")],
+    cmd: [
+      bunExe(),
+      "--jsc-numberOfDFGCompilerThreads=1",
+      "--jsc-numberOfFTLCompilerThreads=1",
+      path.join(import.meta.dir, "dfg-plan-gc-fixture.js"),
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -583,4 +589,4 @@ it("gc() does not root user objects from a concurrent DFG plan's OSR-entry snaps
   // first gc()), but no ClientRequest/IncomingMessage may be a JITWorkList root.
   expect(stdout.trim()).toMatch(/^jitworklist-rooted=0 alive=\d+$/);
   expect(exitCode).toBe(0);
-});
+}, isDebug || isASAN ? 30_000 : undefined);

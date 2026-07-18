@@ -55,7 +55,7 @@ Stream.prototype.pipe = function (dest, options) {
   // Don't leave dangling pipes when there are errors.
   function onerror(er) {
     cleanup();
-    if (EE.listenerCount(this, "error") === 0) {
+    if (this.listenerCount?.("error") === 0) {
       this.emit("error", er);
     }
   }

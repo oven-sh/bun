@@ -508,7 +508,7 @@ describe("util.debuglog", () => {
       onEnabledBefore: false,
       cbCount: 1,
       cbType: "function",
-      cbName: "debug",
+      cbName: "noop",
       cbEnabled: false,
       offName: "logger",
       offEnabled: false,

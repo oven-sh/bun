@@ -61,7 +61,7 @@ function emitWarningIfNeeded(set) {
 }
 
 const noop = function () {};
-Object.defineProperty(noop, "name", { __proto__: null, value: "debug", configurable: true });
+Object.defineProperty(noop, "name", { __proto__: null, value: "noop", configurable: true });
 
 function debuglogImpl(enabled, set) {
   if (debugs[set] === undefined) {

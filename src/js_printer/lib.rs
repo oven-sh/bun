@@ -3384,8 +3384,6 @@ pub mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
 
-                    // reshaped for borrowck — find the matching index first,
-                    // then drop the immutable iter borrow before printing.
                     let mut found: Option<usize> = None;
                     if let Some(exports) = self.options.commonjs_named_exports {
                         let values = exports.values();

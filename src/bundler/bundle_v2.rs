@@ -4132,40 +4132,9 @@ pub mod bv2_impl {
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
 
                             if template.needs(options::PlaceholderField::Dir) {
-                                // `root_dir` is already canonical (`get_fd_path`);
-                                // canonicalize the source dir the same way so
-                                // Windows 8.3 short names relativize correctly.
-                                let source_dir: &[u8] = if pathname.dir.is_empty() {
-                                    b"."
-                                } else {
-                                    pathname.dir
-                                };
-                                let mut real_path_buf = bun_paths::path_buffer_pool::get();
-                                let dir: &[u8] = 'dir: {
-                                    let Ok(dir_file) = bun_sys::File::openat(
-                                        bun_sys::Fd::cwd(),
-                                        source_dir,
-                                        bun_sys::O::PATH | bun_sys::O::DIRECTORY,
-                                        0,
-                                    ) else {
-                                        break 'dir &*bun_paths::resolve_path::normalize_buf::<
-                                            bun_paths::platform::Auto,
-                                        >(
-                                            source_dir, &mut real_path_buf.0
-                                        );
-                                    };
-                                    match dir_file.get_path(&mut real_path_buf) {
-                                        Ok(p) => p,
-                                        Err(_) => &*bun_paths::resolve_path::normalize_buf::<
-                                            bun_paths::platform::Auto,
-                                        >(
-                                            source_dir, &mut real_path_buf.0
-                                        ),
-                                    }
-                                };
-                                template.placeholder.dir = bun_paths::resolve_path::relative_alloc(
+                                template.placeholder.dir = options::source_dir_relative_to_root(
+                                    pathname.dir,
                                     &self.transpiler.options.root_dir,
-                                    dir,
                                 )?;
                             }
 

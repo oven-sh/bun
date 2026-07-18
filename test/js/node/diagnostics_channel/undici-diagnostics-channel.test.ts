@@ -32,7 +32,8 @@ const trailersCountOk = (fired["undici:request:trailers"] ?? []).length;
 // error path: trailers must NOT fire, only error
 let errRequest;
 dc.subscribe("undici:request:error", ({ request }) => { errRequest = request; });
-try { await fetch("http://127.0.0.1:1/", { signal: AbortSignal.timeout(2000) }); } catch {}
+using errSrv = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { open(s) { s.end(); }, data() {} } });
+try { await fetch("http://127.0.0.1:" + errSrv.port + "/"); } catch {}
 
 const create = fired["undici:request:create"][0];
 const headers = fired["undici:request:headers"][0];
@@ -156,7 +157,9 @@ describe("WebSocket", () => {
           ws.send("x");
           await new Promise(r => { ws.onclose = r; });
 
-          const ws2 = new WebSocket("ws://127.0.0.1:1/nope");
+          // connection-level failure: TCP server that closes before WS handshake
+          using errSrv = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { open(s) { s.end(); }, data() {} } });
+          const ws2 = new WebSocket("ws://127.0.0.1:" + errSrv.port + "/nope");
           await new Promise(r => { ws2.onclose = r; ws2.onerror = () => {}; });
 
           const open = fired["undici:websocket:open"]?.[0];

@@ -36,6 +36,7 @@ class DiagnosticsRequest {
   path: string;
   headers: string[];
   completed: boolean;
+  aborted: boolean;
   // populated by addHeader(); read back by native after `undici:request:create`
   _added: string[] | undefined;
 
@@ -45,6 +46,7 @@ class DiagnosticsRequest {
     this.path = path;
     this.headers = headers;
     this.completed = false;
+    this.aborted = false;
     this._added = undefined;
   }
 
@@ -154,6 +156,7 @@ function onComplete(request) {
 
 function onError(request, error) {
   if (!request) return;
+  request.aborted = true;
   request.completed = true;
   if (requestErrorChannel.hasSubscribers) {
     requestErrorChannel.publish({ request, error });

@@ -753,6 +753,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
                 auto eventInit = createErrorEventInit(protectedThis, "Failed to connect"_s, globalObject);
                 auto message = eventInit.message;
+                Bun::UndiciDiagnostics::publishWebSocketError(globalObject, message);
+                Bun::UndiciDiagnostics::publishWebSocketClose(globalObject, protectedThis, 1006, message);
                 protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
                 protectedThis->dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
 
@@ -965,6 +967,7 @@ void WebSocket::failConnectingWebSocket()
                 // close event. Matches Chrome/Firefox and npm ws.
                 auto reason = "WebSocket is closed before the connection is established"_s;
                 auto eventInit = createErrorEventInit(protectedThis, reason, context.jsGlobalObject());
+                Bun::UndiciDiagnostics::publishWebSocketClose(context.jsGlobalObject(), protectedThis, 1006, reason);
                 protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
                 protectedThis->dispatchEvent(CloseEvent::create(false, 1006, reason));
             }

@@ -23,7 +23,19 @@ let httpsProxyPort: number;
 let wsPort: number;
 let wssPort: number;
 
+// These tests rely on the explicit `proxy` option reaching a localhost proxy.
+// An ambient NO_PROXY=127.0.0.1 (set in CI containers) makes #26608 bypass the
+// explicit proxy, so the auth/TLS-failure cases open cleanly instead of
+// erroring. Assign "" (not delete) so the native getenv sees the cleared value.
+const savedProxyEnv: Record<string, string | undefined> = {};
+const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+
 beforeAll(async () => {
+  for (const key of PROXY_ENV_KEYS) {
+    savedProxyEnv[key] = process.env[key];
+    process.env[key] = "";
+  }
+
   // Create HTTP CONNECT proxy
   proxy = createConnectProxy();
   proxyPort = await startProxy(proxy);
@@ -89,6 +101,10 @@ afterAll(() => {
   httpsProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
+
+  for (const key of PROXY_ENV_KEYS) {
+    process.env[key] = savedProxyEnv[key] ?? "";
+  }
 });
 
 describe("ws package proxy API", () => {

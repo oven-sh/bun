@@ -1,5 +1,7 @@
 // https://github.com/nodejs/node/blob/bae03c4e30f927676203f61ff5a34fe0a0c0bbc9/lib/internal/fixed_queue.js
 
+const ArrayPrototypeFill = Array.prototype.fill;
+
 // Currently optimal queue size, tested on V8 6.0 - 6.6. Must be power of two.
 const kSize = 2048;
 const kMask = kSize - 1;
@@ -63,7 +65,7 @@ class FixedCircularBuffer<T> {
     this.top = 0;
     // Filled rather than left holey: a holey array deoptimizes element access
     // and is observable through the queue's backing list.
-    this.list = $newArrayWithSize<T | undefined>(kSize).fill(undefined);
+    this.list = ArrayPrototypeFill.$call($newArrayWithSize<T | undefined>(kSize), undefined);
     this.next = null;
   }
 

@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1600,4 +1600,53 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
       r.destroy();
     }
   });
+});
+
+describe("duplexPair teardown (test-duplex-error.js)", () => {
+  // _destroy schedules the peer teardown on nextTick; two setImmediates give
+  // that tick plus the peer's own destroy/close emission time to settle.
+  const settle = () => new Promise(r => setImmediate(() => setImmediate(r)));
+
+  it("destroying one side with an error destroys the peer without re-emitting the error", async () => {
+    const [a, b] = duplexPair();
+    const aError = jest.fn();
+    const bError = jest.fn();
+    const bClose = jest.fn();
+    a.on("error", aError);
+    b.on("error", bError);
+    b.on("close", bClose);
+    a.resume();
+    b.resume();
+    a.destroy(new Error("boom"));
+    await settle();
+    expect({ a: a.destroyed, b: b.destroyed }).toEqual({ a: true, b: true });
+    expect(aError).toHaveBeenCalledTimes(1);
+    expect(aError.mock.calls[0][0].message).toBe("boom");
+    expect(bError).not.toHaveBeenCalled();
+    expect(bClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroying one side without an error ends the peer's readable", async () => {
+    const [a, b] = duplexPair();
+    const bEnd = jest.fn();
+    b.on("end", bEnd);
+    b.resume();
+    a.destroy();
+    await settle();
+    expect(a.destroyed).toBe(true);
+    expect(bEnd).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => {
+  // Reachable via exposedInternals["internal/fixed_queue"]; without the src/
+  // change that entry (and the .fill()) is absent, so this test fails either way.
+  const FixedQueue = require("bun:internal-for-testing").exposedInternals["internal/fixed_queue"];
+  expect(typeof FixedQueue).toBe("function");
+  const q = new FixedQueue();
+  const list = q.head.list;
+  expect(list.length).toBeGreaterThan(0);
+  let holes = 0;
+  for (let i = 0; i < list.length; i++) if (!(i in list)) holes++;
+  expect(holes).toBe(0);
 });

@@ -1,7 +1,13 @@
 import { $ } from "bun";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 
 describe("echo -e flag support", () => {
+  // Other test files (e.g. 10132) mutate the global $.cwd(); reset it so these
+  // pure-builtin echo invocations don't try to open a since-removed tmp dir.
+  beforeAll(() => {
+    $.cwd(process.cwd());
+  });
+
   test("echo -e does not output -e as literal text", async () => {
     const result = await $`echo -e hello`.text();
     expect(result).toBe("hello\n");

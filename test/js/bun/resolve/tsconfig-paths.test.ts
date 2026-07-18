@@ -7,7 +7,7 @@ import { join } from "path";
 // lookup for exact matches and the '*' position cached at parse time, the
 // per-import cost for the exact pass is O(1) independent of the key count.
 
-describe.concurrent("tsconfig compilerOptions.paths", () => {
+describe("tsconfig compilerOptions.paths", () => {
   test("exact-match resolution is O(1), not a scan over keys", async () => {
     // Self-calibrating complexity check: with 3000 exact-match keys (all the
     // same length, sharing a long prefix so a bytewise compare cannot exit on
@@ -72,7 +72,7 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
     expect(ratio).toBeLessThan(5);
   });
 
-  test("many entries resolve correctly (exact, wildcard, longest-prefix)", async () => {
+  test("many entries resolve correctly (exact, wildcard, longest-prefix, longest-suffix)", async () => {
     const paths: Record<string, string[]> = {};
     // Interleave exact and wildcard entries so iteration order is mixed.
     for (let i = 0; i < 150; i++) {
@@ -82,11 +82,19 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
     // Overlapping wildcards: longest prefix must win.
     paths["@scope/*"] = ["./scope-short/*"];
     paths["@scope/pkg/*"] = ["./scope-long/*"];
+    // Equal prefix, different suffix: longest suffix must win the tie.
+    // Both targets below exist; resolving to tie-long/* proves the longer
+    // suffix was selected over tie-short/*.
+    paths["tie/*"] = ["./tie-short/*"];
+    paths["tie/*end"] = ["./tie-long/*"];
 
     const files: Record<string, string> = {
       "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths } }),
       "scope-short/fallback.ts": "export {};\n",
       "scope-long/main.ts": "export {};\n",
+      "tie-long/x/end.ts": "export {};\n",
+      "tie-short/xend.ts": "export {};\n",
+      "tie-short/y.ts": "export {};\n",
       "main.ts":
         `const dir = import.meta.dir;\n` +
         `const out: string[] = [];\n` +
@@ -97,6 +105,8 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
         `out.push(rel(Bun.resolveSync("wild149/hit", dir)));\n` +
         `out.push(rel(Bun.resolveSync("@scope/pkg/main", dir)));\n` +
         `out.push(rel(Bun.resolveSync("@scope/fallback", dir)));\n` +
+        `out.push(rel(Bun.resolveSync("tie/xend", dir)));\n` +
+        `out.push(rel(Bun.resolveSync("tie/y", dir)));\n` +
         `try { Bun.resolveSync("no-such-key", dir); out.push("BAD"); }\n` +
         `catch (e) { out.push("notfound:" + e.code); }\n` +
         `console.log(out.join("\\n"));\n`,
@@ -125,6 +135,8 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
       "w/149/hit.ts",
       "scope-long/main.ts",
       "scope-short/fallback.ts",
+      "tie-long/x/end.ts",
+      "tie-short/y.ts",
       "notfound:ERR_MODULE_NOT_FOUND",
     ]);
     expect(exitCode).toBe(0);

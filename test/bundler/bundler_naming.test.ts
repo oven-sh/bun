@@ -1,8 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { ESBUILD, itBundled } from "./expectBundled";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {

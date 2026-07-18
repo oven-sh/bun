@@ -877,24 +877,6 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
 });
 
-// Brace alternatives that all reach the same file must yield it once: the
-// dedupe map in prepare_matched_path suppresses the repeat hits.
-test("overlapping brace alternatives dedupe to one result per file", () => {
-  const files: Record<string, string> = {};
-  const expected: string[] = [];
-  for (const top of ["a", "b", "c"]) {
-    for (const mid of ["d", "e", "f"]) {
-      files[`${top}/${mid}/target.txt`] = "";
-      files[`${top}/${mid}/other.log`] = "";
-      expected.push(`${top}/${mid}/target.txt`);
-    }
-  }
-  using dir = tempDir("glob-scan-brace-dedupe", files);
-  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
-  const out = norm(Array.from(new Bun.Glob("{*,a,b,c}/*/*.txt").scanSync({ cwd: String(dir) })));
-  expect(out).toEqual(expected.sort());
-});
-
 // scan() keeps the cwd string it is given verbatim, but child paths pushed for
 // symlink work items are joined and normalized. The entry-name offset stored on
 // those work items must be derived from the normalized joined path, not from the

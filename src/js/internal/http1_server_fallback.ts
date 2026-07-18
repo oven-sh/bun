@@ -447,8 +447,11 @@ function connectionListenerHTTP1(server, socket, options) {
     if (!server.httpAllowHalfOpen) {
       if (req && !req.complete) req.destroy();
       if (socket.writable) socket.end();
-    } else if (socket._httpMessage) {
-      socket._httpMessage._last = true;
+      return;
+    }
+    const httpMessage = socket._httpMessage;
+    if (httpMessage) {
+      httpMessage._last = true;
     } else if (socket.writable) {
       socket.end();
     }

@@ -8012,11 +8012,27 @@ impl H2FrameParser {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
-                        // Same connection-scoped deflater as every other header block: nghttp2
-                        // surfaces the failure from nghttp2_session_mem_send as
-                        // NGHTTP2_ERR_HEADER_COMP regardless of block type, and node reports
-                        // ERR_HTTP2_SESSION_ERROR(COMPRESSION_ERROR) on the session.
-                        this.schedule_header_compression_session_error();
+                        // nghttp2 checks maxSendHeaderBlockLength before deflation and fires
+                        // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR), which node
+                        // surfaces as 'frameError' + ERR_HTTP2_STREAM_ERROR (vendored
+                        // test-http2-exceeds-server-trailer-size.js asserts exactly this).
+                        let identifier = stream.get_identifier();
+                        identifier.ensure_still_alive();
+                        this.dispatch_with_2_extra(
+                            JSH2FrameParser::Gc::onFrameError,
+                            identifier,
+                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                        );
+                        let triggering_id = stream.id;
+                        this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                        this.send_go_away(
+                            triggering_id,
+                            ErrorCode::NO_ERROR,
+                            b"",
+                            this.last_stream_id.get(),
+                            true,
+                        );
                         Ok(Some(JSValue::UNDEFINED))
                     }
                 }

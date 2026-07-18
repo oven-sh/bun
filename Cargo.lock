@@ -267,22 +267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_brotli_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_bundler"
 version = "0.0.0"
 dependencies = [
@@ -346,25 +330,6 @@ dependencies = [
  "bun_resolver",
  "bun_standalone_graph",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
-name = "bun_cares_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_libuv_sys",
- "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -501,25 +466,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_dns"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_sys",
- "bun_windows_sys",
- "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_dotenv"
 version = "0.0.0"
 dependencies = [
@@ -558,24 +504,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_glob"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -823,23 +751,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_libdeflate_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_libuv_sys"
 version = "0.0.0"
 dependencies = [
@@ -989,22 +900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_perf"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_picohttp"
 version = "0.0.0"
 dependencies = [
@@ -1017,24 +912,6 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
-]
-
-[[package]]
-name = "bun_platform"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -1430,25 +1307,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_tcc_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_opaque",
- "bun_ptr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_transpiler"
 version = "0.0.0"
 dependencies = [
@@ -1522,22 +1380,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_which"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_windows_sys"
 version = "0.0.0"
 
@@ -1547,37 +1389,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_zlib_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_zstd"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",

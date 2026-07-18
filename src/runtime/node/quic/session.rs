@@ -1933,26 +1933,21 @@ impl QuicSession {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         if !self.destroyed.get() {
+            // Parse before the latch: a throw here must leave the session
+            // untouched, not marked gracefully-closing with no close sent.
+            // All three branches below want the same values.
+            let (app, code, reason) =
+                self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
-                    // Parse now: the arguments are the user's and must not be
-                    // dropped just because the conn is not bound yet.
-                    let (app, code, reason) =
-                        self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
                     self.pending_graceful
                         .with_mut(|p| *p = Some((app, code, reason)));
                     self.close_when_bound.set(true);
                 } else {
-                    // Read the arguments even with no conn: `parse_close_options`
-                    // can throw on a bad `{type, code, reason}`, and node
-                    // validates regardless of whether a conn exists.
-                    self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
                     self.report_close(global);
                 }
             } else {
-                let (app, code, reason) =
-                    self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
                 let scope_held = self.endpoint_ref().is_some_and(|ep| ep.scope_held());
                 if scope_held {
                     self.pending_graceful

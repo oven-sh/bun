@@ -20,9 +20,14 @@ describe("bundler", () => {
 test("itBundled actually registers tests on this platform", async () => {
   // Spawn a fresh `bun test` against this file filtered to the itBundled case above.
   // Before the fix this reported "Ran 0 tests" on Windows; after, it reports 1 pass.
+  const env = { ...bunEnv };
+  // Don't let ambient bundler-harness dev knobs cause the child to skip registration.
+  delete env.BUN_BUNDLER_TEST_FILTER;
+  delete env.BUN_BUNDLER_TEST_USE_ESBUILD;
+  delete env.BUN_BUNDLER_TEST_DEBUG;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.path, "-t", "harness/itBundledRegisters"],
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });

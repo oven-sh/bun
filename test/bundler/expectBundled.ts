@@ -1306,8 +1306,8 @@ for (const [key, blob] of build.outputs) {
 
             const filename = position?.file
               ? position.namespace === "file"
-                ? "/" + path.relative(root, position.file).replaceAll("\\", "/")
-                : `${position.namespace}:${position.file.replace(root, "").replaceAll("\\", "/")}`
+                ? "/" + path.relative(root, position.file).replaceAll(path.sep, "/")
+                : `${position.namespace}:${position.file.replace(root, "").replaceAll(path.sep, "/")}`
               : "<bun>";
 
             allErrors.push({

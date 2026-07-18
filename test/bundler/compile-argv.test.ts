@@ -90,7 +90,7 @@ describe("bundler", () => {
 
         // argv[1] should be the script path (contains the bundle path)
         // Windows uses "B:/~BUN/root/", Unix uses "/$bunfs/root/"
-        if (!/(\\$bunfs|~BUN).*root/.test(process.argv[1])) {
+        if (!process.argv[1].includes("/$bunfs/") && !process.argv[1].includes("/~BUN/")) {
           console.error("FAIL: Expected argv[1] to contain standalone bundle root, got", process.argv[1]);
           process.exit(1);
         }
@@ -148,7 +148,7 @@ describe("bundler", () => {
         }
 
         // Windows uses "B:/~BUN/root/", Unix uses "/$bunfs/root/"
-        if (!/(\\$bunfs|~BUN).*root/.test(process.argv[1])) {
+        if (!process.argv[1].includes("/$bunfs/") && !process.argv[1].includes("/~BUN/")) {
           console.error("FAIL: Expected argv[1] to contain standalone bundle root, got", process.argv[1]);
           process.exit(1);
         }

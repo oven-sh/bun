@@ -15,6 +15,7 @@ use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use crate::js_promise::Status as PromiseStatus;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use crate::{JSGlobalObject, JSValue};
 use bun_md::root as md;

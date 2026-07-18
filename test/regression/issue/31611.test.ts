@@ -214,19 +214,39 @@ describe.concurrent.skipIf(!perl)("generate-root-certs.pl fails loudly on malfor
     expect(status).not.toBe(0);
   });
 
-  // Cross-check tripwire: a trust object the main loop never consumed.
+  // Adjacent certs with their trust objects swapped: each trust object exists
+  // and is well-formed, so none of the structural guards fire, but applying
+  // B's policy to A's DER is exactly the Izenpe-class silent misattribution.
+  test("trust object with a mismatched CKA_LABEL is a hard error", () => {
+    const { status, stderr } = runGenerator(
+      joinObjects(
+        `BEGINDATA`,
+        certObject("Repro Root A", CERT_OCTAL_A),
+        trustObject("Repro Root B", String.raw`\001\002`, TRUSTED),
+        certObject("Repro Root B", CERT_OCTAL_B),
+        trustObject("Repro Root A", String.raw`\003\004`, TRUSTED),
+      ),
+    );
+    expect(stderr).toContain(`CKO_NSS_TRUST label "Repro Root B" does not match certificate "Repro Root A"`);
+    expect(status).not.toBe(0);
+  });
+
+  // Cross-check tripwire: a stray CKO_NSS_TRUST line the inline guards do not
+  // see (consumed inside the trust-scan loop as an unrecognised attribute).
+  // Only the final re-read count check can catch this.
   test("final trust-object count must equal processed cert count", () => {
     const { status, stderr } = runGenerator(
       joinObjects(
         `BEGINDATA`,
         certObject("Repro Root A", CERT_OCTAL_A),
-        trustObject("Repro Root A", String.raw`\001\002`, TRUSTED),
-        // Second trust object for the same cert: valid NSS, but the parser
-        // only pairs one trust per cert so this must surface, not vanish.
-        trustObject("Repro Root A", String.raw`\001\002`, TRUSTED),
+        trustObject(
+          "Repro Root A",
+          String.raw`\001\002`,
+          `CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST\n` + TRUSTED,
+        ),
       ),
     );
-    expect(stderr).toMatch(/orphan CKO_NSS_TRUST|2 CKO_NSS_TRUST objects but/);
+    expect(stderr).toContain("2 CKO_NSS_TRUST objects but 1 emitted + 0 skipped");
     expect(status).not.toBe(0);
   });
 });

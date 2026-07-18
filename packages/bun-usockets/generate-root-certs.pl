@@ -293,6 +293,9 @@ while (<TXT>) {
     while (<TXT>) {
       last if (/^\s*$/);
       next if (/^#/);
+      if (/^CKA_LABEL UTF8 "(.*)"/ && $1 ne $caname) {
+        die "Parse error: CKO_NSS_TRUST label \"$1\" does not match certificate \"$caname\" at input line $.\n";
+      }
       if (/^\s*CKA_TRUST_([A-Z_]+)\s+CK_TRUST\s+CKT_NSS_([A-Z_]+)\s*$/) {
         $trust_lines++;
         if ( !is_in_list($1,@valid_mozilla_trust_purposes) ) {

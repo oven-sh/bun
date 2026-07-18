@@ -39,8 +39,9 @@ function onWarning(warning: Error): void {
   let msg = `(${process.release?.name || "node"}:${process.pid}) `;
   const code = (warning as any).code;
   if (code) msg += `[${code}] `;
-  if (trace && warning.stack) {
-    msg += `${warning.stack}`;
+  let stack: unknown;
+  if (trace && (stack = warning.stack)) {
+    msg += `${stack}`;
   } else {
     let body: string;
     try {

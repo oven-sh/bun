@@ -2488,6 +2488,8 @@ pub(crate) fn source_dir_relative_to_root(
     root_dir: &[u8],
     on_disk: bool,
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    // Empty for a bare-filename entry (`bun build hi.ts --external '*'`
+    // with no leading `./`); openat needs "." not "".
     let source_dir: &[u8] = if source_dir.is_empty() {
         b"."
     } else {

@@ -760,7 +760,8 @@ pub(crate) fn run_scripts_with_filter(
             bun_sys::Fd::invalid(),
             None,
             IncludeScripts::IncludeScripts,
-        ) else {
+        )
+        .filter(|p| !p.is_poisoned()) else {
             bun_core::warn!(
                 "Failed to read {}, skipping this workspace package\n",
                 bun_core::fmt::quote(&*package_json_path),

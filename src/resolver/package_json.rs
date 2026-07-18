@@ -138,6 +138,11 @@ pub struct PackageJSON {
 
     pub exports: Option<ExportsMap>,
     pub imports: Option<ExportsMap>,
+
+    /// Set when the file is malformed JSON, a non-object, or has a non-string
+    /// `"type"`. Node throws `ERR_INVALID_PACKAGE_CONFIG` for `.js` files under
+    /// such a scope; the runtime loader surfaces this.
+    pub invalid: bool,
 }
 
 // hand-rolled `Default` because `#[derive(Default)]` would zero
@@ -165,6 +170,7 @@ impl Default for PackageJSON {
             browser_map: BrowserMap::default(),
             exports: None,
             imports: None,
+            invalid: false,
         }
     }
 }
@@ -335,6 +341,14 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 }
 
 impl PackageJSON {
+    /// Poisoned (unparseable / non-object) placeholder returned by `parse()`.
+    /// Distinct from a parseable object whose `"type"` is not a string, which
+    /// also sets `invalid` but retains `source_contents`.
+    #[inline]
+    pub fn is_poisoned(&self) -> bool {
+        self.invalid && self.source_contents.is_empty()
+    }
+
     pub fn parse_macros_json(
         macros: js_ast::Expr,
         log: &mut bun_ast::Log,
@@ -500,15 +514,27 @@ impl PackageJSON {
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
         // allocation lives for the life of the returned `PackageJSON`. On every
-        // early `return None` below `entry_contents` drops and frees normally, after
-        // `json_source` is already dead. `Box<[u8]>` heap address is stable
-        // across the move.
+        // early return below (the `invalid(...)` paths) `entry_contents` drops and
+        // frees normally after `json_source` is already dead; the poisoned entry's
+        // `source` uses `b""` and does not reference these bytes. `Box<[u8]>` heap
+        // address is stable across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
+        // An unparseable package.json is still a package scope boundary in
+        // Node (`ERR_INVALID_PACKAGE_CONFIG`); return a poisoned entry so
+        // `nearest_package_json` stops here instead of inheriting the parent.
+        let invalid = |path: &'static [u8]| {
+            Some(PackageJSON {
+                source: bun_ast::Source::init_path_string(path, b""),
+                invalid: true,
+                ..PackageJSON::default()
+            })
+        };
+
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
-            Ok(None) => return None,
+            Ok(None) => return invalid(package_json_path),
             Err(err) => {
                 if cfg!(debug_assertions) {
                     Output::print_error(format_args!(
@@ -517,16 +543,13 @@ impl PackageJSON {
                         bstr::BStr::new(err.name())
                     ));
                 }
-                return None;
+                return invalid(package_json_path);
             }
         };
         let json: js_ast::Expr = parsed_json.root;
 
         if !json.is_object() {
-            // Invalid package.json in node_modules is noisy.
-            // Let's just ignore it.
-            // (allocator.free dropped — entry.contents owned by `entry`)
-            return None;
+            return invalid(package_json_path);
         }
 
         let mut package_json = PackageJSON {
@@ -550,6 +573,7 @@ impl PackageJSON {
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
+            invalid: false,
         };
         // shadow as `&Source`; the owned value is reconstructed at the bottom
         // (Source isn't `Clone`).
@@ -602,6 +626,8 @@ impl PackageJSON {
                     }
                 }
             } else {
+                // Non-string `"type"` is `ERR_INVALID_PACKAGE_CONFIG` in Node.
+                package_json.invalid = true;
                 r_log.add_warning(
                     Some(json_source),
                     type_json.loc,

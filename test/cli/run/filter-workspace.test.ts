@@ -661,4 +661,30 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  test('non-string "type" does not stop --filter from running scripts', async () => {
+    // "type" is a module-loader concern; a non-string value must not make
+    // `bun run --filter` skip the package (npm/pnpm/yarn all run it).
+    const dir = tempDirWithFiles("filter-bad-type", {
+      packages: {
+        foo: {
+          "package.json": `{"name":"foo","type":42,"scripts":{"go":"echo built-foo"}}`,
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("built-foo");
+    expect(stderr).not.toContain("Failed to read");
+    expect(stderr).not.toContain("skipping this workspace package");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -19,6 +19,24 @@ describe("bun", () => {
     expect(exitCode).toBe(1);
   });
 
+  test('non-string "type" does not hide scripts from bun run', () => {
+    // "type" is a module-loader concern; a non-string value must not make
+    // `bun run <script>` miss the package.json (npm/pnpm/yarn all run it).
+    using dir = tempDir("bad-type-scripts", {
+      "package.json": `{"name":"foo","type":42,"scripts":{"build":"echo built-ok"}}`,
+    });
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "build"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain("built-ok");
+    expect(stderr.toString()).not.toMatch(/Script not found/);
+    expect(exitCode).toBe(0);
+  });
+
   test("an empty-string script value is not a runnable script", () => {
     using dir = tempDir("empty-script", {
       "package.json": JSON.stringify({ scripts: { build: "" } }),

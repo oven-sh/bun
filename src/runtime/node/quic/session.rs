@@ -1721,13 +1721,10 @@ impl QuicSession {
                 map_conn_status(status, msg, self.handshake_reported.get())
             }
         };
-        let code_js = match JSValue::from_uint64_no_truncate(global, code) {
-            Ok(v) => v,
-            Err(e) => {
-                global.report_uncaught_exception_from_error(e);
-                return;
-            }
-        };
+        // `close_reported` is already latched above, so returning here would
+        // mark the close delivered without ever delivering it and `closed`
+        // would never settle. Report and carry on with undefined.
+        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report(global);
         let reason_js = reason
             .filter(|r| !r.is_empty())
             .and_then(|r| match bun_core::String::clone_utf8(&r).to_js(global) {

@@ -1834,9 +1834,13 @@ impl QuicEndpoint {
         if was_dead {
             self.dead_provisional_peers
                 .with_mut(|d| d.retain(|(addr, _)| addr.decode() != peer_decoded));
-            // Node's dead server goes silent — abort without a CONNECTION_CLOSE.
+            // Node's dead server goes silent, and `lsquic_conn_abort` sends a
+            // CONNECTION_CLOSE -- use the silent variant the sibling in
+            // session.rs uses.
             // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe { lsquic::lsquic_conn_abort(conn) };
+            if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
+                c.abort_silent();
+            }
             return null_mut();
         }
         match QuicSession::create(

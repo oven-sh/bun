@@ -2508,6 +2508,52 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should handle registry packument `versions` keys that parse to duplicate canonical versions, issue#20371", async () => {
+    // A private registry can serve keys like "0.0.2" and "00.0.2" that are distinct JSON keys
+    // but parse to the same canonical semver. The post-sort ordering check must not assert
+    // strict Greater on adjacent equal entries.
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, async request => {
+        if (request.url.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        }
+        const entry = (v: string) => ({ name: "bar", version: v, dist: { tarball: `${ctx.registry_url}bar-0.0.2.tgz` } });
+        return Response.json({
+          name: "bar",
+          "dist-tags": { latest: "0.0.2" },
+          versions: {
+            "0.0.2": entry("0.0.2"),
+            "00.0.2": entry("00.0.2"),
+          },
+        });
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { bar: "^0.0.2" },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("+ bar@0.0.2");
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("should handle caret range in dependencies when the registry has prereleased packages, issue#4398", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

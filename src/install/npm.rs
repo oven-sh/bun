@@ -3172,14 +3172,13 @@ impl PackageManifest {
 
                     if cfg!(debug_assertions) {
                         if cloned_versions.len() > 1 {
-                            // Sanity check:
-                            // When reading the versions, we iterate through the
-                            // list backwards to choose the highest matching
-                            // version
+                            // Sanity check: we iterate backwards to pick the highest match.
+                            // Untrusted registry keys may parse to duplicate canonical
+                            // versions (e.g. "1.0.0" and "01.0.0"), so allow Equal.
                             let first = semver_versions_[0];
                             let second = semver_versions_[1];
                             let order = second.order(first, string_bytes, string_bytes);
-                            debug_assert!(order == core::cmp::Ordering::Greater);
+                            debug_assert!(order != core::cmp::Ordering::Less);
                         }
                     }
                 }

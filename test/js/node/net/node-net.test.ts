@@ -1182,13 +1182,14 @@ describe.concurrent("unhandled socket 'error' throws (reaches uncaughtException)
         console.log("UNCAUGHT", e.code, e.syscall);
         process.exit(0);
       });
-      // No listeners on the accepted socket.
-      const srv = net.createServer((c) => {});
+      // No 'error' listener on the accepted socket. Writing one byte lets the
+      // client wait until the accept is fully processed before resetting, so
+      // the RST lands on an established server socket on every platform.
+      const srv = net.createServer((c) => { c.write("x"); });
       srv.listen(0, "127.0.0.1", () => {
-        const s = net.connect(srv.address().port, "127.0.0.1", () => {
-          s.resetAndDestroy();
-        });
+        const s = net.connect(srv.address().port, "127.0.0.1");
         s.on("error", () => {});
+        s.once("data", () => s.resetAndDestroy());
       });
       srv.unref();
       process.on("beforeExit", () => {

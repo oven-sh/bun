@@ -823,6 +823,13 @@ describe("mock()", () => {
     const result3 = new fn3();
     expect(typeof result3).toBe("object");
     expect(fn3.mock.instances).toEqual([result3]);
+
+    class NewTarget {}
+    const fn4 = jest.fn();
+    const result4 = Reflect.construct(fn4, [], NewTarget);
+    expect(Object.getPrototypeOf(result4)).toBe(NewTarget.prototype);
+    expect(result4).toBeInstanceOf(NewTarget);
+    expect(fn4.mock.instances).toEqual([result4]);
   });
 });
 

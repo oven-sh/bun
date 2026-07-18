@@ -34,9 +34,18 @@ test("observer", async () => {
   });
   console.log("SUITE_BODY_RAN=" + String(suiteBodyRan));
   // A late skip/todo subtest is not counted as a failure (Node exits 0 for
-  // those); these must not add further fail entries to this run.
-  await saved.test("late-skip", { skip: true }, () => {});
-  await saved.test("late-todo", { todo: true }, () => {});
+  // those); these must not add further fail entries to this run. Node replaces
+  // a {skip:true} body with a noop, so it must not run; a {todo:true} body does.
+  let skipBodyRan = false;
+  let todoBodyRan = false;
+  await saved.test("late-skip", { skip: true }, () => {
+    skipBodyRan = true;
+  });
+  await saved.test("late-todo", { todo: true }, () => {
+    todoBodyRan = true;
+  });
+  console.log("SKIP_BODY_RAN=" + String(skipBodyRan));
+  console.log("TODO_BODY_RAN=" + String(todoBodyRan));
 });
 
 process.on("exit", () => {

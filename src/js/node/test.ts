@@ -1652,6 +1652,9 @@ function runLateSubtest(
   if (!child.todoFlag && !child.skipped) {
     reportLateFailure(child.fullName, failure);
   }
+  // Node replaces a {skip:true} body with a noop, so a late skip's body never
+  // runs; a late todo's body does (Node runs todo bodies).
+  if (child.skipped) return Promise.resolve(undefined);
   // Node runs the body and awaits it; its outcome is discarded in favour of the
   // parentAlreadyFinished failure above, and the returned promise resolves. A
   // no-op done keeps a `(t, done)` body from throwing on `done()`.
@@ -1662,10 +1665,15 @@ function runLateSubtest(
       fn.length === 2 ? fn.$call(undefined, ctx, kDefaultFunction) : fn.$call(undefined, ctx),
     );
   } catch {}
-  return Promise.resolve(body).then(
-    () => undefined,
-    () => undefined,
-  );
+  // Mirror executeTestNode's cleanup so a late body's t.mock.method() does not
+  // leak into later tests (Node's postRun() resets mocks here too).
+  const settle = () => {
+    try {
+      child.mockTracker?.reset();
+    } catch {}
+    return undefined;
+  };
+  return Promise.resolve(body).then(settle, settle);
 }
 
 // Awaits a node's subtest chain, including links appended while waiting.

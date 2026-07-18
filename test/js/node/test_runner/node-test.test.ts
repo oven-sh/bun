@@ -255,6 +255,8 @@ describe("node:test", () => {
     expect(stdout).toContain("BODY_RAN=true");
     expect(stdout).toContain("DONE_BODY_RAN=true");
     expect(stdout).toContain("SUITE_BODY_RAN=true");
+    expect(stdout).toContain("SKIP_BODY_RAN=false");
+    expect(stdout).toContain("TODO_BODY_RAN=true");
     expect(stderr).toContain("parent > late\n");
     expect(stderr).toContain("parent > late-done\n");
     expect(stderr).toContain("parent > late-suite\n");

@@ -194,16 +194,9 @@ describe("bundler", () => {
       },
     ],
   });
-  // assetNaming `[dir]` must be relative to the configured root even when
-  // the root directory and the asset's source path spell the same on-disk
-  // location differently. Bun canonicalizes `root` via the file descriptor
-  // (`GetFinalPathNameByHandle` on Windows, /proc/self/fd on Linux) but
-  // `Bun.build({ files })` source paths are the literal map keys; previously
-  // the uncanonicalized source path was relativized against the canonical
-  // root, so no common prefix was found and `[dir]` expanded to a long
-  // `_.._/_.._/...` traversal back into the source tree. On Windows this
-  // surfaced whenever the cwd contained an 8.3 short path component such as
-  // `C:\Users\RUNNER~1\...` (the default TEMP directory in CI).
+  // `[dir]` must resolve relative to the configured root even when root and
+  // the asset source path spell the same directory differently (Windows 8.3
+  // short names in the cwd, or a symlinked `Bun.build({ files })` key).
   test("naming/AssetNamingDirCanonicalRoot", async () => {
     using base = tempDir("asset-naming-dir-canon", {
       "real/src/lib/first/.keep": "",
@@ -247,12 +240,14 @@ describe("bundler", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     const out = stdout.replaceAll("\\", "/");
     const assetLine = out.split("\n").find(l => l.startsWith("asset "));
-    expect(assetLine).toBe("asset ./lib/second/test.file");
+    expect({ assetLine, stderr, exitCode }).toEqual({
+      assetLine: "asset ./lib/second/test.file",
+      stderr: "",
+      exitCode: 0,
+    });
     expect(out).not.toContain("_.._");
-    expect(exitCode).toBe(0);
   });
   itBundled("naming/AssetNoOverwrite", {
     todo: true,

@@ -100,7 +100,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
                 object_info.put_optional_utf8(
                     global_object,
-                    b"checksumAlgorithme",
+                    b"checksumAlgorithm",
                     item.checksum_algorithme,
                 )?;
                 object_info.put_optional_utf8(

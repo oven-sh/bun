@@ -1773,6 +1773,8 @@ test.skipIf(!isASAN || isWindows)(
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
       LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
     };
+    // Six independent processes so a regression fails fast at the first LSan
+    // sweep instead of after one ~2-minute 252-worker run.
     for (let i = 0; i < 6; i++) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dirname, "worker-terminate-propiter-parent-fixture.js")],

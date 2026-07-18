@@ -13,8 +13,13 @@ const body = path.join(__dirname, "worker-terminate-propiter-worker-fixture.js")
 function spin(iter) {
   const w = new Worker(body);
   w.on("message", () => w.terminate());
-  w.on("error", () => {});
-  w.on("exit", () => {
+  w.on("error", err => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+  w.on("exit", code => {
+    // exit code 1 is terminate(); anything else means the worker never reached postMessage.
+    if (code !== 1) process.exitCode = 1;
     if (iter < ITERS) spin(iter + 1);
   });
 }

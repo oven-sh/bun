@@ -1613,8 +1613,8 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("many-versions-package@1.1996.0");

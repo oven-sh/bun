@@ -2960,15 +2960,18 @@ impl PackageManifest {
                     }
                 }
 
-                if !time_props.is_empty() {
-                    if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
-                        let entry = &time_props[i as usize];
-                        if entry.key.slice() == version_name {
-                            if let Some(publish_time_str) = entry.value.as_str() {
-                                if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                                    package_version.publish_timestamp_ms = ms;
-                                }
-                            }
+                if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
+                    let indexed = &time_props[i as usize];
+                    let entry = if indexed.key.slice() == version_name {
+                        Some(indexed)
+                    } else {
+                        // Hash collision: fall back to a linear scan so the
+                        // result matches the previous `ObjectJSON::get` exactly.
+                        time_props.iter().find(|p| p.key.slice() == version_name)
+                    };
+                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
+                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
+                            package_version.publish_timestamp_ms = ms;
                         }
                     }
                 }

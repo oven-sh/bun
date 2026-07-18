@@ -378,7 +378,6 @@ async function runOneFile(
   // Under process isolation node models the file itself as a top-level test,
   // named by the path as it was passed in and located at 1:1.
   const fileNode = {
-    __proto__: null,
     nesting: 0,
     name: file,
     type: "test",
@@ -389,8 +388,8 @@ async function runOneFile(
     column: 1,
     file: absolute,
   };
-  reporter.emitMessage("test:enqueue", { ...fileNode });
-  reporter.emitMessage("test:dequeue", { ...fileNode });
+  reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
 
   const proc = Bun.spawn({
     cmd: args,
@@ -471,6 +470,7 @@ async function runOneFile(
   // node emits the file node's completion before its verdict, and a failed
   // completion carries the error too.
   reporter.emitMessage("test:complete", {
+    __proto__: null,
     ...fileNode,
     type: undefined,
     testNumber: 1,
@@ -484,6 +484,7 @@ async function runOneFile(
   });
   if (fileFailed) {
     reporter.emitMessage("test:fail", {
+      __proto__: null,
       ...fileNode,
       type: undefined,
       testNumber: 1,

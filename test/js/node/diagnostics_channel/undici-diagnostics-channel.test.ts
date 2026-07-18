@@ -52,7 +52,8 @@ process.stdout.write(JSON.stringify({
              headersIsArray: Array.isArray(headers.response.headers) },
   trailers: { completed: trailers.request.completed, keys: Object.keys(trailers).sort() },
   beforeConnect: Object.keys(fired["undici:client:beforeConnect"][0]).sort(),
-  connected: { keys: Object.keys(connected).sort(), hostname: connected.connectParams.hostname },
+  connected: { keys: Object.keys(connected).sort(), hostname: connected.connectParams.hostname,
+               protocol: connected.connectParams.protocol },
   sendHeaders: { keys: Object.keys(sendHeaders).sort(), hasRequestLine: sendHeaders.headers.startsWith("GET /p?q=1 HTTP/1.1") },
   bodySent: !!fired["undici:request:bodySent"],
   errorFired: fired["undici:request:error"]?.length > 0 && errRequest?.completed === true,
@@ -90,6 +91,7 @@ describe("fetch()", () => {
     expect(out.beforeConnect).toEqual(["connectParams", "connector"]);
     expect(out.connected.keys).toEqual(["connectParams", "connector", "socket"]);
     expect(out.connected.hostname).toBe("127.0.0.1");
+    expect(out.connected.protocol).toBe("http:");
     expect(out.sendHeaders.keys).toEqual(["headers", "request", "socket"]);
     expect(out.sendHeaders.hasRequestLine).toBe(true);
     expect(out.bodySent).toBe(true);

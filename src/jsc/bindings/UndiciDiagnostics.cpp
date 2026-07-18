@@ -110,11 +110,7 @@ void publishWebSocketPingPong(JSC::JSGlobalObject* lexicalGlobalObject, bool isP
     if (!hasSubscriber(globalObject))
         return;
     MarkedArgumentBuffer args;
-    if (payload.empty()) {
-        args.append(jsUndefined());
-    } else {
-        args.append(Bun::createBuffer(globalObject, payload));
-    }
+    args.append(Bun::createBuffer(globalObject, payload));
     callHelperNoThrow(globalObject, isPong ? "wsPong"_s : "wsPing"_s, args);
 }
 

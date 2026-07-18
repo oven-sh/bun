@@ -7,6 +7,7 @@
 //   https://github.com/nodejs/undici/blob/main/docs/docs/api/DiagnosticsChannel.md
 //   undici/lib/core/diagnostics.js, undici/lib/core/request.js
 const dc = require("node:diagnostics_channel");
+const { checkIsHttpToken } = require("internal/validators");
 
 const requestCreateChannel = dc.channel("undici:request:create");
 const requestBodySentChannel = dc.channel("undici:request:bodySent");
@@ -25,6 +26,14 @@ const wsPongChannel = dc.channel("undici:websocket:pong");
 // Bun has no exposed undici Connector; the field exists so consumers that probe
 // `typeof connectParams.connector` see a function.
 function connector() {}
+
+function invalidHeaderValueChar(val: string) {
+  for (let i = 0; i < val.length; i++) {
+    const c = val.$charCodeAt(i);
+    if (c === 0x0d || c === 0x0a || c === 0x00) return true;
+  }
+  return false;
+}
 
 // Undici publishes the same mutable `request` object across create → bodySent →
 // headers → trailers/error, and instrumentation uses it as a WeakMap key to
@@ -53,6 +62,14 @@ class DiagnosticsRequest {
   addHeader(key: string, value: string) {
     key = `${key}`;
     value = `${value}`;
+    // Mirror undici's processHeader(): reject non-token names and CR/LF/NUL
+    // values so this path cannot bypass the header validation fetch() applies.
+    if (key.length === 0 || !checkIsHttpToken(key)) {
+      throw $ERR_INVALID_HTTP_TOKEN("Header name", key);
+    }
+    if (invalidHeaderValueChar(value)) {
+      throw $ERR_INVALID_CHAR("header content", key);
+    }
     $arrayPush(this.headers, key);
     $arrayPush(this.headers, value);
     let added = this._added;
@@ -87,6 +104,9 @@ function buildConnectParams(
   protocol: string,
   port: string,
 ) {
+  // undici destructures protocol from a WHATWG URL ("http:"), but bun_url
+  // stores it without the trailing colon.
+  if (protocol && protocol.$charCodeAt(protocol.length - 1) !== 0x3a) protocol = protocol + ":";
   return {
     host,
     hostname,

@@ -5512,10 +5512,20 @@ pub mod formatter {
                     | jsc::JSType::AsyncGenerator
                     | jsc::JSType::AsyncFunctionGenerator
             ) {
+                let mut writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: false,
+                    estimated_line_length: &mut self.estimated_line_length,
+                };
                 if let Some(name_str) = get_object_name(self.global_this, value)? {
-                    let _ = write!(writer_, "{name_str} ");
+                    writer.add_for_new_line(name_str.len + 1);
+                    writer.print(format_args!("{name_str} "));
                 }
-                let _ = writer_.write_all(b"{}");
+                writer.add_for_new_line(2);
+                writer.write_all(b"{}");
+                if writer.failed {
+                    self.failed = true;
+                }
                 return Ok(());
             }
 

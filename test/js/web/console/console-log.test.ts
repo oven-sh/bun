@@ -152,7 +152,7 @@ it("console.log with SharedArrayBuffer", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/18324
-it("console.log identifies generator and async generator objects", async () => {
+it.concurrent("console.log identifies generator and async generator objects", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

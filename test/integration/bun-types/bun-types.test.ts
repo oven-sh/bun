@@ -388,7 +388,7 @@ describe("@types/bun integration test", () => {
       expect(stderr.trim()).toBe("");
       expect(stdout.trim()).toBe("");
       expect(exitCode).toBe(0);
-    }, 60_000);
+    });
   });
 
   describe("Test Globals", () => {

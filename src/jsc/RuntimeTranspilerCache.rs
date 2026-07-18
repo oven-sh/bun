@@ -396,7 +396,7 @@ impl Entry {
             );
 
             let _ = sys::preallocate_file(
-                tmpfile.fd.cast(),
+                tmpfile.fd.native(),
                 0,
                 i64::try_from(end_position).expect("int cast"),
             );

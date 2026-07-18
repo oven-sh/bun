@@ -678,6 +678,15 @@ describe("expect()", () => {
       }
     });
 
+    const caught = fn => {
+      try {
+        fn();
+      } catch (e) {
+        return e;
+      }
+      throw new Error("expected throw");
+    };
+
     test("strict deepEquals propagates a throwing Proxy get trap like loose mode", () => {
       const trapErr = new RangeError("trapG");
       const thr = () =>
@@ -695,14 +704,6 @@ describe("expect()", () => {
             },
           },
         );
-      const caught = fn => {
-        try {
-          fn();
-        } catch (e) {
-          return e;
-        }
-        throw new Error("expected throw");
-      };
 
       // loose already propagated; strict used to short-circuit on calculatedClassName and return false.
       expect(caught(() => Bun.deepEquals(thr(), { a: 1 }))).toBe(trapErr);
@@ -741,14 +742,6 @@ describe("expect()", () => {
             throw trapErr;
           },
         });
-      const caught = fn => {
-        try {
-          fn();
-        } catch (e) {
-          return e;
-        }
-        throw new Error("expected throw");
-      };
       expect(caught(() => expect(thrArr()).toStrictEqual({ a: 1 }))).toBe(trapErr);
       expect(caught(() => expect({ a: 1 }).toStrictEqual(thrArr()))).toBe(trapErr);
       expect(caught(() => expect(thrArr()).toEqual({ a: 1 }))).toBe(trapErr);

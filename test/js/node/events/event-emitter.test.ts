@@ -914,11 +914,12 @@ test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
 
-// A fired once() wrapper must not retain its target or listener: JSC's
-// conservative stack scan can pin the wrapper (directly or via the array
-// emit() is iterating) long after it fires, which hung the
-// test-gc-http-client* and test-net-connect-memleak suites.
-test("once() wrapper releases its target and listener after firing", async () => {
+// A fired once() wrapper must release its emitter so a held wrapper (e.g.
+// pinned by JSC's conservative stack scan inside emit()) cannot keep an
+// http.ClientRequest alive and hang the test-gc-http-client* suite.
+// wrapped.listener is kept (node asserts it survives emit); only the closure
+// captures are cleared.
+test("once() wrapper releases its target after firing", async () => {
   const src = `
     const { EventEmitter } = require("events");
     const held = [];
@@ -928,23 +929,21 @@ test("once() wrapper releases its target and listener after firing", async () =>
     (function () {
       for (let i = 0; i < total; i++) {
         const ee = new EventEmitter();
-        const captured = { i, pad: Buffer.alloc(64) };
-        ee.once("x", function () { return captured; });
+        ee.once("x", function () {});
         held.push(ee.rawListeners("x")[0]);
         ee.emit("x");
-        registry.register(ee, "target");
-        registry.register(captured, "listener-capture");
+        registry.register(ee);
       }
     })();
     let iters = 0;
     setImmediate(function check() {
       Bun.gc(true);
-      if (collected === total * 2) {
-        console.log("collected " + collected + "/" + total * 2 + " holding " + held.length + " wrappers");
+      if (collected === total) {
+        console.log("collected " + collected + "/" + total + " holding " + held.length + " wrappers");
         return;
       }
       if (++iters > 50) {
-        console.log("stuck " + collected + "/" + total * 2 + " holding " + held.length + " wrappers");
+        console.log("stuck " + collected + "/" + total + " holding " + held.length + " wrappers");
         process.exit(1);
       }
       setImmediate(check);
@@ -958,7 +957,7 @@ test("once() wrapper releases its target and listener after firing", async () =>
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "collected 16/16 holding 8 wrappers",
+    stdout: "collected 8/8 holding 8 wrappers",
     stderr: "",
     exitCode: 0,
   });

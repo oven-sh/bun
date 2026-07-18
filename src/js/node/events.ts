@@ -380,17 +380,15 @@ function _onceWrap(target, type, listener) {
   const wrapped = function onceWrapper() {
     if (!fired) {
       fired = true;
-      // Drop every ref before calling: JSC's conservative stack scan can pin
-      // a fired wrapper (directly, or via the copy-on-write array emit() is
-      // still iterating), which would keep target/listener alive forever.
+      // Drop closure refs before calling: JSC's conservative stack scan can
+      // pin a fired wrapper via a stale emit() local, which would keep
+      // `target` (e.g. an http.ClientRequest) alive indefinitely.
+      // `wrapped.listener` stays: node asserts it survives emit.
       const t = target;
       const l = listener;
       target = undefined;
       listener = undefined;
       t.removeListener(type, wrapped);
-      // After removeListener so a removeListener handler still sees the
-      // original listener via wrapped.listener.
-      wrapped.listener = undefined;
       if (arguments.length === 0) return l.$call(t);
       return l.$apply(t, arguments);
     }

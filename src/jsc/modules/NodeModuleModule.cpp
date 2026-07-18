@@ -880,10 +880,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     JSC::JSValue directoryValue = optionsValue;
     // Matches `typeof options === "object"`, so a callable is not an options bag.
     if (optionsValue.isObject() && !optionsValue.isCallable()) {
-        directoryValue = optionsValue.getObject()->getIfPropertyExists(
+        auto* options = optionsValue.getObject();
+        directoryValue = options->getIfPropertyExists(
             globalObject, JSC::Identifier::fromString(vm, "directory"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (directoryValue.isEmpty()) directoryValue = JSC::jsUndefined();
+        // Node reads `portable` before validating `directory`; the value is unused
+        // here but a throwing getter still propagates.
+        options->getIfPropertyExists(
+            globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!directoryValue.isUndefined() && !directoryValue.isString()) {

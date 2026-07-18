@@ -48,6 +48,22 @@ describe.concurrent("node-module-module", () => {
         },
       }),
     ).toThrow(RangeError);
+    // Node destructures `directory` then `portable` before validating, so a throwing
+    // `portable` getter propagates even when `directory` is already invalid.
+    const order = [];
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          order.push("directory");
+          return 42;
+        },
+        get portable() {
+          order.push("portable");
+          throw new RangeError("portable boom");
+        },
+      }),
+    ).toThrow(new RangeError("portable boom"));
+    expect(order).toEqual(["directory", "portable"]);
     // Valid shapes: string | {directory?, portable?} | undefined. The empty-object shapes
     // exercise the getIfPropertyExists() empty-value guard in the options-bag branch.
     for (const ok of [

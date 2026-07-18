@@ -136,7 +136,9 @@ static void nq_on_reset(lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how) {
 }
 static ssize_t nq_on_dg_write(lsquic_conn_t *c, void *buf, size_t sz) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (!ctx) return 0;
+    /* -1 is "nothing written": lsquic frames any return >= 0, so 0 would put
+     * an empty DATAGRAM frame on the wire. */
+    if (!ctx) return -1;
     struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
     return vt->on_dg_write(ctx, buf, sz);
 }

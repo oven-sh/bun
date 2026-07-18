@@ -2480,8 +2480,10 @@ lsquic_callback! {
 
 lsquic_callback! {
     pub(super) fn on_dg_write(session: &QuicSession, buf: *mut c_void, sz: usize) -> isize = -1; {
+        // -1 means "nothing written"; lsquic treats any value >= 0 as a
+        // datagram it should frame, so 0 emits an empty DATAGRAM frame.
         if buf.is_null() {
-            return 0;
+            return -1;
         }
         let Some((id, len)) = session
             .datagram_queue

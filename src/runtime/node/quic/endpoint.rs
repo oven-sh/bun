@@ -508,47 +508,48 @@ extern "C" fn on_data(
                     in_use != 0
                 });
             if owner_engine.is_none() {
+                // Keep which engine hashed the DCID, as the local path above
+                // does: feeding the sibling engine too makes it treat the
+                // packet as an unknown-CID arrival.
                 let owner = ENDPOINT_REGISTRY.with_borrow(|v| {
-                    v.iter().copied().find(|&other| {
-                        !core::ptr::eq(other, this)
-                            && [
-                                // SAFETY: registered endpoints outlive their
-                                // registry entry.
-                                unsafe { (*other).server_engine.get() },
-                                // SAFETY: as above.
-                                unsafe { (*other).client_engine.get() },
-                            ]
-                            .into_iter()
-                            .filter(|e| !e.is_null())
-                            .any(|e| {
-                                // SAFETY: as above.
-                                let in_use = unsafe {
-                                    lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len())
-                                };
-                                in_use != 0
-                            })
+                    v.iter().copied().find_map(|other| {
+                        if core::ptr::eq(other, this) {
+                            return None;
+                        }
+                        [
+                            // SAFETY: registered endpoints outlive their
+                            // registry entry.
+                            unsafe { (*other).server_engine.get() },
+                            // SAFETY: as above.
+                            unsafe { (*other).client_engine.get() },
+                        ]
+                        .into_iter()
+                        .filter(|e| !e.is_null())
+                        .find(|&e| {
+                            // SAFETY: as above.
+                            let in_use = unsafe {
+                                lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len())
+                            };
+                            in_use != 0
+                        })
+                        .map(|engine| (other, engine))
                     })
                 });
-                if let Some(owner) = owner {
+                if let Some((owner, engine)) = owner {
                     // SAFETY: as above; the packet is fed with OUR local
                     // address (the migration target).
                     let other = unsafe { &*owner };
-                    for engine in [other.server_engine.get(), other.client_engine.get()] {
-                        if engine.is_null() {
-                            continue;
-                        }
-                        // SAFETY: as in the direct feed below.
-                        unsafe {
-                            lsquic::lsquic_engine_packet_in(
-                                engine,
-                                payload.as_ptr(),
-                                payload.len(),
-                                local.as_ptr().cast(),
-                                core::ptr::from_ref(peer).cast(),
-                                owner.cast(),
-                                0,
-                            );
-                        }
+                    // SAFETY: as in the direct feed below.
+                    unsafe {
+                        lsquic::lsquic_engine_packet_in(
+                            engine,
+                            payload.as_ptr(),
+                            payload.len(),
+                            local.as_ptr().cast(),
+                            core::ptr::from_ref(peer).cast(),
+                            owner.cast(),
+                            0,
+                        );
                     }
                     other.process(global);
                     continue;

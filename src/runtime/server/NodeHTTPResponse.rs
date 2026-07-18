@@ -701,7 +701,7 @@ impl NodeHTTPResponse {
 
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
-        self.clear_pending_pinned_write(vm.global());
+        self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
         self.upgrade_context.with_mut(|c| c.reset());
 
         self.buffered_request_body_data_during_pause
@@ -1294,11 +1294,10 @@ impl NodeHTTPResponse {
         }
 
         if EVENT == AbortEvent::Abort {
-            // Clear the GC root via the wrapper C++ handed us, since
-            // get_this_value() returns ZERO once SOCKET_CLOSED is set.
-            if !js_this.is_empty() && self.pending_pinned_write.get().is_some() {
-                js::pending_write_buffer_set_cached(js_this, vm_get().global(), JSValue::ZERO);
-            }
+            // Release the pin + owner + GC root atomically before any user JS
+            // (on_data_or_aborted runs the ondata callback). Clearing the slot
+            // alone would un-root `pinned_value` while it is still read later.
+            self.clear_pending_pinned_write(vm_get().global(), js_this);
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
@@ -1553,14 +1552,10 @@ impl NodeHTTPResponse {
         // Re-arm the poll before marking SOCKET_CLOSED (resume_socket is a no-op
         // once that flag is set) so a paused socket's deferred EOF can fire.
         self.resume_socket();
-        // Drop the zero-copy GC root while the wrapper is still reachable via
-        // the socket; once SOCKET_CLOSED is set get_this_value() returns ZERO.
-        if self.pending_pinned_write.get().is_some() {
-            let this_value = self.get_this_value();
-            if !this_value.is_empty() {
-                js::pending_write_buffer_set_cached(this_value, _global, JSValue::ZERO);
-            }
-        }
+        // Release the zero-copy pin + owner + GC root while the wrapper is
+        // still reachable via the socket (get_this_value() returns ZERO once
+        // SOCKET_CLOSED is set).
+        self.clear_pending_pinned_write(_global, JSValue::ZERO);
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
         if let Some(raw_response) = self.raw_response.get() {
             let state = raw_response.state();
@@ -1702,7 +1697,12 @@ impl NodeHTTPResponse {
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
-    fn clear_pending_pinned_write(&self, global_object: &JSGlobalObject) {
+    /// `js_this` is the wrapper to clear the cached slot on; pass the value
+    /// handed in by C++ on terminal paths where `get_this_value()` is already
+    /// ZERO, or ZERO to have it looked up. The unpin reads `pinned_value`
+    /// before the cached-slot clear, so the cell is still GC-rooted when
+    /// `dynamicDowncast` touches it.
+    fn clear_pending_pinned_write(&self, global_object: &JSGlobalObject, js_this: JSValue) {
         let p = self
             .pending_pinned_write
             .replace(PendingPinnedWrite::default());
@@ -1714,9 +1714,11 @@ impl NodeHTTPResponse {
                 self.pending_pinned_write_owner
                     .replace(crate::node::StringOrBuffer::EMPTY),
             );
-            // On SOCKET_CLOSED the lookup returns ZERO; the abort path clears
-            // the slot itself with the wrapper it was handed by C++.
-            let this_value = self.get_this_value();
+            let this_value = if js_this.is_empty() {
+                self.get_this_value()
+            } else {
+                js_this
+            };
             if !this_value.is_empty() {
                 js::pending_write_buffer_set_cached(this_value, global_object, JSValue::ZERO);
             }
@@ -1733,7 +1735,7 @@ impl NodeHTTPResponse {
         if let Some(raw) = self.raw_response.get() {
             raw.spill_body(p.remaining());
         }
-        self.clear_pending_pinned_write(global_object);
+        self.clear_pending_pinned_write(global_object, JSValue::ZERO);
     }
 
     /// Continue a zero-copy write from the stored offset. Returns `true` if
@@ -1753,7 +1755,7 @@ impl NodeHTTPResponse {
             });
             return true;
         }
-        self.clear_pending_pinned_write(self.server.global_this());
+        self.clear_pending_pinned_write(self.server.global_this(), JSValue::ZERO);
         false
     }
 

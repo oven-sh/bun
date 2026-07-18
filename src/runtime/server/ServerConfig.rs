@@ -223,19 +223,27 @@ impl ServerConfig {
             hasher.final_()
         }
 
-        let mut seen: Vec<u64> = Vec::with_capacity(self.static_routes.len());
+        let mut static_routes_dedupe_list: Vec<u64> = Vec::with_capacity(self.static_routes.len());
 
-        // Iterate backwards so the later occurrence of a (method, path) wins.
-        // `swap_remove` is O(1); the sort below restores deterministic order.
+        // Iterate through the list of static routes backwards
+        // Later ones added override earlier ones
         let list = &mut self.static_routes;
-        let mut index = list.len();
-        while index > 0 {
-            index -= 1;
-            let h = hash(&list[index]);
-            if seen.contains(&h) {
-                list.swap_remove(index);
-            } else {
-                seen.push(h);
+        if !list.is_empty() {
+            let mut index = list.len() - 1;
+            loop {
+                let route = &list[index];
+                let h = hash(route);
+                if static_routes_dedupe_list.contains(&h) {
+                    let _item = list.remove(index);
+                    // _item drops here (deinit)
+                } else {
+                    static_routes_dedupe_list.push(h);
+                }
+
+                if index == 0 {
+                    break;
+                }
+                index -= 1;
             }
         }
 

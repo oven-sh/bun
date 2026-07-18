@@ -799,7 +799,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     }
     scope.releaseAssertNoException();
 
-    return JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,

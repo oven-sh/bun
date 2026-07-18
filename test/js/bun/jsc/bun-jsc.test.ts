@@ -24,7 +24,8 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isBuildKite, isDebug, isWindows } from "harness";
+import path from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -556,3 +557,28 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
+
+// oven-sh/WebKit#308: DFG Plan::m_mustHandleValues is weak, so objects live in
+// the OSR-triggering frame are not JITWorkList-rooted for the life of a queued
+// concurrent compile.
+it(
+  "gc() does not root user objects from a concurrent DFG plan's OSR-entry snapshot",
+  async () => {
+    // http client/server drives enough functions to DFG at once that plans are
+    // still queued at gc(). One compiler thread so they queue instead of drain.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "dfg-plan-gc-fixture.js")],
+      env: { ...bunEnv, BUN_JSC_numberOfDFGCompilerThreads: "1", BUN_JSC_numberOfFTLCompilerThreads: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The "alive" count is timing dependent (how many plans were queued at the
+    // first gc()), but no ClientRequest/IncomingMessage may be a JITWorkList root.
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: expect.stringMatching(/^jitworklist-rooted=0 alive=\d+$/),
+      exitCode: 0,
+    });
+  },
+  isDebug || isASAN ? 30_000 : undefined,
+);

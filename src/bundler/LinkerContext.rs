@@ -904,7 +904,7 @@ impl<'a> LinkerContext<'a> {
         // Note: these slices alias into self.graph.
         // The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
-        // cache raw column base pointers and reborrow at each recursive call.
+        // cache raw column base pointers once and hand them to the pass contexts.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
         let parts_live: *mut [bun_collections::AutoBitSet] = self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
@@ -920,9 +920,9 @@ impl<'a> LinkerContext<'a> {
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
         // (no reallocation during tree-shaking). All column derefs share that
-        // invariant; reborrowing once here (rather than per-call) is sound
-        // because the recursive `mark_file_*` bodies neither reallocate the
-        // slabs nor form a competing `&mut` to any read-only column.
+        // invariant; reborrowing once here is sound because the `mark_file_*`
+        // worklist steps neither reallocate the slabs nor form a competing
+        // `&mut` to any read-only column.
         let (
             entry_points,
             side_effects,

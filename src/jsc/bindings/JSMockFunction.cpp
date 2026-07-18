@@ -988,7 +988,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
         return {};
     }
 
-    JSValue prototype = fn->get(globalObject, vm.propertyNames->prototype);
+    JSValue newTarget = callframe->newTarget();
+    JSObject* newTargetObject = newTarget.isObject() ? asObject(newTarget) : fn;
+    JSValue prototype = newTargetObject->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});
     JSObject* instance = prototype.isObject()
         ? JSC::constructEmptyObject(globalObject, asObject(prototype))

@@ -2,7 +2,7 @@ let resolve;
 const promise = new Promise(r => (resolve = r));
 
 const server = Bun.listen({
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   port: 0,
   socket: {
     open(socket) {
@@ -18,7 +18,7 @@ const server = Bun.listen({
 });
 
 const client = await Bun.connect({
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   port: server.port,
   socket: {
     open(socket) {

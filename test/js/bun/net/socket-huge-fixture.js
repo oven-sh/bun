@@ -13,7 +13,7 @@ const { promise: serverPromise, resolve: serverResolve } = Promise.withResolvers
 
 var server = listen({
   port: 0,
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   data: { sent: 0 },
   socket: {
     open(socket) {

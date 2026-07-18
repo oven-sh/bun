@@ -3,7 +3,7 @@ import { closeSync, openSync } from "node:fs";
 
 const server = Bun.listen({
   port: 0,
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   socket: {
     open(socket) {
       socket.end();

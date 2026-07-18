@@ -195,6 +195,38 @@ test("node-only members live on the prototype, non-enumerable", () => {
   expect(Object.keys(globalThis.performance)).not.toContain("timerify");
 });
 
+// The members are installed on the prototype by node:perf_hooks; the bare web
+// global has none of them until the module is loaded. A future native move (onto
+// JSPerformance.cpp) would make the first half eager and require this to change.
+test("node-only members are installed onto the prototype when node:perf_hooks is loaded", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const proto = Performance.prototype;
+       const keys = ["nodeTiming", "eventLoopUtilization", "timerify"];
+       const describe = () => keys.map(k => {
+         const d = Object.getOwnPropertyDescriptor(proto, k);
+         return k + "=" + typeof globalThis.performance[k] + (d ? "|proto|enum=" + d.enumerable : "|absent");
+       }).join(" ");
+       console.log("before: " + describe());
+       require("node:perf_hooks");
+       console.log("after:  " + describe());`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect({ stdout, exitCode }).toEqual({
+    stdout:
+      "before: nodeTiming=undefined|absent eventLoopUtilization=undefined|absent timerify=undefined|absent\n" +
+      "after:  nodeTiming=object|proto|enum=false eventLoopUtilization=function|proto|enum=false timerify=function|proto|enum=false\n",
+    exitCode: 0,
+  });
+});
+
 // onresourcetimingbufferfull is the global's own accessor; since the module
 // object is the global, assigning through either reaches the same object.
 test("onresourcetimingbufferfull is the global's accessor", () => {

@@ -276,49 +276,48 @@ function processTimerifyComplete(name, start, args, histogram) {
   }
 }
 
-// Node-only members the web `performance` (a WebCore object) lacks. Put them on
-// the Performance prototype (non-enumerable, like node) so node:perf_hooks can
-// export the global object itself instead of a wrapper that re-forwards methods.
-// Target Performance.prototype (not getPrototypeOf(performance)) so a replaced
-// global can't redirect the define onto Object.prototype, and guard with hasOwn
-// so a future native move that adds these as own prototype props suppresses the
-// stub rather than inheriting through the chain.
-const PerformancePrototype = Performance.prototype;
-if (!Object.hasOwn(PerformancePrototype, "nodeTiming")) {
-  Object.defineProperty(PerformancePrototype, "nodeTiming", {
-    __proto__: null,
-    value: createPerformanceNodeTiming(),
-    writable: true,
-    enumerable: false,
-    configurable: true,
-  });
-}
-if (!Object.hasOwn(PerformancePrototype, "eventLoopUtilization")) {
-  Object.defineProperty(PerformancePrototype, "eventLoopUtilization", {
-    __proto__: null,
-    value: eventLoopUtilization,
-    writable: true,
-    enumerable: false,
-    configurable: true,
-  });
-}
-if (!Object.hasOwn(PerformancePrototype, "timerify")) {
-  Object.defineProperty(PerformancePrototype, "timerify", {
-    __proto__: null,
-    value: timerify,
-    writable: true,
-    enumerable: false,
-    configurable: true,
-  });
+// Node-only members go on Performance.prototype (non-enumerable, like node).
+// Not getPrototypeOf(performance): a replaced global would land these on
+// Object.prototype. hasOwn so a future native own-prop suppresses the stub.
+const PerformancePrototype = Performance?.prototype;
+if (PerformancePrototype) {
+  if (!Object.hasOwn(PerformancePrototype, "nodeTiming")) {
+    Object.defineProperty(PerformancePrototype, "nodeTiming", {
+      __proto__: null,
+      value: createPerformanceNodeTiming(),
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (!Object.hasOwn(PerformancePrototype, "eventLoopUtilization")) {
+    Object.defineProperty(PerformancePrototype, "eventLoopUtilization", {
+      __proto__: null,
+      value: eventLoopUtilization,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (!Object.hasOwn(PerformancePrototype, "timerify")) {
+    Object.defineProperty(PerformancePrototype, "timerify", {
+      __proto__: null,
+      value: timerify,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
 }
 
 export default {
   performance,
   constants,
-  // Read off performance so these exports stay identical to
-  // performance.<name> regardless of which layer installed them.
-  eventLoopUtilization: performance.eventLoopUtilization,
-  timerify: performance.timerify,
+  // Read off the same prototype the defines target, so a replaced global
+  // `performance` cannot make these undefined, and a future native own-prop
+  // is what the export picks up.
+  eventLoopUtilization: PerformancePrototype?.eventLoopUtilization ?? eventLoopUtilization,
+  timerify: PerformancePrototype?.timerify ?? timerify,
   Performance,
   PerformanceEntry,
   PerformanceMark,

@@ -279,6 +279,11 @@ impl<const SSL: bool> Response<SSL> {
 
     /// Write body bytes without copying the unwritten tail into uWS backpressure.
     /// Returns the number of body bytes accepted. See `HttpResponse::tryWriteBody`.
+    ///
+    /// Callers gate this on `data.len() > PINNED_WRITE_THRESHOLD` (writes at or
+    /// below the cork-buffer size are already fully absorbed by the cork copy)
+    /// and `<= c_uint::MAX` (the chunk-size line is emitted via
+    /// `writeUnsignedHex((unsigned int) length)`).
     pub fn try_write_body(&mut self, data: &[u8], is_first: bool) -> usize {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -1065,6 +1070,11 @@ pub enum WriteResult {
     WantMore(usize),
     Backpressure(usize),
 }
+
+/// Writes larger than this take the pinned zero-copy `try_write_body` path;
+/// at or below it the cork buffer (`LoopData::CORK_BUFFER_SIZE` = 16KB) already
+/// handles the copy.
+pub const PINNED_WRITE_THRESHOLD: usize = 16 * 1024;
 
 pub use c::uws_res;
 

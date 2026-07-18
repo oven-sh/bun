@@ -398,10 +398,6 @@ impl PendingPinnedWrite {
     }
 }
 
-/// Writes larger than this take the pinned zero-copy path; below it the cork
-/// buffer (`LoopData::CORK_BUFFER_SIZE` = 16KB) already handles the copy.
-const PINNED_WRITE_THRESHOLD: usize = 16 * 1024;
-
 impl NodeHTTPResponse {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
@@ -2028,7 +2024,7 @@ impl NodeHTTPResponse {
             // ArrayBuffer or WTFStringImpl-backed slice) instead of copying
             // the unwritten tail into the uWS backpressure std::string.
             let bytes_len = bytes.len();
-            if bytes_len > PINNED_WRITE_THRESHOLD && bytes_len <= c_uint::MAX as usize {
+            if bytes_len > uws::PINNED_WRITE_THRESHOLD && bytes_len <= c_uint::MAX as usize {
                 let is_buffer = matches!(string_or_buffer, crate::node::StringOrBuffer::Buffer(_));
 
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);

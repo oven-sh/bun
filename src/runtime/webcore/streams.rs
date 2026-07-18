@@ -1088,10 +1088,6 @@ impl PendingPinnedWrite {
     }
 }
 
-/// Writes larger than this take the pinned zero-copy path; at or below it the
-/// cork buffer (`LoopData::CORK_BUFFER_SIZE` = 16KB) already handles the copy.
-const PINNED_WRITE_THRESHOLD: usize = 16 * 1024;
-
 pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub res: Option<*mut UwsResponse<SSL, HTTP3>>,
     pub buffer: Vec<u8>,
@@ -1368,7 +1364,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // for >4 GiB writes, which splits into UINT_MAX-framed sub-chunks
         // (tryWriteBody's `writeUnsignedHex((unsigned int) length)` would
         // truncate).
-        if len <= PINNED_WRITE_THRESHOLD
+        if len <= uws::PINNED_WRITE_THRESHOLD
             || (len as BlobSizeType) < self.high_water_mark
             || len > core::ffi::c_uint::MAX as usize
             || !self.buffer.is_empty()

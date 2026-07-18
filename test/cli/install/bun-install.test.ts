@@ -2517,7 +2517,11 @@ describe.concurrent("bun-install", () => {
         if (request.url.endsWith(".tgz")) {
           return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
         }
-        const entry = (v: string) => ({ name: "bar", version: v, dist: { tarball: `${ctx.registry_url}bar-0.0.2.tgz` } });
+        const entry = (v: string) => ({
+          name: "bar",
+          version: v,
+          dist: { tarball: `${ctx.registry_url}bar-0.0.2.tgz` },
+        });
         return Response.json({
           name: "bar",
           "dist-tags": { latest: "0.0.2" },

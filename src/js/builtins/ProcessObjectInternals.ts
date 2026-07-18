@@ -263,6 +263,10 @@ export function getStdinStream(
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
         stream.push(null);
+        // push(null) only marks the state ended; endReadable() runs on the next
+        // read(). Node's onStreamRead issues read(0) here so 'end' fires even
+        // when pause() has stopped flow() and nothing else will call read().
+        stream.read(0);
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);
@@ -298,6 +302,11 @@ export function getStdinStream(
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
+        // pause() from inside a 'data' listener lands here before maybeReadMore()
+        // can pull again. If the chunk that emitted 'data' carried EOF, the web
+        // stream controller is already closed and one more read() resolves
+        // {done:true} immediately; pull it now so releaseLock() does not drop it.
+        if (reader && !stream_reachedEof) internalRead(stream);
         disown();
       }
     });

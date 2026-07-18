@@ -562,7 +562,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                auto env = Bun::createEmptyProcessEnvMap(globalObject);
                 size_t i = 0;
                 for (auto k : map) {
                     // They can have environment variables with numbers as keys.

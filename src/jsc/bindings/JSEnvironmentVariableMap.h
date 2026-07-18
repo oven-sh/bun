@@ -17,6 +17,11 @@ JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+// Empty process.env for a worker that was handed a snapshot of the spawning
+// thread's env: same class as the ordinary map so defineProperty validation
+// applies on worker threads too. Caller populates it.
+JSC::JSObject* createEmptyProcessEnvMap(Zig::GlobalObject* globalObject);
+
 // Resolve the SHARE_ENV store for a worker spawned from `globalObject`: the
 // spawning thread's existing store if it has one, otherwise a fresh store seeded
 // from its `process.env` (which is then swapped to a write-through view).

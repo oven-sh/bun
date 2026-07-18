@@ -21,6 +21,7 @@
 #include "BunProcess.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
+#include "ErrorCode.h"
 #include "wtf/NeverDestroyed.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -392,6 +393,31 @@ static SharedEnvStore* sharedEnvStoreFor(JSC::JSObject* object)
     return globalObject ? sharedEnvStoreFor(globalObject) : nullptr;
 }
 
+// node rejects anything but a full, fully-permissive data descriptor on
+// process.env (src/node_env_var.cc, EnvDefiner). Bun deliberately still accepts
+// accessors — see the "does not let the store shadow an accessor defined on
+// process.env" test — so only the data-descriptor half of node's rule is
+// enforced here: a descriptor carrying a value must spell out writable,
+// enumerable and configurable, all true. Accessor and empty descriptors keep
+// their existing behaviour. Returns false with an exception pending on reject.
+static bool validateEnvPropertyDescriptor(JSC::JSGlobalObject* globalObject, const JSC::PropertyDescriptor& descriptor, JSC::ThrowScope& scope)
+{
+    static constexpr auto dataDescriptorMessage = "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s;
+
+    if (!descriptor.value())
+        return true;
+
+    // A partial data descriptor is rejected even when what it does specify is
+    // permissive: node requires all three attributes to be present and true.
+    if (!descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent()
+        || !descriptor.writable() || !descriptor.enumerable() || !descriptor.configurable()) {
+        scope.throwException(globalObject, createError(globalObject, Bun::ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, dataDescriptorMessage));
+        return false;
+    }
+
+    return true;
+}
+
 // process.env variant whose reads/writes/deletes/enumeration go through the
 // tree's SharedEnvStore; no instance state, so no custom subspace.
 class JSSharedEnvMap final : public JSC::JSNonFinalObject {
@@ -602,6 +628,9 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (!validateEnvPropertyDescriptor(globalObject, descriptor, scope))
+        return false;
+
     auto* uid = propertyName.uid();
     if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
         // The descriptor lands on the Base object, but getOwnPropertySlot reads the
@@ -742,6 +771,69 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
+// The ordinary (non-SHARE_ENV) process.env. A plain object apart from
+// defineOwnProperty, which node intercepts to reject descriptors that are not
+// fully-permissive data descriptors; without a method-table hook the validation
+// has nowhere to live, so process.env needs its own class rather than a
+// constructEmptyObject().
+class JSProcessEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSProcessEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSProcessEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSProcessEnvMap* ptr = new (NotNull, JSC::allocateCell<JSProcessEnvMap>(vm)) JSProcessEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
+    {
+        VM& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        if (!validateEnvPropertyDescriptor(globalObject, descriptor, scope))
+            return false;
+
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+private:
+    JSProcessEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
+
+JSObject* createEmptyProcessEnvMap(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    return JSProcessEnvMap::create(vm, JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -749,12 +841,12 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+    // Unlike the constructEmptyObject() this replaces, the storage is not
+    // pre-sized to the env count: JSNonFinalObject asserts it has no inline
+    // storage, so the vars below always land in the butterfly. Only JSFinalObject
+    // gets inline slots, and it is `final` — a defineOwnProperty hook and inline
+    // storage are mutually exclusive here.
+    JSC::JSObject* object = JSProcessEnvMap::create(vm, JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);

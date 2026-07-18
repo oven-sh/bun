@@ -167,7 +167,7 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
     // instead, so resizing mid-flight is safe.
     const ab = new ArrayBuffer(CHUNK_SIZE, { maxByteLength: CHUNK_SIZE });
     const payload = new Uint8Array(ab);
-    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    payload.set(makePayload(CHUNK_SIZE));
     const expectedHash = sha1(payload);
 
     let detached: boolean | undefined;
@@ -194,6 +194,56 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
     expect(body.length).toBe(CHUNK_SIZE);
     expect(sha1(body)).toBe(expectedHash);
     expect(detached).toBe(true);
+  });
+
+  test("a large ASCII string write delivers the exact bytes", async () => {
+    const payload = Buffer.alloc(CHUNK_SIZE, "a").toString("latin1");
+    const expected = sha1(Buffer.alloc(CHUNK_SIZE, "a"));
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller: any) {
+              if (controller.write(payload) < 0) await controller.flush(true);
+              controller.end();
+            },
+          } as any),
+        );
+      },
+    });
+
+    const body = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expected);
+  });
+
+  test("a large UTF-16 string write delivers the exact bytes", async () => {
+    // Non-Latin-1 char forces JSC to 16-bit storage; the sink transcodes to
+    // UTF-8 into its own buffer and then sends via tryWriteBody.
+    const payload = Buffer.alloc(CHUNK_SIZE - 1, "a").toString("latin1") + "\u0100";
+    const expectedBytes = Buffer.concat([Buffer.alloc(CHUNK_SIZE - 1, "a"), Buffer.from("\u0100", "utf8")]);
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller: any) {
+              if (controller.write(payload) < 0) await controller.flush(true);
+              controller.end();
+            },
+          } as any),
+        );
+      },
+    });
+
+    const body = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+    expect(body.length).toBe(expectedBytes.length);
+    expect(sha1(body)).toBe(sha1(expectedBytes));
   });
 
   test("readStreamIntoSink: a large enqueue() delivers the exact bytes", async () => {

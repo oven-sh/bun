@@ -761,6 +761,14 @@ pub trait JsSinkType: Sized {
     }
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
+    /// `write_latin1` with the originating JS cell; see `write_bytes_with_value`.
+    fn write_latin1_with_value(
+        &mut self,
+        data: &streams::Result,
+        _input_value: crate::webcore::jsc::JSValue,
+    ) -> streams::result::Writable {
+        self.write_latin1(data)
+    }
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
@@ -936,7 +944,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         let data = bun_ptr::RawSlice::new(view.slice());
         Ok(this
             .sink
-            .write_latin1(&streams::Result::Temporary(data))
+            .write_latin1_with_value(&streams::Result::Temporary(data), str_.to_js())
             .to_js(global))
     }
 

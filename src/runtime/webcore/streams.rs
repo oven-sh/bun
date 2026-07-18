@@ -1113,6 +1113,11 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub end_len: usize,
     pub aborted: bool,
     pub pending_pinned_write: PendingPinnedWrite,
+    /// A `tryWriteBody` chunk is open on the wire (size-hex line written,
+    /// trailing CRLF not yet) and its remaining body bytes live in
+    /// `self.buffer[offset..]`. The next send of those bytes goes out with
+    /// `isFirst=false`; a new chunk must spill this one first.
+    pub mid_body_chunk: bool,
     /// This sink fully ended the uWS response (`res.end()` / a completed
     /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
     /// point, so the owning `RequestContext` is never told if the peer closes
@@ -1151,6 +1156,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             end_len: 0,
             aborted: false,
             pending_pinned_write: PendingPinnedWrite::default(),
+            mid_body_chunk: false,
             ended_response: false,
             on_first_write: None,
             ctx: None,
@@ -1322,6 +1328,30 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.clear_pending_pinned_write();
     }
 
+    /// Copy the remaining body of an open `tryWriteBody` chunk (held in
+    /// `self.buffer[offset..]`) into the uWS backpressure buffer and close the
+    /// chunk framing, so a subsequent write()/end() stays ordered behind it.
+    fn spill_mid_body_chunk(&mut self) {
+        if !self.mid_body_chunk {
+            return;
+        }
+        self.mid_body_chunk = false;
+        let base = self.offset as usize;
+        let len = self.buffer.len().saturating_sub(base);
+        if let Some(res) = self.any_res() {
+            res.spill_body(&self.buffer[base..]);
+        }
+        self.handle_wrote(len);
+    }
+
+    /// Close out any open `tryWriteBody` chunk (whichever storage holds its
+    /// tail) before starting a new one or ending the response.
+    #[inline]
+    fn spill_open_chunk(&mut self) {
+        self.spill_pending_pinned_write();
+        self.spill_mid_body_chunk();
+    }
+
     /// Continue a zero-copy write from the stored offset. Returns `true` when
     /// bytes remain outstanding (wait for another onWritable before resolving
     /// the flush promise).
@@ -1346,12 +1376,18 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         false
     }
 
-    /// Zero-copy fast path for a large ArrayBuffer-backed write: send via
+    /// Zero-copy fast path for a large write whose bytes are backed by a JS
+    /// cell (`ArrayBuffer`/view, or an all-ASCII Latin-1 `JSString`): send via
     /// `try_write_body` (no tail copy into uWS backpressure); on partial
-    /// accept, pin + GC-root the user's buffer and resume on `on_writable`.
-    /// Returns `None` when the preconditions don't hold (caller falls back to
-    /// the buffered path).
-    fn try_write_pinned(&mut self, bytes: &[u8], input_value: JSValue) -> Option<Writable> {
+    /// accept, GC-root the cell (and `pin()` the backing store for buffers)
+    /// and resume on `on_writable`. Returns `None` when the preconditions
+    /// don't hold (caller falls back to the buffered path).
+    fn try_write_pinned(
+        &mut self,
+        bytes: &[u8],
+        input_value: JSValue,
+        is_array_buffer: bool,
+    ) -> Option<Writable> {
         // The HTTP/3 `try_write_body` shim falls back to a copying write, so
         // the pin would only add overhead there.
         if HTTP3 {
@@ -1394,26 +1430,34 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             consumed,
             len
         );
-        // `pin()` prevents `transfer()` from detaching the backing store;
-        // `protect()` GC-roots the cell. Both are released together on drain,
-        // spill, abort or destroy. Resizable / growable-shared buffers are
-        // excluded: resize() keeps the base pointer but mprotect()s trimmed
-        // pages PROT_NONE, so a retained raw slice would fault.
-        match input_value.as_pinned_arraybuffer(self.global_this()) {
-            Some(ab) if !ab.resizable => {
-                input_value.protect();
-                self.pending_pinned_write = PendingPinnedWrite {
-                    remaining: core::ptr::from_ref(&bytes[consumed..]),
-                    pinned_value: input_value,
-                };
-            }
-            pinned => {
-                if pinned.is_some() {
+        // `protect()` GC-roots the cell; for buffers `pin()` also prevents
+        // `transfer()` from detaching the backing store. Both are released on
+        // drain, spill, abort or destroy. Resizable / growable-shared buffers
+        // are excluded: resize() keeps the base pointer but mprotect()s
+        // trimmed pages PROT_NONE, so a retained raw slice would fault.
+        // JSString character buffers are immutable, so `protect()` alone
+        // keeps `bytes` valid.
+        let pinnable = if is_array_buffer {
+            match input_value.as_pinned_arraybuffer(self.global_this()) {
+                Some(ab) if !ab.resizable => true,
+                Some(_) => {
                     input_value.unpin_array_buffer();
+                    false
                 }
-                res.spill_body(&bytes[consumed..]);
-                self.wrote += (len - consumed) as BlobSizeType;
+                None => false,
             }
+        } else {
+            true
+        };
+        if pinnable {
+            input_value.protect();
+            self.pending_pinned_write = PendingPinnedWrite {
+                remaining: core::ptr::from_ref(&bytes[consumed..]),
+                pinned_value: input_value,
+            };
+        } else {
+            res.spill_body(&bytes[consumed..]);
+            self.wrote += (len - consumed) as BlobSizeType;
         }
         self.has_backpressure = true;
         Some(self.writable_result(len as BlobSizeType))
@@ -1478,18 +1522,40 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // clean this so we know when its relevant or not
         self.end_len = 0;
         self.handle_first_write_if_necessary();
-        // uWS has no tryWrite(): write() always accepts the buffer (queuing the
-        // unsent tail internally) and reports whether the socket is now backed
-        // up. Track that so the JS writer can pause; the owning RequestContext
-        // holds the on_writable registration and forwards the drain to
-        // `on_writable()` below.
         if self.requested_end {
             res.end(buf, false);
             self.has_backpressure = false;
-        } else {
+            self.handle_wrote(buf.len());
+        } else if buf.len() > core::ffi::c_uint::MAX as usize {
+            // tryWriteBody emits the chunk-size line via writeUnsignedHex
+            // ((unsigned int)len); fall back to res.write() which splits
+            // >4 GiB into correctly-framed sub-chunks.
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
+            self.handle_wrote(buf.len());
+        } else {
+            // tryWriteBody: body bytes are written with optionally=true, so the
+            // unsent tail stays with us instead of being copied into the uWS
+            // backpressure std::string. The owning RequestContext holds the
+            // on_writable registration; `on_writable()` resends from
+            // `self.buffer[offset..]` with isFirst=false.
+            let consumed = res.try_write_body(buf, !self.mid_body_chunk);
+            self.wrote += consumed as BlobSizeType;
+            if consumed < buf.len() {
+                // `buf` is borrowed from the caller; stash the tail so
+                // `on_writable` can resume.
+                if self.buffer.write(&buf[consumed..]).is_err() {
+                    res.spill_body(&buf[consumed..]);
+                    self.wrote += (buf.len() - consumed) as BlobSizeType;
+                    self.mid_body_chunk = false;
+                } else {
+                    self.mid_body_chunk = true;
+                }
+                self.has_backpressure = true;
+            } else {
+                self.mid_body_chunk = false;
+                self.has_backpressure = false;
+            }
         }
-        self.handle_wrote(buf.len());
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",
@@ -1558,13 +1624,27 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.requested_end {
             res.end(&self.buffer[base..], false);
             self.has_backpressure = false;
-        } else {
+            self.handle_wrote(buf_len);
+        } else if buf_len > core::ffi::c_uint::MAX as usize {
             self.has_backpressure = matches!(
                 res.write(&self.buffer[base..]),
                 uws::WriteResult::Backpressure(_)
             );
+            self.handle_wrote(buf_len);
+        } else {
+            // See `send_without_auto_flusher`: write the body with
+            // optionally=true and advance `offset` by what the socket accepted;
+            // `on_writable` resends the tail from `self.buffer[offset..]`.
+            let consumed = res.try_write_body(&self.buffer[base..], !self.mid_body_chunk);
+            self.handle_wrote(consumed);
+            if consumed < buf_len {
+                self.mid_body_chunk = true;
+                self.has_backpressure = true;
+            } else {
+                self.mid_body_chunk = false;
+                self.has_backpressure = false;
+            }
         }
-        self.handle_wrote(buf_len);
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",
@@ -1598,11 +1678,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return true;
         }
 
-        // Streaming-write drain: uWS already holds the data (our buffer is
-        // empty), so there is nothing to resend. Resolve any flush(true) waiter
-        // — that promise is the resume signal for both readStreamIntoSink and
-        // direct-stream callers. Handled before the try_end resend bookkeeping
-        // below, which assumes a non-empty buffer.
+        // Nothing buffered: either the previous write was fully accepted, or
+        // its tail was spilled into uWS backpressure (which uWS drains on its
+        // own). Resolve any flush(true) waiter — that promise is the resume
+        // signal for both readStreamIntoSink and direct-stream callers.
+        // Handled before the try_end resend bookkeeping below, which assumes a
+        // non-empty buffer.
         if self.readable_slice().is_empty() {
             if self.done {
                 self.signal.close(None);
@@ -1619,11 +1700,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // try_end resend vs streaming-write drain:
         // - end_len > 0: the buffer holds the body uWS partially sent via
         //   try_end; `write_offset` is the resume point into that same buffer.
-        // - end_len == 0: the buffer holds *new* data the user queued while the
-        //   socket was backed up (e.g. write(small) after a write(big) that hit
-        //   backpressure). uWS already owns the earlier bytes; send from 0.
-        //   `write_offset` is uWS's cumulative response count here and is not a
-        //   valid index into our buffer.
+        // - end_len == 0: the buffer holds a partially-accepted tryWriteBody
+        //   tail (`mid_body_chunk`) and/or user data queued while backed up;
+        //   `offset` already points at the resume position. `write_offset` is
+        //   uWS's cumulative response count and is not a valid index here.
         let chunk_start = if self.end_len > 0 {
             // do not write more than available
             (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1) as usize
@@ -1635,6 +1715,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // mutation send's internals perform. The length is used only for
         // `total_written` and the empty check.
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
+        // Draining our own tryWriteBody tail is not new user data: `onReady`
+        // re-invokes pull(), which would run the direct-stream body again.
+        let was_mid_body_chunk = self.mid_body_chunk;
         // if we have nothing to write, we are done
         if chunk_len == 0 {
             if self.done {
@@ -1649,6 +1732,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return false;
             }
             total_written = chunk_len as u64;
+
+            // tryWriteBody accepted another partial; wait for the next drain
+            // before telling JS we're writable.
+            if self.mid_body_chunk {
+                return true;
+            }
 
             if self.requested_end {
                 if let Some(res) = self.any_res() {
@@ -1669,7 +1758,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         // pending_flush or callback could have caused another send()
         // so we check again if we should report readiness
-        if !self.done && !self.requested_end && !self.has_backpressure() {
+        if !self.done && !self.requested_end && !self.has_backpressure() && !was_mid_body_chunk {
             // no pending and total_written > 0
             if total_written > 0 && self.readable_slice().is_empty() {
                 self.signal.ready(Some(total_written as BlobSizeType), None);
@@ -1829,7 +1918,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
         bun_core::scoped_log!(HTTPServerWritableLog, "write({})", bytes.len());
-        self.spill_pending_pinned_write();
+        self.spill_open_chunk();
 
         if self.buffer.len() == 0 && len >= self.high_water_mark {
             // fast path:
@@ -1874,13 +1963,34 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
-        // A previous zero-copy tail must hit the wire before this one; no-op
-        // when the caller waited for the flush promise.
-        self.spill_pending_pinned_write();
-        if let Some(result) = self.try_write_pinned(data.slice(), input_value) {
+        // A previous tryWriteBody tail must hit the wire before this one;
+        // no-op when the caller waited for the flush promise.
+        self.spill_open_chunk();
+        if let Some(result) = self.try_write_pinned(data.slice(), input_value, true) {
             return result;
         }
         self.write(data)
+    }
+
+    pub fn write_latin1_with_value(
+        &mut self,
+        data: &StreamResult,
+        input_value: JSValue,
+    ) -> Writable {
+        if self.done || self.requested_end {
+            return Writable::Owned(0);
+        }
+        self.spill_open_chunk();
+        // All-ASCII Latin-1 is byte-identical to UTF-8 and the JSString's
+        // character buffer is immutable, so the pinned path can hold it by
+        // reference with `protect()` alone.
+        let bytes = data.slice();
+        if strings::is_all_ascii(bytes) {
+            if let Some(result) = self.try_write_pinned(bytes, input_value, false) {
+                return result;
+            }
+        }
+        self.write_latin1(data)
     }
 
     pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
@@ -1897,7 +2007,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
         bun_core::scoped_log!(HTTPServerWritableLog, "writeLatin1({})", bytes.len());
-        self.spill_pending_pinned_write();
+        self.spill_open_chunk();
 
         if self.buffer.len() == 0 && len >= self.high_water_mark {
             let mut do_send = true;
@@ -1956,7 +2066,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let bytes = data.slice();
 
         bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", bytes.len());
-        self.spill_pending_pinned_write();
+        self.spill_open_chunk();
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
@@ -1998,7 +2108,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(());
         }
 
-        self.spill_pending_pinned_write();
+        self.spill_open_chunk();
         self.requested_end = true;
         let readable_len = self.readable_slice().len();
         self.end_len = readable_len;
@@ -2029,7 +2139,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
-        self.spill_pending_pinned_write();
+        self.spill_open_chunk();
         self.requested_end = true;
         let readable_len = self.readable_slice().len();
         self.end_len = readable_len;
@@ -2076,6 +2186,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // ends before the signal close below, which may free `*this`.
         let sink = unsafe { &mut *this };
         sink.clear_pending_pinned_write();
+        sink.mid_body_chunk = false;
         sink.done = true;
         sink.res = None;
         sink.unregister_auto_flusher();
@@ -2167,8 +2278,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// so it must zero out state instead of make it
     pub fn finalize(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
+        // Close any open tryWriteBody chunk before teardown regardless of
+        // `done`: `handle_reject_stream` sets `done = true` first, and the
+        // non-optional `res.write()` path this replaces always left the chunk
+        // well-formed on the wire.
+        self.spill_open_chunk();
         if !self.done {
-            self.spill_pending_pinned_write();
             self.unregister_auto_flusher();
             if let Some(res) = self.any_res() {
                 // The body is finished; drop the drain callback so the owning
@@ -2291,6 +2406,9 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     }
     fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         Self::write_latin1(self, data)
+    }
+    fn write_latin1_with_value(&mut self, data: &StreamResult, input_value: JSValue) -> Writable {
+        Self::write_latin1_with_value(self, data, input_value)
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         Self::end(self, err)

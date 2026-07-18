@@ -176,11 +176,6 @@ struct ssl_ctx_st;
 struct ssl_st;
 
 
-struct us_cert_string_t {
-    const char* str;
-    size_t len;
-};
-
 struct us_cert_der_t {
     const unsigned char* der;
     size_t len;

@@ -1,4 +1,5 @@
 import { describe, test } from "bun:test";
+import { isWindows } from "harness";
 import assert from "node:assert";
 import path from "node:path";
 
@@ -39,15 +40,22 @@ describe("path.relative", () => {
           // trimmed length 2 and is a proper prefix of the other. Node's JS
           // falls through to String#slice with an inverted range, which
           // yields ""; a naive Rust slice with the same indices panics.
-          ["/x..", "/x.", ""],
-          ["/xy.", "/xy", ""],
-          ["/abc", "/ab", ""],
-          ["\\x..", "\\x.", ""],
-          ["\\ab.", "\\ab", ""],
-          ["/xyz.", "/xy", ".."],
-          ["/xyzw", "/xy", ".."],
-          ["/abcde", "/ab", ".."],
-          ["/x.", "/x..", "."],
+          // These resolve through process.cwd() for a device root, so the
+          // expected values below only hold on a POSIX host (where cwd has
+          // no drive letter and resolve("/x.") yields "\\x.").
+          ...(isWindows
+            ? []
+            : [
+                ["/x..", "/x.", ""],
+                ["/xy.", "/xy", ""],
+                ["/abc", "/ab", ""],
+                ["\\x..", "\\x.", ""],
+                ["\\ab.", "\\ab", ""],
+                ["/xyz.", "/xy", ".."],
+                ["/xyzw", "/xy", ".."],
+                ["/abcde", "/ab", ".."],
+                ["/x.", "/x..", "."],
+              ]),
         ],
       ],
       [

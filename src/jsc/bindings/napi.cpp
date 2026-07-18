@@ -150,10 +150,10 @@ using namespace Zig;
 // slot (see NapiEnv::stashExceptionDuringCleanup); for pure value producers
 // this also means they keep working while that exception is pending,
 // matching Node, whose equivalents never check the exception state.
-#define NAPI_RETURN_IF_VM_EXCEPTION(_env)                                                                          \
-    do {                                                                                                           \
-        (_env)->stashExceptionDuringCleanup();                                                                     \
-        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception));     \
+#define NAPI_RETURN_IF_VM_EXCEPTION(_env)                                                                      \
+    do {                                                                                                       \
+        (_env)->stashExceptionDuringCleanup();                                                                 \
+        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception)); \
     } while (0)
 
 #define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope)                                   \

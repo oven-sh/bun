@@ -37,8 +37,9 @@ impl ArrayBufferSink {
         } = *stream_start
         {
             if chunk_size > 0 {
-                self.bytes
-                    .ensure_total_capacity_precise(chunk_size as usize);
+                if self.bytes.try_reserve_exact(chunk_size as usize).is_err() {
+                    return Err(syscall::Error::oom());
+                }
             }
 
             self.as_uint8array = as_uint8array;

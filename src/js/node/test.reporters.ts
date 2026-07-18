@@ -348,8 +348,9 @@ async function* tap(source) {
         for (let i = 0; i < data.tests.length; i++) {
           const test = data.tests[i];
           let msg = `Interrupted while running: ${test.name}`;
-          if (test.file) {
-            msg += ` at ${test.file}:${test.line}:${test.column}`;
+          const { file } = test;
+          if (file) {
+            msg += ` at ${file}:${test.line}:${test.column}`;
           }
           yield `# ${tapEscape(msg)}\n`;
         }
@@ -386,12 +387,13 @@ class SpecReporter extends Transform {
       const formattedErr = formatTestReport("test:fail", test);
       // bun's synthesized events don't carry declaration positions yet; node
       // always has them, so only diverge when they're absent.
-      if (test.file && test.line != null) {
-        const relPath = relative(this.#cwd, test.file);
-        const location = `test at ${relPath}:${test.line}:${test.column}`;
+      const { file, line } = test;
+      if (file && line != null) {
+        const relPath = relative(this.#cwd, file);
+        const location = `test at ${relPath}:${line}:${test.column}`;
         results.push(location);
-      } else if (test.file) {
-        results.push(`test at ${relative(this.#cwd, test.file)}`);
+      } else if (file) {
+        results.push(`test at ${relative(this.#cwd, file)}`);
       }
       results.push(formattedErr);
     }
@@ -454,8 +456,9 @@ class SpecReporter extends Transform {
     for (let i = 0; i < tests.length; i++) {
       const test = tests[i];
       let msg = `${indent(test.nesting)}${reporterUnicodeSymbolMap["warning:alert"]}${test.name}`;
-      if (test.file) {
-        const relPath = relative(this.#cwd, test.file);
+      const { file } = test;
+      if (file) {
+        const relPath = relative(this.#cwd, file);
         msg += ` ${colors.gray}(${relPath}:${test.line}:${test.column})${colors.white}`;
       }
       results.push(msg);
@@ -559,29 +562,31 @@ async function* junit(source) {
         }
         currentTest.attrs.time = (event.data.details.duration_ms / 1000).toFixed(6);
         const nonCommentChildren = currentTest.children.filter(child => child.comment == null);
-        if (nonCommentChildren.length > 0) {
+        const childCount = nonCommentChildren.length;
+        if (childCount > 0) {
           currentTest.tag = "testsuite";
           currentTest.attrs.disabled = 0;
           currentTest.attrs.errors = 0;
-          currentTest.attrs.tests = nonCommentChildren.length;
+          currentTest.attrs.tests = childCount;
           currentTest.attrs.failures = currentTest.children.filter(isFailure).length;
           currentTest.attrs.skipped = currentTest.children.filter(isSkipped).length;
           currentTest.attrs.hostname = hostname();
         } else {
           currentTest.tag = "testcase";
           currentTest.attrs.classname = event.data.classname ?? "test";
-          if (event.data.file) {
-            currentTest.attrs.file = event.data.file;
+          const { file, skip, todo } = event.data;
+          if (file) {
+            currentTest.attrs.file = file;
           }
-          if (event.data.skip) {
+          if (skip) {
             currentTest.children.push({
               __proto__: null,
               nesting: event.data.nesting + 1,
               tag: "skipped",
-              attrs: { __proto__: null, type: "skipped", message: event.data.skip },
+              attrs: { __proto__: null, type: "skipped", message: skip },
             });
           }
-          if (event.data.todo) {
+          if (todo) {
             currentTest.children.push({
               __proto__: null,
               nesting: event.data.nesting + 1,

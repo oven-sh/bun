@@ -571,8 +571,9 @@ if (runChildReporterEnabled) {
   // node's child emits its root-level plan when the file finishes; the file
   // boundary in bun:test is process exit.
   process.on("exit", () => {
-    if (rootNode !== undefined && rootNode.reportedCount > 0) {
-      emitRunChildEvent("test:plan", { __proto__: null, nesting: 0, count: rootNode.reportedCount });
+    const count = rootNode?.reportedCount ?? 0;
+    if (count > 0) {
+      emitRunChildEvent("test:plan", { __proto__: null, nesting: 0, count });
     }
   });
 }
@@ -822,8 +823,9 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
   };
   emitRunChildEvent("test:complete", { ...data, passed: node.passed });
   // A test that ran subtests reports the plan covering them.
-  if (node.reportedCount > 0) {
-    emitRunChildEvent("test:plan", { __proto__: null, nesting: nestingOf(node) + 1, count: node.reportedCount });
+  const { reportedCount } = node;
+  if (reportedCount > 0) {
+    emitRunChildEvent("test:plan", { __proto__: null, nesting: nestingOf(node) + 1, count: reportedCount });
   }
   reportStartChain(node);
   emitRunChildEvent(node.passed ? "test:pass" : "test:fail", data);
@@ -2813,8 +2815,9 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     }
 
     const durationMs = Date.now() - started;
-    if (root.reportedCount > 0) {
-      standaloneSink("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
+    const { reportedCount } = root;
+    if (reportedCount > 0) {
+      standaloneSink("test:plan", { __proto__: null, nesting: 0, count: reportedCount });
     }
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
@@ -2874,8 +2877,9 @@ async function runStandalone() {
     counts.failed++;
   } finally {
     const durationMs = performance.now() - startedAt;
-    if (root.reportedCount > 0) {
-      standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
+    const { reportedCount } = root;
+    if (reportedCount > 0) {
+      standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: reportedCount });
     }
     emitRunDiagnostics(stream, counts, durationMs);
     stream.emitMessage("test:summary", {
@@ -2912,9 +2916,10 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   }
   // Suites: the callback already ran at declaration (node runs describe
   // bodies during load); execute the collected children in order.
-  if (entry.build !== undefined) {
+  const { build } = entry;
+  if (build !== undefined) {
     try {
-      await entry.build;
+      await build;
     } catch (err) {
       node.childrenFailed++;
       node.error = err;

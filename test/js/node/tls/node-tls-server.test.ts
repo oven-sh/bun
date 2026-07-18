@@ -1321,6 +1321,7 @@ it("accepted TLSSocket has an internal 'error' listener (onSocketTLSError)", asy
     const port = (server.address() as AddressInfo).port;
     const secureConn = once(server, "secureConnection");
     client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
     await secureConn;
     expect(count).toBe(1);
   } finally {

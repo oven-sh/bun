@@ -1844,8 +1844,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamClosedPromise, (JSGlobalObject * globalObjec
 
 // node:stream's isReadable/isWritable/isErrored/isDisturbed expect WHATWG streams to carry the
 // Symbol.for("nodejs.stream.*") brand getters that node's own web stream impl defines. Bun's
-// native streams don't, so those helpers duck-type the argument and read the underlying
-// [[state]] here instead. Callers gate on isReadableStream()/isWritableStream() first.
+// native streams don't, so those helpers duck-type and read the underlying [[state]] here instead.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamState, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSValue streamValue = callFrame->argument(0);

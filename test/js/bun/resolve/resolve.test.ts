@@ -1029,7 +1029,7 @@ describe("tsconfig paths wildcard substitution", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { dir: String(dir), stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode };
   }
 
   it.concurrent("maps a .js key suffix to a .ts target suffix (issue #26193)", async () => {
@@ -1105,7 +1105,7 @@ describe("tsconfig paths wildcard substitution", () => {
       "src/lib.ts": `export const v = "hi";`,
     });
     const abs = String(base).replaceAll("\\", "/");
-    const { dir, stdout, exitCode } = await run(
+    const { stdout, exitCode } = await run(
       {
         "tsconfig.json": JSON.stringify({
           compilerOptions: { baseUrl: ".", paths: { "@pkg/*": [`${abs}/src/*`] } },
@@ -1113,7 +1113,6 @@ describe("tsconfig paths wildcard substitution", () => {
       },
       `console.log(Bun.resolveSync("@pkg/sub/../lib", import.meta.dir));`,
     );
-    void dir;
     expect({ stdout, exitCode }).toEqual({ stdout: join(String(base), "src", "lib.ts") + "\n", exitCode: 0 });
     expect(stdout).not.toContain("..");
   });

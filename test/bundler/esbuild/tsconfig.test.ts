@@ -7,7 +7,7 @@ import { itBundled } from "../expectBundled";
 // For debug, all files are written to $TEMP/bun-bundle-tests/tsconfig
 
 describe("bundler", () => {
-  itBundled("tsconfig/Paths", ({ root }) => ({
+  itBundled("tsconfig/Paths", {
     files: {
       "/entry.ts": /* ts */ `
         import baseurl_dot from './baseurl_dot'
@@ -51,8 +51,8 @@ describe("bundler", () => {
               "test5/*": ["./test5-first/*", "./test5-second/*"],
               "/virtual-in/test": ["./actual/test"],
               "/virtual-in-star/*": ["./actual/*"],
-              "/virtual-out/test": ["${root}/baseurl_dot/actual/test"],
-              "/virtual-out-star/*": ["${root}/baseurl_dot/actual/*"],
+              "/virtual-out/test": ["{{root}}/baseurl_dot/actual/test"],
+              "/virtual-out-star/*": ["{{root}}/baseurl_dot/actual/*"],
             }
           }
         }
@@ -105,8 +105,8 @@ describe("bundler", () => {
               "test5/*": ["./test5-first/*", "./test5-second/*"],
               "/virtual-in/test": ["./actual/test"],
               "/virtual-in-star/*": ["./actual/*"],
-              "/virtual-out/test": ["${root}/baseurl_nested/nested/actual/test"],
-              "/virtual-out-star/*": ["${root}/baseurl_nested/nested/actual/*"],
+              "/virtual-out/test": ["{{root}}/baseurl_nested/nested/actual/test"],
+              "/virtual-out-star/*": ["{{root}}/baseurl_nested/nested/actual/*"],
             }
           }
         }
@@ -127,7 +127,7 @@ describe("bundler", () => {
       stdout:
         '{"baseurl_dot":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absoluteIn":"absolute-success","absoluteInStar":"absolute-success","absoluteOut":"absolute-success","absoluteOutStar":"absolute-success"},"baseurl_nested":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absoluteIn":"absolute-success","absoluteInStar":"absolute-success","absoluteOut":"absolute-success","absoluteOutStar":"absolute-success"}}',
     },
-  }));
+  });
   itBundled("tsconfig/PathsNoBaseURL", {
     files: {
       "/entry.ts": /* ts */ `

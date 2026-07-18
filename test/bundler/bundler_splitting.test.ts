@@ -362,8 +362,9 @@ describe("bundler", () => {
     });
     const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     if (buildExit !== 0) {
+      const why = build.killed ? `did not finish within ${THRESHOLD_MS}ms` : `exited ${buildExit}`;
       throw new Error(
-        `bun build did not finish within ${THRESHOLD_MS}ms for ${N} colliding cross-chunk export names ` +
+        `bun build ${why} for ${N} colliding cross-chunk export names ` +
           `(exit ${buildExit}, killed=${build.killed})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
       );
     }

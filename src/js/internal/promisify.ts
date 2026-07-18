@@ -40,13 +40,9 @@ var promisify = function promisify(original) {
             return reject(err);
           }
 
-          if (callbackArgs !== undefined) {
-            // if (!Array.isArray(callbackArgs)) {
-            //   throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
-            // }
-            // if (callbackArgs.length !== values.length) {
-            //   throw new Error("Mismatched length in promisify callback args");
-            // }
+          // A callback invoked with a single value keeps that value, so
+          // util.promisify(dns.lookup)(host, { all: true }) stays an array.
+          if (callbackArgs !== undefined && values.length > 1) {
             const result = {};
             for (let i = 0; i < callbackArgs.length; i++) {
               result[callbackArgs[i]] = values[i];

@@ -518,7 +518,6 @@ describe("lookup deprecated behavior", () => {
 
 describe("uses `dns.promises` implementations for `util.promisify` factory", () => {
   it.each([
-    "lookup",
     "lookupService",
     "resolve",
     "reverse",
@@ -537,6 +536,13 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   ])("%s", method => {
     expect(dns[method][util.promisify.custom]).toBe(dns_promises[method]);
     expect(dns.promises[method]).toBe(dns_promises[method]);
+  });
+
+  // Node.js promisifies the callback dns.lookup instead, so that the promisified
+  // form keeps accepting the "IPv4"/"IPv6" spellings dns.promises.lookup rejects.
+  it("lookup is promisified from its callback implementation, like Node.js", () => {
+    expect(dns.lookup[util.promisify.custom]).toBeUndefined();
+    expect(dns.promises.lookup).toBe(dns_promises.lookup);
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {

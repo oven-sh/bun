@@ -376,8 +376,7 @@ function overflowWarning(emitter, type, handlers) {
 // plus onceWrapper.bind(state): one allocation instead of two per once().
 function _onceWrap(target, type, listener) {
   let fired = false;
-  // Named `onceWrapper` so inspect/rawListeners() output tracks node's.
-  const wrapped = function onceWrapper() {
+  const wrapped = function () {
     if (!fired) {
       fired = true;
       // Drop closure refs so anything that retains the fired wrapper (a cached
@@ -392,6 +391,9 @@ function _onceWrap(target, type, listener) {
       return l.$apply(t, arguments);
     }
   };
+  // Node builds this as onceWrapper.bind(state), so the observable name is
+  // "bound onceWrapper"; match it so rawListeners()/inspect() output agrees.
+  Object.defineProperty(wrapped, "name", { value: "bound onceWrapper", configurable: true });
   wrapped.listener = listener;
   return wrapped;
 }

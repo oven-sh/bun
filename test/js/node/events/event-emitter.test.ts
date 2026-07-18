@@ -397,6 +397,27 @@ describe("EventEmitter", () => {
     expect([rawListeners[0], rawListeners[1].listener]).toEqual([fn, fn3]);
   });
 
+  test("once() wrapper name matches node's 'bound onceWrapper'", () => {
+    const ee = new EventEmitter();
+    const handler = function handler() {};
+    ee.once("x", handler);
+    const wrapped = ee.rawListeners("x")[0] as Function & { listener?: Function };
+    expect({
+      name: wrapped.name,
+      length: wrapped.length,
+      listener: wrapped.listener,
+      descriptor: Object.getOwnPropertyDescriptor(wrapped, "name"),
+    }).toEqual({
+      name: "bound onceWrapper",
+      length: 0,
+      listener: handler,
+      descriptor: { value: "bound onceWrapper", writable: false, enumerable: false, configurable: true },
+    });
+
+    ee.prependOnceListener("y", handler);
+    expect(ee.rawListeners("y")[0].name).toBe("bound onceWrapper");
+  });
+
   test("eventNames", () => {
     const myEmitter = new EventEmitter();
     expect(myEmitter.eventNames()).toEqual([]);

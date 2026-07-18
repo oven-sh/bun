@@ -2685,15 +2685,8 @@ impl PackageManifest {
 
                         for item in items {
                             let name_str = item.key.slice();
-                            let version_str = match item.value.as_str() {
-                                Some(s) => s,
-                                None => {
-                                    if cfg!(debug_assertions) {
-                                        unreachable!("non-value Expr from JSON parser")
-                                    } else {
-                                        continue;
-                                    }
-                                }
+                            let Some(version_str) = item.value.as_str() else {
+                                continue;
                             };
 
                             all_extern_strings[names_base + i] =
@@ -2920,10 +2913,12 @@ impl PackageManifest {
                             }
 
                             // Per-element string-content checks against the
-                            // source JSON. Skipped when meta-only
-                            // optional peers may have been synthesised, since
-                            // `items[j]` correspondence no longer holds then.
-                            if !is_peer || optional_peer_dep_names.is_empty() {
+                            // source JSON. Skipped when `items[j]` no longer
+                            // lines up 1:1 (meta-only peers synthesised, or
+                            // non-string dependency values skipped above).
+                            if count == items.len()
+                                && (!is_peer || optional_peer_dep_names.is_empty())
+                            {
                                 let string_buf: &[u8] = string_builder.allocated_slice();
                                 for (j, dep_name) in name_dependencies.iter().enumerate() {
                                     debug_assert!(

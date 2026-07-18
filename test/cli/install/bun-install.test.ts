@@ -2558,6 +2558,55 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should skip non-string dependency values in registry packument without crashing", async () => {
+    // A registry packument is untrusted input; a version entry may carry a dependency
+    // map with a non-string value (null, number, object). Bun must skip such entries
+    // rather than assert on them.
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, async request => {
+        if (request.url.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        }
+        return Response.json({
+          name: "bar",
+          "dist-tags": { latest: "0.0.2" },
+          versions: {
+            "0.0.2": {
+              name: "bar",
+              version: "0.0.2",
+              dependencies: { baz: null, qux: 123 },
+              dist: { tarball: `${ctx.registry_url}bar-0.0.2.tgz` },
+            },
+          },
+        });
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { bar: "^0.0.2" },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("+ bar@0.0.2");
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("should handle caret range in dependencies when the registry has prereleased packages, issue#4398", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

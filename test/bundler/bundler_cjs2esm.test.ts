@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { itBundled } from "./expectBundled";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
+import { itBundled } from "./expectBundled";
 
 const fakeReactNodeModules = {
   "/node_modules/react/index.js": /* js */ `
@@ -398,47 +398,39 @@ describe("bundler", () => {
   // Printing each `exports.<name>` reference used to linear-scan the named
   // exports map, making a file with N distinct exports referenced N times
   // take O(N^2). This also covers an O(N^2) debug_assert over part.symbol_uses.
-  test(
-    "cjs2esm/ManyNamedExportsPerf",
-    async () => {
-      const N = 25000;
-      const parts: string[] = [];
-      for (let i = 0; i < N; i++) parts.push(`exports.x${i} = ${i};\n`);
-      parts.push("function use() { return [");
-      for (let i = 0; i < N; i++) parts.push(`exports.x${i},`);
-      parts.push("]; }\nexports.use = use;\n");
+  test("cjs2esm/ManyNamedExportsPerf", async () => {
+    const N = 25000;
+    const parts: string[] = [];
+    for (let i = 0; i < N; i++) parts.push(`exports.x${i} = ${i};\n`);
+    parts.push("function use() { return [");
+    for (let i = 0; i < N; i++) parts.push(`exports.x${i},`);
+    parts.push("]; }\nexports.use = use;\n");
 
-      using dir = tempDir("cjs2esm-many-exports", {
-        "lib.cjs": parts.join(""),
-        "entry.js": `import * as lib from './lib.cjs';\nconsole.log(Object.keys(lib).length);\n`,
-      });
+    using dir = tempDir("cjs2esm-many-exports", {
+      "lib.cjs": parts.join(""),
+      "entry.js": `import * as lib from './lib.cjs';\nconsole.log(Object.keys(lib).length);\n`,
+    });
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "./entry.js", "--outfile=out.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 45_000,
-      });
-      const [buildOut, buildErr, buildExit] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
-      if (build.signalCode) {
-        throw new Error(`bun build killed by ${build.signalCode} (took >45s); stderr: ${buildErr.slice(0, 500)}`);
-      }
-      expect(buildErr).not.toContain("error");
-      expect(buildOut).toContain("out.js");
-      expect(buildExit).toBe(0);
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 45_000,
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    if (build.signalCode) {
+      throw new Error(`bun build killed by ${build.signalCode} (took >45s); stderr: ${buildErr.slice(0, 500)}`);
+    }
+    expect(buildErr).not.toContain("error");
+    expect(buildOut).toContain("out.js");
+    expect(buildExit).toBe(0);
 
-      const out = await Bun.file(path.join(String(dir), "out.js")).text();
-      expect(out).toContain(`var $x0 = 0;`);
-      expect(out).toContain(`var $x${N - 1} = ${N - 1};`);
-      expect(out).toContain(`$x0, $x1, $x2,`);
-      expect(out).toContain(`$x${N - 2}, $x${N - 1}`);
-    },
-    60_000,
-  );
+    const out = await Bun.file(path.join(String(dir), "out.js")).text();
+    expect(out).toContain(`var $x0 = 0;`);
+    expect(out).toContain(`var $x${N - 1} = ${N - 1};`);
+    expect(out).toContain(`$x0, $x1, $x2,`);
+    expect(out).toContain(`$x${N - 2}, $x${N - 1}`);
+  }, 60_000);
 });

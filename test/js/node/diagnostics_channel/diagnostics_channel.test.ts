@@ -467,6 +467,31 @@ describe("BoundedChannel", () => {
     expect(events).toEqual(["start", "fn", "end"]);
   });
 
+  test("run still publishes end and restores stores when fn throws", () => {
+    const bc = dc.boundedChannel("bc-run-throw");
+    const store = new AsyncLocalStorage();
+    const events: string[] = [];
+
+    bc.start.bindStore(store);
+    bc.subscribe({
+      start: () => events.push("start"),
+      end: () => events.push("end"),
+    });
+
+    const boom = new Error("boom");
+    expect(store.getStore()).toBeUndefined();
+    expect(() =>
+      bc.run({ ctx: true }, () => {
+        events.push("fn");
+        expect(store.getStore()).toEqual({ ctx: true });
+        throw boom;
+      }),
+    ).toThrow(boom);
+
+    expect(events).toEqual(["start", "fn", "end"]);
+    expect(store.getStore()).toBeUndefined();
+  });
+
   test("withScope is a no-op disposable when there are no subscribers", () => {
     const bc = dc.boundedChannel("bc-noop");
     const scope = bc.withScope({});
@@ -507,16 +532,19 @@ describe("TracingChannel", () => {
     expect(tc.error.name).toBe("tracing:tc-accessors:error");
   });
 
-  test("hasSubscribers reflects any of the five channels", () => {
-    const tc = tracingChannel("tc-hassubs");
-    expect(tc.hasSubscribers).toBeFalse();
+  test.each(["start", "end", "asyncStart", "asyncEnd", "error"] as const)(
+    "hasSubscribers reflects a subscriber on %s",
+    name => {
+      const tc = tracingChannel(`tc-hassubs-${name}`);
+      expect(tc.hasSubscribers).toBeFalse();
 
-    const sub = () => {};
-    tc.asyncEnd.subscribe(sub);
-    expect(tc.hasSubscribers).toBeTrue();
-    tc.asyncEnd.unsubscribe(sub);
-    expect(tc.hasSubscribers).toBeFalse();
-  });
+      const sub = () => {};
+      tc[name].subscribe(sub);
+      expect(tc.hasSubscribers).toBeTrue();
+      expect(tc[name].unsubscribe(sub)).toBeTrue();
+      expect(tc.hasSubscribers).toBeFalse();
+    },
+  );
 
   test("constructed from explicit channel objects", () => {
     const chans = {

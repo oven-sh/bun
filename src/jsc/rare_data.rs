@@ -343,32 +343,38 @@ impl Default for RareData {
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
 /// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
+///
+/// Backed by `[u16; _]` so the bytes are 2-byte aligned; `PathScratch<u16>` can
+/// then borrow the pool instead of spilling to a fresh heap allocation.
 #[derive(Default)]
 pub struct PathBuf {
-    pub small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    pub small: Option<Box<[u16; MAX_PATH_BYTES]>>,
+    pub medium: Option<Box<[u16; 4 * MAX_PATH_BYTES]>>,
+    pub large: Option<Box<[u16; 16 * MAX_PATH_BYTES]>>,
 }
 
 impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
+    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`
+    /// bytes. The returned `&mut [u8]` is 2-byte aligned (u16 backing), so
+    /// `bytemuck::cast_slice_mut::<u8, u16>` on it is sound.
     // Revisit caller semantics for inputs exceeding the large tier.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
-        if min_len <= 2 * Self::S {
+        let tier: &mut [u16] = if min_len <= 2 * Self::S {
             &mut **self
                 .small
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u16; MAX_PATH_BYTES]>)
         } else if min_len <= 8 * Self::S {
             &mut **self
                 .medium
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u16; 4 * MAX_PATH_BYTES]>)
         } else {
             &mut **self
                 .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
-        }
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u16; 16 * MAX_PATH_BYTES]>)
+        };
+        bytemuck::cast_slice_mut::<u16, u8>(tier)
     }
 }
 

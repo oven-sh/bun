@@ -48,9 +48,10 @@ impl ZigStringTruncExt for ZigString {
 /// Borrowed-or-widened `[u16]` view of a `ZigString` for the `T = u16` path.
 /// 16-bit inputs borrow the JSC backing directly; 8-bit (Latin-1) inputs are
 /// zero-extended so a mixed-width argument list can be processed at one `T`.
+/// The `Owned` arm keeps typical path segments inline (no heap alloc).
 enum PathUtf16<'a> {
     Borrowed(&'a [u16]),
-    Owned(Vec<u16>),
+    Owned(SmallVec<[u16; 32]>),
 }
 impl<'a> PathUtf16<'a> {
     #[inline]
@@ -61,7 +62,8 @@ impl<'a> PathUtf16<'a> {
             Self::Borrowed(z.utf16_slice_aligned())
         } else {
             let src = z.slice();
-            let mut buf = vec![0u16; src.len()];
+            let mut buf: SmallVec<[u16; 32]> = SmallVec::new();
+            buf.resize(src.len(), 0);
             strings::copy_latin1_into_utf16(&mut buf, src);
             Self::Owned(buf)
         }
@@ -78,31 +80,29 @@ impl<'a> PathUtf16<'a> {
 /// Pooled path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
-/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
-/// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
-/// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
-/// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
-/// never observed).
+/// sound. The pool is `u16`-backed, so both `T = u8` and `T = u16` borrow it;
+/// only requests exceeding the largest tier (32 × `MAX_PATH_BYTES` bytes) spill
+/// to a one-shot zeroed heap slab.
 enum PathScratch<'a, T: PathCharCwd> {
     Pooled(&'a mut [T]),
     Spill(Box<[T]>),
 }
 
 impl<'a, T: PathCharCwd> PathScratch<'a, T> {
-    /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES`).
-    const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
+    /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES` bytes).
+    const POOL_MAX_BYTES: usize = 32 * MAX_PATH_BYTES;
 
     #[inline]
     fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
-        if !T::IS_U16 && len <= Self::POOL_MAX {
-            // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
-            // is the bytemuck identity cast — never panics, no alignment hazard.
-            let bytes = &mut pool.get(len)[..len];
+        let byte_len = len * core::mem::size_of::<T>();
+        if byte_len <= Self::POOL_MAX_BYTES {
+            // `RarePathBuf::get` hands back a 2-byte-aligned `&mut [u8]` (u16
+            // backing), so `cast_slice_mut::<u8, T>` is sound for T ∈ {u8, u16}.
+            let bytes = &mut pool.get(byte_len)[..byte_len];
             Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
         } else {
-            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
-            // >128 KB) or path-sized (u16), so the zero-fill is negligible and
-            // buys a safe `&mut [T]` in `slice()`.
+            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (only when the
+            // request exceeds 32 × MAX_PATH_BYTES bytes).
             Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
         }
     }

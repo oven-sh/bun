@@ -113,6 +113,13 @@ const chromePath = findChrome();
 const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
 const it = chromePath && !chromeBroken ? test : test.todo;
 
+// Linux CI containers run as root; Chrome refuses to start as root unless
+// --no-sandbox is set (zygote_host_impl_linux.cc). Append it via backend.argv
+// so the test-driver detection still sees Chrome as present.
+const sandboxArgv: string[] =
+  process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox", "--disable-dev-shm-usage"] : [];
+const sandboxArgvJSON = JSON.stringify(sandboxArgv);
+
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote
 // debugging?" dialog on every test, and create visible tabs. The
@@ -121,7 +128,7 @@ const it = chromePath && !chromeBroken ? test : test.todo;
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+const chrome = { type: "chrome" as const, url: false as const, argv: sandboxArgv };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -518,7 +525,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv:${sandboxArgvJSON}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -549,7 +556,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv:${sandboxArgvJSON}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
@@ -589,7 +596,7 @@ it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath, argv: sandboxArgv }, width: 200, height: 200 });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });
@@ -604,7 +611,7 @@ it("backend.argv appends after core flags", async () => {
       "-e",
       `
       const view = new Bun.WebView({
-        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        backend: { type: "chrome", argv: [...${sandboxArgvJSON}, "--user-agent=BunWebViewTest/1.0"] },
         width: 200, height: 200,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -935,7 +942,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", url:false}, width: 200, height: 200,
+        backend: {type:"chrome", url:false, argv:${sandboxArgvJSON}}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");

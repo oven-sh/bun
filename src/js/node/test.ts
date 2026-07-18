@@ -498,6 +498,7 @@ function republishChildEvent(
   counts: Record<string, number>,
 ) {
   const { type, data } = event;
+  Object.setPrototypeOf(data, null);
   data.file = file;
   if (type === "test:pass" || type === "test:fail") {
     const isSuite = data.type === "suite";
@@ -592,7 +593,7 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
   if (!runChildReporterEnabled || node.isSuite) return;
   const { skipped, todoFlag, expectFailure } = node;
   // node reports the xfail label when there is one, otherwise `true`.
-  const xfail = !skipped && !todoFlag && expectFailure ? (expectFailure.label ?? true) : undefined;
+  const xfail = !skipped && expectFailure ? (expectFailure.label ?? true) : undefined;
   // node spreads a `directive` into the event: `skip: true` / `todo: true`, with
   // the other key absent entirely.
   emitRunChildEvent(node.passed ? "test:pass" : "test:fail", {
@@ -1873,7 +1874,7 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
     return undefined;
   }
 
-  if (node.skipped || node.todoFlag) return undefined;
+  if (node.skipped) return undefined;
   return makeTestFailure("test was expected to fail but passed", "expectedFailure");
 }
 

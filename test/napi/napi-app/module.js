@@ -1106,6 +1106,12 @@ nativeTests.test_napi_instanceof = () => {
 };
 
 nativeTests.test_get_value_string = () => {
+  // The addon writes via printf/fflush (sync); on POSIX Node writes a piped
+  // stdout async, so under load the JS headers reorder behind native output.
+  // Force blocking stdout and write headers via writeSync to keep order stable.
+  process.stdout._handle?.setBlocking?.(true);
+  const { writeSync } = require("fs");
+  const log = s => writeSync(1, s + "\n");
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
     const jsc = require("bun:jsc");
@@ -1138,9 +1144,9 @@ nativeTests.test_get_value_string = () => {
     // ["\ud801", "unpaired high surrogate"],
     // ["\udc02", "unpaired low surrogate"],
   ]) {
-    console.log(`test napi_get_value_string on ${string} (${description})`);
+    log(`test napi_get_value_string on ${string} (${description})`);
     for (const encoding of ["latin1", "utf8", "utf16"]) {
-      console.log(encoding);
+      log(encoding);
       const fn = nativeTests[`test_get_value_string_${encoding}`];
       fn(string);
     }

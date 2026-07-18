@@ -2188,15 +2188,7 @@ impl<'a> HTTPClient<'a> {
         self.fail(crate::Error::ConnectionRefused);
     }
 
-    /// Get the buffer we use to write data to the network.
-    ///
-    /// For large files, we want to avoid extra network send overhead
-    /// So we do two things:
-    /// 1. Use a 32 KB stack buffer for small files
-    /// 2. Use a 512 KB heap buffer for large files
-    /// This only has an impact on http://
-    ///
-    /// On https://, we are limited to a 16 KB TLS record size.
+    /// `https://` is capped at one TLS record, so only `http://` gets the large tier.
     #[inline]
     fn get_request_body_send_buffer(&self) -> http_thread::RequestBodyBuffer {
         let actual_estimated_size =
@@ -2991,11 +2983,7 @@ impl<'a> HTTPClient<'a> {
         self.compress_body_for_send(true)?;
 
         let mut request_body_buffer = self.get_request_body_send_buffer();
-        // request_body_buffer drops at scope exit (was `defer .deinit()`)
-        let mut temporary_send_buffer = request_body_buffer.to_array_list();
-        // temporary_send_buffer drops at scope exit
-
-        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
+        let temporary_send_buffer = request_body_buffer.list();
 
         let request = self.build_request(self.body_len_for_send());
 
@@ -3004,16 +2992,16 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
                 // DO the tunneling!
                 self.flags.proxy_tunneling = true;
-                write_proxy_connect(writer, self)?;
+                write_proxy_connect(temporary_send_buffer, self)?;
             } else {
                 bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
                 // HTTP do not need tunneling with CONNECT just a slightly different version of the request
-                write_proxy_request(writer, &request, self)?;
+                write_proxy_request(temporary_send_buffer, &request, self)?;
             }
         } else {
             bun_core::scoped_log!(fetch, "normal request");
             validate_request_target(self.url.host)?;
-            write_request(writer, &request)?;
+            write_request(temporary_send_buffer, &request)?;
         }
 
         let headers_len = temporary_send_buffer.len();

@@ -1230,3 +1230,52 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(exitCode).toBe(0);
   }
 }, 60_000);
+
+// `--bytecode` embeds a JSC bytecode cache for every JS builtin the app can reach. The
+// entry point only names `node:net`; everything else comes from walking the internal
+// require() graph that InternalModuleRegistry resolves at runtime, which the bundler
+// never sees. Without `--bytecode` nothing is embedded and every builtin is parsed.
+test("compile/BytecodeCachesBuiltinModules", async () => {
+  using dir = tempDir("compile-builtin-bytecode", {
+    "entry.ts": `
+      import net from "node:net";
+      const { builtinModuleBytecodeDecodedCount } = require("bun:internal-for-testing");
+      if (typeof net.createServer !== "function") throw new Error("node:net did not load");
+      console.log("decoded:" + builtinModuleBytecodeDecodedCount());
+    `,
+  });
+  const cwd = String(dir);
+  // `bun:internal-for-testing` is gated in release builds; this is the same switch
+  // `--expose-internals` flips, and a compiled executable never parses that flag.
+  const env = { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" };
+  // One outfile, overwritten between the two runs: each of these is a full copy of the
+  // Bun binary, so two at once is hundreds of megabytes for no reason.
+  const outfile = join(cwd, isWindows ? "out.exe" : "out");
+
+  async function compileAndRun(extraArgs: string[]): Promise<number> {
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...extraArgs, "entry.ts", "--outfile", outfile],
+      env,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildErr, buildCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ buildErr, buildCode }).toMatchObject({ buildCode: 0 });
+
+    await using proc = Bun.spawn({ cmd: [outfile], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const match = stdout.match(/^decoded:(\d+)$/m);
+    expect({ stdout, match: match !== null }).toMatchObject({ match: true });
+    return Number(match![1]);
+  }
+
+  expect(await compileAndRun([])).toBe(0);
+
+  // node:net reaches a couple dozen internal/* modules. Assert a floor rather than an
+  // exact count so refactoring src/js doesn't break this, but a floor high enough that
+  // only the transitive walk can reach it.
+  expect(await compileAndRun(["--bytecode"])).toBeGreaterThan(5);
+}, 120_000);

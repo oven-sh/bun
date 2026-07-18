@@ -7,7 +7,12 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "4895f45dfbd0d1226c4d41799887bc0ecb9f341b";
+//
+// Temporarily a PR preview build: the builtin bytecode cache needs
+// encodeFunctionExecutable()/decodeFunctionExecutable(), added in
+// https://github.com/oven-sh/WebKit/pull/270, rebased onto 4895f45d.
+// Re-point this at the merged main autobuild sha before landing.
+export const WEBKIT_VERSION = "autobuild-preview-pr-270-321befdd";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

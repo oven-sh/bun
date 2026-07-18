@@ -1065,6 +1065,12 @@ pub mod resolved_source_tag {
         pub const CommonJsCustomExtension: Self = Self(10);
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
+        /// InternalModuleRegistry tag (`(1 << 9) | id`), or `None` if it isn't one.
+        pub fn try_from_name(name: &[u8]) -> Option<Self> {
+            INTERNAL_MODULE_TAG.get(name).copied()
+        }
+
+        /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
         ///
         /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
@@ -1072,7 +1078,7 @@ pub mod resolved_source_tag {
         /// `HardcodedModule` variant has no matching entry in the generated
         /// module table (`INTERNAL_MODULE_TAG`).
         pub fn from_name(name: &[u8]) -> Self {
-            if let Some(&tag) = INTERNAL_MODULE_TAG.get(name) {
+            if let Some(tag) = Self::try_from_name(name) {
                 return tag;
             }
             debug_assert!(
@@ -1081,6 +1087,13 @@ pub mod resolved_source_tag {
                 bstr::BStr::new(name),
             );
             Self::Javascript
+        }
+
+        /// The `InternalModuleRegistry` id behind a builtin-module tag, if this is one.
+        /// Mirrors `SyntheticModuleType::InternalModuleRegistryFlag` on the C++ side.
+        pub fn internal_module_id(self) -> Option<u32> {
+            const FLAG: u32 = 1 << 9;
+            (self.0 & FLAG != 0).then_some(self.0 & (FLAG - 1))
         }
     }
 

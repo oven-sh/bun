@@ -41,6 +41,10 @@ pub struct StandaloneModuleGraph {
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
+    /// `(InternalModuleRegistry id, JSC cache entry)` for the JS builtins this binary
+    /// embedded bytecode for, sorted by id. BACKREF into the embedded section, raw `*mut`
+    /// for the same provenance reason as `File::bytecode`.
+    pub builtin_bytecode: Box<[(u32, *mut [u8])]>,
 }
 
 // We never want to hit the filesystem for these files
@@ -513,6 +517,18 @@ pub(crate) struct Offsets {
     pub entry_point_id: u32,
     pub compile_exec_argv_ptr: StringPointer,
     pub flags: Flags,
+    /// The `BuiltinBytecodeEntry` array, or a zero-length pointer when the binary was
+    /// built without `--bytecode`.
+    pub builtin_bytecode_ptr: StringPointer,
+}
+
+/// Where the JSC bytecode cache entry for one JS builtin lives inside the embedded
+/// section. `module_id` indexes `InternalModuleRegistry`; the array is sorted by it.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BuiltinBytecodeEntry {
+    pub module_id: u32,
+    pub bytecode: StringPointer,
 }
 
 bitflags::bitflags! {
@@ -542,6 +558,7 @@ impl StandaloneModuleGraph {
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
+                builtin_bytecode: Box::default(),
             });
         }
 
@@ -639,6 +656,29 @@ impl StandaloneModuleGraph {
 
         modules.lock_pointers(); // make the pointers stable forever
 
+        // SAFETY: the entry array is a read-only subrange serialized by `to_bytes`, disjoint
+        // from every payload it points at. Like the modules blob it sits at an arbitrary byte
+        // offset, so each fixed-size record is `read_unaligned` into a local.
+        let builtin_entry_bytes =
+            unsafe { slice_to(raw_const, raw_len, offsets.builtin_bytecode_ptr) };
+        let builtin_entry_count = builtin_entry_bytes.len() / size_of::<BuiltinBytecodeEntry>();
+        let builtin_entry_base = builtin_entry_bytes.as_ptr();
+        let mut builtin_bytecode: Vec<(u32, *mut [u8])> = Vec::with_capacity(builtin_entry_count);
+        for i in 0..builtin_entry_count {
+            // SAFETY: index < count derived from byte length above.
+            let entry: BuiltinBytecodeEntry = unsafe {
+                core::ptr::read_unaligned(
+                    builtin_entry_base
+                        .add(i * size_of::<BuiltinBytecodeEntry>())
+                        .cast::<BuiltinBytecodeEntry>(),
+                )
+            };
+            // SAFETY: subrange in-bounds (serialized by `to_bytes`) and disjoint from every
+            // other payload. Kept as `*mut` so no shared reference ever spans JSC's buffer.
+            let bytes = unsafe { slice_to_mut(raw_ptr, raw_len, entry.bytecode) };
+            builtin_bytecode.push((entry.module_id, bytes));
+        }
+
         Ok(StandaloneModuleGraph {
             // Stored as a raw fat pointer — `byte_count` covers the writable
             // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
@@ -651,8 +691,44 @@ impl StandaloneModuleGraph {
             }
             .as_bytes(),
             flags: offsets.flags,
+            builtin_bytecode: builtin_bytecode.into_boxed_slice(),
         })
     }
+}
+
+unsafe extern "C" {
+    /// Defined in `BuiltinModuleBytecode.cpp`. Flips the flag that gates the lookup below,
+    /// so that the builtin compile path in a Bun that embeds no builtin bytecode (every Bun
+    /// that is not a `--compile --bytecode` executable) never calls into here at all.
+    safe fn Bun__setHasBuiltinModuleBytecode();
+}
+
+/// The embedded JSC bytecode cache entry for JS builtin `module_id`. Only reached once
+/// `Bun__setHasBuiltinModuleBytecode()` has run, i.e. in an executable that actually carries
+/// entries.
+///
+/// The bytes are validated by JSC: the entry carries a cache version and a `SourceCodeKey`
+/// over the builtin's source, so a mismatch (different Bun, different platform's `src/js`
+/// bundle) is rejected and the builtin is parsed instead.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__getBuiltinModuleBytecode(
+    module_id: u32,
+    out_bytes: &mut *mut u8,
+    out_length: &mut usize,
+) -> bool {
+    let Some(graph) = StandaloneModuleGraph::get() else {
+        return false;
+    };
+    // SAFETY: `INSTANCE` is written once before any worker thread exists; this reads the
+    // immutable `builtin_bytecode` slot only.
+    let entries = unsafe { &(*graph).builtin_bytecode };
+    let Ok(index) = entries.binary_search_by_key(&module_id, |(id, _)| *id) else {
+        return false;
+    };
+    let bytes = entries[index].1;
+    *out_bytes = bytes.cast::<u8>();
+    *out_length = bytes.len();
+    true
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -703,12 +779,29 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// Pads `string_builder` so that the next byte written lands on a 128-byte boundary once
+/// the section is mapped. See the long comment at the `bytecode` field in `to_bytes`:
+/// PE/Mach-O put the data 8 bytes after a page-aligned section start, so the worst-case
+/// target is `offset % 128 == 120`.
+fn align_for_bytecode(string_builder: &mut bun_core::StringBuilder) {
+    let target_mod: usize = 128 - size_of::<u64>();
+    let current_mod = string_builder.len % 128;
+    let padding = if current_mod <= target_mod {
+        target_mod - current_mod
+    } else {
+        128 - current_mod + target_mod
+    };
+    string_builder.writable()[0..padding].fill(0);
+    string_builder.len += padding;
+}
+
 pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
+    builtin_bytecode: &[(u32, Box<[u8]>)],
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -756,6 +849,12 @@ pub(crate) fn to_bytes(
     string_builder.cap += 16;
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
+
+    // Each builtin cache entry gets its own 128-byte alignment slot, plus the index record.
+    for (_, bytes) in builtin_bytecode {
+        string_builder.cap += bytes.len() + 128;
+    }
+    string_builder.cap += size_of::<BuiltinBytecodeEntry>() * builtin_bytecode.len();
 
     string_builder.allocate()?;
 
@@ -812,20 +911,7 @@ pub(crate) fn to_bytes(
                 let bytecode = output_files[output_file.bytecode_index as usize]
                     .value
                     .as_slice();
-                let current_offset = string_builder.len;
-                // Calculate padding so that (current_offset + padding) % 128 == 120
-                // This accounts for the 8-byte section header on PE/Mach-O platforms.
-                let target_mod: usize = 128 - size_of::<u64>(); // 120 = accounts for 8-byte header
-                let current_mod = current_offset % 128;
-                let padding = if current_mod <= target_mod {
-                    target_mod - current_mod
-                } else {
-                    128 - current_mod + target_mod
-                };
-                // Zero the padding bytes to ensure deterministic output
-                let writable = string_builder.writable();
-                writable[0..padding].fill(0);
-                string_builder.len += padding;
+                align_for_bytecode(&mut string_builder);
                 let aligned_offset = string_builder.len;
                 let writable_after_padding = string_builder.writable();
                 writable_after_padding[0..bytecode.len()]
@@ -966,6 +1052,31 @@ pub(crate) fn to_bytes(
         modules.push(module);
     }
 
+    // JSC deserializes these in place, so each one needs the same alignment as a chunk's
+    // bytecode. The index is written afterwards, once the payload offsets are known.
+    let mut builtin_entries: Vec<BuiltinBytecodeEntry> = Vec::with_capacity(builtin_bytecode.len());
+    for (module_id, bytes) in builtin_bytecode {
+        align_for_bytecode(&mut string_builder);
+        let offset = string_builder.len;
+        string_builder.writable()[0..bytes.len()].copy_from_slice(bytes);
+        string_builder.len += bytes.len();
+        builtin_entries.push(BuiltinBytecodeEntry {
+            module_id: *module_id,
+            bytecode: StringPointer {
+                offset: offset as u32,
+                length: bytes.len() as u32,
+            },
+        });
+    }
+
+    // SAFETY: `BuiltinBytecodeEntry` is `#[repr(C)]` POD; same rationale as the modules blob.
+    let builtin_entries_as_bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            builtin_entries.as_ptr().cast::<u8>(),
+            builtin_entries.len() * size_of::<BuiltinBytecodeEntry>(),
+        )
+    };
+
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
     // invariants; reinterpreting its backing storage as bytes is sound.
     let modules_as_bytes: &[u8] = unsafe {
@@ -978,6 +1089,7 @@ pub(crate) fn to_bytes(
         entry_point_id: entry_point_id.unwrap() as u32,
         modules_ptr: string_builder.append_count(modules_as_bytes),
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
+        builtin_bytecode_ptr: string_builder.append_count(builtin_entries_as_bytes),
         byte_count: string_builder.len,
         flags,
     };
@@ -1690,6 +1802,7 @@ pub fn to_executable(
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
+    builtin_bytecode: &[(u32, Box<[u8]>)],
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
@@ -1699,6 +1812,7 @@ pub fn to_executable(
         output_format,
         compile_exec_argv,
         flags,
+        builtin_bytecode,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -2138,6 +2252,9 @@ fn from_bytes_alloc(
     offsets: Offsets,
 ) -> crate::Result<*mut StandaloneModuleGraph> {
     let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
+    if !graph.builtin_bytecode.is_empty() {
+        Bun__setHasBuiltinModuleBytecode();
+    }
     Ok(StandaloneModuleGraph::set(graph))
 }
 

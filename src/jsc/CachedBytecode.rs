@@ -27,6 +27,22 @@ unsafe extern "C" {
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
     ) -> bool;
 
+    /// Defined in `BuiltinModuleBytecode.cpp`. Compiles one JS builtin (and every
+    /// function nested inside it) and serializes the whole tree.
+    fn Bun__generateBuiltinModuleBytecode(
+        module_id: u32,
+        output_byte_code: *mut Option<NonNull<u8>>,
+        output_byte_code_size: *mut usize,
+        cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
+    ) -> bool;
+
+    /// The builtins `module_id` requires directly, as a view into a static table.
+    fn Bun__builtinModuleDependencies(
+        module_id: u32,
+        output_ids: *mut *const u32,
+        output_len: *mut usize,
+    );
+
     // safe: `CachedBytecode` is an `opaque_ffi!` ZST handle (`!Freeze` via
     // `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the C++
     // refcount decrement is interior to the cell.
@@ -155,4 +171,61 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     // centralised zero-byte deref proof.
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     Some(owned)
+}
+
+/// Link-time entry point for `bun_bundler`. Same thread setup as
+/// [`__bun_jsc_generate_cached_bytecode`], but for one JS builtin: `module_id` indexes
+/// `InternalModuleRegistry`, and the returned blob covers that builtin's top-level
+/// function plus every function nested inside it.
+///
+/// Returns `None` for native modules, out-of-range ids, and any module whose source
+/// fails to compile, which leaves the builtin to be parsed at runtime as usual.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_generate_builtin_module_bytecode(module_id: u32) -> Option<Box<[u8]>> {
+    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
+    crate::initialize(false);
+
+    let mut handle: Option<NonNull<CachedBytecode>> = None;
+    let mut size: usize = 0;
+    let mut ptr: Option<NonNull<u8>> = None;
+    // SAFETY: out-params are valid for write.
+    let ok = unsafe {
+        Bun__generateBuiltinModuleBytecode(module_id, &raw mut ptr, &raw mut size, &raw mut handle)
+    };
+    if !ok {
+        return None;
+    }
+
+    // SAFETY: on success C++ guarantees both out-params are non-null and the bytes stay
+    // valid until the handle is deref'd.
+    let bytes = unsafe { bun_core::ffi::slice(ptr.unwrap().as_ptr(), size) };
+    let owned = Box::<[u8]>::from(bytes);
+    CachedBytecode__deref(CachedBytecode::opaque_mut(handle.unwrap().as_ptr()));
+    Some(owned)
+}
+
+/// Link-time entry point for `bun_bundler`. The `InternalModuleRegistry` id behind a
+/// canonical builtin specifier (`b"node:net"`), or `None` if it isn't a builtin.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_builtin_module_id_for_specifier(specifier: &[u8]) -> Option<u32> {
+    crate::ResolvedSourceTag::try_from_name(specifier)
+        .and_then(crate::ResolvedSourceTag::internal_module_id)
+}
+
+/// Link-time entry point for `bun_bundler`. The builtins `module_id` requires directly.
+///
+/// These edges are `@createInternalModuleById(N)` calls the builtin bundler emits for each
+/// `require()` between builtins. They resolve at runtime through `InternalModuleRegistry`,
+/// so they are invisible to the JS bundler — the bytecode cache has to walk them itself.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_builtin_module_dependencies(module_id: u32) -> &'static [u32] {
+    let mut ids: *const u32 = core::ptr::null();
+    let mut len: usize = 0;
+    // SAFETY: out-params are valid for write.
+    unsafe { Bun__builtinModuleDependencies(module_id, &raw mut ids, &raw mut len) };
+    if ids.is_null() || len == 0 {
+        return &[];
+    }
+    // SAFETY: C++ hands back a view into a `static constexpr` table.
+    unsafe { core::slice::from_raw_parts(ids, len) }
 }

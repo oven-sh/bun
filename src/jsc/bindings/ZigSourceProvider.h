@@ -23,6 +23,10 @@ class GlobalObject;
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL);
+
+// The thread-local VM used to compile bytecode off the JS thread. It never gets a global
+// object; it only ever parses and runs the bytecode generator.
+JSC::VM& vmForBytecodeCache();
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);

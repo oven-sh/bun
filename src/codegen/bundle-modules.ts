@@ -340,13 +340,10 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
-        const moduleName = idToPublicSpecifierOrEnumName(id);
-        const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
-        const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
         const inner =
           n >= nativeStartIndex
             ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
+            : `return generateModule(globalObject, vm, ${n});`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;
@@ -361,8 +358,82 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 `,
 );
 
-// This header is used by InternalModuleRegistry.cpp, and should only be included in that file.
-// It inlines all the strings for the module IDs.
+// Everything BuiltinModuleBytecode.cpp needs to compile a builtin by numeric id: the source,
+// the identity strings, and which other builtins each one pulls in at runtime.
+//
+// `sourceById` is why that file is the only one allowed to include
+// InternalModuleRegistryConstants.h — the literals are megabytes, and a second translation
+// unit would duplicate them into the binary.
+//
+// The dependency edges come from the `@createInternalModuleById(N)` calls that `requireTransformer`
+// emits for every `require()` between builtins. They are a runtime lookup, invisible to the
+// bundler, so generating a bytecode cache for "net" has to walk this graph to reach the
+// `internal/*` modules `node:net` ends up requiring.
+{
+  const jsModules = moduleList.slice(0, nativeStartIndex);
+  const sourceOf = (id: string) => {
+    const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+    if (!out) throw new Error(`Missing output for ${id}`);
+    return out;
+  };
+
+  const edges: number[][] = jsModules.map(id => {
+    const found = new Set<number>();
+    for (const m of sourceOf(id).matchAll(/@createInternalModuleById\((\d+)/g)) {
+      found.add(Number(m[1]));
+    }
+    return [...found].sort((a, b) => a - b);
+  });
+
+  const offsets: number[] = [0];
+  const flattened: number[] = [];
+  for (const deps of edges) {
+    flattened.push(...deps);
+    offsets.push(flattened.length);
+  }
+
+  const switchOn = (name: string, valueOf: (id: string, n: number) => string) =>
+    `static ASCIILiteral ${name}(unsigned id)
+{
+  switch (id) {
+${jsModules.map((id, n) => `  case ${n}: return ${valueOf(id, n)};`).join("\n")}
+  default: return ASCIILiteral();
+  }
+}`;
+
+  writeIfNotChanged(
+    path.join(CODEGEN_DIR, "InternalModuleRegistry+builtinBytecode.h"),
+    `// clang-format off
+#pragma once
+
+namespace Bun {
+namespace InternalModuleRegistryBuiltins {
+
+// Ids below this are JS modules from src/js; ids at or above it are native modules, which
+// have no JS source and therefore nothing to cache.
+static constexpr unsigned jsModuleCount = ${nativeStartIndex};
+
+${switchOn("sourceById", id => `InternalModuleRegistryConstants::${idToEnumName(id)}Code`)}
+
+${switchOn("nameById", id => `"${idToPublicSpecifierOrEnumName(id)}"_s`)}
+
+${switchOn("urlById", id => `"builtin://${id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/")}"_s`)}
+
+${switchOn("fileById", id => `${JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"))}_s`)}
+
+// dependencyIds[dependencyOffsets[id] .. dependencyOffsets[id + 1]) are the builtins that
+// builtin \`id\` requires directly.
+static constexpr unsigned dependencyOffsets[] = {${offsets.join(",")}};
+static constexpr unsigned dependencyIds[] = {${flattened.length ? flattened.join(",") : "0"}};
+static constexpr unsigned dependencyIdsCount = ${flattened.length};
+
+}
+}`,
+  );
+}
+
+// This header is used by BuiltinModuleBytecode.cpp, and should only be included in that file.
+// It inlines all the strings for the module IDs, which run to several megabytes in release.
 //
 // We cannot use ASCIILiteral's `_s` operator for the module source code because for long
 // strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string

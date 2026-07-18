@@ -1412,6 +1412,19 @@ pub mod bv2_impl {
                 source: &[u8],
                 source_provider_url: &mut bun_core::String,
             ) -> Option<Box<[u8]>>;
+
+            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Serializes one JS
+            /// builtin's compiled tree. `None` for native modules and compile failures.
+            safe fn __bun_jsc_generate_builtin_module_bytecode(module_id: u32)
+            -> Option<Box<[u8]>>;
+
+            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. The builtins
+            /// `module_id` requires directly, as a view into a static C++ table.
+            safe fn __bun_jsc_builtin_module_dependencies(module_id: u32) -> &'static [u32];
+
+            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Canonical builtin
+            /// specifier (`b"node:net"`) to `InternalModuleRegistry` id.
+            safe fn __bun_jsc_builtin_module_id_for_specifier(specifier: &[u8]) -> Option<u32>;
         }
 
         unsafe extern "Rust" {
@@ -1451,6 +1464,24 @@ pub mod bv2_impl {
             source_provider_url: &mut bun_core::String,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
+        }
+
+        /// Bytecode cache entry for one JS builtin, covering its whole nested tree.
+        #[inline]
+        pub fn generate_builtin_module_bytecode(module_id: u32) -> Option<Box<[u8]>> {
+            __bun_jsc_generate_builtin_module_bytecode(module_id)
+        }
+
+        /// The builtins `module_id` requires directly.
+        #[inline]
+        pub fn builtin_module_dependencies(module_id: u32) -> &'static [u32] {
+            __bun_jsc_builtin_module_dependencies(module_id)
+        }
+
+        /// `InternalModuleRegistry` id for a canonical builtin specifier.
+        #[inline]
+        pub fn builtin_module_id_for_specifier(specifier: &[u8]) -> Option<u32> {
+            __bun_jsc_builtin_module_id_for_specifier(specifier)
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
@@ -3766,6 +3797,70 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
+        /// Bytecode cache entries for every JS builtin a `bun build --compile --bytecode`
+        /// binary can reach, sorted by module id.
+        ///
+        /// The bundle's import records only name the builtins the app imports directly
+        /// (`node:net`). Those then `require()` each other through `InternalModuleRegistry`,
+        /// which the bundler never sees, so the set is closed over the internal dependency
+        /// graph: caching "net" means caching `node:net` plus every `internal/*` module it
+        /// transitively reaches.
+        pub fn collect_builtin_module_bytecode(
+            &mut self,
+            reachable_files: &[Index],
+        ) -> Vec<(u32, Box<[u8]>)> {
+            use crate::bundle_v2::dispatch as jsc;
+            use bun_resolve_builtins::HardcodedModule;
+
+            let cfg = HardcodedModule::Cfg::default();
+            let import_records = self.graph.ast.items_import_records();
+
+            let mut pending: Vec<u32> = Vec::new();
+            for source_index in reachable_files {
+                let records: &[ImportRecord] =
+                    import_records[source_index.get() as usize].as_slice();
+                for record in records {
+                    if record.source_index.is_valid() {
+                        continue;
+                    }
+                    if !matches!(
+                        record.tag,
+                        bun_ast::ImportRecordTag::Builtin | bun_ast::ImportRecordTag::Bun
+                    ) {
+                        continue;
+                    }
+                    // `resolve_import_records` strips the `node:` prefix from the record, so
+                    // go back through the alias table for the canonical specifier the tag
+                    // table is keyed on.
+                    let Some(alias) =
+                        HardcodedModule::Alias::get(record.path.text, Target::Bun, cfg)
+                    else {
+                        continue;
+                    };
+                    let Some(id) = jsc::builtin_module_id_for_specifier(alias.path.as_bytes())
+                    else {
+                        continue;
+                    };
+                    pending.push(id);
+                }
+            }
+
+            let mut reached: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+            while let Some(id) = pending.pop() {
+                if !reached.insert(id) {
+                    continue;
+                }
+                pending.extend_from_slice(jsc::builtin_module_dependencies(id));
+            }
+
+            // Native modules have no JS source, so `generate_builtin_module_bytecode`
+            // returns `None` for them — as it does for anything that fails to compile.
+            reached
+                .into_iter()
+                .filter_map(|id| Some((id, jsc::generate_builtin_module_bytecode(id)?)))
+                .collect()
+        }
+
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -3860,8 +3955,20 @@ pub mod bv2_impl {
                         output_files: Vec::new(),
                         metafile: None,
                         metafile_markdown: None,
+                        builtin_bytecode: Vec::new(),
                     });
                 }
+
+                // Before the chunk bytecode runs, so the JS builtins are compiled on this
+                // thread's bytecode VM rather than racing the linker's pool for one.
+                let builtin_bytecode = if this.transpiler.options.compile
+                    && this.transpiler.options.bytecode
+                    && this.transpiler.options.compile_target_is_host
+                {
+                    this.collect_builtin_module_bytecode(&reachable_files)
+                } else {
+                    Vec::new()
+                };
 
                 let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                     &mut this.linker,
@@ -3890,6 +3997,7 @@ pub mod bv2_impl {
                     output_files,
                     metafile,
                     metafile_markdown: None,
+                    builtin_bytecode,
                 })
             })();
 
@@ -4944,6 +5052,17 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
 
+            // Before the chunk bytecode runs, so the JS builtins are compiled on this
+            // thread's bytecode VM rather than racing the linker's pool for one.
+            let builtin_bytecode = if self.transpiler.options.compile
+                && self.transpiler.options.bytecode
+                && self.transpiler.options.compile_target_is_host
+            {
+                self.collect_builtin_module_bytecode(&reachable_files)
+            } else {
+                Vec::new()
+            };
+
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                 &mut self.linker,
                 &mut chunks,
@@ -5010,6 +5129,7 @@ pub mod bv2_impl {
                 output_files,
                 metafile,
                 metafile_markdown,
+                builtin_bytecode,
             })
         }
     }

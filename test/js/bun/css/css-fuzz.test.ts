@@ -130,6 +130,7 @@ if (!isCI) {
       let crashCount = 0;
       let errorCount = 0;
       const startTime = performance.now();
+      const heapBaseline = process.memoryUsage().heapUsed / 1024 / 1024;
 
       for (let i = 0; i < options.iterations; i++) {
         let invalidCSS = "";
@@ -203,7 +204,9 @@ if (!isCI) {
         // Memory check every 100 iterations
         if (i % 100 === 0) {
           const heapUsed = process.memoryUsage().heapUsed / 1024 / 1024;
-          expect(heapUsed).toBeLessThan(500); // Alert if memory usage exceeds 500MB
+          // Alert if memory usage grows by more than 500MB during this fuzz run.
+          // Use growth (not absolute) so prior tests in the same process don't skew it.
+          expect(heapUsed - heapBaseline).toBeLessThan(500);
         }
       }
 

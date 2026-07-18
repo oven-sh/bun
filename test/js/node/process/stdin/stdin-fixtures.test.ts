@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import path from "path";
-import { bunExe } from "harness";
+import { bunExe, isDebug } from "harness";
 
 type Test = {
   file: string;
@@ -24,10 +24,13 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     });
 
     let autoKilled = false;
-    setTimeout(() => {
-      autoKilled = true;
-      child.kill("SIGTERM");
-    }, 1000);
+    const killTimer = setTimeout(
+      () => {
+        autoKilled = true;
+        child.kill("SIGTERM");
+      },
+      isDebug ? 10000 : 1000,
+    );
 
     child.on("error", err => {
       reject(err);
@@ -85,6 +88,7 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     // The 'close' event fires after the process exits and all stdio streams are closed.
     // This is the safest point to resolve the promise with the final results.
     child.on("close", () => {
+      clearTimeout(killTimer);
       // Check if we failed to send all required input.
       if (remainingToSend.length > 0) {
         reject(new Error(`[${cmd}] Not all stdin was sent. Unsent: ${JSON.stringify(remainingToSend)}`));

@@ -880,12 +880,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           const requestCount = (socket._requestCount || 0) + 1;
           socket._requestCount = requestCount;
           http_res._maxRequestsPerSocket = server.maxRequestsPerSocket;
-          // At (or beyond) the limit the response advertises Connection:
-          // close, like Node.js - including the over-limit 503 dropRequest
-          // answer, which would otherwise claim keep-alive right before the
-          // socket is destroyed. Closing the socket here instead would race
-          // already-pipelined requests, which still need to be dispatched so
-          // they can be answered with 503 via dropRequest.
+          // At (or beyond) the limit the response advertises Connection: close,
+          // like Node.js - including the over-limit 503 dropRequest answer,
+          // which would otherwise claim keep-alive.
           http_res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= requestCount;
           if (server.maxRequestsPerSocket < requestCount) {
             reachedRequestsLimit = true;
@@ -976,15 +973,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (reachedRequestsLimit) {
+          // Like Node.js's parserOnIncoming: every request past the limit gets
+          // its own 'dropRequest' + 503. Closing the socket now (or on this
+          // response's "finish") would drop the requests pipelined behind it.
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
           http_res.end();
-          if (isPipelined) {
-            // The 503 is queued behind the in-flight responses; the connection
-            // closes once it has been written, like Node.js (Connection: close).
-            http_res[kMustCloseConnection] = true;
-          } else {
-            socket.destroy();
+          if (!socket[kEndAfterDroppedRequests]) {
+            socket[kEndAfterDroppedRequests] = true;
+            setImmediate(endSocketAfterDroppedRequests, socket);
           }
         } else if (is_upgrade) {
           // Hand the raw socket over to the 'upgrade' listener, like Node.js.
@@ -2411,6 +2408,23 @@ function renderNativeHeaders(res) {
 }
 
 const kMustCloseConnection = Symbol("kMustCloseConnection");
+// `true` = deferred end scheduled; the symbol itself = it fired (read fully
+// parsed), so end on pipeline drain. Two states stop a 503's own "finish" in
+// per-request drainMicrotasks() from closing the socket mid-dispatch.
+const kEndAfterDroppedRequests = Symbol("kEndAfterDroppedRequests");
+
+// Runs once the current read has been fully parsed. With nothing left in flight
+// or queued, every pipelined request has been answered: end the connection.
+// Otherwise onResponseFinishHandleSocket ends it once the pipeline drains.
+function endSocketAfterDroppedRequests(socket) {
+  if (!socket || socket.destroyed || socket.writableEnded) return;
+  socket[kEndAfterDroppedRequests] = kEndAfterDroppedRequests;
+  if (socket[kPipelinedResponses]?.length) return;
+  const inFlight = socket._httpMessage;
+  if (inFlight && !inFlight.finished) return;
+  socket.end();
+}
+
 function stopServerResponsePerf(this: any) {
   if (this[kServerResponseStatistics] && hasObserver("http")) {
     stopPerf(this, kServerResponseStatistics, {
@@ -2461,6 +2475,13 @@ function onResponseFinishHandleSocket(server, socket, res) {
   // Pipelined responses are still queued behind this one: the connection is
   // not idle, so do not arm the keep-alive idle timeout yet.
   if (socket[kPipelinedResponses]?.length) {
+    return;
+  }
+  // A request past maxRequestsPerSocket was dropped on this connection, the
+  // current read has been fully parsed, and the response pipeline has now
+  // drained: end it, deferred so every queued 503 could be written first.
+  if (socket[kEndAfterDroppedRequests] === kEndAfterDroppedRequests) {
+    socket.end();
     return;
   }
   const rawKeepAliveTimeout = server.keepAliveTimeout;

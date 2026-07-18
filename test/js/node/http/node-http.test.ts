@@ -3790,11 +3790,46 @@ it("Expect: 100-Continue matches case-insensitively like Node.js", async () => {
   }
 });
 
-it("the over-limit 503 advertises Connection: close, not keep-alive", async () => {
+const rawGet = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+const rawPost = (path: string, body: string) =>
+  `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.length}\r\n\r\n${body}`;
+
+// Responses whose header block has fully arrived.
+const responsesIn = (raw: string) => Math.min(raw.split("HTTP/1.1 ").length - 1, raw.split("\r\n\r\n").length - 1);
+
+// Pipelines every request into one segment. `until` "responses" hangs up as
+// soon as they have all arrived; "serverClose" waits for the server to hang up
+// instead, so a test can assert it did. Resolving on "close" in either case
+// means a server that tears the connection down mid-pipeline yields the
+// truncated bytes (an assertion failure) rather than hanging until the test
+// times out.
+function sendRequests(
+  port: number,
+  requests: string[],
+  until: "responses" | "serverClose" = "responses",
+): Promise<{ raw: string; serverEnded: boolean }> {
+  const { promise, resolve, reject } = Promise.withResolvers<{ raw: string; serverEnded: boolean }>();
+  const socket = connect(port, "127.0.0.1");
+  let data = "";
+  let serverEnded = false;
+  socket.on("data", chunk => {
+    data += chunk;
+    if (until === "responses" && responsesIn(data) >= requests.length) {
+      socket.destroy();
+      resolve({ raw: data, serverEnded });
+    }
+  });
+  socket.on("end", () => (serverEnded = true));
+  socket.on("close", () => resolve({ raw: data, serverEnded }));
+  socket.on("error", reject);
+  socket.on("connect", () => socket.write(requests.join("")));
+  return promise;
+}
+
+it.concurrent("the over-limit 503 advertises Connection: close, not keep-alive", async () => {
   // Node sets maxRequestsOnConnectionReached unconditionally
   // (maxRequestsPerSocket <= count), so the dropRequest 503 carries
-  // Connection: close instead of advertising keep-alive right before the
-  // socket is destroyed.
+  // Connection: close instead of advertising keep-alive.
   const server = createServer((req, res) => res.end("ok"));
   server.maxRequestsPerSocket = 1;
   try {
@@ -3802,21 +3837,184 @@ it("the over-limit 503 advertises Connection: close, not keep-alive", async () =
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
-    const out = await new Promise<string>((resolve, reject) => {
-      const socket = connect(port, "127.0.0.1");
-      let data = "";
-      socket.on("data", chunk => (data += chunk));
-      socket.on("close", () => resolve(data));
-      socket.on("error", reject);
-      // Two pipelined requests: the second exceeds maxRequestsPerSocket.
-      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n" + "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-    });
+    // Two pipelined requests: the second exceeds maxRequestsPerSocket.
+    const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b")]);
 
-    const second = out.slice(out.indexOf("HTTP/1.1 503"));
+    const second = raw.slice(raw.indexOf("HTTP/1.1 503"));
     expect(second).toContain("HTTP/1.1 503");
     expect(second).toContain("Connection: close");
     expect(second).not.toContain("keep-alive");
   } finally {
+    server.close();
+  }
+});
+
+it.concurrent("every pipelined request past maxRequestsPerSocket gets its own 503 and dropRequest", async () => {
+  // Node answers each over-limit request with a 503 and emits 'dropRequest'
+  // for it, so a client that pipelined several requests at once is not left
+  // with a torn-down connection and no response.
+  const drops: { url: string; isIncomingMessage: boolean; socket: unknown }[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    res.end("ok");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", (req, socket) =>
+    drops.push({ url: req.url, isIncomingMessage: req instanceof IncomingMessage, socket }),
+  );
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    // Three requests pipelined into one segment: /b and /c are both over the
+    // limit of 1, so both must be answered.
+    const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")]);
+
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops.map(({ url, isIncomingMessage }) => ({ url, isIncomingMessage }))).toEqual([
+      { url: "/b", isIncomingMessage: true },
+      { url: "/c", isIncomingMessage: true },
+    ]);
+    // Both drops report the one connection they arrived on.
+    expect(drops[0].socket).toBeDefined();
+    expect(drops[1].socket).toBe(drops[0].socket);
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("a dropped request carrying a body does not stall the rest of the pipeline", async () => {
+  // The 503'd request's body still has to come off the wire, otherwise the
+  // parser never reaches the request pipelined behind it.
+  const drops: string[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    res.end("ok");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => drops.push(req.url));
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const body = "hello=world";
+    const requests = [rawPost("/a", body), rawPost("/b", body), rawPost("/c", body)];
+    const { raw } = await sendRequests(port, requests);
+
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops).toEqual(["/b", "/c"]);
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("the connection is ended only after the pipelined requests have been answered", async () => {
+  // Node leans on keepAliveTimeout to reap the connection; Bun hangs up once
+  // the current read has been answered - but not before the requests already
+  // sitting in the read buffer have each gotten their own 503.
+  const drops: string[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    res.end("ok");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => drops.push(req.url));
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    // The client never hangs up, so reaching "close" at all means the server did.
+    const { raw, serverEnded } = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "serverClose");
+
+    expect(serverEnded).toBe(true);
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops).toEqual(["/b", "/c"]);
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("over-limit 503s queued behind an async response are written before the connection ends", async () => {
+  // The first response finishes two check phases out, so the deferred end runs
+  // while the over-limit 503s are still queued behind it; closing then (or on
+  // the still-in-flight response's "finish") would drop them.
+  const drops: string[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    setImmediate(() => setImmediate(() => res.end("ok")));
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => drops.push(req.url));
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "serverClose");
+
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops).toEqual(["/b", "/c"]);
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("an over-limit request arriving in a later read is answered before the connection ends", async () => {
+  // The deferred end must not pin the close to a response that was the
+  // queue tail at the time: a later read can grow the queue before the
+  // in-flight response finishes.
+  const drops: string[] = [];
+  const { promise: firstResponseBarrier, resolve: unblockFirstResponse } = Promise.withResolvers<void>();
+  const { promise: sawFirstDrop, resolve: onFirstDrop } = Promise.withResolvers<void>();
+  const { promise: sawSecondDrop, resolve: onSecondDrop } = Promise.withResolvers<void>();
+  const server = createServer(async (req, res) => {
+    req.resume();
+    await firstResponseBarrier;
+    res.end("ok");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => {
+    drops.push(req.url);
+    (drops.length === 1 ? onFirstDrop : onSecondDrop)();
+  });
+  let socket: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise: raw, resolve: gotRaw } = Promise.withResolvers<string>();
+    const { promise: socketClosed, resolve: onSocketClosed } = Promise.withResolvers<void>();
+    socket = connect(port, "127.0.0.1");
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("close", () => {
+      gotRaw(data);
+      onSocketClosed();
+    });
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    // Read #1: /a is handled, /b is over the limit and queued behind it.
+    socket.write(rawGet("/a") + rawGet("/b"));
+    await sawFirstDrop;
+    // Let the server's deferred-end callback (same event loop) run first.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Read #2: /c is over the limit too, queued behind /b. Racing against the
+    // socket closing turns a regression that ends the connection too early
+    // into an assertion failure instead of a hang on the missing drop.
+    socket.write(rawGet("/c"));
+    await Promise.race([sawSecondDrop, socketClosed]);
+    unblockFirstResponse();
+
+    const out = await raw;
+    expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops).toEqual(["/b", "/c"]);
+  } finally {
+    unblockFirstResponse();
+    socket?.destroy();
     server.close();
   }
 });

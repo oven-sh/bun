@@ -532,6 +532,10 @@ test.todo("junit reporter", async () => {
 // Since the 2nd time around, we parse the error.stack getter, we need to make sure
 // it doesn't lose frames.
 test("error.stack doesnt lose frames", () => {
+  // Guard against an earlier test file leaving a custom Error.prepareStackTrace
+  // installed, which would make `.stack` return something we can't parse.
+  const originalPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = undefined;
   function top() {
     function middle() {
       function bottom() {
@@ -602,4 +606,6 @@ test("error.stack doesnt lose frames", () => {
 
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+
+  Error.prepareStackTrace = originalPrepareStackTrace;
 });

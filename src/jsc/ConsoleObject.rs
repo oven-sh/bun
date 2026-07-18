@@ -2365,6 +2365,9 @@ pub mod formatter {
                 | T::JSArrayIterator
                 | T::Iterator
                 | T::IteratorHelper
+                | T::Generator
+                | T::AsyncGenerator
+                | T::AsyncFunctionGenerator
                 | T::Object
                 | T::FinalObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
@@ -5499,6 +5502,22 @@ pub mod formatter {
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+
+            // Generators expose iterator helper methods as enumerable properties.
+            // Print them like other empty named objects (`Generator {}`) instead of
+            // dumping the prototype method table (matches Node's empty-object shape).
+            if matches!(
+                js_type,
+                jsc::JSType::Generator
+                    | jsc::JSType::AsyncGenerator
+                    | jsc::JSType::AsyncFunctionGenerator
+            ) {
+                if let Some(name_str) = get_object_name(self.global_this, value)? {
+                    let _ = write!(writer_, "{name_str} ");
+                }
+                let _ = writer_.write_all(b"{}");
+                return Ok(());
+            }
 
             // We want to figure out if we should print this object on one line
             // or multiple lines.

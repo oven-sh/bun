@@ -813,8 +813,9 @@ mod _impl {
         }
 
         if result.is_null() {
-            // bionic has no passwd entries for app uids; with HOME also unset
-            // (zygote/run-as), return a usable default rather than throwing.
+            // bionic may have no passwd entry for app uids; return a usable
+            // default rather than ENOENT. os.homedir() reaches this only when
+            // $HOME is unset; os.userInfo() reaches it regardless of $HOME.
             #[cfg(target_os = "android")]
             {
                 return Ok(BunString::static_("/data/local/tmp"));

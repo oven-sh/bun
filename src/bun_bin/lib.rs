@@ -170,11 +170,6 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // 1.5. Start mimalloc's background scavenger thread. mimalloc leaves
-    //      that to the application instead of spawning it during process
-    //      init; after the signal setup above so it stays single-threaded.
-    bun_alloc::mimalloc::mi_scavenger_start();
-
     // Windows-only startup. Must run BEFORE the first libuv
     // call (uv allocator) and before anything reads `Bun.env`/`process.env`
     // (env conversion).

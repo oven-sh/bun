@@ -605,7 +605,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                     }
                 }
 
-                return exportJwk(globalObject, scope, exportType, false);
+                RELEASE_AND_RETURN(scope, exportJwk(globalObject, scope, exportType, false));
             }
 
             if (formatView == "raw-public"_s || formatView == "raw-private"_s || formatView == "raw-seed"_s) {
@@ -653,7 +653,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                     }
                 }
 
-                return exportRaw(globalObject, scope, rawFormat, form);
+                RELEASE_AND_RETURN(scope, exportRaw(globalObject, scope, rawFormat, form));
             }
         }
 

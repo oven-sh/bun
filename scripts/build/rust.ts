@@ -772,7 +772,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // Ordered before the main cargo build via `implicitInputs` below so the
   // real PE is on disk when `bun_install` compiles. Same env as the main
   // build (toolchain forwarding, CARGO_HOME) but no codegen dep — the shim
-  // crate's graph is bun_core/bun_sys/bun_string only.
+  // crate's graph is bun_opaque/bun_windows_sys only.
   const shimInputs: string[] = [];
   if (cfg.windows) {
     const shimDest = windowsShimDestPath(cfg);

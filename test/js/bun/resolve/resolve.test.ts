@@ -1,7 +1,17 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+  withoutAggressiveGC,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);

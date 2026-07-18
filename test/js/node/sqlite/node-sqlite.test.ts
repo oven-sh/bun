@@ -364,6 +364,8 @@ describe("DatabaseSync", () => {
 
       expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
       expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
+      expect(() => Reflect.construct(backup, [db, ":memory:"])).toThrow(TypeError);
+      expect(Bun.inspect(backup)).toBe("[Function: backup]");
 
       // Controls: these are value-gated in Node (explicit undefined is the
       // same as omission) and must NOT throw.

@@ -248,9 +248,10 @@ describe("bundler", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    const assetLine = stdout.split("\n").find(l => l.startsWith("asset "));
+    const out = stdout.replaceAll("\\", "/");
+    const assetLine = out.split("\n").find(l => l.startsWith("asset "));
     expect(assetLine).toBe("asset ./lib/second/test.file");
-    expect(stdout).not.toContain("_.._");
+    expect(out).not.toContain("_.._");
     expect(exitCode).toBe(0);
   });
   itBundled("naming/AssetNoOverwrite", {

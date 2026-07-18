@@ -712,7 +712,6 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
 // `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
 // `on_cares_complete`.
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
-    const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
     const NS_TYPE: c_ares::NSType = T::NS_TYPE;
     unsafe extern "C" fn raw_callback(
         ctx: *mut c_void,
@@ -5041,13 +5040,6 @@ impl Resolver {
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
         let name_str = name_value.to_js_string(global_this)?;
-        if name_str.length() == 0 {
-            return Err(global_this.throw_invalid_argument_type(
-                "resolve",
-                "name",
-                "non-empty string",
-            ));
-        }
         let name = name_str.to_slice_clone(global_this)?;
 
         match record_type {
@@ -5286,7 +5278,7 @@ impl Resolver {
 }
 
 macro_rules! resolve_record_fn {
-    ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
+    ($global:ident, $method:ident, $jsname:literal, $ty:ty) => {
         // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
         pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
             global_resolver(global_this).$method(global_this, callframe)
@@ -5308,13 +5300,6 @@ macro_rules! resolve_record_fn {
             }
             // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
             let name_str = name_value.to_js_string(global_this)?;
-            if !$allow_empty && name_str.length() == 0 {
-                return Err(global_this.throw_invalid_argument_type(
-                    $jsname,
-                    "hostname",
-                    "non-empty string",
-                ));
-            }
             let name = name_str.to_slice_clone(global_this)?;
             self.do_resolve_cares::<$ty>(name.slice(), global_this)
         }
@@ -5339,65 +5324,51 @@ impl Resolver {
         global_resolve_srv,
         resolve_srv,
         "resolveSrv",
-        c_ares::struct_ares_srv_reply,
-        false
+        c_ares::struct_ares_srv_reply
     );
     resolve_record_fn!(
         global_resolve_soa,
         resolve_soa,
         "resolveSoa",
-        c_ares::struct_ares_soa_reply,
-        true
+        c_ares::struct_ares_soa_reply
     );
     resolve_record_fn!(
         global_resolve_caa,
         resolve_caa,
         "resolveCaa",
-        c_ares::struct_ares_caa_reply,
-        false
+        c_ares::struct_ares_caa_reply
     );
-    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent, true);
-    resolve_record_fn!(
-        global_resolve_ptr,
-        resolve_ptr,
-        "resolvePtr",
-        PtrHostent,
-        false
-    );
+    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent);
+    resolve_record_fn!(global_resolve_ptr, resolve_ptr, "resolvePtr", PtrHostent);
     resolve_record_fn!(
         global_resolve_cname,
         resolve_cname,
         "resolveCname",
-        CnameHostent,
-        false
+        CnameHostent
     );
     resolve_record_fn!(
         global_resolve_mx,
         resolve_mx,
         "resolveMx",
-        c_ares::struct_ares_mx_reply,
-        false
+        c_ares::struct_ares_mx_reply
     );
     resolve_record_fn!(
         global_resolve_naptr,
         resolve_naptr,
         "resolveNaptr",
-        c_ares::struct_ares_naptr_reply,
-        false
+        c_ares::struct_ares_naptr_reply
     );
     resolve_record_fn!(
         global_resolve_txt,
         resolve_txt,
         "resolveTxt",
-        c_ares::struct_ares_txt_reply,
-        false
+        c_ares::struct_ares_txt_reply
     );
     resolve_record_fn!(
         global_resolve_any,
         resolve_any,
         "resolveAny",
-        c_ares::struct_any_reply,
-        false
+        c_ares::struct_any_reply
     );
 
     pub fn do_resolve_cares<T: CAresRecordType>(

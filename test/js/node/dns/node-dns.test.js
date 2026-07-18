@@ -1,7 +1,9 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -570,5 +572,89 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("empty hostname", () => {
+  // Node.js passes "" through to c-ares; it is a string so ERR_INVALID_ARG_TYPE
+  // is wrong, and a promise-returning API must reject rather than throw.
+  //
+  // Every test points at a local mock DNS server that answers everything with
+  // SERVFAIL. ESERVFAIL can only come from that reply, so it also proves the
+  // query was actually sent instead of being short-circuited locally.
+  const resolverOptions = { timeout: 5000, tries: 1 };
+  let udp;
+  let servers;
+
+  beforeAll(async () => {
+    udp = dgram.createSocket("udp4");
+    udp.on("message", (query, rinfo) => {
+      const reply = Buffer.from(query);
+      reply[2] |= 0x80; // QR = response
+      reply[3] = (reply[3] & 0xf0) | 0x02; // RCODE = SERVFAIL
+      udp.send(reply, rinfo.port, rinfo.address);
+    });
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+    servers = [`127.0.0.1:${udp.address().port}`];
+  });
+
+  afterAll(() => {
+    udp.close();
+  });
+
+  const promiseMethods = [
+    "resolve",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCaa",
+    "resolveCname",
+    "resolveMx",
+    "resolveNaptr",
+    "resolveNs",
+    "resolvePtr",
+    "resolveSoa",
+    "resolveSrv",
+    "resolveTxt",
+  ];
+
+  it.each(promiseMethods)("dns.promises.Resolver#%s('') rejects asynchronously", async method => {
+    const resolver = new dns_promises.Resolver(resolverOptions);
+    resolver.setServers(servers);
+
+    let returned;
+    expect(() => {
+      returned = resolver[method]("");
+    }).not.toThrow();
+    expect(returned).toBeInstanceOf(Promise);
+
+    const err = await returned.then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ESERVFAIL");
+  });
+
+  it.each(promiseMethods)("dns.Resolver#%s('') invokes the callback", async method => {
+    const resolver = new dns.Resolver(resolverOptions);
+    resolver.setServers(servers);
+
+    const { promise, resolve } = Promise.withResolvers();
+    expect(() => {
+      resolver[method]("", (err, result) => resolve({ err, result }));
+    }).not.toThrow();
+
+    const { err, result } = await promise;
+    expect(result).toBeUndefined();
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ESERVFAIL");
+  });
+
+  it("non-string hostname still throws ERR_INVALID_ARG_TYPE synchronously", () => {
+    const resolver = new dns_promises.Resolver(resolverOptions);
+    expect(() => resolver.resolve4(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => dns.resolve4(123, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 });

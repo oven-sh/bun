@@ -1088,9 +1088,7 @@ impl ExportRenamer {
             // `StringHashMap::put` boxes the key itself; the arena copy below is
             // only for the caller's returned slice (`string_buffer` is reused).
             self.used.put(attempt, 1).expect("unreachable");
-            if let Some(v) = self.used.get_mut(input) {
-                *v = tries;
-            }
+            *self.used.get_mut(input).expect("unreachable") = tries;
             return self.arena.alloc_slice_copy(attempt);
         }
     }

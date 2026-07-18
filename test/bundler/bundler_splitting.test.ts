@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -329,10 +329,10 @@ describe("bundler", () => {
   });
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
-  // (ExportRenamer::next_renamed_name). Debug builds blow past the 15s cap
-  // with far fewer files than release, hence the isDebug-scaled N.
+  // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
+  // cap with far fewer files than release, hence the scaled N.
   test("splitting/ManyCrossChunkExportAliasCollisions", async () => {
-    const N = isDebug ? 2500 : 20000;
+    const N = isDebug || isASAN ? 2500 : 20000;
     const THRESHOLD_MS = 15000;
 
     const files: Record<string, string> = {};
@@ -361,12 +361,14 @@ describe("bundler", () => {
       killSignal: "SIGKILL",
     });
     const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    if (buildExit !== 0) {
-      const why = build.killed ? `did not finish within ${THRESHOLD_MS}ms` : `exited ${buildExit}`;
+    if (build.signalCode !== null) {
       throw new Error(
-        `bun build ${why} for ${N} colliding cross-chunk export names ` +
-          `(exit ${buildExit}, killed=${build.killed})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
+        `bun build did not finish within ${THRESHOLD_MS}ms for ${N} colliding cross-chunk export names ` +
+          `(signal ${build.signalCode})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
       );
+    }
+    if (buildExit !== 0) {
+      throw new Error(`bun build exited ${buildExit}\nstdout:\n${buildOut}\nstderr:\n${buildErr}`);
     }
 
     // The shared chunk's export clause must hand out a unique alias for every

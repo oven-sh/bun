@@ -8,6 +8,10 @@ import { join } from "path";
 
 var packageDir: string;
 
+// #33072 (non-overridable pack default ignores) landed after the sweep's
+// pinned 1498d7b77 runner; gate so the sweep passes while HEAD still runs it.
+const isStalePinnedRunner = Bun.revision.startsWith("1498d7b77");
+
 beforeEach(() => {
   packageDir = tmpdirSync();
 });
@@ -1103,7 +1107,7 @@ describe("files", () => {
     ]);
   });
 
-  test("'files' overrides the overridable default ignores but never .git/.npmrc/lockfiles", async () => {
+  test.todoIf(isStalePinnedRunner)("'files' overrides the overridable default ignores but never .git/.npmrc/lockfiles", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -1137,7 +1141,7 @@ describe("files", () => {
     ]);
   });
 
-  test("non-overridable default ignores are not packed when 'files' matches everything", async () => {
+  test.todoIf(isStalePinnedRunner)("non-overridable default ignores are not packed when 'files' matches everything", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),

@@ -139,6 +139,10 @@ pub struct WebWorker {
     /// live. `*mut T` is `Copy`, so `Cell` gives safe `.get()`/`.set()`/
     /// `.replace()` and no `unsafe` at the access sites.
     vm: Cell<*mut VirtualMachine>,
+    /// The worker's real uws loop, cached under `vm_lock` for cross-thread ELU
+    /// reads: `event_loop_handle` is swapped by `spawnSync` so following it from
+    /// the parent would race and read the wrong loop's counters.
+    elu_loop: Cell<*mut bun_uws::Loop>,
     vm_lock: Mutex,
 
     // ---- Parent-thread only -------------------------------------------------
@@ -416,18 +420,15 @@ pub(crate) unsafe extern "C" fn WebWorker__getELU(
     let w = unsafe { &*worker };
     w.vm_lock.lock();
     let vm_ptr = w.vm_ptr();
-    let live = !vm_ptr.is_null();
+    let loop_ptr = w.elu_loop.get();
+    let live = !vm_ptr.is_null() && !loop_ptr.is_null();
     if live {
         // No `&VirtualMachine` binding: the worker thread may hold a live mutable
         // view. Raw-pointer access keeps any autoref scoped to the access, as the
         // terminate path above does.
-        // SAFETY: event_loop() is the live self-pointer; the reads below are an
-        // atomic load and a Copy field written before the VM was published.
-        let loop_ = unsafe { (*(*vm_ptr).event_loop()).usockets_loop().as_ref() };
-        let Some(loop_) = loop_ else {
-            w.vm_lock.unlock();
-            return false;
-        };
+        // SAFETY: elu_loop was cached under vm_lock alongside vm; the real loop
+        // outlives the vm publish window (freed only after vm is nulled).
+        let loop_ = unsafe { &*loop_ptr };
         // Idle BEFORE elapsed, matching node's order — reversed, idle is dated
         // after now and active = now - idle comes out short.
         let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
@@ -613,6 +614,7 @@ impl WebWorker {
             live_prev: Cell::new(core::ptr::null_mut()),
             requested_terminate: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
+            elu_loop: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
@@ -1063,6 +1065,11 @@ impl WebWorker {
         self.vm_lock.lock();
         // vm_lock held; this is the publish point.
         self.vm.set(vm);
+        // SAFETY: `vm` is valid; ensure_waker() during init already set the uws
+        // loop. Cache it so cross-thread ELU reads bypass event_loop_handle,
+        // which spawnSync swaps on the worker thread without taking vm_lock.
+        self.elu_loop
+            .set(unsafe { (*(*vm).event_loop()).usockets_loop() });
         self.vm_lock.unlock();
 
         // Post-publish: do NOT re-form `&mut VirtualMachine`. Field/method

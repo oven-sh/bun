@@ -436,9 +436,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 
     if (will_idle_inside_event_loop) {
+        /* Zero entry BEFORE folding into idle_ns: a cross-thread reader between
+         * the two under-counts (bounded, monotonic) instead of double-counting. */
+        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_RELEASE);
         __atomic_add_fetch(&loop->data.idle_ns, us_internal_monotonic_ns() - idle_start_ns,
                            __ATOMIC_RELAXED);
-        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_RELEASE);
     }
 
     /* Before anything can allocate again. */

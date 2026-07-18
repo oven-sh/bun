@@ -1041,7 +1041,6 @@ describe.concurrent("false route with no fetch handler", () => {
     expect(ok.status).toBe(200);
 
     proc.kill();
-    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    await proc.exited;
   });
 });

@@ -846,7 +846,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
+            // calculatedClassName() returns "ProxyObject" for any Proxy, rejecting a transparent
+            // Proxy before any trap runs. Compare observable prototypes so the strict gate matches
+            // Node/Jest and a throwing trap is reached and propagated like the loose path.
+            JSValue p1 = o1->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue p2 = o2->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (p1 != p2) {
+                return false;
+            }
+        } else if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
     }

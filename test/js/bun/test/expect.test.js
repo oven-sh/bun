@@ -677,6 +677,55 @@ describe("expect()", () => {
         expect(p1).toStrictEqual(p2);
       }
     });
+
+    test("strict deepEquals propagates a throwing Proxy get trap like loose mode", () => {
+      const thr = () =>
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new RangeError("trapG");
+            },
+            ownKeys() {
+              return ["a"];
+            },
+            getOwnPropertyDescriptor() {
+              return { enumerable: true, configurable: true, value: 1 };
+            },
+          },
+        );
+
+      // loose already propagated; strict used to short-circuit on calculatedClassName and return false.
+      expect(() => Bun.deepEquals(thr(), { a: 1 })).toThrow("trapG");
+      expect(() => Bun.deepEquals(thr(), { a: 1 }, true)).toThrow("trapG");
+      // toEqual / toStrictEqual surface the trap throw (previously aborted on assert builds).
+      expect(() => expect(thr()).toEqual({ a: 1 })).toThrow("trapG");
+      expect(() => expect(thr()).toStrictEqual({ a: 1 })).toThrow("trapG");
+      expect(() => expect({ a: 1 }).toStrictEqual(thr())).toThrow("trapG");
+
+      // A transparent Proxy now passes the strict type gate (Node's util.isDeepStrictEqual agrees).
+      expect(Bun.deepEquals(new Proxy({ a: 1 }, {}), { a: 1 }, true)).toBe(true);
+      expect(Bun.deepEquals({ a: 1 }, new Proxy({ a: 1 }, {}), true)).toBe(true);
+      expect(new Proxy({ a: 1 }, {})).toStrictEqual({ a: 1 });
+      class Foo {}
+      expect(Bun.deepEquals(new Proxy(new Foo(), {}), new Foo(), true)).toBe(true);
+      expect(Bun.deepEquals(new Proxy({}, {}), new Foo(), true)).toBe(false);
+    });
+
+    test("expect diff rendering propagates a throwing Proxy trap instead of aborting", () => {
+      // Array target vs object: deepEquals returns false at the isArray gate, so the
+      // diff renderer is what touches the proxy. Previously aborted on assert builds
+      // with "Unexpected exception observed"; the trap throw should surface instead.
+      const thrArr = () =>
+        new Proxy([1], {
+          get() {
+            throw new RangeError("trapG");
+          },
+        });
+      expect(() => expect(thrArr()).toStrictEqual({ a: 1 })).toThrow("trapG");
+      expect(() => expect({ a: 1 }).toStrictEqual(thrArr())).toThrow("trapG");
+      expect(() => expect(thrArr()).toEqual({ a: 1 })).toThrow("trapG");
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {

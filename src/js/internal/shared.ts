@@ -144,6 +144,35 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+// Node invokes fs/dns callbacks off the libuv completion, so a throw inside one
+// escapes as an uncaughtException. Bun runs them from a promise reaction, where
+// an unguarded throw would only reject that promise (an unhandledRejection).
+const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
+
+// Wrap a node-style callback so a throw inside it takes the uncaught path. The
+// callback keeps its place in the event loop; only the throw is rerouted. The
+// arity switch avoids materializing `arguments` for the shapes fs and dns use.
+function guardCallback(callback) {
+  return function guarded(a, b, c) {
+    try {
+      switch (arguments.length) {
+        case 0:
+          return callback();
+        case 1:
+          return callback(a);
+        case 2:
+          return callback(a, b);
+        case 3:
+          return callback(a, b, c);
+        default:
+          return callback.$apply(undefined, arguments);
+      }
+    } catch (e) {
+      reportUncaughtException(e);
+    }
+  };
+}
+
 function getLazy<T>(initializer: () => T) {
   let value: T;
   let initialized = false;
@@ -321,6 +350,7 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  guardCallback,
 
   hasObserver,
   startPerf,

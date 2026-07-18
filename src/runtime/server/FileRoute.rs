@@ -329,10 +329,8 @@ impl FileRoute {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        // `path` borrows from the blob's store. The route-table ref plus the
-        // `ref_()` above keep `*this_ptr` (and its owned store) alive for the
-        // whole function, and nothing below mutates `this.blob.store`.
-        let Some(path) = this.blob.store.get().as_ref().unwrap().get_path() else {
+        let store = this.blob.store().unwrap().clone();
+        let Some(path) = store.get_path() else {
             req.set_yield(true);
             Self::on_response_complete(this_ptr, resp);
             return;

@@ -51,7 +51,17 @@ globalThis.Promise = function (...args) {
   });
 };
 globalThis.Promise.prototype = Promise.prototype;
-Object.assign(globalThis.Promise, Promise);
+// Native Promise statics (all/race/withResolvers/...) are non-enumerable, so
+// Object.assign skips them — copy descriptors so the shim keeps them.
+for (const key of Reflect.ownKeys(Promise)) {
+  if (key === "length" || key === "name" || key === "prototype") continue;
+  Object.defineProperty(globalThis.Promise, key, Object.getOwnPropertyDescriptor(Promise, key)!);
+}
+// This file intentionally smashes globals; put the real Promise back so test
+// files batched after us in the same process still have Promise.all/withResolvers.
+afterAll(() => {
+  globalThis.Promise = Promise;
+});
 
 function wrap(input, from) {
   if (typeof input?.catch === "function") {

@@ -3933,30 +3933,34 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   // first tunnel bytes as bodyHead; without one it falls through as a normal
   // request with req.upgrade cleared; CONNECT without a listener destroys.
   {
-    const server = createServer(() => {
-      throw new Error("request handler must not run for a handled upgrade");
-    });
+    const unexpectedRequest = Promise.withResolvers<never>();
+    const server = createServer(() =>
+      unexpectedRequest.reject(new Error("request handler must not run for a handled upgrade")),
+    );
     server.on("upgrade", (req, socket, head) => {
       socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\nHEAD:" + head.toString());
       socket.on("data", d => socket.write("TUNNEL:" + d));
     });
     const [clientSide, serverSide] = duplexPair();
     server.emit("connection", serverSide);
-    const out = await new Promise<string>((resolve, reject) => {
-      let buf = "";
-      let sentMore = false;
-      clientSide.on("data", d => {
-        buf += d;
-        if (!sentMore && buf.includes("HEAD:early")) {
-          sentMore = true;
-          clientSide.write("more");
-        }
-        if (buf.includes("TUNNEL:more")) resolve(buf);
-      });
-      clientSide.on("error", reject);
-      clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
-      clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\nearly");
-    });
+    const out = await Promise.race([
+      unexpectedRequest.promise,
+      new Promise<string>((resolve, reject) => {
+        let buf = "";
+        let sentMore = false;
+        clientSide.on("data", d => {
+          buf += d;
+          if (!sentMore && buf.includes("HEAD:early")) {
+            sentMore = true;
+            clientSide.write("more");
+          }
+          if (buf.includes("TUNNEL:more")) resolve(buf);
+        });
+        clientSide.on("error", reject);
+        clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
+        clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\nearly");
+      }),
+    ]);
     expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
     expect(out).toContain("HEAD:early");
     expect(out).toContain("TUNNEL:more");
@@ -3987,8 +3991,9 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 
   {
+    let requestHandlerRan = false;
     const server = createServer(() => {
-      throw new Error("request handler must not run for CONNECT");
+      requestHandlerRan = true;
     });
     const [clientSide, serverSide] = duplexPair();
     server.emit("connection", serverSide);
@@ -3997,6 +4002,7 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     const closed = new Promise<void>(resolve => serverSide.on("close", () => resolve()));
     clientSide.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n");
     await closed;
+    expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
   }
 });

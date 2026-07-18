@@ -1267,17 +1267,28 @@ pub(crate) fn format(
         Default::default(),
     )?;
 
-    let field = |key: &str| -> JsResult<ZigString> {
-        match path_object_ptr.get_truthy(global_object, key)? {
-            Some(v) => v.get_zig_string(global_object),
-            None => Ok(ZigString::EMPTY),
-        }
+    // `get_truthy` performs a full [[Get]] and may invoke user getters/Proxy
+    // traps, so take a +1 ref on each field's WTFStringImpl before reading the
+    // next; the `OwnedString` RAII guards keep all five alive until scope exit.
+    let field = |key: &str| -> JsResult<bun_core::OwnedString> {
+        Ok(bun_core::OwnedString::new(
+            match path_object_ptr.get_truthy(global_object, key)? {
+                Some(v) => v.to_bun_string(global_object)?,
+                None => bun_core::String::EMPTY,
+            },
+        ))
     };
-    let root_zstr = field("root")?;
-    let dir_zstr = field("dir")?;
-    let base_zstr = field("base")?;
-    let name_zstr = field("name")?;
-    let ext_zstr = field("ext")?;
+    let root_owned = field("root")?;
+    let dir_owned = field("dir")?;
+    let base_owned = field("base")?;
+    let name_owned = field("name")?;
+    let ext_owned = field("ext")?;
+
+    let root_zstr = root_owned.to_zig_string();
+    let dir_zstr = dir_owned.to_zig_string();
+    let base_zstr = base_owned.to_zig_string();
+    let name_zstr = name_owned.to_zig_string();
+    let ext_zstr = ext_owned.to_zig_string();
 
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
 

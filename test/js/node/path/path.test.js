@@ -113,6 +113,24 @@ describe("path", () => {
     });
   });
 
+  // path.format reads five properties; a Proxy/getter can allocate and GC
+  // between reads. The field values must stay alive across all five lookups.
+  test("format with Proxy getters returning fresh strings", () => {
+    const vals = { root: "/", dir: "/\uD800", base: "x.y", name: "x", ext: ".y" };
+    const pathObject = new Proxy(
+      {},
+      {
+        get(_, key) {
+          Bun.gc(true);
+          // fresh, non-interned string not stored on the target
+          return Buffer.alloc(1, "_").toString() + vals[key];
+        },
+      },
+    );
+    expect(path.posix.format(pathObject)).toBe("_/\uD800/_x.y");
+    expect(path.win32.format({ ...vals, dir: "C:\\a" })).toBe("C:\\a\\x.y");
+  });
+
   // Valid non-BMP code points (surrogate *pairs*) must also survive — they
   // share the 16-bit code path with the unpaired case.
   test("preserves surrogate pairs", () => {

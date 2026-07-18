@@ -2004,6 +2004,12 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
         auto s = warning.getString(globalObject);
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+        // Only the synthesized error gets its stack re-captured past `ctor`;
+        // a caller-supplied Error keeps whatever .stack it already had.
+        if (ctor.isCallable()) {
+            Bun::captureStackTraceForError(globalObject, errorInstance, ctor);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
@@ -2012,13 +2018,6 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
 
     if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
-
-    // Hide the internal emitter frames so --throw-deprecation reports the
-    // user's call site, matching Node's ErrorCaptureStackTrace(warning, ctor).
-    if (ctor.isCallable()) {
-        Bun::captureStackTraceForError(globalObject, errorInstance, ctor);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
 
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }

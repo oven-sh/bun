@@ -96,6 +96,22 @@ describe("process.emitWarning default stderr report", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("passing an Error instance leaves its .stack untouched even when ctor is given", async () => {
+    const src = `
+      function outer() {
+        const e = new Error("boom");
+        const orig = e.stack;
+        process.emitWarning(e, { ctor: outer });
+        process.emitWarning(e, "Type", "CODE", outer);
+        console.log(e.stack === orig ? "same" : "changed");
+      }
+      outer();
+    `;
+    const { stdout, exitCode } = await run([], src);
+    expect(stdout).toBe("same\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("--trace-warnings prints the warning stack for non-deprecation warnings", async () => {
     const src = `process.emitWarning("trace me", "CustomWarning", "CODE10");`;
     const { stderr, exitCode } = await run(["--trace-warnings"], src);

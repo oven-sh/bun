@@ -957,6 +957,17 @@ describe("DONT_CONTEXTIFY", () => {
     expect(ctx.sv).toBe(42);
   });
 
+  test("vm.runInNewContext honors contextCodeGeneration with DONT_CONTEXTIFY", () => {
+    let thrown: unknown;
+    try {
+      runInNewContext("eval('1')", constants.DONT_CONTEXTIFY, { contextCodeGeneration: { strings: false } });
+    } catch (e) {
+      thrown = e;
+    }
+    // The EvalError comes from the context's own realm, so compare by name.
+    expect((thrown as Error)?.name).toBe("EvalError");
+  });
+
   test("var/function declarations work via runInNewContext", () => {
     expect(
       runInNewContext(

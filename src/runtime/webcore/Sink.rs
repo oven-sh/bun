@@ -750,6 +750,15 @@ pub trait JsSinkType: Sized {
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
+    /// `write_bytes` with the originating JS cell, for sinks that can hold the
+    /// backing store by reference past the call (pinned zero-copy writes).
+    fn write_bytes_with_value(
+        &mut self,
+        data: &streams::Result,
+        _input_value: crate::webcore::jsc::JSValue,
+    ) -> streams::result::Writable {
+        self.write_bytes(data)
+    }
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
@@ -893,7 +902,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let data = bun_ptr::RawSlice::new(slice);
             return Ok(this
                 .sink
-                .write_bytes(&streams::Result::Temporary(data))
+                .write_bytes_with_value(&streams::Result::Temporary(data), arg)
                 .to_js(global));
         }
 

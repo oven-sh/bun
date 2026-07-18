@@ -822,18 +822,19 @@ it("object property enumeration scales linearly with property count", () => {
     return best;
   }
 
-  const small = makeWide(1000);
-  const large = makeWide(10000);
-  // Output still lists every property (no behavior change).
-  expect(Bun.inspect(large).includes("p9999")).toBe(true);
+  const small = makeWide(4000);
+  const large = makeWide(40000);
 
   withoutAggressiveGC(() => {
+    // Output still lists every property (no behavior change).
+    expect(Bun.inspect(large).includes("p39999")).toBe(true);
+
     timeInspect(small); // warm up
-    const tSmall = timeInspect(small) / 1000;
-    const tLarge = timeInspect(large) / 10000;
+    const tSmall = timeInspect(small) / 4000;
+    const tLarge = timeInspect(large) / 40000;
 
     // Per-property cost must stay roughly constant as n grows 10x. The previous
-    // Vector-based visited-property dedup was O(n^2), giving a ~10x ratio here.
-    expect(tLarge / tSmall).toBeLessThan(5);
+    // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
+    expect(tLarge / tSmall).toBeLessThan(3);
   });
-});
+}, 20_000);

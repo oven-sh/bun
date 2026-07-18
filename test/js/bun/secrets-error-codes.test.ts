@@ -1,7 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { isCI, isMacOS, isWindows } from "harness";
+import { isCI, isLinux, isMacOS, isWindows } from "harness";
 
-describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {
+// On Linux the secrets backend dlopen()s libsecret at runtime; probe once so
+// environments without it (containers, minimal installs) skip instead of fail.
+const secretsBackendAvailable = await (async () => {
+  if (!isLinux) return true;
+  try {
+    await Bun.secrets.get({ service: "bun-secrets-probe", name: "bun-secrets-probe" });
+    return true;
+  } catch (error: any) {
+    if (error?.code === "ERR_SECRETS_PLATFORM_ERROR") return false;
+    return true;
+  }
+})();
+
+const secretsTodo = (isCI && !isWindows) || !secretsBackendAvailable;
+
+describe.todoIf(secretsTodo)("Bun.secrets error codes", () => {
   test("non-existent secret returns null without error", async () => {
     const result = await Bun.secrets.get({
       service: "non-existent-service-" + Date.now(),

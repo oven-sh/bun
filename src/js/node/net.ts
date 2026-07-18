@@ -845,8 +845,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
-          // No error argument: the socket has no 'error' listener yet, so destroy(err)
-          // would surface as an uncaught exception.
+          // No error argument: tlsClientError already reported it, and the
+          // onServerSocketTLSError listener is inert once _secureEstablished is
+          // set so destroy(verifyError) would be swallowed.
           self.destroy();
           return;
         }
@@ -985,6 +986,9 @@ function onconnection(err, clientHandle) {
         remoteFamily: _socket.remoteFamily || "IPv4",
       };
       clientHandle.end();
+      // destroy() so a RST from the dropped peer reaches a destroyed socket
+      // (SocketEmitEndNT short-circuits) instead of one with no 'error' listener.
+      _socket.destroy();
       self.emit("drop", data);
       return;
     }
@@ -1000,6 +1004,7 @@ function onconnection(err, clientHandle) {
     };
 
     clientHandle.end();
+    _socket.destroy();
     self.emit("drop", data);
     return;
   }

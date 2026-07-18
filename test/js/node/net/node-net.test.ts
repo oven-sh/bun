@@ -1230,4 +1230,37 @@ describe.concurrent("unhandled socket 'error' throws (reaches uncaughtException)
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
+
+  // Node checks maxConnections on the raw handle before wrapping; Bun wraps
+  // first. The wrapper that was dropped before 'connection' fires must not
+  // surface a late RST from the dropped peer as uncaughtException.
+  it("maxConnections-dropped connection: peer RST does not crash the server", async () => {
+    const fixture = `
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("UNCAUGHT", e.code);
+        process.exit(7);
+      });
+      const srv = net.createServer(c => { c.on("error", () => {}); });
+      srv.maxConnections = 0;
+      srv.on("drop", () => console.log("DROPPED"));
+      srv.listen(0, "127.0.0.1", () => {
+        const c = net.connect(srv.address().port, "127.0.0.1");
+        c.on("error", () => {});
+        c.on("end", () => c.resetAndDestroy());
+        c.on("close", () => { srv.close(); console.log("DONE"); });
+      });
+      srv.unref();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("DROPPED\nDONE");
+    expect(exitCode).toBe(0);
+  });
 });

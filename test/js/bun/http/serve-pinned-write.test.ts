@@ -160,6 +160,36 @@ describe("Bun.serve direct-stream large Buffer writes are sent zero-copy", () =>
     expect(Buffer.compare(body.subarray(first.length), second)).toBe(0);
   });
 
+  test("a small sub-highWaterMark write after a large backpressured write is well-framed at finalize", async () => {
+    // Large write spills its tail into uWS backpressure, then a small write
+    // is queued in self.buffer. pull() returns without end() so finalize()
+    // runs flush_no_wait() -> try_write_body while uWS backpressure is
+    // non-empty (returns 0), leaving a chunk open; the chunk must be spilled
+    // before end_stream() or the client's decoder mis-frames.
+    const first = makePayload(CHUNK_SIZE);
+    const second = Buffer.alloc(1000, 0xee);
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller: any) {
+              controller.write(first);
+              controller.write(second);
+            },
+          } as any),
+        );
+      },
+    });
+
+    const body = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+    expect(body.length).toBe(first.length + second.length);
+    expect(sha1(body.subarray(0, first.length))).toBe(sha1(first));
+    expect(Buffer.compare(body.subarray(first.length), second)).toBe(0);
+  });
+
   test("a resizable ArrayBuffer is spilled, not pinned", async () => {
     // Resizable buffers reserve maxByteLength virtually; resize() down
     // mprotect()s the trimmed pages PROT_NONE, so the pinned path must not

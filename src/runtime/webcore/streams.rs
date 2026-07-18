@@ -2296,6 +2296,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 res.clear_on_writable();
             }
             let _ = self.flush_no_wait();
+            // flush_no_wait -> send_readable may itself open a new chunk on
+            // partial accept (uWS backpressure is already non-empty, so the
+            // optionally=true body write returns 0). Close it so end_stream()
+            // appends the terminator after a well-formed chunk.
+            self.spill_mid_body_chunk();
             self.done = true;
 
             if let Some(res) = self.any_res() {

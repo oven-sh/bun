@@ -1871,6 +1871,12 @@ impl QuicSession {
     /// Applies a graceful close stashed while a dispatch was on the stack.
     /// Returns whether one was applied.
     pub(super) fn flush_pending_graceful(&self) -> bool {
+        // A provisional session stashes its close here too, and `apply_close`
+        // silently no-ops without a conn — draining it here would consume the
+        // close that `bind_conn` is waiting to apply.
+        if self.conn.get().is_null() {
+            return false;
+        }
         if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
             self.apply_graceful_close(app, code, reason);
             return true;

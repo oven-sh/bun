@@ -599,7 +599,7 @@ function findExpressionCompleteTarget(code) {
       // Something went wrong with the parsing, however this can be due to incomplete code
       // (that is for example missing a closing bracket, as for example `{ a: obj.te`), in
       // this case we take the last code keyword and try again
-      // TODO(dario-piotrowicz): make this more robust, right now we only split by spaces
+      // upstream-todo(dario-piotrowicz): make this more robust, right now we only split by spaces
       //                         but that's not always enough, for example it doesn't handle
       //                         this code: `{ a: obj['hello world'].te`
       return findExpressionCompleteTarget(keywords.at(-1));

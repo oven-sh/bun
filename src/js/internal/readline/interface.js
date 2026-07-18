@@ -145,7 +145,7 @@ const kAddNewLineOnTTY = Symbol("_addNewLineOnTTY");
 
 function InterfaceConstructor(input, output, completer, terminal) {
   this[kSawReturnAt] = 0;
-  // TODO(BridgeAR): Document this property. The name is not ideal, so we
+  // upstream-todo(BridgeAR): Document this property. The name is not ideal, so we
   // might want to expose an alias and document that instead.
   this.isCompletionEnabled = true;
   this[kSawKeyPress] = false;
@@ -909,7 +909,7 @@ class Interface extends InterfaceConstructor {
     this[kOnLine](line);
   }
 
-  // TODO(puskin94): edit [kTtyWrite] to make call this function on a new key combination
+  // upstream-todo(puskin94): edit [kTtyWrite] to make call this function on a new key combination
   //                 to make it add a new line in the middle of a "complete" multiline.
   //                 I tried with shift + enter but it is not detected. Find a new one.
   //                 Make sure to call this[kSavePreviousState](); && this.clearLine();
@@ -1080,10 +1080,10 @@ class Interface extends InterfaceConstructor {
     this[kHistoryNext]();
   }
 
-  // TODO(BridgeAR): Add underscores to the search part and a red background in
+  // upstream-todo(BridgeAR): Add underscores to the search part and a red background in
   // case no match is found. This should only be the visual part and not the
   // actual line content!
-  // TODO(BridgeAR): In case the substring based search is active and the end is
+  // upstream-todo(BridgeAR): In case the substring based search is active and the end is
   // reached, show a comment how to search the history as before. E.g., using
   // <ctrl> + N. Only show this after two/three UPs or DOWNs, not on the first
   // one.
@@ -1245,7 +1245,7 @@ class Interface extends InterfaceConstructor {
     if (key.ctrl && key.shift) {
       /* Control and shift pressed */
       switch (key.name) {
-        // TODO(BridgeAR): The transmitted escape sequence is `\b` and that is
+        // upstream-todo(BridgeAR): The transmitted escape sequence is `\b` and that is
         // identical to <ctrl>-h. It should have a unique escape sequence.
         case "backspace":
           this[kDeleteLineLeft]();
@@ -1350,7 +1350,7 @@ class Interface extends InterfaceConstructor {
           break;
 
         case "w": // Delete backwards to a word boundary
-        // TODO(BridgeAR): The transmitted escape sequence is `\b` and that is
+        // upstream-todo(BridgeAR): The transmitted escape sequence is `\b` and that is
         // identical to <ctrl>-h. It should have a unique escape sequence.
         // Falls through
         case "backspace":

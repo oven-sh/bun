@@ -602,7 +602,7 @@ function setupReverseSearch(repl) {
   }
 
   function print(outputLine, inputLine, cursor = repl.cursor) {
-    // TODO(BridgeAR): Resizing the terminal window hides the overlay. To fix
+    // upstream-todo(BridgeAR): Resizing the terminal window hides the overlay. To fix
     // that, readline must be aware of this information. It's probably best to
     // add a couple of properties to readline that allow to do the following:
     // 1. Add arbitrary data to the end of the current line while not counting

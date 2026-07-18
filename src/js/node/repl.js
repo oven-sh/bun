@@ -926,7 +926,7 @@ class REPLServer extends Interface {
       // Editor mode
       if (key.ctrl && !key.shift) {
         switch (key.name) {
-          // TODO(BridgeAR): There should not be a special mode necessary for full
+          // upstream-todo(BridgeAR): There should not be a special mode necessary for full
           // multiline support.
           case "d": // End editor mode
             _turnOffEditorMode(self);
@@ -958,7 +958,7 @@ class REPLServer extends Interface {
     self.displayPrompt();
   }
   setupHistory(historyConfig = {}, cb) {
-    // TODO(puskin94): necessary because historyConfig can be a string for backwards compatibility
+    // upstream-todo(puskin94): necessary because historyConfig can be a string for backwards compatibility
     const options = typeof historyConfig === "string" ? { filePath: historyConfig } : historyConfig;
 
     if (typeof cb === "function") {
@@ -1155,7 +1155,7 @@ class REPLServer extends Interface {
     this.context = this.createContext();
     this.underscoreAssigned = false;
     this.underscoreErrAssigned = false;
-    // TODO(BridgeAR): Deprecate the lines.
+    // upstream-todo(BridgeAR): Deprecate the lines.
     this.lines = [];
     this.lines.level = [];
 
@@ -1236,7 +1236,7 @@ function start(prompt, source, eval_, useGlobal, ignoreUndefined, replMode) {
   return new REPLServer(prompt, source, eval_, useGlobal, ignoreUndefined, replMode);
 }
 
-// TODO(BridgeAR): This should be replaced with acorn to build an AST. The
+// upstream-todo(BridgeAR): This should be replaced with acorn to build an AST. The
 // language became more complex and using a simple approach like this is not
 // sufficient anymore.
 function _memory(cmd) {

@@ -98,7 +98,7 @@ function runTest() {
             }));
             throw e;
           }
-          // TODO(BridgeAR): Auto close on last chunk!
+          // upstream-todo(BridgeAR): Auto close on last chunk!
           i++;
         }
 

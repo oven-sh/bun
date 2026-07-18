@@ -3006,7 +3006,7 @@ impl RunCommand {
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
-        // positional wins, `-p` wins.
+        // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive
             && !ctx.runtime_options.eval.eval_and_print
             && ctx.positionals.is_empty()

@@ -134,9 +134,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that.
-    // FIXME: double-parse — checkSyntax discards its AST and runInThisContext
-    // reparses via JSC::evaluate; migrate to compile-once via m_cachedExecutable.
+    // recoverable-error flow (and user code) relies on that. This is a
+    // double-parse (checkSyntax discards its AST and runInThisContext reparses
+    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
     JSC::ParserError parseError;
     if (!JSC::checkSyntax(vm, source, parseError)) {
         auto exception = parseError.toErrorObject(globalObject, source, -1);

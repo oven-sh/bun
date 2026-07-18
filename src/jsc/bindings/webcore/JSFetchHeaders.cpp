@@ -69,6 +69,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_delete);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_get);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_has);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set);
+static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_clear);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_entries);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_values);
@@ -309,6 +310,7 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
     { "getAll"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_getAll, 1 } },
     { "has"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_has, 1 } },
     { "set"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_set, 2 } },
+    { "clear"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_clear, 0 } },
     { "entries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_entries, 0 } },
     { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_keys, 0 } },
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_values, 0 } },
@@ -442,6 +444,21 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_deleteBody(JSC
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_deleteBody>(*lexicalGlobalObject, *callFrame, "delete");
+}
+
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_clearBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clear(); })));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_clear, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_clearBody>(*lexicalGlobalObject, *callFrame, "clear");
 }
 
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_getBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
@@ -597,18 +614,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexic
     }
 
     FetchHeaders& headers = thisObject->wrapped();
-    // HTTPHeaderMap's iterator covers only the common and uncommon segments;
-    // set-cookie values live in their own segment, so size() (which counts
-    // every cookie) used to leave trailing holes in the array. Size for one
-    // entry per unique name and append "set-cookie" explicitly.
-    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.sizeAfterJoiningSetCookieHeader());
+    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.size());
 
-    unsigned int i = 0;
-    for (const auto& header : headers.internalHeaders()) {
+    for (unsigned int i = 0; const auto& header : headers.internalHeaders()) {
         outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
-    }
-    if (!headers.internalHeaders().getSetCookieHeaders().isEmpty()) {
-        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, WTF::httpHeaderNameDefaultCaseStringImpl(HTTPHeaderName::SetCookie)));
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(outArray));
@@ -704,7 +713,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         for (const auto& it : vec) {
             const auto& name = it.key;
             const auto& value = it.value;
-            obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, lowercaseHeaderName(name)), jsString(vm, value));
+            obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value));
         }
     }
 

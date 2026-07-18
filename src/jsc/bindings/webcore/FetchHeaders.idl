@@ -39,6 +39,7 @@ typedef (sequence<sequence<ByteString>> or record<ByteString, ByteString>) Heade
     ByteString? get(ByteString name);
     boolean has(ByteString name);
     undefined set(ByteString name, ByteString value);
+    undefined clear();
 
     iterable<ByteString, ByteString>;
 };

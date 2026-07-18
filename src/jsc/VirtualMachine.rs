@@ -1472,7 +1472,10 @@ impl VirtualMachine {
                 dispatch = true;
             }
 
-            if dispatch {
+            // Same guard as on entry: a fatal throw during the inner drain
+            // must not re-dispatch. The main-thread case already hard-exits
+            // via `exit_on_uncaught_exception`; this covers workers.
+            if dispatch && self.unhandled_error_counter == 0 {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 

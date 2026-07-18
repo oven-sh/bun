@@ -1265,11 +1265,7 @@ describe("bun build --metafile-md", () => {
 
     // a/shared.js is imported by usea.js, b/shared.js by useb.js. A lookup
     // that ignored directories would attribute both to the first match.
-    expect(content).toMatch(
-      /### `a\/shared\.js`\n\n[\s\S]*?- \*\*Imported by\*\* \(1 files\): `usea\.js`/,
-    );
-    expect(content).toMatch(
-      /### `b\/shared\.js`\n\n[\s\S]*?- \*\*Imported by\*\* \(1 files\): `useb\.js`/,
-    );
+    expect(content).toMatch(/### `a\/shared\.js`\n\n[\s\S]*?- \*\*Imported by\*\* \(1 files\): `usea\.js`/);
+    expect(content).toMatch(/### `b\/shared\.js`\n\n[\s\S]*?- \*\*Imported by\*\* \(1 files\): `useb\.js`/);
   });
 });

@@ -2048,12 +2048,13 @@ async function getVendorTests(cwd) {
         // skipTestNames filters out individual tests by name (vs skipTests which drops whole
         // files), so a single timing-sensitive upstream test doesn't cost the rest of its file.
         // `bun test -t` is a regex, so a negative lookahead that rejects any title containing a
-        // skip key leaves everything else matched.
+        // skip key leaves everything else matched. --pass-with-no-tests keeps a file that's
+        // fully filtered from exiting 1 and being annotated as a failure.
         const testArgs = [];
         const skipNames = skipTestNames ? Object.keys(skipTestNames) : [];
         if (skipNames.length) {
           const escaped = skipNames.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-          testArgs.push("--test-name-pattern", `^(?!.*(?:${escaped}))`);
+          testArgs.push("--test-name-pattern", `^(?!.*(?:${escaped}))`, "--pass-with-no-tests");
         }
 
         return {

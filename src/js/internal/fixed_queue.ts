@@ -61,7 +61,9 @@ class FixedCircularBuffer<T> {
   constructor() {
     this.bottom = 0;
     this.top = 0;
-    this.list = $newArrayWithSize(kSize);
+    // Filled rather than left holey: a holey array deoptimizes element access
+    // and is observable through the queue's backing list.
+    this.list = $newArrayWithSize<T | undefined>(kSize).fill(undefined);
     this.next = null;
   }
 

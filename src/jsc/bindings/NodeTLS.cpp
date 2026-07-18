@@ -46,6 +46,7 @@ static WTF::String derToPEMString(const unsigned char* der, size_t derLen)
 
 JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     VM& vm = globalObject->vm();
 
     const struct us_cert_der_t* out;
@@ -58,9 +59,10 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
         auto raw = out[i];
         auto str = derToPEMString(raw.der, raw.len);
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -436,8 +436,16 @@ pub(crate) fn rm_options_for_testing(
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     let parsed = args::Rm::from_js(global, &mut slice)?;
     let obj = JSValue::create_empty_object(global, 4);
-    obj.put(global, b"retryDelay", JSValue::js_number(parsed.retry_delay as f64));
-    obj.put(global, b"maxRetries", JSValue::js_number(parsed.max_retries as f64));
+    obj.put(
+        global,
+        b"retryDelay",
+        JSValue::js_number(parsed.retry_delay as f64),
+    );
+    obj.put(
+        global,
+        b"maxRetries",
+        JSValue::js_number(parsed.max_retries as f64),
+    );
     obj.put(global, b"recursive", JSValue::js_boolean(parsed.recursive));
     obj.put(global, b"force", JSValue::js_boolean(parsed.force));
     Ok(obj)

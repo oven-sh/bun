@@ -125,9 +125,7 @@ class FSEvent {
 
 function assertFSEventHandle(handle) {
   if (!(handle instanceof FSEvent)) {
-    throw $ERR_INTERNAL_ASSERTION(
-      "handle must be a FSEvent" + require("internal/shared").kInternalAssertionSuffix,
-    );
+    throw $ERR_INTERNAL_ASSERTION("handle must be a FSEvent" + require("internal/shared").kInternalAssertionSuffix);
   }
 }
 

@@ -7920,12 +7920,14 @@ impl NodeFS {
                     // Node reaches a missing path through the lstat() that
                     // validateRmOptions performs before removing anything, so the
                     // ENOENT it reports is tagged `lstat`, not `rm`.
-                    return Err(
-                        sys::Error::from_code(E::ENOENT, sys::Tag::lstat).with_path(args.path.slice())
-                    );
+                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::lstat)
+                        .with_path(args.path.slice()));
                 }
-                return Err(sys::Error::from_code(map_anyerror_to_errno_rm_tree(&err), sys::Tag::rm)
-                    .with_path(args.path.slice()));
+                return Err(sys::Error::from_code(
+                    map_anyerror_to_errno_rm_tree(&err),
+                    sys::Tag::rm,
+                )
+                .with_path(args.path.slice()));
             }
             return Ok(());
         }
@@ -10061,7 +10063,10 @@ pub fn zig_delete_tree(
                                 &ancestor.name
                             };
                             if matches!(
-                                dt_delete_dir(sys::Dir::borrow(&ancestor.parent_dir), ancestor_name),
+                                dt_delete_dir(
+                                    sys::Dir::borrow(&ancestor.parent_dir),
+                                    ancestor_name
+                                ),
                                 Err(E::ENOTEMPTY | E::EEXIST)
                             ) {
                                 return Err(dt_err(E::ENOTEMPTY));

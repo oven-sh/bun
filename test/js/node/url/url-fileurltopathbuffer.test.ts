@@ -52,9 +52,7 @@ describe("fileURLToPathBuffer", () => {
   });
 
   test("windows: drive letters and separators", () => {
-    expect(fileURLToPathBuffer(new URL("file:///C:/dir/x.txt"), { windows: true }).toString()).toBe(
-      "C:\\dir\\x.txt",
-    );
+    expect(fileURLToPathBuffer(new URL("file:///C:/dir/x.txt"), { windows: true }).toString()).toBe("C:\\dir\\x.txt");
     expect(() => fileURLToPathBuffer(new URL("file:///dir/x.txt"), { windows: true })).toThrowWithCode(
       TypeError,
       "ERR_INVALID_FILE_URL_PATH",

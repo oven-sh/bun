@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { resolveObjectURL } from "node:buffer";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -256,4 +258,77 @@ describe("url", () => {
     expect(params.get("second")).toBe("replaced");
     expect(params.get("third")).toBeNull();
   });
+});
+
+describe("object URL prefix check", () => {
+  // The "blob:" prefix check dispatches on encoding and only reads
+  // prefix.len() code units; these inputs must not be transcoded first.
+  it("revokeObjectURL / resolveObjectURL handle non-blob inputs across encodings", () => {
+    const latin1 = "\u00e9not-a-blob";
+    const utf16 = "\u{1f600}not-a-blob";
+    const blobish = "blob:" + "\u{1f600}";
+    const real = URL.createObjectURL(new Blob(["hi"]));
+    expect({
+      revokeLatin1: URL.revokeObjectURL(latin1),
+      revokeUtf16: URL.revokeObjectURL(utf16),
+      revokeBlobish: URL.revokeObjectURL(blobish),
+      resolveLatin1: resolveObjectURL(latin1),
+      resolveUtf16: resolveObjectURL(utf16),
+      resolveBlobish: resolveObjectURL(blobish),
+      resolveUtf16Real: resolveObjectURL(real + "\u{1f600}"),
+      resolveReal: resolveObjectURL(real) instanceof Blob,
+    }).toEqual({
+      revokeLatin1: undefined,
+      revokeUtf16: undefined,
+      revokeBlobish: undefined,
+      resolveLatin1: undefined,
+      resolveUtf16: undefined,
+      resolveBlobish: undefined,
+      resolveUtf16Real: undefined,
+      resolveReal: true,
+    });
+    URL.revokeObjectURL(real);
+    expect(resolveObjectURL(real)).toBeUndefined();
+  });
+
+  // bun_core::String::{has_prefix_comptime, eql_comptime} used to scan or
+  // transcode the entire string before comparing a short ASCII literal. With
+  // an O(literal) check this workload is effectively free; with an O(n) check
+  // it allocates and transcodes tens of GB and cannot finish inside the spawn
+  // timeout. Covers both encoding arms (UTF-16 and 8-bit Latin-1) and both
+  // helpers (has_prefix_comptime via revoke/resolveObjectURL, eql_comptime via
+  // fetch's protocol option).
+  test("ASCII prefix/equality checks on huge strings are O(k), not O(n)", async () => {
+    const fixture = `
+      const { resolveObjectURL } = require("node:buffer");
+      const n = 16 * 1024 * 1024;
+      const huge16 = Buffer.alloc(n * 2, "\\u0100", "utf16le").toString("utf16le");
+      const huge8 = Buffer.alloc(n, 0xe9).toString("latin1");
+      if (huge16.length !== n || huge16.charCodeAt(0) !== 0x100) throw new Error("setup");
+      if (huge8.length !== n || huge8.charCodeAt(0) !== 0xe9) throw new Error("setup");
+      for (const huge of [huge16, huge8]) {
+        for (let i = 0; i < 2000; i++) {
+          URL.revokeObjectURL(huge);
+          resolveObjectURL(huge);
+          try { fetch("http://x", { protocol: huge }).catch(() => {}); } catch {}
+        }
+      }
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 60_000);
 });

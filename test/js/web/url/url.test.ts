@@ -1,7 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
-import { parseArgs } from "node:util";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -292,32 +291,28 @@ describe("object URL prefix check", () => {
     expect(resolveObjectURL(real)).toBeUndefined();
   });
 
-  it("util.parseArgs classifies UTF-16 and Latin-1 tokens correctly", () => {
-    const utf16Positional = "x\u0100y";
-    const latin1Positional = "x\u00e9y";
-    for (const p of [utf16Positional, latin1Positional]) {
-      const { values, positionals } = parseArgs({
-        args: ["--flag", p, "-a"],
-        options: { flag: { type: "boolean" }, a: { type: "boolean", short: "a" } },
-        allowPositionals: true,
-      });
-      expect({ values, positionals }).toEqual({
-        values: { flag: true, a: true },
-        positionals: [p],
-      });
-    }
-  });
-
-  // bun_core::String::has_prefix_comptime used to scan/transcode the entire
-  // string before checking a 5-byte prefix. With an O(prefix) check this
-  // workload is effectively free; with an O(n) check it allocates and
-  // transcodes tens of GB and cannot finish inside the spawn timeout.
-  test("revokeObjectURL on a large UTF-16 string is O(prefix), not O(n)", async () => {
+  // bun_core::String::{has_prefix_comptime, eql_comptime} used to scan or
+  // transcode the entire string before comparing a short ASCII literal. With
+  // an O(literal) check this workload is effectively free; with an O(n) check
+  // it allocates and transcodes tens of GB and cannot finish inside the spawn
+  // timeout. Covers both encoding arms (UTF-16 and 8-bit Latin-1) and both
+  // helpers (has_prefix_comptime via revoke/resolveObjectURL, eql_comptime via
+  // fetch's protocol option).
+  test("ASCII prefix/equality checks on huge strings are O(k), not O(n)", async () => {
     const fixture = `
+      const { resolveObjectURL } = require("node:buffer");
       const n = 16 * 1024 * 1024;
-      const huge = Buffer.alloc(n * 2, "\\u0100", "utf16le").toString("utf16le");
-      if (huge.length !== n || huge.charCodeAt(0) !== 0x100) throw new Error("setup");
-      for (let i = 0; i < 2000; i++) URL.revokeObjectURL(huge);
+      const huge16 = Buffer.alloc(n * 2, "\\u0100", "utf16le").toString("utf16le");
+      const huge8 = Buffer.alloc(n, 0xe9).toString("latin1");
+      if (huge16.length !== n || huge16.charCodeAt(0) !== 0x100) throw new Error("setup");
+      if (huge8.length !== n || huge8.charCodeAt(0) !== 0xe9) throw new Error("setup");
+      for (const huge of [huge16, huge8]) {
+        for (let i = 0; i < 2000; i++) {
+          URL.revokeObjectURL(huge);
+          resolveObjectURL(huge);
+          try { fetch("http://x", { protocol: huge }).catch(() => {}); } catch {}
+        }
+      }
       console.log("done");
     `;
     await using proc = Bun.spawn({

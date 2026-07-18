@@ -241,6 +241,22 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfiesExact("5.0.0-beta.1", "5.0.0", false);
   });
 
+  test("overflow-length version components are not treated as wildcards", () => {
+    // A major/minor/patch component longer than 20 digits must behave the same
+    // as one that is exactly 20 digits and overflows u64. Previously the 21+
+    // digit case fell through to `None` (a wildcard) so any version matched.
+    // node-semver returns false for all of these.
+    const twenty = Buffer.alloc(20, "9").toString();
+    const twentyOne = Buffer.alloc(21, "9").toString();
+    for (const big of [twenty, twentyOne]) {
+      testSatisfies("^" + big, "1.0.0", false);
+      testSatisfies("^" + big, "5.0.0", false);
+      testSatisfies("~" + big, "1.0.0", false);
+      testSatisfies("~" + big, "5.0.0", false);
+      testSatisfies("~1." + big, "2.0.0", false);
+    }
+  });
+
   test("ranges", () => {
     testSatisfies("~1.2.3", "1.2.3", true);
     testSatisfies("~1.2", "1.2.0", true);

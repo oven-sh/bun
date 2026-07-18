@@ -325,6 +325,10 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
     }
 
+    pub fn mark_wrote_date_header(&mut self) {
+        c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
+    }
+
     pub fn write_mark(&mut self) {
         c::uws_res_write_mark(Self::ssl_flag(), self.as_raw())
     }
@@ -731,6 +735,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.mark_wrote_content_length_header())
     }
 
+    pub fn mark_wrote_date_header(self) {
+        any_dispatch!(self, |r| r.mark_wrote_date_header())
+    }
+
     pub fn write_mark(self) {
         any_dispatch!(self, |r| r.write_mark())
     }
@@ -1083,6 +1091,7 @@ pub mod c {
     // unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;

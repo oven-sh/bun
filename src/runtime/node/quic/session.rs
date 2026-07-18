@@ -1017,8 +1017,7 @@ impl QuicSession {
                     {
                         continue;
                     }
-                    let buf =
-                        ArrayBuffer::create_buffer(global, &token).or_report(global);
+                    let buf = ArrayBuffer::create_buffer(global, &token).or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref()
@@ -1049,8 +1048,7 @@ impl QuicSession {
                         self.schedule_process();
                         continue;
                     }
-                    let buf =
-                        ArrayBuffer::create_buffer(global, &blob).or_report(global);
+                    let buf = ArrayBuffer::create_buffer(global, &blob).or_report(global);
                     if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref()

@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean, validateObject } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -60,21 +60,53 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
+function debuglogImpl(enabled, set) {
   if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+    let impl;
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+      impl = function debug() {
+        const msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      impl = function debug() {};
     }
+    Object.defineProperty(impl, "enabled", {
+      __proto__: null,
+      value: enabled,
+      configurable: true,
+      enumerable: true,
+    });
+    debugs[set] = impl;
   }
   return debugs[set];
+}
+
+function debuglog(set, cb) {
+  set = set.toUpperCase();
+  const enabled = debugEnvRegex.test(set);
+  // The implementation is created eagerly so that the NODE_DEBUG=http warning
+  // is emitted when node:http requires this, the way node:_http_client does.
+  const impl = debuglogImpl(enabled, set);
+  let notified = false;
+  const logger = function debuglogWrapper() {
+    if (!notified) {
+      notified = true;
+      if (typeof cb === "function") cb(impl);
+    }
+    return impl.$apply(undefined, arguments);
+  };
+  Object.defineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return enabled;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {
@@ -213,30 +245,82 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
-  validateString(text, "text");
+// internal/streams/utils pulls in the whole stream machinery and
+// internal/util/colors requires node:tty, so neither loads until a caller
+// actually asks styleText to look at a stream.
+let lazyStreamUtils;
+let lazyUtilColors;
 
-  if ($isJSArray(format)) {
-    let left = "";
-    let right = "";
-    for (const key of format) {
-      const formatCodes = inspect.colors[key];
-      if (formatCodes == null) {
-        validateOneOf(key, "format", ObjectKeys(inspect.colors));
-      }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+// The options are read the way node's lib/util.js reads them today, so that
+// `{ stream: null }` falls back to process.stdout rather than throwing.
+function styleText(format, text, options) {
+  const validateStream = options?.validateStream ?? true;
+
+  validateString(text, "text");
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
+  validateBoolean(validateStream, "options.validateStream");
+
+  let skipColorize;
+  if (validateStream) {
+    const stream = options?.stream ?? process.stdout;
+    lazyStreamUtils ??= require("internal/streams/utils");
+    const { isReadableStream, isWritableStream, isNodeStream } = lazyStreamUtils;
+    if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
 
-    return `${left}${text}${right}`;
+    lazyUtilColors ??= require("internal/util/colors");
+    skipColorize = !lazyUtilColors.shouldColorize(stream);
   }
 
-  let formatCodes = inspect.colors[format];
+  const formatArray = $isJSArray(format) ? format : [format];
 
-  if (formatCodes == null) {
-    validateOneOf(format, "format", ObjectKeys(inspect.colors));
+  const codes: [number, number][] = [];
+  for (const key of formatArray) {
+    if (key === "none") continue;
+    const formatCodes = inspect.colors[key];
+    // If the format is not a valid style, throw an error.
+    if (formatCodes == null) {
+      validateOneOf(key, "format", ObjectKeys(inspect.colors));
+    }
+    if (skipColorize) continue;
+    codes.push(formatCodes);
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+
+  if (skipColorize) {
+    return text;
+  }
+
+  let openCodes = "";
+  for (let i = 0; i < codes.length; i++) {
+    openCodes += `\u001b[${codes[i][0]}m`;
+  }
+
+  // Process the text to handle nested styles: reapply the style after any
+  // matching reset code that is not at the very end of the string.
+  let processedText = text;
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i];
+    processedText = processedText.replace(new RegExp(`\\u001b\\[${code[1]}m`, "g"), (match, offset) => {
+      if (offset + match.length < processedText.length) {
+        if (code[0] === inspect.colors.dim[0] || code[0] === inspect.colors.bold[0]) {
+          // Dim and bold are not mutually exclusive, so reapply.
+          return `${match}\u001b[${code[0]}m`;
+        }
+        return `\u001b[${code[0]}m`;
+      }
+      return match;
+    });
+  }
+
+  let closeCodes = "";
+  for (let i = codes.length - 1; i >= 0; i--) {
+    closeCodes += `\u001b[${codes[i][1]}m`;
+  }
+
+  return `${openCodes}${processedText}${closeCodes}`;
 }
 
 function getSystemErrorName(err: any) {

@@ -78,8 +78,30 @@ describe("process.emitWarning default stderr report", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    expect(stderr).not.toMatch(/DEP0T4|DeprecationWarning/);
     expect(stdout).toBe("event:DeprecationWarning:DEP0T4\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--trace-deprecation prints the warning stack instead of the hint", async () => {
+    const src = `
+      const util = require("node:util");
+      util.deprecate(() => 1, "dep msg E", "DEP0T5")();
+    `;
+    const { stderr, exitCode } = await run(["--trace-deprecation"], src);
+    expect(stderr.split("\n")[0]).toMatch(/^\(\w+:\d+\) \[DEP0T5\] DeprecationWarning: dep msg E$/);
+    expect(stderr).toMatch(/^\s+at /m);
+    expect(stderr).not.toMatch(/internal:util\/deprecate/);
+    expect(stderr).not.toContain("--trace-deprecation ...");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--trace-warnings prints the warning stack for non-deprecation warnings", async () => {
+    const src = `process.emitWarning("trace me", "CustomWarning", "CODE10");`;
+    const { stderr, exitCode } = await run(["--trace-warnings"], src);
+    expect(stderr.split("\n")[0]).toMatch(/^\(\w+:\d+\) \[CODE10\] CustomWarning: trace me$/);
+    expect(stderr).toMatch(/^\s+at /m);
+    expect(stderr).not.toContain("--trace-warnings ...");
     expect(exitCode).toBe(0);
   });
 });

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { resolveObjectURL } from "node:buffer";
+import { parseArgs } from "node:util";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -256,4 +259,81 @@ describe("url", () => {
     expect(params.get("second")).toBe("replaced");
     expect(params.get("third")).toBeNull();
   });
+});
+
+describe("object URL prefix check", () => {
+  // The "blob:" prefix check dispatches on encoding and only reads
+  // prefix.len() code units; these inputs must not be transcoded first.
+  it("revokeObjectURL / resolveObjectURL handle non-blob inputs across encodings", () => {
+    const latin1 = "\u00e9not-a-blob";
+    const utf16 = "\u{1f600}not-a-blob";
+    const blobish = "blob:" + "\u{1f600}";
+    const real = URL.createObjectURL(new Blob(["hi"]));
+    expect({
+      revokeLatin1: URL.revokeObjectURL(latin1),
+      revokeUtf16: URL.revokeObjectURL(utf16),
+      revokeBlobish: URL.revokeObjectURL(blobish),
+      resolveLatin1: resolveObjectURL(latin1),
+      resolveUtf16: resolveObjectURL(utf16),
+      resolveBlobish: resolveObjectURL(blobish),
+      resolveUtf16Real: resolveObjectURL(real + "\u{1f600}"),
+      resolveReal: resolveObjectURL(real) instanceof Blob,
+    }).toEqual({
+      revokeLatin1: undefined,
+      revokeUtf16: undefined,
+      revokeBlobish: undefined,
+      resolveLatin1: undefined,
+      resolveUtf16: undefined,
+      resolveBlobish: undefined,
+      resolveUtf16Real: undefined,
+      resolveReal: true,
+    });
+    URL.revokeObjectURL(real);
+    expect(resolveObjectURL(real)).toBeUndefined();
+  });
+
+  it("util.parseArgs classifies UTF-16 and Latin-1 tokens correctly", () => {
+    const utf16Positional = "x\u0100y";
+    const latin1Positional = "x\u00e9y";
+    for (const p of [utf16Positional, latin1Positional]) {
+      const { values, positionals } = parseArgs({
+        args: ["--flag", p, "-a"],
+        options: { flag: { type: "boolean" }, a: { type: "boolean", short: "a" } },
+        allowPositionals: true,
+      });
+      expect({ values, positionals }).toEqual({
+        values: { flag: true, a: true },
+        positionals: [p],
+      });
+    }
+  });
+
+  // bun_core::String::has_prefix_comptime used to scan/transcode the entire
+  // string before checking a 5-byte prefix. With an O(prefix) check this
+  // workload is effectively free; with an O(n) check it allocates and
+  // transcodes tens of GB and cannot finish inside the spawn timeout.
+  test("revokeObjectURL on a large UTF-16 string is O(prefix), not O(n)", async () => {
+    const fixture = `
+      const n = 16 * 1024 * 1024;
+      const huge = Buffer.alloc(n * 2, "\\u0100", "utf16le").toString("utf16le");
+      if (huge.length !== n || huge.charCodeAt(0) !== 0x100) throw new Error("setup");
+      for (let i = 0; i < 2000; i++) URL.revokeObjectURL(huge);
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 60_000);
 });

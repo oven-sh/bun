@@ -1282,11 +1282,33 @@ thread_local! {
     // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
     // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
     // on any leaked parser would touch freed JSC/uws state. Skip slot
-    // teardown (a leaked parser is a bug anyway) while still freeing the
-    // pool allocation itself.
+    // teardown while still freeing the pool allocation itself. A leaked
+    // parser's native-heap fields are released by
+    // `free_leaked_parsers_for_thread_exit` (worker teardown step 5).
     static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
         const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
+}
+
+/// Worker-thread teardown hook: reclaim any parser the JSC VM failed to finalize. Called from
+/// `WebWorker::shutdown` after `~VM`, so every JSC-backed handle on a leaked parser is dangling;
+/// `free_native_for_thread_exit` forgets those and drops the pure-Rust/C allocations (engine's
+/// stream HashMap, lshpack state, per-stream boxes, scratch Vecs). The pool itself is taken so
+/// the slot storage is released here rather than by the TLS destructor.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__H2FrameParser__onThreadExit() {
+    let Some(pool) = POOL.with_borrow_mut(Option::take) else {
+        return;
+    };
+    let mut it = pool.hive.used.iter_set();
+    while let Some(index) = it.next() {
+        let slot = pool.hive.ptr_at(index);
+        // SAFETY: `used` bit set ⇒ slot is a fully-initialized parser whose `finalize()` never
+        // ran; this thread is the sole remaining owner (the VM that could have touched it is
+        // gone) and the shared borrow touches only interior-mutable fields.
+        unsafe { (*slot).free_native_for_thread_exit() };
+    }
+    drop(pool);
 }
 
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
@@ -2320,6 +2342,34 @@ impl Stream {
         if !FINALIZING {
             VirtualMachine::get().event_loop_mut().process_gc_timer();
         }
+    }
+
+    /// Free this stream's heap allocations after the owning worker's JSC VM has been torn down.
+    /// JSC-backed fields (Strong handles, the AbortSignal listener) are forgotten rather than
+    /// dropped: their backing storage lives in the VM's HandleSet / heap, already freed by ~VM,
+    /// so running their Drop would touch freed memory. See free_leaked_parsers_for_thread_exit.
+    ///
+    /// # Safety
+    /// `this` is a heap::alloc'd Stream still linked from a parser that finalize() never reached.
+    /// The worker's JSC VM must already be torn down and no other reference to `*this` may exist.
+    unsafe fn free_native_for_thread_exit(this: *mut Self) {
+        // SAFETY: caller contract; sole owner.
+        let stream = unsafe { &mut *this };
+        let _ = ManuallyDrop::new(core::mem::take(&mut stream.js_context));
+        if let Some(signal) = stream.signal.take() {
+            // SignalRef::Drop detaches from the (freed) AbortSignal and derefs the parser; skip
+            // it and reclaim only the Box.
+            let raw = Box::into_raw(signal);
+            // SAFETY: `raw` is the unique Box allocation; ManuallyDrop<T> is repr(transparent).
+            drop(unsafe { Box::from_raw(raw.cast::<ManuallyDrop<SignalRef>>()) });
+        }
+        for frame in core::mem::take(&mut stream.data_frame_queue).data.drain(..) {
+            let PendingFrame { callback, .. } = frame;
+            let _ = ManuallyDrop::new(callback);
+        }
+        // SAFETY: caller contract; every field whose Drop would touch JSC has been taken above,
+        // so the remaining auto-Drop (Vec<u8> etc.) is pure heap.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -10033,6 +10083,44 @@ impl H2FrameParser {
         for _ in 0..stranded {
             self.deref();
         }
+    }
+
+    /// Free every heap allocation this parser owns after the worker's JSC VM has been torn down.
+    /// `finalize()` is the owning path, but ~VM's lastChanceToFinalize does not always reach the
+    /// JSH2FrameParser cell when a worker is terminated mid-stream (the same gap the
+    /// no-validate-leaksan.txt worker tests cover). The slot then leaks every field's allocation,
+    /// because the POOL is ManuallyDrop. This walks the JSC-free path of deinit(): pure-Rust/C
+    /// allocations are dropped, and the JSC-backed handles (whose storage already went down with
+    /// the VM) are forgotten so their Drop cannot touch freed memory.
+    fn free_native_for_thread_exit(&self) {
+        *self.engine.borrow_mut() = None;
+        self.hpack.set(None);
+        self.read_buffer.set(MutableString::default());
+        self.write_buffer.set(Vec::new());
+        self.custom_settings.set(Vec::new());
+        self.wire_custom_settings.set(Vec::new());
+        self.remote_custom_settings_filter.set(Vec::new());
+        self.remote_custom_settings.set(Vec::new());
+        self.pending_stream_send_consumed.set(Vec::new());
+        self.pending_settings_window_submissions.set(Vec::new());
+        self.pending_engine_stream_closes.set(Vec::new());
+        self.rewrite_tail.set(Vec::new());
+        self.hdr_block.set(Vec::new());
+        self.hdr_meta.set(Vec::new());
+        let _ = ManuallyDrop::new(self.strong_this.replace(JsRef::empty()));
+        let mut sctx = self.sctx.replace(BunHashMap::default());
+        let ids: Vec<u32> = sctx.keys().copied().collect();
+        for id in ids {
+            let _ = ManuallyDrop::new(sctx.remove(&id));
+        }
+        drop(sctx);
+        let streams = self.streams.replace(BunHashMap::default());
+        for (_, item) in streams.iter() {
+            // SAFETY: each entry is the heap::alloc'd *mut Stream owned by this parser; the VM
+            // is gone and this is the only remaining owner.
+            unsafe { Stream::free_native_for_thread_exit(*item) };
+        }
+        drop(streams);
     }
 
     fn deinit(&self) {

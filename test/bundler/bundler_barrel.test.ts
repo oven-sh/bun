@@ -1420,7 +1420,7 @@ describe("bundler", () => {
     outdir: "/out",
     // Plugin transforms a.js content
     plugins(builder) {
-      builder.onLoad({ filter: /loadlib\/a\.js$/ }, () => {
+      builder.onLoad({ filter: /loadlib[\/\\]a\.js$/ }, () => {
         return { contents: 'export const A = "transformed-by-plugin";', loader: "js" };
       });
     },

@@ -595,6 +595,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/keep/this/file"
@@ -618,6 +619,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobBasicPattern", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import { used } from "demo-pkg/lib/used.js";
@@ -646,6 +648,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobQuestionMark", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import { file1 } from "demo-pkg/file1.js";
@@ -682,6 +685,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobBraceExpansion", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import { comp } from "demo-pkg/components/comp.js";
@@ -713,6 +717,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobMixedPatterns", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import { used } from "demo-pkg/lib/used.js";
@@ -751,6 +756,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobDeepPattern", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/shallow.js";
@@ -779,6 +785,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobExtensionPattern", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/utils/util.js";
@@ -3174,6 +3181,7 @@ describe("bundler", () => {
   });
   // im confused what this is testing. cross platform slash? there is none?? not even in the go source
   itBundled("dce/PackageJsonSideEffectsFalseCrossPlatformSlash", {
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/foo"

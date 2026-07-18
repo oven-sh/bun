@@ -232,7 +232,7 @@ describe("bundler", () => {
         });
         builder.onResolve({ filter: /^magic:.*/ }, args => {
           expect(args.path).toBe("magic:some_string");
-          expect(args.importer).toBe(root + "/index.ts");
+          expect(args.importer).toBe(path.join(root, "index.ts"));
           expect(args.namespace).toBe("file");
           expect(args.kind).toBe("import-statement");
           onResolveCount++;
@@ -510,7 +510,7 @@ describe("bundler", () => {
         stdout: "this string should exist once this string should exist once",
       },
       onAfterBundle(api) {
-        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"].sort());
+        expect(importers.sort()).toEqual([path.join(root, "one.ts"), path.join(root, "two.ts")].sort());
         expect(onResolveCount).toBe(2);
         const contents = api.readFile("/out.js");
         expect([...contents.matchAll(/this string should exist once/g)].length).toBe(1);

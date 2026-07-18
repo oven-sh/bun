@@ -5,7 +5,7 @@ import assert from 'node:assert';
 {
   const fh = await open(new URL(import.meta.url));
 
-  // TODO: remove autoClose option when it becomes default
+  // autoClose: true is passed explicitly until it becomes the default upstream
   const readableStream = fh.readableWebStream({ autoClose: true });
 
   // Consume the stream

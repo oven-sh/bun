@@ -69,7 +69,7 @@ var ffi = globalThis.Bun.FFI;
 const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
-const viewSource = ffi.viewSource;
+const nativeViewSource = ffi.viewSource;
 
 const BunCString = ffi.CString;
 const nativeLinkSymbols = ffi.linkSymbols;
@@ -81,7 +81,9 @@ delete ffi.closeCallback;
 
 class JSCallback {
   constructor(cb, options) {
-    const { ctx, ptr } = nativeCallback(options, cb);
+    const result = nativeCallback(options, cb);
+    if (Error.isError(result)) throw result;
+    const { ctx, ptr } = result;
     this.#ctx = ctx;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;
@@ -518,6 +520,12 @@ function cc(options) {
   // Previously, it didn't need to be bound
   result.close = result.close.bind(result);
 
+  return result;
+}
+
+function viewSource(symbols, isCallback?) {
+  const result = nativeViewSource(symbols, isCallback);
+  if (Error.isError(result)) throw result;
   return result;
 }
 

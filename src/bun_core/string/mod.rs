@@ -772,8 +772,16 @@ impl String {
         // encoding-aware `to_utf8_without_ref`.
         self.to_utf8_without_ref().slice() == other
     }
+    /// Equality against an ASCII literal. Dispatches on encoding so only
+    /// `lit.len()` units are touched; never scans or transcodes `self`.
     pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool {
-        self.eql_utf8(lit.as_ref())
+        let lit = lit.as_ref();
+        debug_assert!(lit.is_ascii(), "eql_comptime expects an ASCII literal");
+        if self.is_utf16() {
+            return strings::eql_comptime_utf16(self.utf16(), lit);
+        }
+        let bytes = self.latin1();
+        bytes.len() == lit.len() && strings::eql_comptime_ignore_len(bytes, lit)
     }
 
     /// `bun.String.githubAction` — returns a `Display`
@@ -785,15 +793,15 @@ impl String {
         StringGithubActionFormatter { text: self }
     }
 
-    /// `bun.String.hasPrefixComptime` — ASCII-only prefix
-    /// check that avoids materialising the whole UTF-8 view when the
-    /// underlying encoding is 8-bit; falls back to `to_utf8_without_ref` for
-    /// 16-bit / WTF-backed strings.
+    /// `bun.String.hasPrefixComptime` — ASCII prefix check. Dispatches on
+    /// encoding so only `prefix.len()` units are touched; never scans or
+    /// transcodes `self`.
     pub fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool {
-        if let Some(bytes) = self.as_utf8() {
-            return strings::has_prefix_comptime(bytes, prefix);
+        debug_assert!(prefix.is_ascii(), "has_prefix_comptime expects ASCII");
+        if self.is_utf16() {
+            return strings::has_prefix_comptime_utf16(self.utf16(), prefix);
         }
-        strings::has_prefix_comptime(self.to_utf8_without_ref().slice(), prefix)
+        strings::has_prefix_comptime(self.latin1(), prefix)
     }
 
     #[inline]

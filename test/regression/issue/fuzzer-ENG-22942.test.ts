@@ -25,8 +25,10 @@ test("expect.extend with object containing non-function values should throw", ()
 test("expect.extend with valid matchers still works", () => {
   const jest = Bun.jest(import.meta.path);
 
+  // Use a unique matcher name: expect.extend mutates the shared matcher table,
+  // so shadowing a built-in like toBeEven leaks into later files in the same run.
   jest.expect.extend({
-    toBeEven(received: number) {
+    toBeEvenENG22942(received: number) {
       const pass = received % 2 === 0;
       return {
         message: () => `expected ${received} ${pass ? "not " : ""}to be even`,
@@ -35,6 +37,6 @@ test("expect.extend with valid matchers still works", () => {
     },
   });
 
-  jest.expect(4).toBeEven();
-  jest.expect(3).not.toBeEven();
+  jest.expect(4).toBeEvenENG22942();
+  jest.expect(3).not.toBeEvenENG22942();
 });

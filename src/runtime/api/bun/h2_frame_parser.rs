@@ -1284,7 +1284,7 @@ thread_local! {
     // on any leaked parser would touch freed JSC/uws state. Skip slot
     // teardown while still freeing the pool allocation itself. A leaked
     // parser's native-heap fields are released by
-    // `free_leaked_parsers_for_thread_exit` (worker teardown step 5).
+    // `Bun__H2FrameParser__onThreadExit` (worker teardown step 5).
     static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
         const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
@@ -2347,7 +2347,7 @@ impl Stream {
     /// Free this stream's heap allocations after the owning worker's JSC VM has been torn down.
     /// JSC-backed fields (Strong handles, the AbortSignal listener) are forgotten rather than
     /// dropped: their backing storage lives in the VM's HandleSet / heap, already freed by ~VM,
-    /// so running their Drop would touch freed memory. See free_leaked_parsers_for_thread_exit.
+    /// so running their Drop would touch freed memory. See Bun__H2FrameParser__onThreadExit.
     ///
     /// # Safety
     /// `this` is a heap::alloc'd Stream still linked from a parser that finalize() never reached.

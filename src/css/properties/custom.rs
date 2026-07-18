@@ -15,7 +15,7 @@ use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
-use css_values::color::{ColorFallbackKind, CssColor, RGBA};
+use css_values::color::{ColorFallback, ColorFallbackKind, CssColor, RGBA};
 use css_values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
 };
@@ -498,19 +498,26 @@ impl TokenList {
                 break;
             };
             match token {
-                Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let tok = token.clone();
-                    let closing_delimiter = match tok {
-                        Token::OpenParen => Token::CloseParen,
-                        Token::OpenSquare => Token::CloseSquare,
-                        Token::OpenCurly => Token::CloseCurly,
-                        _ => unreachable!(),
-                    };
-                    tokens.push(TokenOrValue::Token(tok));
+                Token::OpenParen => {
+                    tokens.push(TokenOrValue::Token(Token::OpenParen));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_raw(input2, tokens, options, depth + 1)
                     })?;
-                    tokens.push(TokenOrValue::Token(closing_delimiter));
+                    tokens.push(TokenOrValue::Token(Token::CloseParen));
+                }
+                Token::OpenSquare => {
+                    tokens.push(TokenOrValue::Token(Token::OpenSquare));
+                    input.parse_nested_block(|input2| {
+                        TokenListFns::parse_raw(input2, tokens, options, depth + 1)
+                    })?;
+                    tokens.push(TokenOrValue::Token(Token::CloseSquare));
+                }
+                Token::OpenCurly => {
+                    tokens.push(TokenOrValue::Token(Token::OpenCurly));
+                    input.parse_nested_block(|input2| {
+                        TokenListFns::parse_raw(input2, tokens, options, depth + 1)
+                    })?;
+                    tokens.push(TokenOrValue::Token(Token::CloseCurly));
                 }
                 Token::Function(_) => {
                     tokens.push(TokenOrValue::Token(token.clone()));
@@ -680,18 +687,32 @@ impl TokenList {
                         continue;
                     }
                 }
-                Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let closing_delimiter = match &tok {
-                        Token::OpenParen => Token::CloseParen,
-                        Token::OpenSquare => Token::CloseSquare,
-                        Token::OpenCurly => Token::CloseCurly,
-                        _ => unreachable!(),
-                    };
-                    tokens.push(TokenOrValue::Token(tok.clone()));
+                Token::OpenParen => {
+                    tokens.push(TokenOrValue::Token(Token::OpenParen));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_into(input2, tokens, options, depth + 1)
                     })?;
-                    tokens.push(TokenOrValue::Token(closing_delimiter));
+                    tokens.push(TokenOrValue::Token(Token::CloseParen));
+                    last_is_delim = true; // Whitespace is not required after any of these chars.
+                    last_is_whitespace = false;
+                    continue;
+                }
+                Token::OpenSquare => {
+                    tokens.push(TokenOrValue::Token(Token::OpenSquare));
+                    input.parse_nested_block(|input2| {
+                        TokenListFns::parse_into(input2, tokens, options, depth + 1)
+                    })?;
+                    tokens.push(TokenOrValue::Token(Token::CloseSquare));
+                    last_is_delim = true; // Whitespace is not required after any of these chars.
+                    last_is_whitespace = false;
+                    continue;
+                }
+                Token::OpenCurly => {
+                    tokens.push(TokenOrValue::Token(Token::OpenCurly));
+                    input.parse_nested_block(|input2| {
+                        TokenListFns::parse_into(input2, tokens, options, depth + 1)
+                    })?;
+                    tokens.push(TokenOrValue::Token(Token::CloseCurly));
                     last_is_delim = true; // Whitespace is not required after any of these chars.
                     last_is_whitespace = false;
                     continue;
@@ -741,7 +762,7 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
@@ -771,19 +792,19 @@ impl TokenList {
         let mut res = css::SmallList::<Fallbacks, 2>::default();
         if fallbacks.contains(ColorFallbackKind::P3) {
             res.append((
-                ColorFallbackKind::P3.supports_condition(),
-                self.get_fallback(bump, ColorFallbackKind::P3),
+                ColorFallback::P3.supports_condition(),
+                self.get_fallback(bump, ColorFallback::P3),
             ));
         }
 
         if fallbacks.contains(ColorFallbackKind::LAB) {
             res.append((
-                ColorFallbackKind::LAB.supports_condition(),
-                self.get_fallback(bump, ColorFallbackKind::LAB),
+                ColorFallback::Lab.supports_condition(),
+                self.get_fallback(bump, ColorFallback::Lab),
             ));
         }
 
-        if !lowest_fallback.is_empty() {
+        if let Some(lowest_fallback) = lowest_fallback.as_single() {
             for token_or_value in self.v.iter_mut() {
                 match token_or_value {
                     TokenOrValue::Color(color) => {
@@ -1091,7 +1112,7 @@ impl Variable {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> Self {
         Variable {
             name: self.name,
             fallback: self
@@ -1169,7 +1190,7 @@ impl EnvironmentVariable {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> Self {
         EnvironmentVariable {
             name: self.name,
             indices: self.indices.clone(),
@@ -1312,7 +1333,7 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> Self {
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),

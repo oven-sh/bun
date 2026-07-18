@@ -571,9 +571,9 @@ impl<R> CssRuleList<R> {
                         // count against the selector-expansion cap.
                         doc.rules.minify(context, parent_is_unused)?;
                     }
-                    CssRule::Style(_sty) => {
+                    CssRule::Style(sty) => {
                         minify_style_arm(
-                            rule,
+                            sty,
                             &mut rules,
                             &mut style_rules,
                             &mut merge_state,
@@ -656,7 +656,7 @@ impl<R> CssRuleList<R> {
 }
 
 fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
-    rule: &mut CssRule<R>,
+    sty: &mut style::StyleRule<R>,
     rules: &mut Vec<CssRule<R>>,
     style_rules: &mut StyleRuleKeyMap,
     merge_state: &mut StyleRuleMergeState,
@@ -665,9 +665,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
     use css::selector::{self, Component, Selector, SelectorList};
-    let CssRule::Style(sty) = rule else {
-        unreachable!()
-    };
 
     if parent_is_unused || sty.minify(context, parent_is_unused)? {
         return Ok(());
@@ -852,7 +849,16 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // every rule already in the list is fully minified here, which the
         // duplicate check below relies on.
         debug_assert!(!merge_state.pending_minify);
-        rules.push(core::mem::replace(rule, CssRule::Ignored));
+        rules.push(CssRule::Style(core::mem::replace(
+            sty,
+            style::StyleRule {
+                selectors: SelectorList::default(),
+                vendor_prefix: css::VendorPrefix::empty(),
+                declarations: dc::decl_block_empty_static(context.arena),
+                rules: CssRuleList::default(),
+                loc: css::Location::default(),
+            },
+        )));
         merge_state.last_compat = sty_compat;
 
         // Check if this rule is a duplicate of an earlier rule, meaning it has

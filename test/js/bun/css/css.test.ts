@@ -5656,6 +5656,18 @@ describe("css tests", () => {
       "@namespace svg url(http://www.w3.org/2000/svg); .foo:is(svg|a) { color: yellow }",
       '@namespace svg "http://www.w3.org/2000/svg";.foo:is(svg|a){color:#ff0}',
     );
+    // Qualified-name selector matrix — QNamePrefix split coverage.
+    minify_test(
+      "@namespace svg url(http://www.w3.org/2000/svg); [svg|attr]{color:red}",
+      '@namespace svg "http://www.w3.org/2000/svg";[svg|attr]{color:red}',
+    );
+    minify_test("|foo{color:red}", "|foo{color:red}");
+    minify_test("|*{color:red}", "|*{color:red}");
+    minify_test(
+      "@namespace svg url(http://www.w3.org/2000/svg); svg|*{color:red}",
+      '@namespace svg "http://www.w3.org/2000/svg";svg|*{color:red}',
+    );
+    error_test("[*]{color:red}", "ExpectedBarInAttr");
     minify_test("a:is(.foo .bar) { color: yellow }", "a:is(.foo .bar){color:#ff0}");
     minify_test(":is(.foo, .bar) { color: yellow }", ":is(.foo,.bar){color:#ff0}");
     minify_test("a:is(:not(.foo)) { color: yellow }", "a:not(.foo){color:#ff0}");

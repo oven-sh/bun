@@ -138,7 +138,8 @@ impl Size {
                 } else if *vp == VendorPrefix::MOZ {
                     dest.write_str("-moz-available")
                 } else {
-                    unreachable!("Unexpected vendor prefixes")
+                    vp.to_css(dest)?;
+                    dest.write_str("stretch")
                 }
             }
             Size::FitContentFunction(l) => {
@@ -274,7 +275,8 @@ impl MaxSize {
                 } else if *vp == VendorPrefix::MOZ {
                     dest.write_str("-moz-available")
                 } else {
-                    unreachable!("Unexpected vendor prefixes")
+                    vp.to_css(dest)?;
+                    dest.write_str("stretch")
                 }
             }
             MaxSize::FitContentFunction(l) => {

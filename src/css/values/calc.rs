@@ -272,45 +272,28 @@ impl<V: CalcValue> Calc<V> {
     }
 
     pub fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
-        if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
-            // PERF: we can reuse the allocation here
-            // Reshaped for borrowck — clone out of boxes then drop originals.
-            let (a, b) = match (self, rhs) {
-                (Calc::Value(a), Calc::Value(b)) => (*a, *b),
-                _ => unreachable!(),
-            };
-            return Ok(Self::into_calc(Self::add_value(a, b)));
-        }
-        if let (Calc::Number(a), Calc::Number(b)) = (&self, &rhs) {
-            return Ok(Calc::Number(a + b));
-        }
-        if matches!(self, Calc::Value(_)) {
-            // PERF: we can reuse the allocation here
-            let a = match self {
-                Calc::Value(a) => *a,
-                _ => unreachable!(),
-            };
-            let rhs_value = rhs.into_value(input)?;
-            return Ok(Self::into_calc(Self::add_value(a, rhs_value)));
-        }
-        if matches!(rhs, Calc::Value(_)) {
-            // PERF: we can reuse the allocation here
-            let b = match rhs {
-                Calc::Value(b) => *b,
-                _ => unreachable!(),
-            };
-            let this_value = self.into_value(input)?;
-            return Ok(Self::into_calc(Self::add_value(this_value, b)));
-        }
-        if matches!(self, Calc::Function(_)) || matches!(rhs, Calc::Function(_)) {
-            return Ok(Calc::Sum {
-                left: Box::new(self),
+        // PERF: we can reuse the Box<V> allocations in the Value arms.
+        match (self, rhs) {
+            (Calc::Value(a), Calc::Value(b)) => Ok(Self::into_calc(Self::add_value(*a, *b))),
+            (Calc::Number(a), Calc::Number(b)) => Ok(Calc::Number(a + b)),
+            (Calc::Value(a), rhs) => {
+                let rhs_value = rhs.into_value(input)?;
+                Ok(Self::into_calc(Self::add_value(*a, rhs_value)))
+            }
+            (lhs, Calc::Value(b)) => {
+                let this_value = lhs.into_value(input)?;
+                Ok(Self::into_calc(Self::add_value(this_value, *b)))
+            }
+            (lhs @ Calc::Function(_), rhs) | (lhs, rhs @ Calc::Function(_)) => Ok(Calc::Sum {
+                left: Box::new(lhs),
                 right: Box::new(rhs),
-            });
+            }),
+            (lhs, rhs) => {
+                let this_value = lhs.into_value(input)?;
+                let rhs_value = rhs.into_value(input)?;
+                Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
+            }
         }
-        let this_value = self.into_value(input)?;
-        let rhs_value = rhs.into_value(input)?;
-        Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
     }
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {

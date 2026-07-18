@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
-use crate::css_values::color::{ColorFallbackKind, CssColor};
+use crate::css_values::color::{ColorFallback, ColorFallbackKind, CssColor};
 use crate::css_values::length::Length;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
@@ -270,7 +270,7 @@ macro_rules! impl_fallbacks {
                 if fallbacks.contains(ColorFallbackKind::RGB) {
                     res.append(Self {
                         $(
-                            $field: self.$field.get_fallback(arena, ColorFallbackKind::RGB),
+                            $field: self.$field.get_fallback(arena, ColorFallback::Rgb),
                         )+
                     });
                 }
@@ -278,14 +278,14 @@ macro_rules! impl_fallbacks {
                 if fallbacks.contains(ColorFallbackKind::P3) {
                     res.append(Self {
                         $(
-                            $field: self.$field.get_fallback(arena, ColorFallbackKind::P3),
+                            $field: self.$field.get_fallback(arena, ColorFallback::P3),
                         )+
                     });
                 }
 
                 if fallbacks.contains(ColorFallbackKind::LAB) {
                     $(
-                        self.$field = self.$field.get_fallback(arena, ColorFallbackKind::LAB);
+                        self.$field = self.$field.get_fallback(arena, ColorFallback::Lab);
                     )+
                 }
 

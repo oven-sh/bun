@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_parser::CssResult as Result;
 use crate::dependencies::UrlDependency;
 use crate::generics::DeepClone as _;
-use crate::values::color::ColorFallbackKind;
+use crate::values::color::{ColorFallback, ColorFallbackKind};
 use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
 use crate::values::url::Url;
@@ -149,7 +149,7 @@ impl Image {
 
         // Get RGB fallbacks if needed.
         let rgb = if fallbacks.contains(ColorFallbackKind::RGB) {
-            Some(self.get_fallback(arena, ColorFallbackKind::RGB))
+            Some(self.get_fallback(arena, ColorFallback::Rgb))
         } else {
             None
         };
@@ -193,12 +193,12 @@ impl Image {
 
             // P3 fallback.
             if fallbacks.contains(ColorFallbackKind::P3) {
-                res.append(self.get_fallback(arena, ColorFallbackKind::P3));
+                res.append(self.get_fallback(arena, ColorFallback::P3));
             }
 
             // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
             if fallbacks.contains(ColorFallbackKind::LAB) {
-                *self = self.get_fallback(arena, ColorFallbackKind::LAB);
+                *self = self.get_fallback(arena, ColorFallback::Lab);
             }
         } else if let Some(last) = res.pop() {
             // Prefixed property with no unprefixed version.
@@ -210,7 +210,7 @@ impl Image {
         res
     }
 
-    pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
+    pub fn get_fallback(&self, arena: &Arena, kind: ColorFallback) -> Image {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
@@ -261,7 +261,7 @@ impl crate::small_list::ImageFallback for Image {
         Image::with_image(self, arena, image)
     }
     #[inline]
-    fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, arena: &Arena, kind: ColorFallback) -> Self {
         Image::get_fallback(self, arena, kind)
     }
     #[inline]
@@ -420,10 +420,9 @@ impl ImageSetOption {
         dest: &mut css::Printer,
         is_prefixed: bool,
     ) -> core::result::Result<(), PrintErr> {
-        if matches!(self.image, Image::Url(_)) && !is_prefixed {
-            let Image::Url(url) = &self.image else {
-                unreachable!()
-            };
+        if let Image::Url(url) = &self.image
+            && !is_prefixed
+        {
             let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
                 // Hoist `get_import_records` (mut borrow) out of the
                 // arg list so `filename()` (shared borrow) can run; result is `&'a _`.

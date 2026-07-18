@@ -137,8 +137,15 @@ impl Targets {
     pub fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
         // PERF: runtime dispatch (a const-generic param
         // would need #[derive(ConstParamTy)] on compat::Feature).
-        let target_feature: Features = Features::from_compat(compat_feature);
-        self.should_compile(compat_feature, target_feature)
+        let Some(flag) = Features::from_compat(compat_feature) else {
+            debug_assert!(
+                false,
+                "compat::Feature::{:?} has no Features flag",
+                compat_feature
+            );
+            return !self.is_compatible(compat_feature);
+        };
+        self.should_compile(compat_feature, flag)
     }
 
     pub fn should_compile_selectors(&self) -> bool {
@@ -465,33 +472,234 @@ impl Features {
     /// The variant is taken at runtime, so the table is
     /// hand-written: every `compat::Feature` whose snake_case tag matches a
     /// `Features` field gets an arm; any other variant is a programmer error.
-    pub fn from_compat(compat_feature: css::compat::Feature) -> Features {
+    pub fn from_compat(compat_feature: css::compat::Feature) -> Option<Features> {
         use css::compat::Feature;
         match compat_feature {
-            Feature::Nesting => Features::NESTING,
-            Feature::NotSelectorList => Features::NOT_SELECTOR_LIST,
-            Feature::DirSelector => Features::DIR_SELECTOR,
-            Feature::LangSelectorList => Features::LANG_SELECTOR_LIST,
-            Feature::IsSelector => Features::IS_SELECTOR,
-            Feature::TextDecorationThicknessPercent => Features::TEXT_DECORATION_THICKNESS_PERCENT,
-            Feature::MediaIntervalSyntax => Features::MEDIA_INTERVAL_SYNTAX,
-            Feature::MediaRangeSyntax => Features::MEDIA_RANGE_SYNTAX,
-            Feature::CustomMediaQueries => Features::CUSTOM_MEDIA_QUERIES,
-            Feature::ClampFunction => Features::CLAMP_FUNCTION,
-            Feature::ColorFunction => Features::COLOR_FUNCTION,
-            Feature::OklabColors => Features::OKLAB_COLORS,
-            Feature::LabColors => Features::LAB_COLORS,
-            Feature::P3Colors => Features::P3_COLORS,
-            Feature::HexAlphaColors => Features::HEX_ALPHA_COLORS,
-            Feature::SpaceSeparatedColorNotation => Features::SPACE_SEPARATED_COLOR_NOTATION,
-            Feature::FontFamilySystemUi => Features::FONT_FAMILY_SYSTEM_UI,
-            Feature::DoublePositionGradients => Features::DOUBLE_POSITION_GRADIENTS,
-            // A tag with no matching `Features` field is a programmer error,
-            // guarded by a runtime unreachable.
-            _ => unreachable!(
-                "compat::Feature::{:?} has no same-named targets::Features flag",
-                compat_feature
-            ),
+            Feature::Nesting => Some(Features::NESTING),
+            Feature::NotSelectorList => Some(Features::NOT_SELECTOR_LIST),
+            Feature::DirSelector => Some(Features::DIR_SELECTOR),
+            Feature::LangSelectorList => Some(Features::LANG_SELECTOR_LIST),
+            Feature::IsSelector => Some(Features::IS_SELECTOR),
+            Feature::TextDecorationThicknessPercent => {
+                Some(Features::TEXT_DECORATION_THICKNESS_PERCENT)
+            }
+            Feature::MediaIntervalSyntax => Some(Features::MEDIA_INTERVAL_SYNTAX),
+            Feature::MediaRangeSyntax => Some(Features::MEDIA_RANGE_SYNTAX),
+            Feature::CustomMediaQueries => Some(Features::CUSTOM_MEDIA_QUERIES),
+            Feature::ClampFunction => Some(Features::CLAMP_FUNCTION),
+            Feature::ColorFunction => Some(Features::COLOR_FUNCTION),
+            Feature::OklabColors => Some(Features::OKLAB_COLORS),
+            Feature::LabColors => Some(Features::LAB_COLORS),
+            Feature::P3Colors => Some(Features::P3_COLORS),
+            Feature::HexAlphaColors => Some(Features::HEX_ALPHA_COLORS),
+            Feature::SpaceSeparatedColorNotation => Some(Features::SPACE_SEPARATED_COLOR_NOTATION),
+            Feature::FontFamilySystemUi => Some(Features::FONT_FAMILY_SYSTEM_UI),
+            Feature::DoublePositionGradients => Some(Features::DOUBLE_POSITION_GRADIENTS),
+            // Every remaining `compat::Feature` has no same-named `Features`
+            // flag; the exhaustive arm makes new variants a compile error.
+            Feature::AbsFunction
+            | Feature::AccentSystemColor
+            | Feature::AfarListStyleType
+            | Feature::AmharicAbegedeListStyleType
+            | Feature::AmharicListStyleType
+            | Feature::AnchorSizeSize
+            | Feature::AnimationTimelineShorthand
+            | Feature::AnyLink
+            | Feature::AnyPseudo
+            | Feature::ArabicIndicListStyleType
+            | Feature::ArmenianListStyleType
+            | Feature::AsterisksListStyleType
+            | Feature::Autofill
+            | Feature::AutoSize
+            | Feature::BengaliListStyleType
+            | Feature::BinaryListStyleType
+            | Feature::BorderImageRepeatRound
+            | Feature::BorderImageRepeatSpace
+            | Feature::CalcFunction
+            | Feature::CambodianListStyleType
+            | Feature::CapUnit
+            | Feature::CaseInsensitive
+            | Feature::ChUnit
+            | Feature::CircleListStyleType
+            | Feature::CjkDecimalListStyleType
+            | Feature::CjkEarthlyBranchListStyleType
+            | Feature::CjkHeavenlyStemListStyleType
+            | Feature::ConicGradient
+            | Feature::ContainerQueryLengthUnits
+            | Feature::Cue
+            | Feature::CueFunction
+            | Feature::DecimalLeadingZeroListStyleType
+            | Feature::DecimalListStyleType
+            | Feature::DefaultPseudo
+            | Feature::DevanagariListStyleType
+            | Feature::Dialog
+            | Feature::DiscListStyleType
+            | Feature::DisclosureClosedListStyleType
+            | Feature::DisclosureOpenListStyleType
+            | Feature::EmUnit
+            | Feature::EthiopicAbegedeAmEtListStyleType
+            | Feature::EthiopicAbegedeGezListStyleType
+            | Feature::EthiopicAbegedeListStyleType
+            | Feature::EthiopicAbegedeTiErListStyleType
+            | Feature::EthiopicAbegedeTiEtListStyleType
+            | Feature::EthiopicHalehameAaErListStyleType
+            | Feature::EthiopicHalehameAaEtListStyleType
+            | Feature::EthiopicHalehameAmEtListStyleType
+            | Feature::EthiopicHalehameGezListStyleType
+            | Feature::EthiopicHalehameOmEtListStyleType
+            | Feature::EthiopicHalehameSidEtListStyleType
+            | Feature::EthiopicHalehameSoEtListStyleType
+            | Feature::EthiopicHalehameTigListStyleType
+            | Feature::EthiopicListStyleType
+            | Feature::EthiopicNumericListStyleType
+            | Feature::ExtendedSystemFonts
+            | Feature::ExUnit
+            | Feature::FirstLetter
+            | Feature::FirstLine
+            | Feature::FitContentFunctionSize
+            | Feature::FitContentSize
+            | Feature::FocusVisible
+            | Feature::FocusWithin
+            | Feature::FontSizeRem
+            | Feature::FontSizeXXXLarge
+            | Feature::FontStretchPercentage
+            | Feature::FontStyleObliqueAngle
+            | Feature::FontWeightNumber
+            | Feature::FootnotesListStyleType
+            | Feature::FormValidation
+            | Feature::Fullscreen
+            | Feature::Gencontent
+            | Feature::GeorgianListStyleType
+            | Feature::GradientInterpolationHints
+            | Feature::GujaratiListStyleType
+            | Feature::GurmukhiListStyleType
+            | Feature::HasSelector
+            | Feature::HebrewListStyleType
+            | Feature::HiraganaIrohaListStyleType
+            | Feature::HiraganaListStyleType
+            | Feature::HypotFunction
+            | Feature::IcUnit
+            | Feature::ImageSet
+            | Feature::IndeterminatePseudo
+            | Feature::InOutOfRange
+            | Feature::IsAnimatableSize
+            | Feature::JapaneseFormalListStyleType
+            | Feature::JapaneseInformalListStyleType
+            | Feature::KannadaListStyleType
+            | Feature::KatakanaIrohaListStyleType
+            | Feature::KatakanaListStyleType
+            | Feature::KhmerListStyleType
+            | Feature::KoreanHangulFormalListStyleType
+            | Feature::KoreanHanjaFormalListStyleType
+            | Feature::KoreanHanjaInformalListStyleType
+            | Feature::LaoListStyleType
+            | Feature::LhUnit
+            | Feature::LightDark
+            | Feature::LinearGradient
+            | Feature::LogicalBorderRadius
+            | Feature::LogicalBorders
+            | Feature::LogicalBorderShorthand
+            | Feature::LogicalInset
+            | Feature::LogicalMargin
+            | Feature::LogicalMarginShorthand
+            | Feature::LogicalPadding
+            | Feature::LogicalPaddingShorthand
+            | Feature::LogicalSize
+            | Feature::LogicalTextAlign
+            | Feature::LowerAlphaListStyleType
+            | Feature::LowerArmenianListStyleType
+            | Feature::LowerGreekListStyleType
+            | Feature::LowerHexadecimalListStyleType
+            | Feature::LowerLatinListStyleType
+            | Feature::LowerNorwegianListStyleType
+            | Feature::LowerRomanListStyleType
+            | Feature::MalayalamListStyleType
+            | Feature::MarkerPseudo
+            | Feature::MaxContentSize
+            | Feature::MaxFunction
+            | Feature::MinContentSize
+            | Feature::MinFunction
+            | Feature::ModFunction
+            | Feature::MongolianListStyleType
+            | Feature::MozAvailableSize
+            | Feature::MyanmarListStyleType
+            | Feature::Namespaces
+            | Feature::NoneListStyleType
+            | Feature::NthChildOf
+            | Feature::OctalListStyleType
+            | Feature::OptionalPseudo
+            | Feature::OriyaListStyleType
+            | Feature::OromoListStyleType
+            | Feature::OverflowShorthand
+            | Feature::PartPseudo
+            | Feature::PersianListStyleType
+            | Feature::PlaceContent
+            | Feature::Placeholder
+            | Feature::PlaceholderShown
+            | Feature::PlaceItems
+            | Feature::PlaceSelf
+            | Feature::QUnit
+            | Feature::RadialGradient
+            | Feature::RcapUnit
+            | Feature::RchUnit
+            | Feature::ReadOnlyWrite
+            | Feature::RemFunction
+            | Feature::RemUnit
+            | Feature::RepeatingConicGradient
+            | Feature::RepeatingLinearGradient
+            | Feature::RepeatingRadialGradient
+            | Feature::RexUnit
+            | Feature::RicUnit
+            | Feature::RlhUnit
+            | Feature::RoundFunction
+            | Feature::Selection
+            | Feature::Selectors2
+            | Feature::Selectors3
+            | Feature::Shadowdomv1
+            | Feature::SidamaListStyleType
+            | Feature::SignFunction
+            | Feature::SimpChineseFormalListStyleType
+            | Feature::SimpChineseInformalListStyleType
+            | Feature::SomaliListStyleType
+            | Feature::SquareListStyleType
+            | Feature::StretchSize
+            | Feature::StringListStyleType
+            | Feature::SymbolsListStyleType
+            | Feature::TamilListStyleType
+            | Feature::TeluguListStyleType
+            | Feature::TextDecorationThicknessShorthand
+            | Feature::ThaiListStyleType
+            | Feature::TibetanListStyleType
+            | Feature::TigreListStyleType
+            | Feature::TigrinyaErAbegedeListStyleType
+            | Feature::TigrinyaErListStyleType
+            | Feature::TigrinyaEtAbegedeListStyleType
+            | Feature::TigrinyaEtListStyleType
+            | Feature::TradChineseFormalListStyleType
+            | Feature::TradChineseInformalListStyleType
+            | Feature::UpperAlphaListStyleType
+            | Feature::UpperArmenianListStyleType
+            | Feature::UpperHexadecimalListStyleType
+            | Feature::UpperLatinListStyleType
+            | Feature::UpperNorwegianListStyleType
+            | Feature::UpperRomanListStyleType
+            | Feature::VbUnit
+            | Feature::VhUnit
+            | Feature::ViewportPercentageUnitsDynamic
+            | Feature::ViewportPercentageUnitsLarge
+            | Feature::ViewportPercentageUnitsSmall
+            | Feature::ViUnit
+            | Feature::VmaxUnit
+            | Feature::VminUnit
+            | Feature::VwUnit
+            | Feature::WebkitFillAvailableSize
+            | Feature::XResolutionUnit => {
+                debug_assert!(
+                    false,
+                    "compat::Feature::{compat_feature:?} has no Features mapping"
+                );
+                None
+            }
         }
     }
 }

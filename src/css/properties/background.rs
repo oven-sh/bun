@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate as css;
-use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::color::CssColor;
+use crate::css_values::color::{ColorFallback, ColorFallbackKind};
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
@@ -225,7 +225,7 @@ impl Background {
         ret
     }
 
-    pub(crate) fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
+    pub(crate) fn get_fallback(&self, arena: &Bump, kind: ColorFallback) -> Background {
         let mut ret = self.deep_clone(arena);
         ret.color = self.color.get_fallback(arena, kind);
         ret.image = self.image.get_fallback(arena, kind);
@@ -1170,7 +1170,7 @@ impl crate::small_list::ImageFallback for Background {
         Background::with_image(self, arena, image)
     }
     #[inline]
-    fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, arena: &Bump, kind: ColorFallback) -> Self {
         Background::get_fallback(self, arena, kind)
     }
     #[inline]

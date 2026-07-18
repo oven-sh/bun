@@ -38,7 +38,7 @@ pub trait ImageFallback: Sized {
     fn get_fallback(
         &self,
         arena: &bun_alloc::Arena,
-        kind: crate::values::color::ColorFallbackKind,
+        kind: crate::values::color::ColorFallback,
     ) -> Self;
     fn get_necessary_fallbacks(
         &self,
@@ -79,7 +79,7 @@ pub mod fallbacks_gated {
     where
         T: super::ImageFallback,
     {
-        use css::css_values::color::ColorFallbackKind;
+        use css::css_values::color::{ColorFallback, ColorFallbackKind};
         // Determine what vendor prefixes and color fallbacks are needed.
         let mut prefixes = css::VendorPrefix::default();
         let mut fallbacks = ColorFallbackKind::default();
@@ -94,7 +94,7 @@ pub mod fallbacks_gated {
             let len = this.len();
             let mut shallow_clone = SmallList::<T, 1>::init_capacity(len);
             for i in 0..len {
-                let out_val = this.r#mut(i).get_fallback(arena, ColorFallbackKind::RGB);
+                let out_val = this.r#mut(i).get_fallback(arena, ColorFallback::Rgb);
                 shallow_clone.append(out_val);
             }
             Some(shallow_clone)
@@ -126,28 +126,30 @@ pub mod fallbacks_gated {
 
         #[inline]
         fn prefix_helper<T: ImageFallback>(
-            prefix: &'static str,
+            prefix: css::VendorPrefix,
             pfs: css::VendorPrefix,
             pfi: &SmallList<T, 1>,
             r: &mut Vec<SmallList<T, 1>>,
             alloc: &bun_alloc::Arena,
         ) {
-            if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
+            if pfs.contains(prefix) {
                 let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
                 for i in 0..pfi.len() {
                     let in_ = pfi.at(i);
-                    let image = in_
-                        .get_image()
-                        .get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix));
+                    let image = in_.get_image().get_prefixed(alloc, prefix);
                     images.append(in_.with_image(alloc, image));
                 }
                 r.push(images);
             }
         }
 
-        prefix_helper("webkit", prefixes, prefix_images, &mut res, arena);
-        prefix_helper("moz", prefixes, prefix_images, &mut res, arena);
-        prefix_helper("o", prefixes, prefix_images, &mut res, arena);
+        for prefix in [
+            css::VendorPrefix::WEBKIT,
+            css::VendorPrefix::MOZ,
+            css::VendorPrefix::O,
+        ] {
+            prefix_helper(prefix, prefixes, prefix_images, &mut res, arena);
+        }
 
         if prefixes.contains(css::VendorPrefix::NONE) {
             if let Some(r) = rgb {
@@ -158,7 +160,7 @@ pub mod fallbacks_gated {
                 let len = this.len();
                 let mut p3_images = SmallList::<T, 1>::init_capacity(len);
                 for i in 0..len {
-                    let out_val = this.r#mut(i).get_fallback(arena, ColorFallbackKind::P3);
+                    let out_val = this.r#mut(i).get_fallback(arena, ColorFallback::P3);
                     p3_images.append(out_val);
                 }
                 res.push(p3_images);
@@ -167,7 +169,7 @@ pub mod fallbacks_gated {
             // Convert to lab if needed (e.g. if oklab is not supported but lab is).
             if fallbacks.contains(ColorFallbackKind::LAB) {
                 for item in this.slice_mut() {
-                    let new = item.get_fallback(arena, ColorFallbackKind::LAB);
+                    let new = item.get_fallback(arena, ColorFallback::Lab);
                     let old = core::mem::replace(item, new);
                     drop(old);
                 }

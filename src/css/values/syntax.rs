@@ -176,7 +176,7 @@ impl SyntaxString {
                                     if input.is_exhausted() {
                                         return Ok(ParsedComponent::Repeated(Repeated {
                                             components: parsed,
-                                            multiplier: component.multiplier,
+                                            separator: RepeatSeparator::Space,
                                         }));
                                     }
                                 }
@@ -192,7 +192,7 @@ impl SyntaxString {
                                         Err(_) => {
                                             return Ok(ParsedComponent::Repeated(Repeated {
                                                 components: parsed,
-                                                multiplier: component.multiplier,
+                                                separator: RepeatSeparator::Comma,
                                             }));
                                         }
                                     }
@@ -424,22 +424,30 @@ pub enum ParsedComponent {
     TokenList(TokenList),
 }
 
+/// The separator for a [`Repeated`] component list. Unlike [`Multiplier`],
+/// this excludes `None`: a `Repeated` is only ever built for `+`/`#`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatSeparator {
+    /// Space-separated (`+` multiplier).
+    Space,
+    /// Comma-separated (`#` multiplier).
+    Comma,
+}
+
 /// A repeated component value.
 pub struct Repeated {
     /// The components to repeat.
     // PERF: `Vec` until `'bump` is threaded into BumpVec.
     pub components: Vec<ParsedComponent>,
-    /// A multiplier describing how the components repeat.
-    pub multiplier: Multiplier,
+    /// The separator between repeated components.
+    pub separator: RepeatSeparator,
 }
 
 impl Repeated {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // Hand-expanded `css.implementDeepClone` (field-wise reflection):
-        // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
         Repeated {
             components: self.components.iter().map(|c| c.deep_clone(bump)).collect(),
-            multiplier: self.multiplier,
+            separator: self.separator,
         }
     }
 }
@@ -464,10 +472,9 @@ impl ParsedComponent {
             ParsedComponent::Literal(v) => dest.serialize_identifier(v.v()),
             ParsedComponent::Repeated(r) => dest.write_separated(
                 r.components.iter(),
-                |d| match r.multiplier {
-                    Multiplier::Comma => d.delim(b',', false),
-                    Multiplier::Space => d.write_char(b' '),
-                    Multiplier::None => unreachable!(),
+                |d| match r.separator {
+                    RepeatSeparator::Comma => d.delim(b',', false),
+                    RepeatSeparator::Space => d.write_char(b' '),
                 },
                 |d, c| c.to_css(d),
             ),

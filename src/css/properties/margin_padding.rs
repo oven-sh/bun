@@ -434,17 +434,17 @@ pub trait SizeHandlerSpec {
     // These are pure mechanical pattern-matches over `Property`; they could
     // be generated via macro.
 
-    fn extract_top(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_left(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_right(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_block_start(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_block_end(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_inline_start(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_inline_end(p: &Property) -> &LengthPercentageOrAuto;
-    fn extract_shorthand(p: &Property) -> &Self::Shorthand;
-    fn extract_block_shorthand(p: &Property) -> &Self::BlockShorthand;
-    fn extract_inline_shorthand(p: &Property) -> &Self::InlineShorthand;
+    fn extract_top(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_bottom(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_left(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_right(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_block_start(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_block_end(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_inline_start(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_inline_end(p: &Property) -> Option<&LengthPercentageOrAuto>;
+    fn extract_shorthand(p: &Property) -> Option<&Self::Shorthand>;
+    fn extract_block_shorthand(p: &Property) -> Option<&Self::BlockShorthand>;
+    fn extract_inline_shorthand(p: &Property) -> Option<&Self::InlineShorthand>;
 
     fn make_top(v: LengthPercentageOrAuto) -> Property;
     fn make_bottom(v: LengthPercentageOrAuto) -> Property;
@@ -556,10 +556,8 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        // Match on the *raw* union discriminant (`Property::variant_tag()`).
         // The `Unparsed` arm needs the inner `property_id` to decide whether
-        // the unparsed value belongs to this handler, so it stays a
-        // structural match.
+        // the unparsed value belongs to this handler.
         if let Property::Unparsed(unparsed) = property {
             let id = unparsed.property_id.tag();
             if id == S::TOP
@@ -615,43 +613,42 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             return true;
         }
 
-        let tag = property.variant_tag();
-        if tag == S::TOP {
+        if let Some(val) = S::extract_top(property) {
             self.property_helper(
                 PhysicalSlot::Top,
-                S::extract_top(property),
+                val,
                 PropertyCategory::Physical,
                 dest,
                 context,
             );
-        } else if tag == S::BOTTOM {
+        } else if let Some(val) = S::extract_bottom(property) {
             self.property_helper(
                 PhysicalSlot::Bottom,
-                S::extract_bottom(property),
+                val,
                 PropertyCategory::Physical,
                 dest,
                 context,
             );
-        } else if tag == S::LEFT {
+        } else if let Some(val) = S::extract_left(property) {
             self.property_helper(
                 PhysicalSlot::Left,
-                S::extract_left(property),
+                val,
                 PropertyCategory::Physical,
                 dest,
                 context,
             );
-        } else if tag == S::RIGHT {
+        } else if let Some(val) = S::extract_right(property) {
             self.property_helper(
                 PhysicalSlot::Right,
-                S::extract_right(property),
+                val,
                 PropertyCategory::Physical,
                 dest,
                 context,
             );
-        } else if tag == S::BLOCK_START {
+        } else if let Some(val) = S::extract_block_start(property) {
             self.flush_helper_logical(
                 LogicalSlot::BlockStart,
-                S::extract_block_start(property),
+                val,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -659,54 +656,53 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             // Reconstruct via the spec's `make_X(extract_X)` pair.
             self.logical_property_helper(
                 LogicalSlot::BlockStart,
-                S::make_block_start(S::extract_block_start(property).clone()),
+                S::make_block_start(val.clone()),
                 dest,
                 context,
             );
-        } else if tag == S::BLOCK_END {
+        } else if let Some(val) = S::extract_block_end(property) {
             self.flush_helper_logical(
                 LogicalSlot::BlockEnd,
-                S::extract_block_end(property),
+                val,
                 PropertyCategory::Logical,
                 dest,
                 context,
             );
             self.logical_property_helper(
                 LogicalSlot::BlockEnd,
-                S::make_block_end(S::extract_block_end(property).clone()),
+                S::make_block_end(val.clone()),
                 dest,
                 context,
             );
-        } else if tag == S::INLINE_START {
+        } else if let Some(val) = S::extract_inline_start(property) {
             self.flush_helper_logical(
                 LogicalSlot::InlineStart,
-                S::extract_inline_start(property),
+                val,
                 PropertyCategory::Logical,
                 dest,
                 context,
             );
             self.logical_property_helper(
                 LogicalSlot::InlineStart,
-                S::make_inline_start(S::extract_inline_start(property).clone()),
+                S::make_inline_start(val.clone()),
                 dest,
                 context,
             );
-        } else if tag == S::INLINE_END {
+        } else if let Some(val) = S::extract_inline_end(property) {
             self.flush_helper_logical(
                 LogicalSlot::InlineEnd,
-                S::extract_inline_end(property),
+                val,
                 PropertyCategory::Logical,
                 dest,
                 context,
             );
             self.logical_property_helper(
                 LogicalSlot::InlineEnd,
-                S::make_inline_end(S::extract_inline_end(property).clone()),
+                S::make_inline_end(val.clone()),
                 dest,
                 context,
             );
-        } else if tag == S::BLOCK_SHORTHAND {
-            let val = S::extract_block_shorthand(property);
+        } else if let Some(val) = S::extract_block_shorthand(property) {
             self.flush_helper_logical(
                 LogicalSlot::BlockStart,
                 S::block_shorthand_start(val),
@@ -733,8 +729,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
-        } else if tag == S::INLINE_SHORTHAND {
-            let val = S::extract_inline_shorthand(property);
+        } else if let Some(val) = S::extract_inline_shorthand(property) {
             self.flush_helper_logical(
                 LogicalSlot::InlineStart,
                 S::inline_shorthand_start(val),
@@ -761,8 +756,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
-        } else if tag == S::SHORTHAND {
-            let val = S::extract_shorthand(property);
+        } else if let Some(val) = S::extract_shorthand(property) {
             self.flush_helper_physical(
                 PhysicalSlot::Top,
                 S::shorthand_top(val),
@@ -946,7 +940,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         } else {
             Self::prop(
                 &mut block_start,
-                S::BLOCK_START,
                 S::extract_block_start,
                 S::make_top,
                 S::TOP_ID,
@@ -955,7 +948,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             );
             Self::prop(
                 &mut block_end,
-                S::BLOCK_END,
                 S::extract_block_end,
                 S::make_bottom,
                 S::BOTTOM_ID,
@@ -974,26 +966,14 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 context,
             );
         } else if inline_start.is_some() || inline_end.is_some() {
-            // Raw union-tag equality, which is `false` for `Unparsed`.
-            let start_matches = inline_start
-                .as_ref()
-                .map(|p| p.variant_tag() == S::INLINE_START)
-                .unwrap_or(false);
-            let end_matches = inline_end
-                .as_ref()
-                .map(|p| p.variant_tag() == S::INLINE_END)
-                .unwrap_or(false);
-            let values_equal = if start_matches && end_matches {
-                S::extract_inline_start(inline_start.as_ref().unwrap())
-                    == S::extract_inline_end(inline_end.as_ref().unwrap())
-            } else {
-                false
-            };
+            // `extract_*` yields `None` for `Unparsed`, so unparsed longhands fall through.
+            let start_val = inline_start.as_ref().and_then(S::extract_inline_start);
+            let end_val = inline_end.as_ref().and_then(S::extract_inline_end);
+            let values_equal = matches!((start_val, end_val), (Some(s), Some(e)) if s == e);
 
-            if start_matches && end_matches && values_equal {
+            if values_equal {
                 Self::prop(
                     &mut inline_start,
-                    S::INLINE_START,
                     S::extract_inline_start,
                     S::make_left,
                     S::LEFT_ID,
@@ -1002,7 +982,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 );
                 Self::prop(
                     &mut inline_end,
-                    S::INLINE_END,
                     S::extract_inline_end,
                     S::make_right,
                     S::RIGHT_ID,
@@ -1012,7 +991,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             } else {
                 Self::logical_prop_helper(
                     &mut inline_start,
-                    S::INLINE_START,
                     S::extract_inline_start,
                     S::make_left,
                     S::LEFT_ID,
@@ -1023,7 +1001,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 );
                 Self::logical_prop_helper(
                     &mut inline_end,
-                    S::INLINE_END,
                     S::extract_inline_end,
                     S::make_right,
                     S::RIGHT_ID,
@@ -1040,8 +1017,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     #[allow(clippy::too_many_arguments)]
     fn logical_prop_helper(
         val: &mut Option<Property>,
-        logical: PropertyIdTag,
-        extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
+        extract_logical: fn(&Property) -> Option<&LengthPercentageOrAuto>,
         make_ltr: fn(LengthPercentageOrAuto) -> Property,
         ltr: PropertyId,
         make_rtl: fn(LengthPercentageOrAuto) -> Property,
@@ -1052,9 +1028,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         // _ = this; // autofix
         let bump = dest.bump();
         if let Some(v_) = val.as_ref() {
-            // Raw discriminant comparison.
-            if v_.variant_tag() == logical {
-                let v = extract_logical(v_);
+            if let Some(v) = extract_logical(v_) {
                 context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
             } else if let Property::Unparsed(v) = v_ {
                 context.add_logical_rule(
@@ -1081,44 +1055,35 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 None => true,
             };
 
-        let (start_prop, end_prop) = match pair {
-            LogicalSidePair::Block => (S::BLOCK_START, S::BLOCK_END),
-            LogicalSidePair::Inline => (S::INLINE_START, S::INLINE_END),
+        // `extract_*` yields `None` for `Unparsed`, so unparsed longhands fall
+        // through to the else branch and are appended as-is.
+        let extracted = match pair {
+            LogicalSidePair::Block => (
+                start.as_ref().and_then(S::extract_block_start).cloned(),
+                end.as_ref().and_then(S::extract_block_end).cloned(),
+            ),
+            LogicalSidePair::Inline => (
+                start.as_ref().and_then(S::extract_inline_start).cloned(),
+                end.as_ref().and_then(S::extract_inline_end).cloned(),
+            ),
         };
 
-        // Raw discriminant comparison. `variant_tag()` keeps `Unparsed` distinct so an
-        // unparsed longhand falls through to the else branch and is appended
-        // as-is, instead of hitting `unreachable!()` in `extract_*`.
-        if start
-            .as_ref()
-            .map(|p| p.variant_tag() == start_prop)
-            .unwrap_or(false)
-            && end
-                .as_ref()
-                .map(|p| p.variant_tag() == end_prop)
-                .unwrap_or(false)
-            && shorthand_supported
-        {
-            // The ≤2-field invariant is upheld structurally by `make_*_shorthand`.
-            let start_v = match pair {
-                LogicalSidePair::Block => S::extract_block_start(start.as_ref().unwrap()).clone(),
-                LogicalSidePair::Inline => S::extract_inline_start(start.as_ref().unwrap()).clone(),
-            };
-            let end_v = match pair {
-                LogicalSidePair::Block => S::extract_block_end(end.as_ref().unwrap()).clone(),
-                LogicalSidePair::Inline => S::extract_inline_end(end.as_ref().unwrap()).clone(),
-            };
-            let prop = match pair {
-                LogicalSidePair::Block => S::make_block_shorthand(start_v, end_v),
-                LogicalSidePair::Inline => S::make_inline_shorthand(start_v, end_v),
-            };
-            dest.push(prop);
-        } else {
-            if let Some(s) = start.take() {
-                dest.push(s);
+        match (shorthand_supported, extracted) {
+            (true, (Some(start_v), Some(end_v))) => {
+                // The ≤2-field invariant is upheld structurally by `make_*_shorthand`.
+                let prop = match pair {
+                    LogicalSidePair::Block => S::make_block_shorthand(start_v, end_v),
+                    LogicalSidePair::Inline => S::make_inline_shorthand(start_v, end_v),
+                };
+                dest.push(prop);
             }
-            if let Some(e) = end.take() {
-                dest.push(e);
+            _ => {
+                if let Some(s) = start.take() {
+                    dest.push(s);
+                }
+                if let Some(e) = end.take() {
+                    dest.push(e);
+                }
             }
         }
     }
@@ -1126,8 +1091,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     #[inline]
     fn prop(
         val: &mut Option<Property>,
-        logical: PropertyIdTag,
-        extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
+        extract_logical: fn(&Property) -> Option<&LengthPercentageOrAuto>,
         make_physical: fn(LengthPercentageOrAuto) -> Property,
         physical: PropertyId,
         dest: &mut DeclarationList,
@@ -1137,11 +1101,10 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         let _ = context;
         let bump = dest.bump();
         if let Some(v) = val.as_ref() {
-            // Raw discriminant comparison.
-            if v.variant_tag() == logical {
+            if let Some(lv) = extract_logical(v) {
                 // Clone instead of moving out of `&Property`;
                 // `LengthPercentageOrAuto` is small.
-                dest.push(make_physical(extract_logical(v).clone()));
+                dest.push(make_physical(lv.clone()));
             } else if let Property::Unparsed(u) = v {
                 dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
             }
@@ -1175,70 +1138,70 @@ macro_rules! size_handler_spec_projections {
         const LEFT_ID: PropertyId = PropertyId::$Left;
         const RIGHT_ID: PropertyId = PropertyId::$Right;
 
-        fn extract_top(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_top(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$Top(v) => v,
-                _ => unreachable!(),
+                Property::$Top(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_bottom(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$Bottom(v) => v,
-                _ => unreachable!(),
+                Property::$Bottom(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_left(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_left(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$Left(v) => v,
-                _ => unreachable!(),
+                Property::$Left(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_right(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_right(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$Right(v) => v,
-                _ => unreachable!(),
+                Property::$Right(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_block_start(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_block_start(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$BlockStart(v) => v,
-                _ => unreachable!(),
+                Property::$BlockStart(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_block_end(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_block_end(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$BlockEnd(v) => v,
-                _ => unreachable!(),
+                Property::$BlockEnd(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_inline_start(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_inline_start(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$InlineStart(v) => v,
-                _ => unreachable!(),
+                Property::$InlineStart(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_inline_end(p: &Property) -> &LengthPercentageOrAuto {
+        fn extract_inline_end(p: &Property) -> Option<&LengthPercentageOrAuto> {
             match p {
-                Property::$InlineEnd(v) => v,
-                _ => unreachable!(),
+                Property::$InlineEnd(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_shorthand(p: &Property) -> &Self::Shorthand {
+        fn extract_shorthand(p: &Property) -> Option<&Self::Shorthand> {
             match p {
-                Property::$Shorthand(v) => v,
-                _ => unreachable!(),
+                Property::$Shorthand(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_block_shorthand(p: &Property) -> &Self::BlockShorthand {
+        fn extract_block_shorthand(p: &Property) -> Option<&Self::BlockShorthand> {
             match p {
-                Property::$BlockShorthand(v) => v,
-                _ => unreachable!(),
+                Property::$BlockShorthand(v) => Some(v),
+                _ => None,
             }
         }
-        fn extract_inline_shorthand(p: &Property) -> &Self::InlineShorthand {
+        fn extract_inline_shorthand(p: &Property) -> Option<&Self::InlineShorthand> {
             match p {
-                Property::$InlineShorthand(v) => v,
-                _ => unreachable!(),
+                Property::$InlineShorthand(v) => Some(v),
+                _ => None,
             }
         }
         fn make_top(v: LengthPercentageOrAuto) -> Property {

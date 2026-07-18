@@ -1616,10 +1616,10 @@ JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObj
     WTF::StringBuilder builder;
     builder.append("The MIME syntax for a "_s);
     builder.append(part);
-    builder.append(" in "_s);
+    builder.append(" in \""_s);
     builder.append(input);
 
-    builder.append(" is invalid"_s);
+    builder.append("\" is invalid"_s);
     if (position != -1) {
         builder.append(" at "_s);
         builder.append(String::number(position));

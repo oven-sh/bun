@@ -1254,7 +1254,7 @@ impl PathLikeExt for PathLike {
                 )?))
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(arg) {
+                if let Some(domurl) = jsc::DOMURL::cast(arg, ctx) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let mut str = bun_core::OwnedString::new(match domurl.file_system_path() {
                         Ok(s) => s,

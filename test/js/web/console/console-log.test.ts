@@ -164,6 +164,11 @@ it("console.log %s uses Node's format semantics, not engine ToString", async () 
     console.log("%s", new Date(1700000000000));
     console.log("%s %s", Symbol("a"), { x: 1 });
     console.log("%s %s %O", { a: 1 }, { b: 2 }, { c: 3 });
+    console.log("%s", { toString() { return "custom"; } });
+    class X { toString() { return "X!"; } }
+    console.log("%s", new X());
+    class P { a = 1 }
+    console.log("%s", new P());
   `;
   await using proc = spawn({
     cmd: [bunExe(), "-e", src],
@@ -194,6 +199,9 @@ it("console.log %s uses Node's format semantics, not engine ToString", async () 
     "{ a: 1 } { b: 2 } {",
     "  c: 3,",
     "}",
+    "custom",
+    "X!",
+    "P { a: 1 }",
     "",
   ].join("\n");
   expect({ out: out.replaceAll("\r\n", "\n"), err, exitCode }).toEqual({ out: expected, err: "", exitCode: 0 });

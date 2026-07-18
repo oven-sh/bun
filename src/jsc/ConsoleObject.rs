@@ -3324,6 +3324,94 @@ pub mod formatter {
         }
     }
 
+    /// Approximates `!hasBuiltInToString` from Node's `util.format` `%s`:
+    /// walk the prototype chain to whichever object owns `toString` and treat
+    /// it as user-provided unless that object's own `constructor` names a core
+    /// ECMAScript built-in.
+    fn percent_s_has_user_to_string(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let mut pointer = value;
+        for _ in 0..64 {
+            if !pointer.is_cell() || !pointer.is_object() {
+                return Ok(false);
+            }
+            if pointer.js_type() == jsc::JSType::ProxyObject {
+                let target = pointer.get_proxy_internal_field(jsc::ProxyField::Target);
+                if target.is_empty_or_undefined_or_null() {
+                    return Ok(false);
+                }
+                pointer = target;
+                continue;
+            }
+            if let Some(to_string) = pointer.get_own_truthy(global, "toString")? {
+                if !to_string.is_callable() {
+                    return Ok(false);
+                }
+                let Some(ctor) = pointer.get_own_truthy(global, "constructor")? else {
+                    return Ok(true);
+                };
+                if !ctor.is_callable() {
+                    return Ok(true);
+                }
+                let name = ctor.get_name(global)?;
+                return Ok(!percent_s_is_builtin_ctor_name(&name));
+            }
+            let proto = pointer.get_prototype(global);
+            if proto.is_empty_or_undefined_or_null() {
+                return Ok(false);
+            }
+            pointer = proto;
+        }
+        Ok(false)
+    }
+
+    fn percent_s_is_builtin_ctor_name(name: &bun_core::String) -> bool {
+        for builtin in [
+            "Object",
+            "Array",
+            "Function",
+            "Boolean",
+            "Number",
+            "String",
+            "Symbol",
+            "BigInt",
+            "Date",
+            "RegExp",
+            "Error",
+            "AggregateError",
+            "EvalError",
+            "RangeError",
+            "ReferenceError",
+            "SyntaxError",
+            "TypeError",
+            "URIError",
+            "Map",
+            "Set",
+            "WeakMap",
+            "WeakSet",
+            "Promise",
+            "ArrayBuffer",
+            "SharedArrayBuffer",
+            "DataView",
+            "Int8Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Int16Array",
+            "Uint16Array",
+            "Int32Array",
+            "Uint32Array",
+            "Float16Array",
+            "Float32Array",
+            "Float64Array",
+            "BigInt64Array",
+            "BigUint64Array",
+        ] {
+            if name.eql_comptime(builtin) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -3870,6 +3958,10 @@ pub mod formatter {
             }
 
             drop(writer);
+            if percent_s_has_user_to_string(value, global).unwrap_or(false) {
+                return self.print_as::<false>(Tag::String, writer_, value, value.js_type());
+            }
+
             let prev_quote = self.quote_strings;
             let prev_single = self.single_line;
             let prev_max_depth = self.max_depth;

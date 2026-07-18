@@ -253,6 +253,18 @@ void ScriptExecutionContext::removeFromContextsMap()
     allScriptExecutionContextsMap().remove(m_identifier);
 }
 
+void ScriptExecutionContext::markTerminating()
+{
+    // postTaskTo() holds this lock across its isTerminating() check and
+    // postTaskConcurrently() enqueue. Taking it here establishes an ordering
+    // with every concurrent poster: either its whole critical section ran
+    // before ours (task enqueued, and the caller's subsequent concurrent-queue
+    // drain will see it), or ours ran first (poster observes true and drops
+    // the task instead of enqueueing onto a queue that will never drain).
+    Locker locker { allScriptExecutionContextsMapLock };
+    m_isTerminating.store(true, std::memory_order_release);
+}
+
 ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 {
     if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
@@ -288,6 +300,12 @@ extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObjec
     auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
     if (!context) return nullptr;
     return context->globalObject();
+}
+
+extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* globalObject)
+{
+    if (auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext())
+        context->markTerminating();
 }
 
 } // namespace WebCore

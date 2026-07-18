@@ -1223,7 +1223,15 @@ function test(
         websocket: {
           sendPings: false,
           message() {},
-          ...fn(done, () => connect(server, localClients), options as any),
+          ...fn(
+            done,
+            () =>
+              connect(server, localClients).catch(e => {
+                done(e);
+                throw e;
+              }),
+            options as any,
+          ),
         },
       });
       options.server = server;
@@ -1245,21 +1253,47 @@ function test(
 async function connect(server: Server, clientList: Subprocess[] = clients): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
   const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
-  const { promise, resolve } = Promise.withResolvers();
-  const client = spawn({
-    cmd: [bunExe(), pathname, url.href],
-    cwd: import.meta.dir,
-    env: { ...bunEnv, "LOG_MESSAGES": "0" },
-    stdio: ["inherit", "inherit", "inherit"],
-    ipc(message) {
-      if (message === "connected") {
-        resolve();
+  // The concurrent test() wrapper starts every case at once, each spawning
+  // 1–2 echo subprocesses. On CI boxes with a tight cgroup pids.max that
+  // burst can make posix_spawn (or the child's own thread creation) fail
+  // with EAGAIN. Retry with backoff instead of failing/hanging the test.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const { promise, resolve } = Promise.withResolvers<true | "died">();
+    let client: Subprocess;
+    try {
+      client = spawn({
+        cmd: [bunExe(), pathname, url.href],
+        cwd: import.meta.dir,
+        env: { ...bunEnv, "LOG_MESSAGES": "0" },
+        stdio: ["inherit", "inherit", "inherit"],
+        ipc(message) {
+          if (message === "connected") resolve(true);
+        },
+        serialization: "json",
+        onExit() {
+          resolve("died");
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === "EAGAIN") {
+        lastErr = e;
+        await Bun.sleep(50 * (attempt + 1));
+        continue;
       }
-    },
-    serialization: "json",
-  });
-  clientList.push(client);
-  await promise;
+      throw e;
+    }
+    clientList.push(client);
+    if ((await promise) === true) return;
+    // Child exited before "connected" arrived. A clean exit means it did
+    // connect and the server already closed it — IPC just lost the race.
+    if (client.exitCode === 0) return;
+    // Non-zero exit before connecting — likely starved of threads; retry.
+    clientList.splice(clientList.indexOf(client), 1);
+    lastErr = new Error(`echo client exited (${client.exitCode}/${client.signalCode}) before connecting`);
+    await Bun.sleep(50 * (attempt + 1));
+  }
+  throw lastErr;
 }
 
 it("you can call server.subscriberCount() when its not a websocket server", async () => {

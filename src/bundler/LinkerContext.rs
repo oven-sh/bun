@@ -27,7 +27,7 @@ use bun_ast::{
 use crate::Index;
 use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
-use bun_js_printer::{self as js_printer, renamer};
+use bun_js::js_printer::{self as js_printer, renamer};
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::SideEffects;
@@ -2211,6 +2211,10 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
             // outlives only this call (see above).
             unsafe { bun_core::ptr::detach_lifetime_ref(&self.mangled_props) };
+        let output_format = self.options.output_format;
+        let target = self.options.target;
+        let enable_source_maps =
+            self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2233,33 +2237,33 @@ impl<'a> LinkerContext<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             input_module_type: ast.exports_kind.into(),
-            module_type: self.options.output_format,
+            module_type: output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
 
             to_esm_ref,
             to_commonjs_ref,
-            require_ref: match self.options.output_format {
+            require_ref: match output_format {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback:
-                Some((&mut *self).into()),
             line_offset_tables: Some(line_offset_table),
-            target: self.options.target,
+            target,
 
-            hmr_ref: if self.options.output_format == Format::InternalBakeDev {
+            hmr_ref: if output_format == Format::InternalBakeDev {
                 ast.wrapper_ref
             } else {
                 Ref::NONE
             },
 
-            input_files_for_dev_server: if self.options.output_format == Format::InternalBakeDev {
+            input_files_for_dev_server: if output_format == Format::InternalBakeDev {
                 Some(parse_graph.input_files.items_source())
             } else {
                 None
             },
             mangled_props: Some(mangled_props),
+            require_or_import_meta_for_source_callback:
+                Some((&mut *self).into()),
             ..Default::default()
         };
 
@@ -2290,8 +2294,6 @@ impl<'a> LinkerContext<'a> {
             core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
         };
 
-        let enable_source_maps =
-            self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         let result = if enable_source_maps {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
                 &mut printer,

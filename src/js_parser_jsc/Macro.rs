@@ -247,84 +247,30 @@ impl MacroContext {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Lower-tier bridge (`bun_ast::Macro::MacroContext` ⇆ this crate)
+// Lower-tier bridge (`bun_js::Macro::MacroContext` ⇆ this crate)
 //
-// `bun_js_parser` / `bun_bundler` cannot name `Resolver`/`DotEnv`/JSC types,
-// so the parser-visible `MacroContext` carries an opaque `data` pointer to a
-// boxed instance of this crate's `MacroContext` and dispatches `init`/`call`/
-// `get_remap` through `extern "Rust"` fns resolved at link time. All type
-// erasure is confined to these three bodies.
+// `bun_js` / `bun_bundler` cannot name `Resolver`/`DotEnv`/JSC types, so the
+// parser-visible `MacroContext` carries a boxed `dyn MacroRunner` pointing at
+// an instance of this crate's `MacroContext`. All type erasure is confined to
+// this impl.
 // ══════════════════════════════════════════════════════════════════════════
 
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_macro_context_init(
-    transpiler: *mut core::ffi::c_void,
-) -> js_parser::Macro::MacroContext {
-    // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
-    // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
-    // runtime so reading it as `'static` is layout-identical. The boxed state
-    // is leaked for the long-lived `vm.transpiler` instance — but callers that run on a
-    // short-lived bytewise-cloned `Transpiler` (e.g.
-    // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
-    // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
-    // was actually invoked, its lazily-created `bump` arena) leaks per
-    // iteration. `bump` is `None` on init, so this fn itself never calls
-    // `mi_heap_new()`.
-    let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
-    let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
-    js_parser::Macro::MacroContext {
-        javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
-        data: data.cast::<core::ffi::c_void>(),
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
-    if data.is_null() {
-        return;
-    }
-    // SAFETY: `data` is exactly the `Box<MacroContext>` allocated in
-    // `__bun_macro_context_init` above; sole owner. Dropping the Box frees the
-    // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
-    // (→ `mi_heap_destroy`) on the lazily-created `bump`.
-    drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
-    crate::vm::virtual_machine::drop_source_code_printer_if_macro_owned();
-}
-
-/// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
-/// `bun_jsc` dependency) to sweep the per-worker macro VM after the worker's
-/// `MacroContext` boxes are freed. See [`collect_macro_vm_garbage`].
-///
-/// [`collect_macro_vm_garbage`]: crate::vm::virtual_machine::collect_macro_vm_garbage
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_macro_collect_vm_garbage() {
-    crate::vm::virtual_machine::collect_macro_vm_garbage();
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_macro_context_call(
-    ctx: &mut js_parser::Macro::MacroContext,
-    import_record_path: &[u8],
-    source_dir: &[u8],
-    log: &mut Log,
-    source: &Source,
-    import_range: Range,
-    caller: Expr,
-    function_name: &[u8],
-) -> Result<Expr, bun_js_parser::Error> {
-    // ABI: the `extern "Rust"` declaration in bun_js_parser names
-    // `bun_js_parser::Error`; keep both sides byte-identical.
-    debug_assert!(
-        !ctx.data.is_null(),
-        "MacroContext.call reached without init"
-    );
-    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
-    // lower-tier handle is uniquely borrowed for this call so no alias exists.
-    let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
-    inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
-    let caller_loc = caller.loc;
-    inner
-        .call(
+impl js_parser::Macro::MacroRunner for MacroContext {
+    fn call(
+        &mut self,
+        javascript_object: js_parser::Macro::MacroJSCtx,
+        import_record_path: &[u8],
+        source_dir: &[u8],
+        log: &mut Log,
+        source: &Source,
+        import_range: Range,
+        caller: Expr,
+        function_name: &[u8],
+    ) -> Result<Expr, bun_js::js_parser::Error> {
+        self.javascript_object = JSValue::from_encoded(javascript_object.0 as usize);
+        let caller_loc = caller.loc;
+        MacroContext::call(
+            self,
             import_record_path,
             source_dir,
             log,
@@ -345,26 +291,24 @@ pub(crate) fn __bun_macro_context_call(
                     format_args!("\"{}\" error in macro", e.name()),
                 );
             }
-            bun_js_parser::Error::MacroFailed
+            bun_js::js_parser::Error::MacroFailed
         })
+    }
+
+    fn get_remap(&self, path: &[u8]) -> Option<&'static js_parser::Macro::MacroRemapEntry> {
+        MacroContext::get_remap(self, path).map(|e| {
+            // SAFETY: `e` borrows an entry in the remap table owned by
+            // `Transpiler.options`, which outlives every parse that calls this fn,
+            // so extending the borrow to `'static` upholds the trait contract.
+            unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
+        })
+    }
 }
 
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_macro_context_get_remap(
-    data: *mut core::ffi::c_void,
-    path: &[u8],
-) -> Option<&'static js_parser::Macro::MacroRemapEntry> {
-    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
-    // remap table lives in `Transpiler.options` which outlives every parse, so
-    // the `'static` borrow is sound for callers that drop it before the
-    // `Transpiler` does.
-    let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner.get_remap(path).map(|e| {
-        // SAFETY: `e` borrows an entry in the remap table owned by
-        // `Transpiler.options`, which outlives every parse that calls this fn,
-        // so extending the borrow to `'static` upholds the function-level contract.
-        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
-    })
+impl Drop for MacroContext {
+    fn drop(&mut self) {
+        crate::vm::virtual_machine::drop_source_code_printer_if_macro_owned();
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════

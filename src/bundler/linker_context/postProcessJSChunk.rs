@@ -23,7 +23,7 @@ use bun_core::{
     string_joiner::{StringJoiner, Watcher},
     strings,
 };
-use bun_js_printer::{self as js_printer, PrintResult};
+use bun_js::js_printer::{self as js_printer, PrintResult};
 use bun_sourcemap as SourceMap;
 
 use crate::IndexInt;
@@ -1346,6 +1346,16 @@ pub fn generate_entry_point_tail_js<'a>(
         };
     }
 
+    let minify_whitespace = c.options.minify_whitespace;
+    let print_dce_annotations = c.options.emit_dce_annotations;
+    let minify_syntax = c.options.minify_syntax;
+    // SAFETY: `c.mangled_props` is not mutated during printing; detached borrow
+    // outlives only this call (matches the `LinkerContext::print_code_for_file_in_chunk_js` pattern).
+    let mangled_props: &crate::MangledProps =
+        unsafe { bun_core::ptr::detach_lifetime_ref(&c.mangled_props) };
+    let resolver_target = c.resolver().opts.target;
+    let source = c.get_source(source_index);
+
     let print_options = js_printer::Options {
         // TODO: IIFE indent
         indent: Default::default(),
@@ -1353,14 +1363,14 @@ pub fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: Some((&mut *c).into()),
 
-        minify_whitespace: c.options.minify_whitespace,
-        print_dce_annotations: c.options.emit_dce_annotations,
-        minify_syntax: c.options.minify_syntax,
-        mangled_props: Some(&c.mangled_props),
+        minify_whitespace,
+        print_dce_annotations,
+        minify_syntax,
+        mangled_props: Some(mangled_props),
         module_info,
         // .const_values = c.graph.const_values,
+        require_or_import_meta_for_source_callback: Some((&mut *c).into()),
         ..Default::default()
     };
 
@@ -1374,9 +1384,9 @@ pub fn generate_entry_point_tail_js<'a>(
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
-            c.resolver().opts.target,
+            resolver_target,
             &ast_view,
-            c.get_source(source_index),
+            source,
             print_options,
             import_records,
             &[Part {

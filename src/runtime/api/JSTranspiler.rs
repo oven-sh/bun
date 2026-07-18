@@ -1763,7 +1763,7 @@ impl JSTranspiler {
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.
         let transpiler = unsafe { self.transpiler_mut() };
         if transpiler.macro_context.is_none() {
-            let mc = JSAst::Macro::MacroContext::init(transpiler);
+            let mc = JSAst::Macro::MacroContext::default();
             transpiler.macro_context = Some(mc);
         }
         opts.macro_context = transpiler.macro_context.as_mut();

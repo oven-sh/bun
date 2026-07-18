@@ -4,8 +4,8 @@ use bun_core::alloc_impl::Arena as Bump; // bumpalo::Bump re-export (AST crate: 
 use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_core::collections::{BoundedArray, VecExt};
 
-use bun_js_printer::renamer;
-use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
+use bun_js::js_printer::renamer;
+use bun_js::js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
 use crate::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};

@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::alloc_impl::Arena as Bump;
 use bun_core::{self, Global, Output, ZStr, feature_flags};
 use bun_core::{MutableString, strings};
-use bun_js_parser as js_parser;
+use bun_js::js_parser;
 use bun_resolver::fs as fs_mod;
 use bun_sys::{self, Fd};
 

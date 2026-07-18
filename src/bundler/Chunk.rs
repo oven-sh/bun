@@ -1632,14 +1632,14 @@ pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
 pub mod bun_renamer {
-    pub use bun_js_printer::renamer::*;
+    pub use bun_js::js_printer::renamer::*;
 
     #[derive(Default)]
     pub enum ChunkRenamer {
         #[default]
         None,
-        Number(Box<bun_js_printer::renamer::NumberRenamer>),
-        Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
+        Number(Box<bun_js::js_printer::renamer::NumberRenamer>),
+        Minify(Box<bun_js::js_printer::renamer::MinifyRenamer>),
     }
 
     impl ChunkRenamer {
@@ -1650,11 +1650,11 @@ pub mod bun_renamer {
                 ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
             }
         }
-        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub(crate) fn as_renamer(&mut self) -> bun_js::js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
+                ChunkRenamer::Number(r) => bun_js::js_printer::renamer::Renamer::NumberRenamer(r),
+                ChunkRenamer::Minify(r) => bun_js::js_printer::renamer::Renamer::MinifyRenamer(r),
             }
         }
     }

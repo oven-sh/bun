@@ -10,6 +10,7 @@
 // lifecycle_script_runner.rs).
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
+extern crate bun_js_parser as bun_js_printer;
 // `bun_core::declare_scope!` / `scoped_log!` — the macros live at
 // `bun_core` crate root (#[macro_export]); alias the crate so the
 // `bun_core::` path resolves.

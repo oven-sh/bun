@@ -727,9 +727,9 @@ pub mod parse_worker {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
-                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
-                        bun_js_parser::Result::Cached
-                        | bun_js_parser::Result::AlreadyBundled(_) => {
+                        bun_js::js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js::js_parser::Result::Cached
+                        | bun_js::js_parser::Result::AlreadyBundled(_) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")
                         }
                     }

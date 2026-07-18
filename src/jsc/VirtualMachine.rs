@@ -2690,7 +2690,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// printer is mid-write would alias. Callers must only dereference this
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
-    pub fn get(&mut self) -> Option<&mut dyn bun_js::SourceMapSink> {
+    pub fn get(&mut self) -> Option<bun_js::SourceMapHandler<'_>> {
         // Take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
         // (VSCode-extension) clients fall through to the `source_mappings`
@@ -2703,9 +2703,9 @@ impl<'a> SourceMapHandlerGetter<'a> {
             // `source_mappings` is a value field on the VM, exclusively
             // borrowed for the returned handler's lifetime (bounded by
             // `&mut self`).
-            return Some(self.vm_source_mappings_mut());
+            return Some(bun_js::SourceMapHandler::new(self.vm_source_mappings_mut()));
         }
-        Some(self)
+        Some(bun_js::SourceMapHandler::new(self))
     }
 }
 
@@ -2717,12 +2717,12 @@ impl<'a> bun_js::SourceMapSink for SourceMapHandlerGetter<'a> {
         &mut self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
-    ) -> bun_js_printer::Result<()> {
+    ) -> bun_js::js_printer::Result<()> {
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
         chunk
             .print_source_map_contents_from_internal::<true>(source, &mut temp_json_buffer, true)
-            .map_err(|_| bun_js_printer::Error::WriteFailed)?;
+            .map_err(|_| bun_js::js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
@@ -2733,7 +2733,7 @@ impl<'a> bun_js::SourceMapSink for SourceMapHandlerGetter<'a> {
 
         self.vm_source_mappings_mut()
             .put_mappings(source, chunk.buffer)
-            .map_err(|_| bun_js_printer::Error::WriteFailed)?;
+            .map_err(|_| bun_js::js_printer::Error::WriteFailed)?;
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg

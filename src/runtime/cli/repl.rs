@@ -1815,9 +1815,8 @@ impl<'a> Repl<'a> {
 
         // Initialize macro context from transpiler (required for import processing).
         if vm.transpiler.macro_context.is_none() {
-            vm.as_mut().transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
-                &mut vm.as_mut().transpiler,
-            ));
+            vm.as_mut().transpiler.macro_context =
+                Some(bun_js_parser::Macro::MacroContext::default());
         }
         opts.macro_context = vm.as_mut().transpiler.macro_context.as_mut();
 
@@ -1843,7 +1842,7 @@ impl<'a> Repl<'a> {
             Ok(r) => r,
             Err(_) => return None,
         };
-        let bun_js_parser::Result::Ast(mut ast) = parse_result else {
+        let bun_js::js_parser::Result::Ast(mut ast) = parse_result else {
             return None;
         };
         // Don't call ast.deinit() - the arena handles cleanup

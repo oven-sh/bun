@@ -42,7 +42,7 @@ mod JSPrinter {
         input: &[u8],
         writer: &mut (impl bun_loop::Write + ?Sized),
         encoding: Encoding,
-    ) -> bun_js_printer::Result<()> {
+    ) -> bun_js::js_printer::Result<()> {
         match encoding {
             Encoding::Latin1 => {
                 bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)

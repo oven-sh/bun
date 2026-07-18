@@ -450,7 +450,7 @@ pub enum Error {
     #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
     #[error(transparent)]
-    JsParser(#[from] bun_js_parser::Error),
+    JsParser(#[from] bun_js::js_parser::Error),
     #[error(transparent)]
     JsLexer(#[from] bun_js_parser::lexer::Error),
     #[error(transparent)]
@@ -464,7 +464,7 @@ pub enum Error {
     #[error(transparent)]
     Hpack(#[from] bun_http::lshpack::HpackError),
     #[error(transparent)]
-    JsPrinter(#[from] bun_js_printer::Error),
+    JsPrinter(#[from] bun_js::js_printer::Error),
     #[error(transparent)]
     Sourcemap(#[from] bun_sourcemap::Error),
     #[error(transparent)]

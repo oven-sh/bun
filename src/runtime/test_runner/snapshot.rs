@@ -270,7 +270,7 @@ impl<'a> Snapshots<'a> {
 
         let parse_result = parser.parse()?;
         let mut ast = match parse_result {
-            bun_js_parser::Result::Ast(ast) => ast,
+            bun_js::js_parser::Result::Ast(ast) => ast,
             _ => return Err(crate::Error::ParseError),
         };
 

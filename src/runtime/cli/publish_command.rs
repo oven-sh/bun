@@ -1569,7 +1569,7 @@ impl PublishCommand {
         ) {
             Ok(w) => w,
             Err(e) => {
-                if e == bun_js_printer::Error::Alloc(bun_core::alloc_impl::AllocError) {
+                if e == bun_js::js_printer::Error::Alloc(bun_core::alloc_impl::AllocError) {
                     return Err(AllocError);
                 }
                 Output::err_generic("failed to print normalized package.json: {}", (e.name(),));

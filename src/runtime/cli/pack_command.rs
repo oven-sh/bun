@@ -3591,7 +3591,7 @@ fn edit_root_package_json(
     ) {
         Ok(w) => w,
         Err(err) => {
-            if err == bun_js_printer::Error::Alloc(bun_core::alloc_impl::AllocError) {
+            if err == bun_js::js_printer::Error::Alloc(bun_core::alloc_impl::AllocError) {
                 return Err(AllocError);
             }
             Output::err_generic(

@@ -47,13 +47,13 @@ pub enum Error {
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
-    JsPrinter(#[from] bun_js_printer::Error),
+    JsPrinter(#[from] bun_js::js_printer::Error),
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
     Dotenv(#[from] bun_dotenv::Error),
     #[error(transparent)]
-    JsParser(#[from] bun_js_parser::Error),
+    JsParser(#[from] bun_js::js_parser::Error),
     #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
     #[error(transparent)]
@@ -78,14 +78,14 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<Error> for bun_js_printer::Error {
+impl From<Error> for bun_js::js_printer::Error {
     fn from(e: Error) -> Self {
         match e {
             Error::JsPrinter(inner) => inner,
-            Error::Core(inner) => bun_js_printer::Error::Core(inner),
-            Error::Alloc(inner) => bun_js_printer::Error::Alloc(inner),
-            Error::WriteFailed => bun_js_printer::Error::WriteFailed,
-            _ => bun_js_printer::Error::Core(bun_core::Error::Unexpected),
+            Error::Core(inner) => bun_js::js_printer::Error::Core(inner),
+            Error::Alloc(inner) => bun_js::js_printer::Error::Alloc(inner),
+            Error::WriteFailed => bun_js::js_printer::Error::WriteFailed,
+            _ => bun_js::js_printer::Error::Core(bun_core::Error::Unexpected),
         }
     }
 }

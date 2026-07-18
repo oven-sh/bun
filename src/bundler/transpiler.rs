@@ -6,7 +6,7 @@ use bun_core::alloc_impl::Arena;
 use bun_core::collections::HashMap;
 use bun_core::collections::VecExt;
 use bun_dotenv as dot_env;
-use bun_js_parser as js_ast;
+use bun_js::js_parser as js_ast;
 use bun_sys::perf::system_timer::Timer as SystemTimer;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
@@ -400,7 +400,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!(*self.resolve_results),
             self.fs,
         );
-        self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
+        self.macro_context = Some(js_ast::Macro::MacroContext::default());
     }
 
     /// Returns the resolver's auto-install package-manager handle. Errs when
@@ -1671,7 +1671,7 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if self.macro_context.is_none() {
-                    let ctx = js_ast::Macro::MacroContext::init(self);
+                    let ctx = js_ast::Macro::MacroContext::default();
                     self.macro_context = Some(ctx);
                 }
                 // Thread the caller-supplied JS
@@ -2668,7 +2668,7 @@ impl<'a> Transpiler<'a> {
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
-        handler: js_printer::SourceMapHandler<'_>,
+        handler: Option<js_printer::SourceMapHandler<'_>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // env_var feature_flag getters return `Option<bool>`
@@ -2683,7 +2683,7 @@ impl<'a> Transpiler<'a> {
                 &result.source,
                 writer,
                 format,
-                Some(handler),
+                handler,
                 result.runtime_transpiler_cache,
                 module_info,
             );
@@ -2694,7 +2694,7 @@ impl<'a> Transpiler<'a> {
             &result.source,
             writer,
             format,
-            Some(handler),
+            handler,
             result.runtime_transpiler_cache,
             module_info,
         )

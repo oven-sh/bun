@@ -1013,6 +1013,104 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
   });
 });
 
+// tsconfig "paths" wildcard substitution: the captured text replaces the first
+// '*' in the target textually (TypeScript's replaceFirstStar). The key
+// pattern's suffix is consumed by the match and must not be re-appended, and
+// a '*' that is not on a segment boundary must not get a '/' inserted.
+// https://github.com/oven-sh/bun/issues/26193
+describe("tsconfig paths wildcard substitution", () => {
+  async function run(files: Record<string, string>, script: string) {
+    using dir = tempDir("tsconfig-paths-wildcard", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("maps a .js key suffix to a .ts target suffix (issue #26193)", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@src/*.js": ["./src/*.ts"] } },
+        }),
+        "src/lib.ts": `export const greeting = "hi";`,
+      },
+      `import { greeting } from "@src/lib.js"; console.log(greeting);`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("hi\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("drops the key suffix when the target has no suffix", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "tie/*end": ["./tie-long/*"], "tie/*": ["./tie-short/*"] } },
+        }),
+        "tie-long/x.ts": `export const v = "long-x";`,
+        "tie-short/xend.ts": `export const v = "short-xend";`,
+      },
+      `import { v } from "tie/xend"; console.log(v);`,
+    );
+    expect(stderr).toBe("");
+    // Longest prefix is equal ("tie/"), longest suffix "end" wins over "", so
+    // "tie/xend" matches "tie/*end" with * = "x" and resolves to ./tie-long/x.
+    expect(stdout).toBe("long-x\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("substitutes into a '*' not on a segment boundary", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "t*t3/foo": ["./test3-succ*s.ts"] } },
+        }),
+        "test3-success.ts": `export default "test3-success";`,
+      },
+      `import v from "test3/foo"; console.log(v);`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("test3-success\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still resolves plain prefix-only wildcards", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+        }),
+        "src/a/b.ts": `export const ok = 1;`,
+      },
+      `import { ok } from "@/a/b"; console.log(ok);`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("falls through to the next target when the first does not exist", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "lib/*.js": ["./first/*.ts", "./second/*.ts"] } },
+        }),
+        "second/thing.ts": `export const where = "second";`,
+      },
+      `import { where } from "lib/thing.js"; console.log(where);`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("second\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Stress the resolver's directory-info cache: resolve through hundreds of
 // distinct package directories (each `put` hands back a slot pointer into the
 // shared dir-cache that must stay valid while the cache keeps growing) plus a

@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -570,5 +571,55 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32164
+describe("Resolver pointed at a server that refuses connections", () => {
+  // Bind a UDP port and close it so nothing is listening there, then point the
+  // resolver at it. The query's UDP send gets an ICMP port-unreachable, which
+  // must surface as an immediate ECONNREFUSED like in Node, not as ETIMEOUT
+  // after c-ares exhausts its retries.
+  async function closedUdpPort() {
+    const socket = dgram.createSocket("udp4");
+    await new Promise((resolve, reject) => {
+      socket.once("error", reject);
+      socket.bind(0, "127.0.0.1", resolve);
+    });
+    const port = socket.address().port;
+    await new Promise(resolve => socket.close(resolve));
+    return port;
+  }
+
+  it("dns.promises.Resolver rejects with ECONNREFUSED", async () => {
+    const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers([`127.0.0.1:${await closedUdpPort()}`]);
+    const err = await resolver.resolve4("econnrefused.bun.invalid").then(
+      () => {
+        throw new Error("expected resolve4 to reject");
+      },
+      e => e,
+    );
+    expect({ code: err.code, syscall: err.syscall, message: err.message }).toEqual({
+      code: "ECONNREFUSED",
+      syscall: "queryA",
+      message: "queryA ECONNREFUSED econnrefused.bun.invalid",
+    });
+  });
+
+  it("dns.Resolver (callback API) errors with ECONNREFUSED", async () => {
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers([`127.0.0.1:${await closedUdpPort()}`]);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    resolver.resolve4("econnrefused.bun.invalid", (err, addresses) => {
+      try {
+        expect(addresses).toBeUndefined();
+        expect(err?.code).toBe("ECONNREFUSED");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
   });
 });

@@ -1185,7 +1185,11 @@ describe.concurrent("unhandledRejection async context", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `created-in-A="B" created-in-C=null\n`, stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `created-in-A="B" created-in-C=null\n`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Rejections raised inside a context are stored wrapped in an AsyncContextFrame,
@@ -1217,7 +1221,11 @@ describe.concurrent("unhandledRejection async context", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unhandled:late:ctx,rejectionHandled\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "unhandled:late:ctx,rejectionHandled\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // expect(fn).toThrow() drains pending rejections synchronously, so the drain can

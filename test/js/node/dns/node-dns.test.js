@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -570,5 +570,74 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("root-anchored localhost names", () => {
+  // Runs in a child process: dns.setServers() is process-global, and the point of
+  // the fixture is that the nameserver it installs never receives a single query.
+  const fixture = `
+    const dns = require("node:dns");
+    const dgram = require("node:dgram");
+
+    const queries = [];
+    const server = dgram.createSocket("udp4");
+    server.on("message", (msg, rinfo) => {
+      let offset = 12;
+      const labels = [];
+      while (msg[offset]) {
+        labels.push(msg.subarray(offset + 1, offset + 1 + msg[offset]).toString());
+        offset += msg[offset] + 1;
+      }
+      queries.push(labels.join(".") + " type=" + msg.readUInt16BE(offset + 1));
+
+      // Answer NXDOMAIN so a leaked query fails immediately instead of retrying.
+      const header = Buffer.alloc(12);
+      msg.copy(header, 0, 0, 2);
+      header.writeUInt16BE(0x8183, 2);
+      header.writeUInt16BE(1, 4);
+      server.send(Buffer.concat([header, msg.subarray(12, offset + 5)]), rinfo.port, rinfo.address);
+    });
+    await new Promise(resolve => server.bind(0, "127.0.0.1", resolve));
+    dns.setServers(["127.0.0.1:" + server.address().port]);
+
+    const addresses = all => all.map(entry => entry.address).sort();
+    const loopback = addresses(await dns.promises.lookup("localhost", { all: true }));
+
+    const result = { queries, loopback };
+    for (const name of ["localhost.", "LOCALHOST.", "sub.localhost", "sub.localhost."]) {
+      result[name] = await dns.promises
+        .lookup(name, { all: true })
+        .then(addresses, err => "error " + err.code);
+    }
+    server.close();
+    console.log(JSON.stringify(result));
+  `;
+
+  it("resolve to loopback without reaching the configured nameserver", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.trim()) {
+      throw new Error(`fixture printed nothing (exit code ${exitCode})\n${stderr}`);
+    }
+
+    const result = JSON.parse(stdout);
+    expect(result.loopback).not.toEqual([]);
+    expect(result.loopback.filter(address => address === "127.0.0.1" || address === "::1")).toEqual(result.loopback);
+
+    // A trailing dot only suppresses search-list expansion; it names the same host.
+    expect(result["localhost."]).toEqual(result.loopback);
+    expect(result["LOCALHOST."]).toEqual(result.loopback);
+    // How "sub.localhost" itself resolves is the platform resolver's call; all the
+    // trailing dot may do is not change the answer.
+    expect(result["sub.localhost."]).toEqual(result["sub.localhost"]);
+    expect(result.queries).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });

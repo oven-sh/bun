@@ -503,20 +503,52 @@ pub(super) mod lib_uv_backend {
 // normalizeDNSName
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A single trailing dot is the root-anchored spelling of the same name: it
+/// suppresses search-list expansion but does not change which name is being
+/// asked for. The bare root (`"."`) has no name to unanchor.
+fn strip_root_dot(name: &[u8]) -> &[u8] {
+    match name.split_last() {
+        Some((b'.', unanchored)) if !unanchored.is_empty() => unanchored,
+        _ => name,
+    }
+}
+
+fn ends_with_caseless(name: &[u8], suffix: &[u8]) -> bool {
+    name.len() >= suffix.len()
+        && strings::eql_case_insensitive_ascii_check_length(
+            &name[name.len() - suffix.len()..],
+            suffix,
+        )
+}
+
 pub(super) fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
-    if *backend == GetAddrInfoBackend::CAres {
-        // https://github.com/c-ares/c-ares/issues/477
-        if name.ends_with(b".localhost") {
+    // Match on the unanchored, case-folded spelling: "LOCALHOST." names the same
+    // host as "localhost", and a root-anchored name must never be matched only
+    // when it is written without its trailing dot.
+    let unanchored = strip_root_dot(name);
+
+    // RFC 6761 6.3: "localhost." and anything under ".localhost." always resolve
+    // to loopback and are never sent to a configured nameserver. c-ares misses
+    // the root-anchored spellings. https://github.com/c-ares/c-ares/issues/477
+    if strings::eql_case_insensitive_ascii_check_length(unanchored, b"localhost")
+        || ends_with_caseless(unanchored, b".localhost")
+    {
+        if *backend == GetAddrInfoBackend::CAres {
+            // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
             *backend = GetAddrInfoBackend::System;
             return b"localhost";
-        } else if name.ends_with(b".local")
-            // https://github.com/c-ares/c-ares/pull/463
-            || strings::is_ipv6_address(name)
-            // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
-            || name == b"localhost"
-        {
-            *backend = GetAddrInfoBackend::System;
         }
+        // getaddrinfo() resolves these itself. Hand it the real subdomain so a
+        // hosts-file entry for it still wins; only the root dot comes off.
+        return unanchored;
+    }
+
+    if *backend == GetAddrInfoBackend::CAres
+        // https://github.com/c-ares/c-ares/pull/463
+        && (ends_with_caseless(unanchored, b".local") || strings::is_ipv6_address(name))
+    {
+        *backend = GetAddrInfoBackend::System;
+        return unanchored;
     }
 
     name

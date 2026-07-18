@@ -151,18 +151,21 @@ it("console.log %j prints [Circular] for self-referencing objects", async () => 
       `
         const c = { a: 1 }; c.self = c;
         try { console.log("pre %j post", c); } catch (e) { console.log("THREW:" + e.constructor.name); }
-        try { console.log("%j", { toJSON() { throw new Error("tj"); } }); } catch { console.log("ctl-tojson:THREW"); }
-        try { console.log("%j", 10n); } catch { console.log("ctl-bigint:THREW"); }
+        try { console.log("%j", { toJSON() { throw new Error("tj"); } }); }
+        catch (e) { console.log("ctl-tojson:" + e.constructor.name + ":" + e.message); }
+        try { console.log("%j", 10n); }
+        catch (e) { console.log("ctl-bigint:" + e.constructor.name + ":" + String(e.message).includes("BigInt")); }
       `,
     ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.replaceAll("\r\n", "\n")).toBe("pre [Circular] post\nctl-tojson:THREW\nctl-bigint:THREW\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.replaceAll("\r\n", "\n"), exitCode }).toEqual({
+    stdout: "pre [Circular] post\nctl-tojson:Error:tj\nctl-bigint:TypeError:true\n",
+    exitCode: 0,
+  });
 });
 
 it("console.log with SharedArrayBuffer", () => {

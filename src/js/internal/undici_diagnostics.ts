@@ -60,6 +60,7 @@ class DiagnosticsRequest {
     this.completed = false;
     this.aborted = false;
     this._added = undefined;
+    this._connectParams = undefined;
   }
 
   addHeader(key: string, value: string) {

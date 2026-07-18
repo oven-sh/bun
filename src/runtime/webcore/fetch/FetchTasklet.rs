@@ -158,13 +158,35 @@ pub(crate) mod undici_diagnostics {
         }
     }
 
+    /// Capture the mutex-guarded bits `publish_pending` needs. Must be called
+    /// under `this.mutex` (before `cleanup` unlocks) because `this.result` is
+    /// wholesale-replaced by the HTTP thread's `callback()` under the same
+    /// lock; reading it after unlock is a data race when `!is_done`.
+    pub(crate) fn snapshot_for_publish(this: &FetchTasklet) -> (bool, JSValue) {
+        let aborted = this
+            .signal_store
+            .aborted
+            .load(core::sync::atomic::Ordering::Relaxed);
+        let failed = this.result.fail.is_some() || this.abort_reason.has() || aborted;
+        let fallback_err = this.abort_reason.get().unwrap_or(JSValue::UNDEFINED);
+        (failed, fallback_err)
+    }
+
     /// Called after `mutex.unlock()` from `on_progress_update`'s cleanup.
     /// Publishes whatever is pending: response-head events (connected /
     /// sendHeaders / bodySent / headers) and/or the terminal event
     /// (error / trailers). All tasklet state is extracted into locals before
     /// the first JS call so a subscriber that re-enters via the body
-    /// callbacks never observes an aliased `&mut FetchTasklet`.
-    pub(crate) fn publish_pending(this: &mut FetchTasklet, global: &JSGlobalObject, is_done: bool) {
+    /// callbacks never observes an aliased `&mut FetchTasklet`. `failed`/
+    /// `fallback_err` come from `snapshot_for_publish`, captured under the
+    /// lock by the caller.
+    pub(crate) fn publish_pending(
+        this: &mut FetchTasklet,
+        global: &JSGlobalObject,
+        is_done: bool,
+        failed: bool,
+        fallback_err: JSValue,
+    ) {
         let Some(request) = this.diagnostics_request.get() else {
             this.diagnostics_error_value.deinit();
             return;
@@ -189,13 +211,6 @@ pub(crate) mod undici_diagnostics {
             core::mem::replace(&mut this.diagnostics_error_value, StrongOptional::empty());
         let stashed_err = err_strong.get();
 
-        let aborted = this
-            .signal_store
-            .aborted
-            .load(core::sync::atomic::Ordering::Relaxed);
-        let failed = this.result.fail.is_some() || this.abort_reason.has() || aborted;
-        let fallback_err = this.abort_reason.get().unwrap_or(JSValue::UNDEFINED);
-
         let terminal = stashed_err.is_some() || is_done;
         let mut request_strong = if terminal {
             core::mem::replace(&mut this.diagnostics_request, StrongOptional::empty())
@@ -208,11 +223,7 @@ pub(crate) mod undici_diagnostics {
         if let Some((status, status_text, headers_js)) = response_head {
             jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request);
             jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
-                global,
-                request,
-                status,
-                status_text,
-                headers_js,
+                global, request, status, status_text, headers_js,
             );
         }
 
@@ -1038,13 +1049,27 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
+            // Capture mutex-guarded state needed by publish_pending before
+            // unlocking: `this.result` is wholesale-replaced by the HTTP
+            // thread's callback() under this lock, so reading it afterwards
+            // would race when !is_done.
+            let diag_snapshot = this
+                .diagnostics_request
+                .has()
+                .then(|| undici_diagnostics::snapshot_for_publish(this));
             this.mutex.unlock();
             // Publish to diagnostics_channel only after the mutex is released:
             // subscribers run user JS that may re-enter this tasklet via
             // `on_start_streaming_http_response_body_callback` (self-deadlock)
             // or simply run slowly (blocks the HTTP thread's callback()).
-            if this.diagnostics_request.has() {
-                undici_diagnostics::publish_pending(this, &global_this, is_done);
+            if let Some((failed, fallback_err)) = diag_snapshot {
+                undici_diagnostics::publish_pending(
+                    this,
+                    &global_this,
+                    is_done,
+                    failed,
+                    fallback_err,
+                );
             }
             // if we are not done we wait until the next call
             if is_done {

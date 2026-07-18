@@ -158,11 +158,7 @@ pub fn generate_code_for_lazy_export(
                         &self.all_symbols[css_ref.source_index(idx) as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
-                    let loc = ast
-                        .local_scope
-                        .get(name)
-                        .unwrap()
-                        .loc;
+                    let loc = ast.local_scope.get(name).unwrap().loc;
 
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
@@ -265,8 +261,7 @@ pub fn generate_code_for_lazy_export(
                                     // it is from the current file
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
-                                        let Some(name_entry) = ast.local_scope.get(name_v)
-                                        else {
+                                        let Some(name_entry) = ast.local_scope.get(name_v) else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,

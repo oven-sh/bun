@@ -1610,8 +1610,7 @@ mod __css_validation {
                                 };
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
-                                    let Some(other_name) = other_ast.local_scope.get(name_v)
-                                    else {
+                                    let Some(other_name) = other_ast.local_scope.get(name_v) else {
                                         continue;
                                     };
                                     let other_name_ref =

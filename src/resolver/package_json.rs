@@ -1185,10 +1185,12 @@ impl<'a> Visitor<'a> {
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
         expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
 
+        let index = EntryDataMap::build_index(&map_data);
         Entry {
             data: EntryData::Map(EntryDataMap {
                 list: map_data,
                 expansion_keys: expansion_keys.into_boxed_slice(),
+                index,
             }),
         }
     }
@@ -1274,9 +1276,36 @@ pub struct EntryDataMap {
     // This is not a std.ArrayHashMap because we also store the key_range which is a little weird
     pub expansion_keys: Box<[MapEntry]>,
     pub list: EntryDataMapList,
+    /// `key → list index` accelerator for `value_for_key`. Built only when
+    /// `list.len() > ENTRY_MAP_INDEX_THRESHOLD` so small condition maps
+    /// (`import`/`require`/`default`) stay a linear scan. Stores indices, not
+    /// keys, so nothing is duplicated from `list`.
+    index: Option<Box<bun_collections::hashbrown::HashTable<u32>>>,
 }
 
 pub type EntryDataMapList = Vec<MapEntry>;
+
+/// Exact-key lookup in `value_for_key` falls back to a linear scan below this
+/// many entries (a nested `import`/`require`/`node`/`default` condition map is
+/// ~2-8 keys; only top-level subpath maps get large).
+const ENTRY_MAP_INDEX_THRESHOLD: usize = 16;
+
+impl EntryDataMap {
+    fn build_index(list: &EntryDataMapList) -> Option<Box<bun_collections::hashbrown::HashTable<u32>>> {
+        if list.len() <= ENTRY_MAP_INDEX_THRESHOLD {
+            return None;
+        }
+        let mut table = bun_collections::hashbrown::HashTable::with_capacity(list.len());
+        for (i, entry) in list.iter().enumerate() {
+            let h = bun_wyhash::hash(&entry.key);
+            // First occurrence wins, matching the linear scan's behavior on duplicate keys.
+            if table.find(h, |&j| strings::eql(&list[j as usize].key, &entry.key)).is_none() {
+                table.insert_unique(h, i as u32, |&j| bun_wyhash::hash(&list[j as usize].key));
+            }
+        }
+        Some(Box::new(table))
+    }
+}
 
 #[derive(Clone)]
 pub struct MapEntry {
@@ -1293,6 +1322,12 @@ impl Entry {
     pub fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
         match &self.data {
             EntryData::Map(m) => {
+                if let Some(index) = m.index.as_deref() {
+                    let h = bun_wyhash::hash(key_);
+                    return index
+                        .find(h, |&j| strings::eql(&m.list[j as usize].key, key_))
+                        .map(|&j| &m.list[j as usize].value);
+                }
                 for entry in m.list.iter() {
                     if strings::eql(&entry.key, key_) {
                         return Some(&entry.value);

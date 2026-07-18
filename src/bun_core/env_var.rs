@@ -465,36 +465,15 @@ pub(crate) mod kind {
             DebugWarn,
             /// Ignore deserialization errors and treat the variable as not set.
             NotSet,
-            /// Formatting errors are treated as truthy values.
-            ///
-            /// If this library fails to parse the value as an integer and truthy cast is
-            /// enabled, truthy values will be set to 1 or 0.
-            ///
-            /// Note: Most values are considered truthy, except for "", "0", "false", "no",
-            /// and "off".
-            #[allow(dead_code)]
-            TruthyCast,
-        }
-
-        /// Control what empty strings are treated as.
-        #[derive(Clone, Copy)]
-        pub(crate) enum EmptyStringAs {
-            /// Empty strings are handled as the given value.
-            #[allow(dead_code)]
-            Value(ValueType),
-            /// Empty strings are treated as deserialization errors.
-            Erroneous,
         }
 
         #[derive(Clone, Copy)]
         pub(crate) struct DeserOpts {
             pub error_handling: ErrorHandling,
-            pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
             pub(crate) const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
-                empty_string_as: EmptyStringAs::Erroneous,
             };
         }
         impl Default for DeserOpts {
@@ -545,15 +524,7 @@ pub(crate) mod kind {
                 };
 
                 if raw_env == b"" {
-                    match self.ip.opts.deser.empty_string_as {
-                        EmptyStringAs::Value(v) => {
-                            self.value.store(v, Ordering::Relaxed);
-                            return Some(v);
-                        }
-                        EmptyStringAs::Erroneous => {
-                            return self.handle_error(raw_env, "is an empty string");
-                        }
-                    }
+                    return self.handle_error(raw_env, "is an empty string");
                 }
 
                 // Distinguishes Overflow vs InvalidCharacter; '-0'→0, '-N'→Overflow,
@@ -591,15 +562,6 @@ pub(crate) mod kind {
                     ErrorHandling::NotSet => {
                         self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                         None
-                    }
-                    ErrorHandling::TruthyCast => {
-                        if super::boolean::string_is_truthy(raw_env) {
-                            self.value.store(1, Ordering::Relaxed);
-                            Some(1)
-                        } else {
-                            self.value.store(0, Ordering::Relaxed);
-                            Some(0)
-                        }
                     }
                 }
             }
@@ -852,15 +814,6 @@ macro_rules! __unsigned_opts {
         $crate::env_var::kind::unsigned::CtorOptions {
             deser: $crate::env_var::kind::unsigned::DeserOpts {
                 error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
-                empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Erroneous,
-            },
-        }
-    };
-    ({ deser: { error_handling: $eh:ident, empty_string_as: Value($v:expr) } }) => {
-        $crate::env_var::kind::unsigned::CtorOptions {
-            deser: $crate::env_var::kind::unsigned::DeserOpts {
-                error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
-                empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Value($v),
             },
         }
     };

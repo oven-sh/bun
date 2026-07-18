@@ -333,12 +333,11 @@ describe("FORCE_COLOR piped console", () => {
         }) + "\\n");
         console.log("x", { a: 1 });`,
       ],
-      env: { ...bunEnv, PATH: process.env.PATH, NO_COLOR: undefined, FORCE_COLOR: value },
+      env: { ...bunEnv, PATH: process.env.PATH, NO_COLOR: undefined, NODE_DISABLE_COLORS: undefined, FORCE_COLOR: value },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
     const nl = stdout.indexOf("\n");
     const meta = JSON.parse(stdout.slice(0, nl));
     const rest = stdout.slice(nl + 1);
@@ -347,12 +346,15 @@ describe("FORCE_COLOR piped console", () => {
       ansi: meta.ansi,
       colorDepthSaysColor: meta.depth > 2,
       emittedEscapes: rest.includes("\x1b"),
+      stderr,
+      exitCode,
     }).toEqual({
       FORCE_COLOR: value,
       ansi: colored,
       colorDepthSaysColor: colored,
       emittedEscapes: colored,
+      stderr: "",
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   });
 });

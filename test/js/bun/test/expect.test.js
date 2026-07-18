@@ -719,6 +719,15 @@ describe("expect()", () => {
       class Foo {}
       expect(Bun.deepEquals(new Proxy(new Foo(), {}), new Foo(), true)).toBe(true);
       expect(Bun.deepEquals(new Proxy({}, {}), new Foo(), true)).toBe(false);
+
+      // Proxy skips the array fast path (which compares length); the generic walk never sees
+      // non-enumerable .length, so it must be compared explicitly. Matches Node/Jest.
+      expect(Bun.deepEquals(new Proxy(new Array(5), {}), [], true)).toBe(false);
+      // eslint-disable-next-line no-sparse-arrays
+      expect(Bun.deepEquals(new Proxy([1, ,], {}), [1], true)).toBe(false);
+      expect(Bun.deepEquals(new Proxy([1, 2, 3], {}), [1, 2, 3], true)).toBe(true);
+      expect(Bun.deepEquals([1, 2, 3], new Proxy([1, 2, 3], {}), true)).toBe(true);
+      expect(Bun.deepEquals(new Proxy([1, 2], {}), new Proxy([1, 2, 3], {}), true)).toBe(false);
     });
 
     test("expect diff rendering propagates a throwing Proxy trap instead of aborting", () => {

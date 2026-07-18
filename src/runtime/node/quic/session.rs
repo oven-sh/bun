@@ -1661,13 +1661,10 @@ impl QuicSession {
         if fin {
             self.qlog_fin_sent.set(true);
         }
-        let data_js = match bun_core::String::clone_utf8(data.as_bytes()).to_js(global) {
-            Ok(v) => v,
-            Err(err) => {
-                global.report_uncaught_exception_from_error(err);
-                return;
-            }
-        };
+        // `qlog_fin_sent` is latched above and also gates the guard at the top,
+        // so bailing here would silently end the whole qlog stream, not just
+        // drop this record.
+        let data_js = bun_core::String::clone_utf8(data.as_bytes()).to_js(global).or_report(global);
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(

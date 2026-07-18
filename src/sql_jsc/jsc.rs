@@ -789,13 +789,13 @@ unsafe extern "C" {
 #[macro_export]
 macro_rules! put_host_functions {
     ($obj:expr, $global:expr, [ $( ($name:literal, $f:expr, $arity:expr) ),* $(,)? ]) => {{
-        let __obj: $crate::jsc::JSValue = $obj;
+        let __obj: $crate::sql::jsc::JSValue = $obj;
         let __g = $global;
         $(
             __obj.put(
                 __g,
                 $name.as_bytes(),
-                $crate::jsc::JSFunction::create(__g, $name, $f, $arity, ::core::default::Default::default()),
+                $crate::sql::jsc::JSFunction::create(__g, $name, $f, $arity, ::core::default::Default::default()),
             );
         )*
         __obj

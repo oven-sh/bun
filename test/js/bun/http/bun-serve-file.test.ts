@@ -1176,9 +1176,7 @@ test("file route serves a burst of concurrent requests after reloads with duplic
   }
 
   const N = 64;
-  const bodies = await Promise.all(
-    Array.from({ length: N }, () => fetch(`${server.url}f`).then(r => r.text())),
-  );
+  const bodies = await Promise.all(Array.from({ length: N }, () => fetch(`${server.url}f`).then(r => r.text())));
   expect(bodies.every(b => b === "hello from file route")).toBe(true);
 
   // HEAD goes through FileRoute::on with the same borrowed path.

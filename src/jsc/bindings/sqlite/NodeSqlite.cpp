@@ -2125,16 +2125,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
+    // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
+    // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
     int capacity = 1000;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNumber()) {
-        capacity = arg0.toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (capacity < 1) capacity = 1;
+        capacity = JSC::toInt32(arg0.asNumber());
     }
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSNodeSqliteTagStoreClassStructure.get(zigGlobal);
-    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<unsigned>(capacity));
+    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<size_t>(capacity));
     return JSValue::encode(store);
 }
 
@@ -3528,7 +3529,7 @@ void JSNodeSqliteLimits::getOwnPropertyNames(JSObject* object, JSGlobalObject* g
 const ClassInfo JSNodeSqliteTagStore::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStore) };
 const ClassInfo JSNodeSqliteTagStorePrototype::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStorePrototype) };
 
-JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, unsigned capacity)
+JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, size_t capacity)
 {
     auto* ptr = new (NotNull, allocateCell<JSNodeSqliteTagStore>(vm)) JSNodeSqliteTagStore(vm, structure);
     ptr->finishCreation(vm, db, capacity);
@@ -3539,7 +3540,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsTagStoreCapacity);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreDb);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreSize);
 
-void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, unsigned capacity)
+void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, size_t capacity)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -3693,11 +3694,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
 
         {
             WTF::Locker locker { cellLock() };
-            if (m_order.size() >= m_capacity) m_order.removeLast();
             Entry e;
             e.sql = sqlStr;
             e.stmt.set(vm, this, stmtObj);
             m_order.insert(0, std::move(e));
+            // Node's LRUCache::Put inserts then evicts with `size > capacity`,
+            // so capacity=0 prepares but never caches.
+            if (m_order.size() > m_capacity) m_order.removeLast();
         }
     }
 
@@ -3803,13 +3806,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsTagStoreCapacity, (JSGlobalObject*, EncodedJSValue th
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->capacity()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->capacity())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreSize, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->size()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->size())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreDb, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {

@@ -549,6 +549,13 @@ impl WindowsLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
+    /// `closesocket()` every still-open fd so `ExitProcess` doesn't RST the
+    /// peer. No JS dispatch, no free. Called once, immediately before exit.
+    pub fn close_fds_for_exit(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_loop_close_fds_for_exit(self) };
+    }
+
     // See PosixLoop::next_tick — same trampoline-synthesis limitation.
     pub fn next_tick(
         &mut self,
@@ -660,6 +667,8 @@ mod c {
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
+        #[cfg(windows)]
+        pub(super) fn us_loop_close_fds_for_exit(loop_: *mut Loop);
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]

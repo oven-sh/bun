@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tls as tlsCert, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1130,4 +1130,119 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// Windows RSTs sockets abandoned at ExitProcess; bun must closesocket() them
+// first so the peer sees FIN (node does this via RunCleanup → uv_close). On
+// POSIX the kernel FINs on fd reap, so this is a Windows-only observable.
+it.skipIf(!isWindows)("natural process exit with an open unref'd socket FINs the peer (no RST)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const net = require("net");
+const { spawn } = require("child_process");
+const srv = net.createServer(c => {
+  let data = "";
+  c.on("data", d => { data += d; });
+  c.on("end", () => console.log("END " + data));
+  c.on("error", e => console.log("ERROR " + e.code));
+  c.on("close", hadError => { console.log("CLOSE hadError=" + hadError); srv.close(); });
+});
+srv.listen(0, "127.0.0.1", () => {
+  const child = spawn(process.execPath, ["-e", \`
+    const s = require("net").connect(\${srv.address().port}, "127.0.0.1");
+    s.on("connect", () => { s.write("hello"); s.unref(); });
+    s.on("error", () => {});
+  \`], { stdio: "inherit" });
+  child.on("close", code => console.log("CHILD_EXIT " + code));
+});
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Peer must observe a graceful close: END with the data, then CLOSE without error.
+  expect(stdout).toContain("END hello");
+  expect(stdout).toContain("CLOSE hadError=false");
+  expect(stdout).not.toContain("ERROR");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(!isWindows)("process.exit() with an open socket FINs the peer (no RST)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const net = require("net");
+const { spawn } = require("child_process");
+const srv = net.createServer(c => {
+  c.on("end", () => console.log("END"));
+  c.on("error", e => console.log("ERROR " + e.code));
+  c.on("close", hadError => { console.log("CLOSE hadError=" + hadError); srv.close(); });
+});
+srv.listen(0, "127.0.0.1", () => {
+  const child = spawn(process.execPath, ["-e", \`
+    const s = require("net").connect(\${srv.address().port}, "127.0.0.1");
+    s.on("connect", () => { s.write("bye"); process.exit(0); });
+    s.on("error", () => {});
+  \`], { stdio: "inherit" });
+  child.on("close", code => console.log("CHILD_EXIT " + code));
+});
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("CLOSE hadError=false");
+  expect(stdout).not.toContain("ERROR");
+  expect(exitCode).toBe(0);
+});
+
+// https.Server.closeAllConnections() → server.stop(true) must FIN the client,
+// not RST. Node's closeAllConnections is socket.destroy() (uv_close → FIN),
+// not resetAndDestroy(). Only observable on Windows: Linux delivers the
+// already-sent close_notify before an RST, Windows drops it.
+it.skipIf(!isWindows)("https.Server.closeAllConnections() FINs the client (no RST)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const https = require("https");
+const tls = require("tls");
+const srv = https.createServer(${JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert })},
+  (req, res) => { res.writeHead(200, { Connection: "keep-alive" }); res.end(); });
+srv.listen(0, "127.0.0.1", () => {
+  const c = tls.connect({ port: srv.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  let got = "";
+  c.setEncoding("utf8");
+  c.on("data", d => {
+    got += d;
+    if (got.endsWith("0\\r\\n\\r\\n")) { srv.closeAllConnections(); srv.close(); }
+  });
+  c.on("end", () => console.log("CLIENT_END"));
+  c.on("error", e => console.log("CLIENT_ERROR " + e.code));
+  c.on("close", hadError => console.log("CLIENT_CLOSE hadError=" + hadError));
+  c.on("secureConnect", () => c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+});
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("CLIENT_CLOSE hadError=false");
+  expect(stdout).not.toContain("CLIENT_ERROR");
+  expect(exitCode).toBe(0);
 });

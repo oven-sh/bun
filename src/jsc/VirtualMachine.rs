@@ -1621,6 +1621,12 @@ impl VirtualMachine {
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
             self.destroy();
+        } else {
+            // Windows RSTs sockets abandoned at ExitProcess (POSIX FINs on fd
+            // reap). closesocket() each open fd so the kernel graceful-close
+            // survives ExitProcess, matching node's RunCleanup → uv_close.
+            #[cfg(windows)]
+            self.uws_loop_mut().close_fds_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }

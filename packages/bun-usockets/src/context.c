@@ -120,9 +120,11 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
      * open in head_sockets waiting for the peer's reply. Callers of close_all
      * (e.g. Listener.deinit) free the embedding storage immediately after, so
      * any survivor's s->group becomes a dangling pointer. The graceful walk
-     * already flushed close_notify; force-drain the rest synchronously now. */
+     * already flushed close_notify; force-drain the rest synchronously now.
+     * FAST_SHUTDOWN (not RESET): node's closeAllConnections() is destroy(),
+     * not resetAndDestroy(); SO_LINGER{1,0} here RSTs the peer on Windows. */
     while (group->head_sockets) {
-        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, 0);
     }
 
     /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets

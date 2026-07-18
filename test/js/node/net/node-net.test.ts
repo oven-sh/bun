@@ -1,7 +1,16 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tls as tlsCert, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  isASAN,
+  isDebug,
+  isWindows,
+  tls as tlsCert,
+  tmpdirSync,
+} from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";

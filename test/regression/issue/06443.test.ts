@@ -10,18 +10,20 @@ describe("Bun.serve()", () => {
   const servers = [
     {
       port: 0,
-      url: /^http:\/\/localhost:\d+\/$/,
+      url: /^http:\/\/127\.0\.0\.1:\d+\/$/,
     },
     {
       tls,
       port: 0,
-      url: /^https:\/\/localhost:\d+\/$/,
+      url: /^https:\/\/127\.0\.0\.1:\d+\/$/,
     },
   ];
 
   test.each(servers)("%j", async ({ url, ...options }) => {
+    // 127.0.0.1, not "localhost": on v6-preferring hosts Bun.serve binds ::1
+    // while fetch's resolver picks 127.0.0.1 (or vice versa) → ConnectionRefused.
     const server = serve({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       ...options,
       fetch(request) {
         return new Response(request.url);
@@ -29,9 +31,9 @@ describe("Bun.serve()", () => {
     });
     try {
       const proto = options.tls ? "https" : "http";
-      const target = `${proto}://localhost:${server.port}/`;
+      const target = `${proto}://127.0.0.1:${server.port}/`;
       const response = await fetch(target, { tls: { rejectUnauthorized: false } });
-      expect(response.text()).resolves.toMatch(url);
+      await expect(response.text()).resolves.toMatch(url);
     } finally {
       server.stop(true);
     }

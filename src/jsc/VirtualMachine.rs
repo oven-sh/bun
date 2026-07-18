@@ -3581,6 +3581,14 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
+        // A previous generation's failure left this nonzero, wedging
+        // `is_event_loop_alive()` false and the run loop in `tick_possibly_forever`
+        // (which never drains timers). Each reload is a fresh start.
+        self.unhandled_error_counter = 0;
+        // `on_before_exit` (reached via the same wedged path) armed this; leave
+        // it set and the recovered generation's first uncaught exception exits
+        // the process instead of surviving like a fresh `--hot` run would.
+        self.exit_on_uncaught_exception = false;
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {
                 JSValue::from_cell(p).unprotect();

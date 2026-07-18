@@ -776,3 +776,82 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+it(
+  "timers keep firing after a failed reload is fixed",
+  async () => {
+    const root = join(cwd, "hot-timer-entry.ts");
+    const src = (gen: number) =>
+      `const GEN = ${gen};\n` +
+      `setInterval(() => console.log("TICK " + GEN), 16);\n` +
+      `console.log("EVAL " + GEN);\n`;
+    writeFileSync(root, src(1));
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let out = "";
+    let err = "";
+    let exited = false;
+    let waiters: Array<() => void> = [];
+    const notify = () => {
+      for (const w of waiters.splice(0)) w();
+    };
+    (async () => {
+      for await (const chunk of runner.stdout) {
+        out += new TextDecoder().decode(chunk);
+        notify();
+      }
+    })();
+    (async () => {
+      for await (const chunk of runner.stderr) {
+        err += new TextDecoder().decode(chunk);
+        notify();
+      }
+    })();
+    runner.exited.then(() => {
+      exited = true;
+      notify();
+    });
+
+    const waitFor = async (pred: () => boolean, what: string) => {
+      while (!pred()) {
+        if (exited) {
+          throw new Error(`child exited before "${what}"\nstdout:\n${out}\nstderr:\n${err}`);
+        }
+        await new Promise<void>(r => waiters.push(r));
+      }
+    };
+
+    const countTicks = (gen: number) => (out.match(new RegExp(`TICK ${gen}\\b`, "g")) ?? []).length;
+
+    // Generation 1 evaluates and its interval fires.
+    await waitFor(() => out.includes("EVAL 1"), "EVAL 1");
+    await waitFor(() => countTicks(1) >= 3, "gen 1 ticks");
+
+    // Break the file with a syntax error; wait for the error on stderr.
+    writeFileSync(root, "const GEN = ((;\n");
+    await waitFor(() => /error/i.test(err), "syntax error on stderr");
+
+    // Fix the file. The new generation must evaluate AND its interval must fire.
+    writeFileSync(root, src(2));
+    await waitFor(() => out.includes("EVAL 2"), "EVAL 2 after fix");
+    // Without the fix the run loop is wedged in tick_possibly_forever()
+    // (which never drains timers) and this never resolves.
+    await waitFor(() => countTicks(2) >= 3, "gen 2 ticks after fix");
+
+    // One more good edit to confirm recovery is durable.
+    writeFileSync(root, src(3));
+    await waitFor(() => out.includes("EVAL 3"), "EVAL 3");
+    await waitFor(() => countTicks(3) >= 3, "gen 3 ticks");
+
+    runner.kill();
+  },
+  timeout,
+);

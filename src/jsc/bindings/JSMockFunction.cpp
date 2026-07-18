@@ -1003,16 +1003,12 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     // Match the behavior of constructing an ordinary JS function, which is what
     // mock functions are in Jest: create `this` from newTarget.prototype, run the
     // mock as a call with that `this`, and return the result only if it is an object.
-    JSObject* prototype = nullptr;
-    if (JSObject* newTarget = callframe->newTarget().getObject()) {
-        JSValue prototypeValue = newTarget->get(lexicalGlobalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (prototypeValue.isObject())
-            prototype = asObject(prototypeValue);
-    }
-    JSObject* thisObject = prototype
-        ? JSC::constructEmptyObject(lexicalGlobalObject, prototype)
-        : JSC::constructEmptyObject(lexicalGlobalObject);
+    JSC::JSObject* newTarget = asObject(callframe->newTarget());
+    JSC::JSGlobalObject* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::Structure* structure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->objectStructureForObjectConstructor());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSObject* thisObject = JSC::constructEmptyObject(vm, structure);
 
     JSValue result = JSValue::decode(jsMockFunctionCallImpl(lexicalGlobalObject, callframe, thisObject));
     RETURN_IF_EXCEPTION(scope, {});

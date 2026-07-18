@@ -2,10 +2,10 @@
 // Reference: https://github.com/nodejs/node/blob/v26.3.0/lib/diagnostics_channel.js
 
 const { validateFunction } = require("internal/validators");
-const { kEmptyObject } = require("internal/shared");
 
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
+const SafeDisposableStack = DisposableStack;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -98,7 +98,7 @@ class RunStoresScope {
   #stack;
 
   constructor(activeChannel, data) {
-    const stack = new DisposableStack();
+    const stack = new SafeDisposableStack();
     let taken = false;
 
     try {
@@ -135,8 +135,6 @@ class RunStoresScope {
     this.#stack[SymbolDispose]();
   }
 }
-
-const noopDisposable = { __proto__: null, [SymbolDispose]() {} };
 
 class ActiveChannel {
   _subscribers;
@@ -263,7 +261,7 @@ class Channel {
   }
 
   withStoreScope() {
-    return noopDisposable;
+    return { [SymbolDispose]() {} };
   }
 }
 
@@ -387,7 +385,7 @@ class BoundedChannel {
     return done;
   }
 
-  withScope(context = kEmptyObject) {
+  withScope(context = {}) {
     return new BoundedChannelScope(this, context);
   }
 

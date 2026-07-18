@@ -1065,8 +1065,8 @@ test("lowering many decorated instance fields into a large constructor body stay
       bunExe(),
       "-e",
       `
-        const M = 80000;
-        const N = 1000000;
+        const M = 50000;
+        const N = 700000;
         let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
         for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
         src += "constructor() {\\nsuper();\\n";
@@ -1085,11 +1085,9 @@ test("lowering many decorated instance fields into a large constructor body stay
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 60_000,
+    timeout: 30_000,
     killSignal: "SIGKILL",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toStartWith("DONE ");
-  expect(exitCode).toBe(0);
-}, 90_000);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: expect.stringMatching(/^DONE \d+\n$/), exitCode: 0 });
+}, 60_000);

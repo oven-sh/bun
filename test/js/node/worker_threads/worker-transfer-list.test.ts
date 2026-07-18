@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { once } from "events";
 import { Worker } from "worker_threads";
 
 // The transferList option is converted as a whole before workerData is serialized,
@@ -22,6 +23,10 @@ test("a valid transferList still detaches the transferred buffer", async () => {
   const worker = new Worker("", { eval: true, workerData: buf, transferList: [buf] });
   try {
     expect(buf.byteLength).toBe(0);
+    // Let startup finish before terminate(): terminate() mid-preload trips
+    // JSModuleLoader::continueDynamicImport's scope.assertNoException() on the
+    // pending TerminationException (debug/ASAN only).
+    await once(worker, "online");
   } finally {
     await worker.terminate();
   }

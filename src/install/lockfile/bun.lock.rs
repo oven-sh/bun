@@ -1594,6 +1594,17 @@ fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     }
 }
 
+/// Map each row's key bytes to its index. Reverse insert so duplicate keys
+/// resolve to the first row, matching a linear-scan-and-break lookup.
+fn index_rows_by_key<'a>(rows: &'a [JSON::E::PropertyJSON]) -> HashMap<&'a [u8], usize> {
+    let mut m: HashMap<&'a [u8], usize> = HashMap::default();
+    m.reserve(rows.len());
+    for (idx, row) in rows.iter().enumerate().rev() {
+        m.insert(row.key.slice(), idx);
+    }
+    m
+}
+
 fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     match &expr.data {
         ExprData::EArrayJSON(a) => a.get().items(),
@@ -2143,11 +2154,7 @@ pub fn parse_into_binary_lockfile(
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
         let workspace_path_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         let workspace_rows = object_rows(&workspaces_obj);
-        let mut row_by_path: HashMap<&[u8], usize> = HashMap::default();
-        row_by_path.reserve(workspace_rows.len());
-        for (idx, row) in workspace_rows.iter().enumerate().rev() {
-            row_by_path.insert(row.key.slice(), idx);
-        }
+        let row_by_path = index_rows_by_key(workspace_rows);
         for workspace_path in &workspace_path_snapshot {
             let Some(&row_idx) =
                 row_by_path.get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
@@ -3365,11 +3372,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     if IS_ROOT {
         let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
         let workspace_rows = object_rows(workspaces_obj);
-        let mut row_by_path: HashMap<&[u8], usize> = HashMap::default();
-        row_by_path.reserve(workspace_rows.len());
-        for (idx, row) in workspace_rows.iter().enumerate().rev() {
-            row_by_path.insert(row.key.slice(), idx);
-        }
+        let row_by_path = index_rows_by_key(workspace_rows);
         for workspace_path in lockfile.workspace_paths.values() {
             let Some(&row_idx) =
                 row_by_path.get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))

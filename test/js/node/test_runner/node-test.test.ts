@@ -255,10 +255,13 @@ describe("node:test", () => {
     expect(stdout).toContain("BODY_RAN=true");
     expect(stdout).toContain("DONE_BODY_RAN=true");
     expect(stdout).toContain("SUITE_BODY_RAN=true");
-    expect(stderr).toContain("parent > late");
-    expect(stderr).toContain("parent > late-suite");
+    expect(stderr).toContain("parent > late\n");
+    expect(stderr).toContain("parent > late-done\n");
+    expect(stderr).toContain("parent > late-suite\n");
     expect(stderr).toContain("test could not be started because its parent finished");
     // Only the plain late subtests fail; the late skip/todo ones do not.
+    expect(stderr).not.toContain("parent > late-skip");
+    expect(stderr).not.toContain("parent > late-todo");
     expect(stderr).toContain("2 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 1,

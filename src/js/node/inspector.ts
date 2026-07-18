@@ -1063,11 +1063,14 @@ class Session extends EventEmitter {
     const id = this.#nextCommandId++;
     this.#pendingResults.$set(id, done);
     const message = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
+    const wasDispatching = this.#dispatchingClientCommand;
     this.#dispatchingClientCommand = true;
     try {
       adapter.handleClientMessage(message);
     } finally {
-      this.#dispatchingClientCommand = false;
+      // Restore rather than clear: a post() re-entered from a listener must not
+      // flip the outer dispatch back to synchronous delivery.
+      this.#dispatchingClientCommand = wasDispatching;
     }
   }
 

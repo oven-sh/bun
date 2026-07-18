@@ -573,11 +573,13 @@ static JSC::EncodedJSValue takeBufferedInspectorMessages(JSC::JSGlobalObject* gl
     for (auto& reply : buffered) {
         args.append(jsString(vm, reply));
     }
-    channel.clear();
     if (args.hasOverflowed()) {
+        // Leave the buffer intact: the messages were not handed to anyone, so
+        // dropping them here would lose them for the next drain.
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
+    channel.clear();
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args)));
 }
 

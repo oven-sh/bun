@@ -1688,6 +1688,13 @@ impl QuicSession {
         }
         self.with_state(|s| s.closing = 1);
         self.write_stat(IDX_STATS_SESSION_DESTROYED_AT, now_ns());
+        // Take the close reason before emit_qlog: that runs onSessionQlog,
+        // which is user JS and drains microtasks, so a destroy() from inside
+        // it would swap the reason this close reports.
+        let taken = self
+            .peer_close
+            .with_mut(Option::take)
+            .or_else(|| self.self_close.with_mut(Option::take));
         if self.qlog_enabled.get() {
             let t = now_ns() / 1_000_000;
             let chunk = format!(
@@ -1695,10 +1702,7 @@ impl QuicSession {
             );
             self.emit_qlog(global, &chunk, true);
         }
-        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match self
-            .peer_close
-            .with_mut(Option::take)
-            .or_else(|| self.self_close.with_mut(Option::take))
+        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken
         {
             Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
             None if self.conn.get().is_null() => {

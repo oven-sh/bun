@@ -1544,7 +1544,11 @@ pub(crate) fn node_http_request_on_reject(
 }
 
 impl NodeHTTPResponse {
-    pub(crate) fn abort(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn abort(
+        &self,
+        global_object: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         if self.is_done() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -1555,7 +1559,7 @@ impl NodeHTTPResponse {
         // Release the zero-copy pin + owner + GC root while the wrapper is
         // still reachable via the socket (get_this_value() returns ZERO once
         // SOCKET_CLOSED is set).
-        self.clear_pending_pinned_write(_global, JSValue::ZERO);
+        self.clear_pending_pinned_write(global_object, JSValue::ZERO);
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
         if let Some(raw_response) = self.raw_response.get() {
             let state = raw_response.state();

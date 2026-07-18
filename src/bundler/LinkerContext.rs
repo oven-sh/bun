@@ -958,6 +958,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 entry_point_kinds,
                 css_reprs,
+                worklist: Vec::new(),
             };
 
             // Tree shaking: Each entry point marks all files reachable from itself
@@ -2594,12 +2595,11 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // accessors.
 // ══════════════════════════════════════════════════════════════════════════
 
-// The three `mark_*` functions below are mutually recursive and hot. Passing
-// the five SoA-column slices as separate arguments costs 10 words of fat
-// pointers per call; with `&mut self` + indices that overflows the 6 SysV
-// integer-arg registers and spills to the stack on every recursive step.
-// Packing the slices into a borrowed context struct keeps each call at 3-4
-// register-sized arguments.
+// The liveness pass visits every (file, part) at most once. Processing order is
+// irrelevant to the final bitset state, so the former mutual recursion is
+// driven off an explicit worklist (LIFO, so traversal order matches the old
+// DFS). Packing the slices into a borrowed context struct keeps each step at
+// 3-4 register-sized arguments.
 pub struct TreeShakeCtx<'a, 'r> {
     pub side_effects: &'r [SideEffects],
     pub parts: &'r [bun_ast::PartList<'a>],
@@ -2607,6 +2607,16 @@ pub struct TreeShakeCtx<'a, 'r> {
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub entry_point_kinds: &'r [EntryPoint::Kind],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub worklist: Vec<TreeShakeWork>,
+}
+
+#[derive(Clone, Copy)]
+pub enum TreeShakeWork {
+    File(crate::IndexInt),
+    Part {
+        part_index: crate::IndexInt,
+        source_index: crate::IndexInt,
+    },
 }
 
 pub struct CodeSplitCtx<'a, 'r> {
@@ -2720,6 +2730,24 @@ impl<'a> LinkerContext<'a> {
         ctx: &mut TreeShakeCtx<'a, '_>,
         source_index: crate::IndexInt,
     ) {
+        debug_assert!(ctx.worklist.is_empty());
+        ctx.worklist.push(TreeShakeWork::File(source_index));
+        while let Some(work) = ctx.worklist.pop() {
+            match work {
+                TreeShakeWork::File(src) => self.mark_file_live_step(ctx, src),
+                TreeShakeWork::Part {
+                    part_index,
+                    source_index,
+                } => self.mark_part_live_step(ctx, part_index, source_index),
+            }
+        }
+    }
+
+    fn mark_file_live_step(
+        &mut self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
+        source_index: crate::IndexInt,
+    ) {
         #[cfg(debug_assertions)]
         {
             let parse_graph = self.parse_graph();
@@ -2746,9 +2774,6 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        #[cfg(debug_assertions)]
-        scopeguard::defer! { debug_tree_shake!("end()"); }
-
         if self.graph.files_live.is_set(source_index as usize) {
             return;
         }
@@ -2760,11 +2785,12 @@ impl<'a> LinkerContext<'a> {
         }
 
         if ctx.css_reprs[source_index as usize].is_some() {
-            for ri in 0..ctx.import_records[source_index as usize].len() {
-                let record = &ctx.import_records[source_index as usize][ri];
+            for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
-                    let other_source_index = record.source_index.get();
-                    self.mark_file_live_for_tree_shaking(ctx, other_source_index);
+                    let other = record.source_index.get();
+                    if !self.graph.files_live.is_set(other as usize) {
+                        ctx.worklist.push(TreeShakeWork::File(other));
+                    }
                 }
             }
             return;
@@ -2774,20 +2800,19 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for ri in 0..ctx.import_records[source_index as usize].len() {
-                let record = &ctx.import_records[source_index as usize][ri];
+            for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
-                    let other_source_index = record.source_index.get();
-                    self.mark_file_live_for_tree_shaking(ctx, other_source_index);
+                    let other = record.source_index.get();
+                    if !self.graph.files_live.is_set(other as usize) {
+                        ctx.worklist.push(TreeShakeWork::File(other));
+                    }
                 }
             }
             return;
         }
 
-        let part_count = ctx.parts[source_index as usize].len();
-        for part_index in 0..part_count {
-            // Note: reshaped for borrowck — re-borrow part each iteration since recursion mutates `parts`
-            let part = &ctx.parts[source_index as usize].as_slice()[part_index];
+        let parts = ctx.parts[source_index as usize].as_slice();
+        for (part_index, part) in parts.iter().enumerate() {
             let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             if can_be_removed_if_unused && part.tag == bun_ast::PartTag::CommonjsNamedExport {
@@ -2796,14 +2821,8 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // Also include any statement-level imports. Iterate by index so we
-            // don't hold a borrow of `part`/`parts` across the recursive call —
-            // the recursion never resizes this part's `import_record_indices`,
-            // so re-slicing each iteration is sound.
-            let import_indices_len = part.import_record_indices.len();
-            for ii in 0..import_indices_len {
-                let import_index = ctx.parts[source_index as usize].as_slice()[part_index]
-                    .import_record_indices[ii];
+            // Also include any statement-level imports
+            for &import_index in part.import_record_indices.iter() {
                 let record = &ctx.import_records[source_index as usize][import_index as usize];
                 if record.kind != ImportKind::Stmt {
                     continue;
@@ -2825,7 +2844,9 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     // Otherwise, include this module for its side effects
-                    self.mark_file_live_for_tree_shaking(ctx, other_source_index);
+                    if !self.graph.files_live.is_set(other_source_index as usize) {
+                        ctx.worklist.push(TreeShakeWork::File(other_source_index));
+                    }
                 } else if is_external_without_side_effects {
                     // This can be removed if it's unused
                     continue;
@@ -2839,23 +2860,23 @@ impl<'a> LinkerContext<'a> {
             // Include all parts in this file with side effects, or just include
             // everything if tree-shaking is disabled. Note that we still want to
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
-            let force_tree_shaking =
-                ctx.parts[source_index as usize].as_slice()[part_index].force_tree_shaking;
             if !can_be_removed_if_unused
-                || (!force_tree_shaking
+                || (!part.force_tree_shaking
                     && !self.options.tree_shaking
                     && ctx.entry_point_kinds[source_index as usize].is_entry_point())
             {
-                self.mark_part_live_for_tree_shaking(
-                    ctx,
-                    u32::try_from(part_index).expect("int cast"),
-                    source_index,
-                );
+                let part_index = u32::try_from(part_index).expect("int cast");
+                if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index,
+                        source_index,
+                    });
+                }
             }
         }
     }
 
-    pub fn mark_part_live_for_tree_shaking(
+    fn mark_part_live_step(
         &mut self,
         ctx: &mut TreeShakeCtx<'a, '_>,
         part_index: crate::IndexInt,
@@ -2901,22 +2922,16 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        #[cfg(debug_assertions)]
-        scopeguard::defer! { debug_tree_shake!("end()"); }
-
         // Include the file containing this part
-        self.mark_file_live_for_tree_shaking(ctx, source_index);
+        if !self.graph.files_live.is_set(source_index as usize) {
+            ctx.worklist.push(TreeShakeWork::File(source_index));
+        }
 
-        // The recursion above/below only flips bits in `ctx.parts_live`; it never
-        // resizes any part's `dependencies`, so the slice's len/ptr are stable.
-        // Iterate by index and re-borrow per iteration to satisfy borrowck without
-        // the per-call `Vec` clone the original port did.
-        let dependencies_len = ctx.parts[source_index as usize].as_slice()[part_index as usize]
-            .dependencies
-            .len();
+        let dependencies =
+            &ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies;
 
         #[cfg(feature = "debug_logs")]
-        if dependencies_len == 0 {
+        if dependencies.is_empty() {
             log_part_dependency_tree!(
                 "markPartLiveForTreeShaking {}:{} | EMPTY",
                 source_index,
@@ -2924,9 +2939,7 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        for di in 0..dependencies_len {
-            let dependency =
-                ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies[di];
+        for dependency in dependencies.iter() {
             #[cfg(feature = "debug_logs")]
             if source_index != 0 && dependency.source_index.get() != 0 {
                 log_part_dependency_tree!(
@@ -2938,11 +2951,14 @@ impl<'a> LinkerContext<'a> {
                 );
             }
 
-            self.mark_part_live_for_tree_shaking(
-                ctx,
-                dependency.part_index,
-                dependency.source_index.get(),
-            );
+            let dep_source = dependency.source_index.get();
+            let dep_part = dependency.part_index;
+            if !ctx.parts_live[dep_source as usize].is_set(dep_part as usize) {
+                ctx.worklist.push(TreeShakeWork::Part {
+                    part_index: dep_part,
+                    source_index: dep_source,
+                });
+            }
         }
     }
 } // end tree-shaking impl

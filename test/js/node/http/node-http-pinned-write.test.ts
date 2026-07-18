@@ -248,12 +248,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   test.skipIf(isWindows)(
     "a resizable ArrayBuffer is copied into backpressure, not held by reference",
     async () => {
-      // A resizable ArrayBuffer reserves maxByteLength virtually and resize()
-      // down mprotect()s the trimmed pages PROT_NONE. pin() does not block
-      // resize(), so retaining a raw slice into one would make the later
-      // read of the held tail fault: the memcpy in spill_body SIGSEGVs, and
-      // send() on drain returns EFAULT (0 consumed) so onWritable spins at
-      // 100% CPU. Run in a child so the crash is observed as exit != 0.
+      // resize() mprotect()s trimmed pages PROT_NONE and pin() doesn't block
+      // it, so a retained raw slice faults on spill / EFAULT-spins on drain.
+      // Run in a child so the crash is observed as exit != 0.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -279,9 +276,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
             res.write(payload);
             // Shrink below a page so the whole retained tail is PROT_NONE.
             ab.resize(1024);
-            // end() spills any held tail into uWS backpressure before writing
-            // the terminator. If the tail was held by reference this is a
-            // memcpy from PROT_NONE.
+            // end() spills any held tail; memcpy from PROT_NONE if held by reference.
             res.end();
           });
           await once(server.listen(0), "listening");
@@ -330,10 +325,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   test.skipIf(isWindows)(
     "resizing a resizable ArrayBuffer after write() does not wedge drain",
     async () => {
-      // The onWritable drain path: try_write_body hands the retained slice to
-      // send(), which returns EFAULT for PROT_NONE user pages -> 0 bytes
-      // consumed -> onWritable re-arms forever. Bound the child so the spin
-      // surfaces as exit 1 instead of hanging the suite.
+      // Drain path: send() on PROT_NONE pages returns EFAULT -> 0 consumed ->
+      // onWritable re-arms forever. Bound the child so a spin surfaces as exit 1.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

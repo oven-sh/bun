@@ -61,6 +61,11 @@ function gcHeapSnapshot(used, capacity, external) {
 const kGCProfilerSession = Symbol("kGCProfilerSession");
 const kGCProfilerStartTime = Symbol("kGCProfilerStartTime");
 
+// A profiler that is started and then dropped without stop() would otherwise
+// leave its native session open for the life of the VM; the registry releases
+// it when the wrapper is collected, matching node's BaseObject finalizer.
+let gcProfilerRegistry: FinalizationRegistry<number> | undefined;
+
 class GCProfiler {
   constructor() {
     this[kGCProfilerSession] = null;
@@ -70,13 +75,16 @@ class GCProfiler {
   start() {
     if (this[kGCProfilerSession] !== null) return;
     this[kGCProfilerStartTime] = DateNow();
-    this[kGCProfilerSession] = startGCProfiler();
+    const id = startGCProfiler();
+    this[kGCProfilerSession] = id;
+    (gcProfilerRegistry ??= new FinalizationRegistry(stopGCProfiler)).register(this, id, this);
   }
 
   stop() {
     const session = this[kGCProfilerSession];
     if (session === null) return undefined;
     this[kGCProfilerSession] = null;
+    gcProfilerRegistry!.unregister(this);
 
     const events = stopGCProfiler(session);
     const statistics = [];

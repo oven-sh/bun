@@ -1854,7 +1854,10 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
           throw errorToCheck;
         }, validation);
       } catch (e) {
-        const error = makeTestFailure("The test failed, but the error did not match the expected validation");
+        const error = makeTestFailure(
+          "The test failed, but the error did not match the expected validation",
+          "testCodeFailure",
+        );
         (error as { cause?: unknown }).cause = e;
         return error;
       }

@@ -302,10 +302,9 @@ export function getStdinStream(
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
-        // pause() from inside a 'data' listener lands here before maybeReadMore()
-        // can pull again. If the chunk that emitted 'data' carried EOF, the web
-        // stream controller is already closed and one more read() resolves
-        // {done:true} immediately; pull it now so releaseLock() does not drop it.
+        // pause() inside a 'data' listener lands here before maybeReadMore() pulls
+        // again. If that chunk carried EOF the controller is already closed and one
+        // more read() resolves {done:true}; pull now so releaseLock() can't drop it.
         if (reader && !stream_reachedEof) internalRead(stream);
         disown();
       }

@@ -108,7 +108,7 @@ JSC::JSValue KeyObject::exportJwkAkpKey(JSC::JSGlobalObject* lexicalGlobalObject
 
     const auto& pkey = m_data->asymmetricKey;
     ASCIILiteral name = pqcNidToKeyTypeName(pkey.id());
-    ASSERT(name);
+    ASSERT(!name.isNull());
 
     JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
 

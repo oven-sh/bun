@@ -10,6 +10,7 @@ use bun_loop::ConcurrentTask::AutoDeinit;
 use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_loop::KeepAlive;
 use crate::StringJsc;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::vm::virtual_machine::VirtualMachine;
 use crate::{

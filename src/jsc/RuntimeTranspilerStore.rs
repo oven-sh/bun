@@ -75,7 +75,6 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
     }
 }
 
-// PORTING.md §Global mutable state: lazily-opened debug-dump dir, guarded by a
 // mutex. `Guarded` fuses the lock and the payload so the per-access body is
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
@@ -227,7 +226,6 @@ impl Taskable for RuntimeTranspilerStore {
 impl RuntimeTranspilerStore {
     pub fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
-        // (PORTING.md §Allocators).
         Self::default()
     }
 

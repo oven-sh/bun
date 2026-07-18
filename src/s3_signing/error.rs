@@ -47,7 +47,6 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
 }
 
 // `getJSSignError` / `throwSignError` live as extension-trait methods in the
-// `*_jsc` crate (see PORTING.md §Idiom map).
 
 // `code` / `message` are borrowed slices valid only for the duration of the
 // callback invocation (callers parse them out of an XML response body). Field

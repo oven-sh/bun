@@ -244,7 +244,6 @@ mod live_workers {
 
     pub(super) static MUTEX: Mutex = Mutex::new();
     // Intrusive doubly-linked list head; nodes are `WebWorker.live_{next,prev}`.
-    // PORTING.md §Global mutable state: list head, every read/write is under
     // `MUTEX` above. `AtomicCell` so the slot itself is `Sync` with safe
     // load/store (the mutex still provides the actual happens-before for the
     // intrusive list walk).

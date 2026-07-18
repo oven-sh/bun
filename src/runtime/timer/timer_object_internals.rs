@@ -118,7 +118,6 @@ impl TimerObjectInternals {
 
     /// `@fieldParentPtr("internals", self).event_loop_timer`. Returns a raw
     /// pointer (NOT `&mut`) so callers can hold it across re-entrant JS calls
-    /// without minting aliased `&mut` (PORTING.md §Forbidden — the callback
     /// may reach this same field via `cancel()`/`refresh()`).
     fn event_loop_timer(&self) -> *mut EventLoopTimer {
         match self.parent_ptr() {

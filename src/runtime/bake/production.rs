@@ -245,7 +245,6 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
-/// `bun_runtime → bun (binary)` dep cycle (PORTING.md §Forbidden: dep-cycle
 /// fixes via fn-ptr hooks — move/port the code instead).
 #[cold]
 #[inline(never)]
@@ -420,7 +419,6 @@ pub(super) fn build_with_vm(
 
     // this is probably wrong
     // Note: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no leaking). `Loader` self-borrows `Map`,
     // so both live in `DOTENV_SINGLETON`.
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
         map: UnsafeCell::new(dotenv::Map::init()),

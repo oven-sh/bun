@@ -433,7 +433,6 @@ pub mod bun_object {
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
     // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;
-    // see PORTING.md §FFI — cannot write `extern jsc_conv!()` in Rust.)
 
     // --- LazyProperty initializers ---
     // (BunObject__createBunStdin / Stderr / Stdout exported at file scope below.)

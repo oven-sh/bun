@@ -38,7 +38,6 @@ pub struct WorkTask<Context: WorkTaskContext> {
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
     /// `EventLoop`) outlives every task scheduled on it.
     pub event_loop: BackRef<EventLoop>,
-    // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
     pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
     pub async_task_tracker: AsyncTaskTracker,

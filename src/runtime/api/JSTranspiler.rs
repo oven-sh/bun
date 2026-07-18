@@ -54,7 +54,6 @@ pub struct JSTranspiler {
     pub arena: Box<Arena>,
     // Intrusive refcount field for `bun_core::ptr::IntrusiveRc<JSTranspiler>`:
     // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
-    // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
     pub ref_count: bun_core::ptr::RefCount<JSTranspiler>,
 }
 
@@ -666,7 +665,6 @@ pub(crate) struct TransformTask<'a> {
     /// task's lifetime. `ManuallyDrop` prevents double-free; the original owns.
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     // `IntrusiveRc` (not `Arc`): JSTranspiler uses single-thread intrusive
-    // `bun.ptr.RefCount` and crosses FFI as `m_ctx` (PORTING.md §Pointers).
     pub js_instance: bun_core::ptr::IntrusiveRc<JSTranspiler>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,

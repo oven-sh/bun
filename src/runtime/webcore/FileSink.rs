@@ -898,7 +898,6 @@ impl FileSink {
     }
 
     pub fn finalize(&mut self) {
-        // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
         // must not touch live JS cells.
 
         // Shutdown never unwinds the writer: the loop stops ticking, so the

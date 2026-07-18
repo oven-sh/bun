@@ -298,7 +298,6 @@ pub type Result_ = Maybe<()>;
 ///
 /// Use `.keys()` to get the matched paths
 // `to_js_array` lives in a `*_jsc` crate
-// (per PORTING.md §Strings, `.toJS` is only callable there), so the JS-array
 // fast path moves up-tier anyway and there's no win keeping `BunString` keys
 // here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
 // rebuilds `BunString`s from `.keys()`. Default hashing includes the trailing

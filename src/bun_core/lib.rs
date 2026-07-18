@@ -1540,7 +1540,6 @@ pub(crate) mod strings_impl {
     // ──────────────────────────────────────────────────────────────────────
     // Transcoding. Lives in T0 so
     // collections::Vec<u8> can call it without depending on bun_string.
-    // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
     use bun_core::simdutf;
 

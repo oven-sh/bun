@@ -39,7 +39,6 @@ impl IniTestingAPIs {
         let mut log = Log::init();
 
         let envjs = frame.argument(1);
-        // The loader is either VM-owned or built locally. Per PORTING.md §Forbidden
         // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
         // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
         // return.

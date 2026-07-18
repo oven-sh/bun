@@ -31,5 +31,4 @@ impl FetchCacheMode {
     /// The map type is a zero-sized handle, so this is the same map as the
     /// module-level `MAP` static.
     pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
-    // to_js lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
 }

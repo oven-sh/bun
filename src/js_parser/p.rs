@@ -798,7 +798,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Unique borrow of the current scope. Takes `&mut self` so two live
-    /// `&mut Scope` cannot alias from a shared `&P` (PORTING.md §Forbidden).
     /// Caller must not also hold a borrow obtained via `module_scope[_mut]()`
     /// when the two handles alias (top level).
     #[inline]
@@ -1000,7 +999,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Defined as `&mut self` methods so the only live `&mut` is the caller's
     // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
     // *field* holds `&mut self` while a `&mut P` is materialised inside the
-    // visitor (PORTING.md §Forbidden).
     pub fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(

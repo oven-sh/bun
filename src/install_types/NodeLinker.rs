@@ -168,7 +168,6 @@ impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
     // (`EString`/`EArray` via `StoreRef<E::*>`). The arena-taking
     // `E::String::slice` / `Expr::as_string_cloned` signatures get a local
-    // `bun_core::alloc_impl::Arena` (PORTING.md §Allocators: AST=bumpalo) used only for
     // transient UTF-16→UTF-8 transcoding inside `slice`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,

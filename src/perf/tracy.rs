@@ -159,7 +159,6 @@ pub fn tracy_allocator() -> TracyAllocator {
     TracyAllocator::init()
 }
 
-/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so there is
 /// no allocator parameter; the parent is implicitly the
 /// global mimalloc (`#[global_allocator]`).
 // The tracy alloc/free hooks (`___tracy_emit_memory_alloc` etc.) are not

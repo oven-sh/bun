@@ -29,7 +29,6 @@ pub struct RefString {
     pub impl_: WTFStringImpl,
 
     // No per-instance allocator — non-AST crate uses the
-    // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
     // frees via `heap::take`.
     pub ctx: Option<NonNull<c_void>>,
     pub on_before_deinit: Option<Callback>,

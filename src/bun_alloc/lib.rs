@@ -249,7 +249,6 @@ impl<'a> FixedBufferAllocator<'a> {
     }
 }
 
-// PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
@@ -316,7 +315,6 @@ macro_rules! arena_format {
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
-// ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_core::Arena` (= bumpalo::Bump)
 //   NullableAllocator        → prefer `Option<&Arena>` or drop the param
@@ -913,7 +911,6 @@ pub fn out_of_memory() -> ! {
 
 // ── page_size ─────────────────────────────────────────────────────────────
 // Used by LinuxMemFdAllocator / standalone_graph.
-// Cached via OnceLock per PORTING.md §Concurrency (was lazy-init in std).
 
 static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 
@@ -3472,7 +3469,6 @@ impl<
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
 // ──────────────────────────────────────────────────────────────────────────
 //
 // The legacy allocator interface threaded an allocator

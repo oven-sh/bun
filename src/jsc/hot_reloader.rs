@@ -412,7 +412,6 @@ unsafe impl Sync for WatchChangedPaths {}
 /// `ChangedFilesFilter`; the string must outlive the process.
 ///
 /// Init-once-then-read-only (main thread sets, watcher thread reads), so
-/// `OnceLock` per PORTING.md §Global mutable state. `&ZStr` is a fat pointer
 /// (`ZStr` is `[u8]`-backed), so `AtomicCell` would not fit anyway.
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();

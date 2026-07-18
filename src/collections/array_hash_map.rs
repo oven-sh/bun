@@ -3,7 +3,6 @@
 //! `bun.CaseInsensitiveASCIIStringArrayHashMap`, `bun.StringHashMapUnowned`).
 //!
 //! `ArrayHashMap` differs from a regular `HashMap` in three ways that callers
-//! depend on (PORTING.md §Collections):
 //!   * iteration order is insertion order;
 //!   * `keys()` / `values()` return contiguous slices (the entries live in
 //!     parallel `Vec`s, not a hash table's bucket array);

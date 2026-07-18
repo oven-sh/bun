@@ -1,6 +1,5 @@
 //! ABI-compatible with `JSC::EncodedJSValue` — `#[repr(transparent)]` over the
 //! encoded 64-bit JSC value. `PhantomData<*const ()>` makes the type
-//! `!Send + !Sync` (PORTING.md §JSC types): JSValues are GC-cell pointers and
 //! must never cross threads.
 //!
 //! In the future, this type will exclude `zero`, encoding it as `error.JSError`
@@ -1014,7 +1013,6 @@ impl JSValue {
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer; conjuring a
     /// `&'static mut` here would permit aliased `&mut` UB across two calls on
-    /// the same value (PORTING.md §Forbidden).
     pub fn as_promise(self) -> Option<*mut JSPromise> {
         if !self.is_cell() {
             return None;

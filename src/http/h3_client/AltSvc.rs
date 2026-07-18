@@ -133,10 +133,8 @@ struct Record {
 
 // module-level mutable state; safe because
 // every access is on the single HTTP thread (see module doc).
-// PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
 static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
 
-/// Borrow the (lazily-initialized) per-HTTP-thread cache. PORTING.md §Global
 /// mutable state: only ever accessed from the single HTTP thread (see module
 /// doc), so the `&'static mut` is the unique live borrow at every call site.
 /// Callers must not hold the result across a call that re-enters this

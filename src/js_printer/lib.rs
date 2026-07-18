@@ -58,8 +58,6 @@ pub use bun_core::paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
-// have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
-// renamed-name strings are arena-owned and typed `*const [u8]` (PORTING.md §Allocators).
 // A future refactor could thread the AST `'bump` lifetime through Renamer to
 // replace the raw pointers.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1673,7 +1671,6 @@ pub mod __gated_printer {
         /// Reborrow the optional `ModuleInfo` for the duration of `&mut self`.
         /// Callers that need to interleave other `&mut self` calls (e.g.
         /// `name_for_symbol`) must fetch those values *before* calling this, then
-        /// re-call `module_info()` — see PORTING.md §Forbidden re: lifetime-extend.
         #[inline]
         fn module_info(&mut self) -> Option<&mut analyze_transpiled_module::ModuleInfo> {
             if !Self::MAY_HAVE_MODULE_INFO {

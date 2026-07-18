@@ -53,7 +53,6 @@ impl ModuleLoader {
     ///
     /// Takes only `&mut VirtualMachine` (not `&mut self,
     /// &mut VirtualMachine`) — `ModuleLoader` is a value field of
-    /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
     pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
         // PERF: this unconditionally calls `reset()`. Per
@@ -545,7 +544,6 @@ use bun_bundler::transpiler::PluginRunner;
 
 // `ModuleLoader.resolveEmbeddedFile`
 // lives in `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
-// per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
 // the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
 // `node::fs`, none of which are `bun_jsc` deps. Three callers live in
 // `bun_runtime`:

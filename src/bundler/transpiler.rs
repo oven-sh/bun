@@ -891,7 +891,6 @@ pub struct ParseResult<'a> {
     /// decoded `data:` URL. `bun_ast::Source.contents` is `&'static [u8]`
     /// (the AST crate's `Str` convention) so the backing must live at least as long as
     /// the `ParseResult`; threading it here means it drops when the result is
-    /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
     /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
     /// paths (no-op on drop).
     pub source_contents_backing: resolver::cache::Contents,
@@ -1244,7 +1243,6 @@ impl<'a> Transpiler<'a> {
             None => match dot_env::instance() {
                 Some(l) => l,
                 None => {
-                    // PORTING.md §Forbidden bars `Box::leak` even for
                     // process-lifetime singletons. `bun_dotenv::INSTANCE` is an
                     // `AtomicPtr<Loader<'static>>` and `Loader` borrows
                     // an unbounded `&mut Map`, so a `OnceLock<Loader>` here can't
@@ -1396,7 +1394,6 @@ impl<'a> Transpiler<'a> {
         // Owns the heap allocation backing `source.contents` for the
         // non-shared-buffer file-read and `data:` URL paths. Threaded into the
         // returned `ParseResult` so it drops with the result instead of being
-        // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
         // client-entry / `node:` / shared-buffer paths it stays `Empty`
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
@@ -1504,7 +1501,6 @@ impl<'a> Transpiler<'a> {
             // recycled). Thread the
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
-            // (PORTING.md §Forbidden patterns).
             source_backing = core::mem::take(&mut entry.contents);
             // SAFETY: `source_backing` outlives every read through
             // `source.contents` (it is moved into the returned `ParseResult`,
@@ -2013,7 +2009,6 @@ fn parse_data_loader<'a>(
                             // per-parse arena. Arena-copy the
                             // owned `Box<[u8]>` so it is freed
                             // with the arena instead of leaking
-                            // (PORTING.md §Forbidden patterns
                             // bars `heap::alloc` for `&'static`).
                             // SAFETY: ARENA — `arena` outlives
                             // the returned `ParseResult.ast`.
@@ -2170,7 +2165,6 @@ fn parse_md_loader<'a>(
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
         // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
-        // PORTING.md §Forbidden patterns bars `Box::leak` here.
         // SAFETY: ARENA — `arena` outlives the returned
         // `ParseResult.ast` (the AST crate's `Str` convention erases
         // `'bump` to `'static` for `E::String.data`).
@@ -2258,7 +2252,6 @@ fn parse_wasm_loader<'a>(
 #[inline(never)]
 fn parse_unsupported_loader(loader: options::Loader, path: &bun_core::paths::fs::Path<'static>) -> ! {
     // Programmer-error hard crash, NOT a
-    // silent `None` (PORTING.md §Forbidden: silent no-op).
     bun_core::Output::panic(format_args!(
         "Unsupported loader {:?} for path: {}",
         loader,

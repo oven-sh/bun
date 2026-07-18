@@ -181,7 +181,6 @@ impl Default for Function {
     }
 }
 
-// PORTING.md §Global mutable state: written once at startup with the
 // resolved tinycc lib dir; read by the FFI compile path. RacyCell over the
 // raw C-string pointer (no concurrent writers).
 pub static LIB_DIR_Z: bun_core::RacyCell<*const c_char> = bun_core::RacyCell::new(c"".as_ptr());

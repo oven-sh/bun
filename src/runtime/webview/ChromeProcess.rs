@@ -54,7 +54,6 @@ pub struct ChromeProcess {
     process: NonNull<Process>,
 }
 
-// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
 // Only accessed from the JS thread (exported fns are called from C++ on the
 // mutator thread; on_process_exit runs on the event loop thread which is the
 // same thread), so Relaxed ordering suffices.

@@ -78,7 +78,6 @@ mod _impl {
         pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
-        // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,

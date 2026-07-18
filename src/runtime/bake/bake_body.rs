@@ -281,7 +281,6 @@ impl StringRefList {
     // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
     // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
-    // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
@@ -1441,7 +1440,6 @@ fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // `runtime_embed_file!` returns `&'static str` (no NUL). Use a per-side
     // `OnceLock` holding the NUL-terminated copy — read once per process,
-    // never freed. PORTING.md §Forbidden bans leaking for `&'static`; this is the
     // sanctioned process-lifetime-singleton pattern instead. (Under
     // `cfg(bun_codegen_embed)` the macro expands to `include_str!`, so this
     // costs one extra copy at first call; the cost is negligible vs. keeping

@@ -289,7 +289,6 @@ pub enum SyntaxComponentKind {
     /// A `<custom-ident>` component.
     CustomIdent,
     /// A literal component.
-    // PORTING.md §Forbidden bans laundering a parser-borrowed slice to
     // `&'static`; that would need a `'bump` lifetime threaded through
     // `SyntaxString`. We own the bytes instead — `Box<[u8]>` per §Forbidden
     // ("the field should be `Box<[T]>` … not `&'static [T]`"). May swap for

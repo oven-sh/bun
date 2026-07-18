@@ -796,13 +796,11 @@ fn worker_flush_aggregates(
 }
 
 /// Reused across all worker → coordinator emits.
-// PORTING.md §Global mutable state: only accessed from the single worker
 // thread after run_as_worker begins → RacyCell.
 static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::DEFAULT);
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
-// PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
 static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
 // Lifetime note: stores an 'a-bound pointer as 'static; sound because the
 // pointee outlives all callers (process exits before it's dropped).

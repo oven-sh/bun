@@ -746,7 +746,6 @@ pub mod abort_handler {
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
-    // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
     // no concurrent access.
     #[cfg(unix)]

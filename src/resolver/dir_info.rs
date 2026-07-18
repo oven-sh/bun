@@ -305,7 +305,6 @@ impl DirInfo {
 // `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
 // the use site and `bun_core::alloc_impl::BSSMapInner::init()` hands back the storage.
-// PORTING.md §Global mutable state: lazy singleton. `AtomicCell` over the
 // `Option<NonNull<_>>` because resolver-pool threads race on first access;
 // the load/CAS below makes the publish itself data-race-free. (The map's
 // *contents* are still guarded by the resolver mutex.)
@@ -313,7 +312,6 @@ static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
     bun_core::AtomicCell::new(None);
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
-/// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline(always)]
 pub fn hash_map_instance() -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAP.load() {

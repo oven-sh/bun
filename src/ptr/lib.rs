@@ -13,7 +13,6 @@
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
-//! Per PORTING.md §Pointers, most consumers of `bun.ptr.*` map directly to std
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
@@ -30,7 +29,6 @@ pub type CowString<'a> = Cow<'a, [u8]>;
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
 
-// owned/shared — OBSOLETE per PORTING.md §Pointers: callers
 // use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
 pub mod owned;
 pub mod shared;

@@ -726,7 +726,6 @@ impl VirtualMachine {
     /// Returns a raw `*EventLoop` (no aliasing guarantee). Returning `&mut`
     /// here would let two overlapping callers (e.g. a JS callback re-entering
     /// `vm.event_loop()` from inside `tick()`) mint aliased `&mut EventLoop` to
-    /// the same allocation — UB per PORTING.md §Forbidden. Callers form a
     /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
     #[inline(always)]
     pub fn event_loop(&self) -> *mut EventLoop {
@@ -1264,7 +1263,6 @@ impl VirtualMachine {
         // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
         // mirroring `auto_tick`/`ensure_debugger` — so the error is actually
         // emitted to stderr before callers hard-exit. With no hook installed
-        // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
         // silent no-op here since the real path has observable logic.
         if let Some(hooks) = runtime_hooks() {
             (hooks.print_exception)(self, result, exception_list);

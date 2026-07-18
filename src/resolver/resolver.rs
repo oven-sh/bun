@@ -291,7 +291,6 @@ use bun_ast::SideEffects;
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
 // singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
-// borrow `&'static [u8]` source bytes. PORTING.md §Forbidden bars `Box::leak`/
 // `mem::forget` for this — process-lifetime storage must go through
 // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
@@ -316,7 +315,6 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
 
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
 // `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
-// emit and release builds dead-strip (PORTING.md §Logging).
 //
 bun_core::define_scoped_log!(debuglog, Resolver, hidden);
 
@@ -694,7 +692,6 @@ impl<'a> Resolver<'a> {
 
     /// NOTE (Stacked Borrows): returns the RAW `*mut` (NOT `&'a mut`). A
     /// `&'a mut` accessor would let two `fs()` calls manufacture coexisting
-    /// aliased unique refs to the same singleton (PORTING.md §Forbidden:
     /// aliased-&mut), and any later `&mut *self.fs` retag would pop a previously
     /// returned `&'a mut`'s SB tag while it's still nominally live for `'a`.
     /// Callers must `unsafe { &mut *r.fs() }` at the narrowest use site and let
@@ -4259,7 +4256,6 @@ impl<'a> Resolver<'a> {
         // SAFETY: ARENA — `self.fs` points at the process-global FileSystem singleton.
         // Derive provenance from the raw `*mut FileSystem` field directly so later
         // `unsafe { &mut *self.fs() }` calls (e.g. `dirname_store.append_*`) cannot pop `rfs`'s tag
-        // under Stacked Borrows (PORTING.md §Forbidden: aliased-&mut).
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs {
             () => {

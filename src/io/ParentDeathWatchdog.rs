@@ -56,7 +56,6 @@ pub struct ParentDeathWatchdog;
 pub const EXIT_CODE: u8 = 128 + 1;
 
 // Atomics/OnceLock with single-writer-at-startup discipline (see
-// docs/PORTING.md §Global mutable state).
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_PPID: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 

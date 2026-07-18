@@ -1844,7 +1844,6 @@ impl<'a> Printer<'a> {
             Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
         };
 
-        // PORTING.md §Forbidden patterns: never `Box::leak` — own `map`/`loader` as locals;
         // they live for the function scope (one-shot CLI path).
         let mut map = DotEnv::Map::init();
         let mut env_loader = DotEnv::Loader::init(&mut map);
@@ -2811,7 +2810,6 @@ pub use package_index::Map as PackageIndexMap;
 /// The binary lockfile serializer reads this u32 directly from disk; an
 /// exhaustive Rust enum would
 /// make deserializing a future v4+ lockfile instant UB (transmute-to-enum with an
-/// invalid discriminant). PORTING.md §Forbidden patterns: never transmute disk data
 /// into an exhaustive enum. Represent as a transparent u32 with associated consts so
 /// unknown values round-trip and can be compared against `current()` for a graceful
 /// version-mismatch error.

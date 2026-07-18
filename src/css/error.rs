@@ -3,7 +3,6 @@ use core::fmt;
 
 use crate::{Location, SourceLocation, Token};
 
-// Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
 use crate::Str;
 

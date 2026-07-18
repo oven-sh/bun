@@ -14,7 +14,6 @@
 //! After migration, `RacyCell` should remain only for FFI-shaped `.bss`
 //! symbols where Rust never reads the bytes itself.
 //!
-//! See `docs/PORTING.md` §Global mutable state.
 
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;

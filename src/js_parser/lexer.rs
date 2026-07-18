@@ -3360,7 +3360,6 @@ lexer_impl_header! {
                 }
 
                 // Note: bytes-based integer parse — source bytes are
-                // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
                 // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
                 // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
                 // (release builds would silently encode garbage surrogate pairs).

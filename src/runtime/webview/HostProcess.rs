@@ -39,7 +39,6 @@ pub struct HostProcess {
     process: NonNull<Process>,
 }
 
-// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
 // Only ever accessed from the JS thread (macOS WebView host is single-VM).
 static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());

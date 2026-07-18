@@ -31,7 +31,6 @@ pub struct ClientContext {
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
-// PORTING.md §Global mutable state: HTTP-thread-only singleton. AtomicCell
 // over RacyCell because the payload is a pointer-sized `Copy` value
 // (`Option<NonNull<_>>` has an `Atom` impl) so load/store are safe; the
 // uncontended atomic op is free on the single HTTP client thread.
@@ -52,7 +51,6 @@ impl ClientContext {
     }
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
-    /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub fn get() -> Option<NonNull<ClientContext>> {
         INSTANCE.load()
     }

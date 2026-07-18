@@ -2435,7 +2435,6 @@ impl<'a> Drop for Repl<'a> {
 }
 
 /// Global pointer for signal handler to access the VM.
-// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
 // Atomics are async-signal-safe; the previous raw-global `Option<*mut>` was
 // not. `null` encodes `None`.
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =

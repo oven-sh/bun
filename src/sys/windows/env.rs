@@ -3,7 +3,6 @@ use core::ffi::c_char;
 use bun_core::alloc_impl::AllocError;
 
 /// After running `convert_env_to_wtf8`, the pointers in the process environment block will point into this buffer.
-// PORTING.md §Global mutable state: written exactly once at program startup
 // before any threads are spawned. RacyCell — startup-only.
 pub(crate) static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> =
     bun_core::RacyCell::new(None);

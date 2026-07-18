@@ -94,7 +94,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
             // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
             // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
-            // laundering (forbidden per PORTING.md §Forbidden patterns).
             let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
             opts.ts_decorators = Some(DeferredTsDecorators {
                 values: ts_decorators_slice,

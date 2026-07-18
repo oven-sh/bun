@@ -474,5 +474,4 @@ impl fmt::Display for CompileTarget {
     }
 }
 
-// `fromJS` / `fromSlice` re-exports from bundler_jsc deleted — see PORTING.md §Idiom map.
 // In Rust these are extension-trait methods living in bun_bundler_jsc.

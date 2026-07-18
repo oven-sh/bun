@@ -28,7 +28,6 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
     // label handed to `malloc_set_zone_name` is stored as the map *value*
     // (alongside the zone) to keep its allocation alive for 'static
-    // (PORTING.md §Forbidden: never `Box::leak`).
     struct ZoneTable(UnsafeCell<Vec<(Vec<u8>, Vec<u8>, &'static Zone)>>);
     // SAFETY: the inner `Vec` is only accessed while `LOCK` is held.
     unsafe impl Sync for ZoneTable {}

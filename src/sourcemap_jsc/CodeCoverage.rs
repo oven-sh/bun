@@ -475,7 +475,6 @@ impl ByteRangeMapping {
     /// The pointer borrows the thread-local `Box`, which is pinned for the
     /// thread's lifetime and never re-entered while the caller holds it
     /// (single-threaded CLI report path). Callers reborrow per-access —
-    /// PORTING.md §Global mutable state.
     pub fn map() -> Option<NonNull<ByteRangeMappingHashMap>> {
         thread_map_opt()
     }

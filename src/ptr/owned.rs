@@ -13,7 +13,6 @@
 //!   Dynamic(P)                Box<T> — allocator field deleted
 //!   Unmanaged                 Box<T> — managed/unmanaged split disappears
 //!
-//! Callers should use the std types directly (PORTING.md §Pointers). This file exists so
 //! `bun_core::ptr::owned::*` resolves and so the API surface has a 1:1 diffable mapping comment.
 
 /// An owned pointer or slice that was allocated using the default allocator.
@@ -30,7 +29,6 @@
 ///
 /// In Rust this is `Box<T>` / `Box<[T]>` / `Option<Box<_>>`. The alias below covers
 /// only the `*T` (single, non-optional) case, which is the overwhelmingly common one. Slice and
-/// optional callers use `Box<[T]>` / `Option<Box<T>>` directly (PORTING.md §Pointers).
 pub type Owned<T> = Box<T>;
 
 /// The runtime-allocator param/field is deleted entirely outside AST crates. `Dynamic` collapses
@@ -60,7 +58,6 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // const ConstPointer = AddConst(Pointer);             → `&T` / `&[T]`
 
 // #pointer: Pointer,     → the Box itself (Box<T> IS the pointer)
-// #allocator: Allocator, → deleted (global mimalloc; PORTING.md §Allocators)
 
 // pub const Unmanaged = owned.Unmanaged(Pointer, Allocator);
 //   → managed/unmanaged split disappears (no allocator field to elide). `Box<T>` is already
@@ -118,7 +115,6 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // ── deinit ───────────────────────────────────────────────────────────────────────────────────
 // Calls `deinit` on the underlying data (pointer target or slice elements) and then frees.
 //   deinit(self: *Self) void
-//     → drop(boxed)                              (implicit at scope exit; see PORTING.md §Idiom)
 //   `deinit` on the allocator → no-op (no allocator field).
 
 // ── deinitShallow ────────────────────────────────────────────────────────────────────────────

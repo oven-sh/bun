@@ -1,6 +1,5 @@
 //! `bun_core::wtf` — thin FFI wrappers over linked WTF (WebKit) utilities.
 //!
-//! Per docs/PORTING.md §Forbidden patterns, we never re-implement C/C++
 //! library code in Rust. WTF is statically linked into the binary, so
 //! tier-0 callers declare the C symbol directly — no `bun_jsc` crate
 //! dependency is required to reference it.

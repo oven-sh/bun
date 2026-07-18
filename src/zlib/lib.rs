@@ -8,7 +8,6 @@ use core::mem::size_of;
 
 use bun_core::collections::VecExt as _;
 
-// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
 
 pub const MIN_WBITS: c_int = 8;

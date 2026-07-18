@@ -266,7 +266,6 @@ pub struct RareData {
 
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
-    /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
     /// owns the data, no sidecar `Mutex<()>`).
     pub listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
@@ -396,7 +395,6 @@ pub use bun_loop::PipeReadBuffer;
 /// mutex doubles as the env-map serialisation point even though it owns only
 /// the slots.
 ///
-/// PORTING.md §Concurrency: lock owns the data — no sidecar `Mutex<()>` field.
 #[derive(Default)]
 pub struct ProxyEnvStorage(Mutex<ProxyEnvSlots>);
 

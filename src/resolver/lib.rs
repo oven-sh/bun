@@ -1694,7 +1694,6 @@ pub mod fs {
                 // The computed path borrows env-var storage joined with a literal,
                 // so it must own its buffer. This runs once for the process via
                 // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
-                // the allowed process-lifetime singleton (PORTING.md §Forbidden
                 // exception), not a per-call leak.
                 static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
                 return OWNED
@@ -1966,7 +1965,6 @@ pub mod dir_entry_accessor {
                 // cached realpath is what records the entry as a symlink.
                 let symlink_target = entry.cache().symlink;
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
-                // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
                 // until the next `read_directory` regeneration; `name_slice()`
                 // re-narrows the lifetime so it never escapes the iter result.
@@ -2194,7 +2192,6 @@ pub mod cache {
     /// Provenance-tagged backing for [`Entry`] source bytes.
     ///
     /// Replaces the prior `&'static [u8]` + `Box::leak`/`heap::take` pair
-    /// (forbidden per docs/PORTING.md §Forbidden patterns). The enum makes
     /// provenance explicit so `deinit` matches on the variant instead of
     /// guessing — the old scheme would `heap::take` a `MutableString`-owned
     /// pointer on the `use_shared_buffer=true` path (UB).

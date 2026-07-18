@@ -23,7 +23,6 @@ pub struct UpdateRequest {
     /// CLI positional (truly process-lifetime) or the active lockfile's
     /// `buffers.string_bytes`. Stored as a raw fat pointer because the
     /// lockfile buffer's lifetime cannot be expressed as `'static` without UB
-    /// lifetime extension (PORTING.md §Forbidden patterns), and threading a
     /// real `<'a>` through every `&mut [UpdateRequest]` in the install
     /// pipeline is a larger reshape. ARENA-class field per the PORTING.md
     /// type map: `[]const u8` struct-field, never freed, points into a buffer

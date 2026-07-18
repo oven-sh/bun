@@ -51,7 +51,6 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
-    /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
     /// newtype carries the encoded bits at the lowest tier that needs them so
     /// `Transpiler::ParseOptions.macro_js_ctx` and `MacroContext.javascript_object`
     /// share one canonical type without `bun_js_parser` / `bun_bundler` taking a

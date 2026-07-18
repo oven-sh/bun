@@ -6,7 +6,6 @@
 //! convention (`"sysv64"` on Windows-x64, `"C"` elsewhere) is encoded by
 //! emitting two `#[cfg]`-gated shims from a proc-macro instead.
 //!
-//! See `docs/PORTING.md` §JSC types and §FFI.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};

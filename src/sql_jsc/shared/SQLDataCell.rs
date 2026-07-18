@@ -196,7 +196,6 @@ pub struct TypedArray {
 impl SQLDataCell {
     // Note: kept as an explicit method, not `impl Drop` — this type is
     // #[repr(C)], lives inside a C union, is bulk-passed to C++ by pointer, and
-    // freeing is gated on `free_value`. See PORTING.md §Idiom map (FFI types
     // keep explicit destroy).
     pub fn deinit(&mut self) {
         if self.free_value == 0 {

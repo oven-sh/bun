@@ -26,7 +26,6 @@ use bun_core::alloc_impl::AllocError;
 /// ```
 ///
 /// In Rust, `Vec`/`Box` allocation already aborts on OOM via the
-/// global allocator's `handle_alloc_error`. Per PORTING.md §Allocators,
 /// callsites of `bun.handleOom(expr)` translate to bare `expr`. This function
 /// remains for the residual cases where a `Result<T, AllocError>` is threaded
 /// explicitly.

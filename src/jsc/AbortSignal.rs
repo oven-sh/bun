@@ -293,7 +293,6 @@ pub struct Timeout {
     /// The `Timeout`'s lifetime is owned by the AbortSignal.
     /// But this does have a ref count increment.
     // AbortSignal is an opaque C++ type with intrusive WebCore
-    // refcounting (ref/unref) that crosses FFI — PORTING.md §Pointers: never
     // Arc here. Kept as raw `*mut` with manual unref.
     pub signal: *mut AbortSignal,
 

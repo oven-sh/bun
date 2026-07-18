@@ -3,7 +3,6 @@ use core::ptr;
 use bun_core::alloc_impl::ArenaVecExt as _;
 use bun_core::alloc_impl::{AllocError, Arena as Bump};
 // `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
-// is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use self::StringEncoding as Encoding;
 use bun_core::alloc_impl::ArenaVec as BumpVec;
 use bun_core::SmolStr;

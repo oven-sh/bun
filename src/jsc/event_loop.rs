@@ -1013,7 +1013,6 @@ impl EventLoop {
     //
     // `vm()` returns a raw pointer, NOT `&mut VirtualMachine`. `EventLoop` is a
     // value field of `VirtualMachine`, so materializing `&mut VM` while a
-    // `&EventLoop`/`&mut EventLoop` is live would alias (PORTING.md §Forbidden).
     // Callers must dereference per-field at use sites.
     #[inline(always)]
     fn vm(&self) -> *mut VirtualMachine {

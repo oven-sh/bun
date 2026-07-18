@@ -22,7 +22,6 @@ macro_rules! arena_slice_newtype {
         pub struct $name {
             // CSS parser slices are arena-owned; the borrow is erased to a raw
             // pointer until the crate threads a `'bump` lifetime (see
-            // PORTING.md §Allocators). Never dereferenced after arena reset.
             pub v: *const [u8],
         }
 

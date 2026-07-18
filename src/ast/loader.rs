@@ -78,7 +78,6 @@ impl LoaderOptional {
     }
 
     pub fn unwrap(self) -> Option<Loader> {
-        // PORTING.md §Forbidden patterns bars transmute-to-enum;
         // exhaustive match so out-of-range tags are debug-asserted, never UB.
         match self.0 {
             0 => Some(Loader::Jsx),

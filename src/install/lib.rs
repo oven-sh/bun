@@ -556,7 +556,6 @@ impl RunCommand {
     /// Find the "best" shell to use. Cached to only run once.
     /// Returns a slice into a process-lifetime static buffer (includes trailing NUL).
     pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
-        // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock. Store the
         // result bytes (including NUL) directly in the OnceLock so the borrow is
         // trivially `'static` — avoids the Mutex+data_ptr dance from the draft.
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
@@ -842,11 +841,9 @@ impl RunCommand {
 /// Process-lifetime arena for the install-tier `Transpiler` constructed in
 /// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
 /// `runtime/cli/run_command.rs` — `bun_core::alloc_impl::Arena` is `!Sync`, so guard a
-/// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
 /// `Box::leak`).
 fn install_runner_arena() -> &'static bun_core::alloc_impl::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
     // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
     static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_core::alloc_impl::Arena>> =
         bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());

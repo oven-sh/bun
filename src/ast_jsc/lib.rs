@@ -46,7 +46,6 @@ pub(crate) fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<J
 
 pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResult<JSValue> {
     let msgs: &[Msg] = this.msgs.as_slice();
-    // On-stack array: conservative GC stack scan keeps these JSValues alive (see PORTING.md §JSC).
     let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
 
     let count = u16::try_from(msgs.len().min(errors_stack.len())).unwrap();

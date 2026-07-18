@@ -108,7 +108,6 @@ impl PathChar for u16 {
         // const time, so dispatch on the closed set of ASCII literals actually
         // passed through `T::lit` across the codebase. Each gets one static.
         // Zero runtime allocation; `Box::leak` is forbidden here
-        // (PORTING.md §Forbidden).
         macro_rules! w {
             ($($b:literal),* $(,)?) => {{ static W: &[u16] = &[$($b as u16),*]; W }};
         }

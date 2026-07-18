@@ -142,7 +142,6 @@ pub(super) mod lib_info {
     ) -> i32;
     pub(crate) type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
 
-    // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
     // null = "tried and failed / not yet loaded"; LOADED disambiguates.
     static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
@@ -2146,7 +2145,6 @@ impl Drop for GlobalData {
 pub mod internal {
     use super::*;
 
-    // PORTING.md §Global mutable state: lazy env-var memo — an `OnceLock<u32>`
     // (idempotent init, safe concurrent read).
     static MAX_DNS_TIME_TO_LIVE_SECONDS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
@@ -2359,7 +2357,6 @@ pub mod internal {
     const MAX_ENTRIES: usize = 256;
 
     /// The cache data guarded by `GLOBAL_CACHE`; the lock owns the data
-    /// (PORTING.md §Concurrency).
     pub(crate) struct GlobalCache {
         pub cache: [*mut Request; MAX_ENTRIES],
         pub len: usize,

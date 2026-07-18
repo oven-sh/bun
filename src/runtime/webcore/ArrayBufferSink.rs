@@ -11,7 +11,6 @@ pub type JSSink = sink::JSSink<ArrayBufferSink>;
 #[derive(Default)]
 pub struct ArrayBufferSink {
     pub bytes: Vec<u8>,
-    // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
     pub signal: Signal,
     // `Sink<'a>` carries a borrow; `'static` here means the caller is

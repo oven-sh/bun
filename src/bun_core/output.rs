@@ -2869,7 +2869,6 @@ pub fn stdin_reader() -> StdinReader {
 /// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
 ///
 /// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
-/// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
 /// `&mut` at the use site. Matches the other self-ref escapes in this module
 /// (`writer()`, `error_writer()`, …).
 ///

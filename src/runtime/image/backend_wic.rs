@@ -859,7 +859,6 @@ type WICConvertBitmapSourceFn = unsafe extern "system" fn(
     src: *mut IWICBitmapSource,
     out: *mut *mut IWICBitmapSource,
 ) -> HRESULT;
-// PORTING.md §Global mutable state: written once under `FACTORY_ONCE`,
 // read-only thereafter. Fn pointers are `Send + Sync + Copy`, so a plain
 // `OnceLock` gives a safe write-once slot (`.get().copied()` ⇔ the old
 // `Option<fn>` read).
@@ -872,7 +871,6 @@ const CLSCTX_INPROC_SERVER: u32 = 1;
 thread_local! {
     static COM_INITIALISED: Cell<bool> = const { Cell::new(false) };
 }
-// PORTING.md §Global mutable state: written once under `FACTORY_ONCE`,
 // read-only thereafter → AtomicPtr (Once provides the happens-before).
 static FACTORY_PTR: core::sync::atomic::AtomicPtr<IWICImagingFactory> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());

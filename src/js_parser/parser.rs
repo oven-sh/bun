@@ -368,7 +368,6 @@ pub mod Runtime {
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
         pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
             // Empty path returns `None` (≡ static empty). Owned `Box` per
-            // PORTING.md §Forbidden — never leak.
             if feature_flags.is_empty() {
                 return None;
             }

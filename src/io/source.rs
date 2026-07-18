@@ -453,7 +453,6 @@ impl Source {
 pub mod stdin_tty {
     use super::*;
 
-    // PORTING.md §Global mutable state: init guarded by `LOCK` + `INITIALIZED`;
     // afterwards only accessed by uv on the loop thread. RacyCell.
     static DATA: bun_core::RacyCell<MaybeUninit<uv::uv_tty_t>> =
         bun_core::RacyCell::new(MaybeUninit::uninit());

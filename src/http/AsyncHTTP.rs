@@ -679,7 +679,6 @@ impl<'a> AsyncHTTP<'a> {
     pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
         crate::http_thread::init(&Default::default());
 
-        // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
         let ctx = bun_core::heap::into_raw_nn(Box::new(SingleHTTPChannel::init()));

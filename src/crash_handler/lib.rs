@@ -315,7 +315,6 @@ pub mod debug {
     }
 
     // ── self debug-info singleton ────────────────────────────────────────
-    // PORTING.md §Global mutable state: lazy debug-only singleton. RacyCell —
     // only called from a stopped/crashing process (lldb or the crash handler
     // after `panicking` has serialized), so no concurrent access; callers
     // reborrow the returned `*mut` per-access.
@@ -579,7 +578,6 @@ mod draft {
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
-    // PORTING.md §Concurrency: `bun_sys::threading::Guarded<()>` for a bare critical section.
     static PANIC_MUTEX: bun_sys::threading::Guarded<()> = bun_sys::threading::Guarded::new(());
 
     thread_local! {
@@ -600,7 +598,6 @@ mod draft {
         pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
     }
 
-    // PORTING.md §Concurrency: `bun_sys::threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
     // Stores a boxed type-erased closure (not a bare fn pointer) so that
     // `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
     // caller's typed handler.
@@ -1562,7 +1559,6 @@ mod draft {
     }
 
     pub(crate) fn report_base_url() -> &'static [u8] {
-        // PORTING.md §Concurrency: OnceLock for lazy global init (was a raw mutable global Option).
         static BASE_URL: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
         *BASE_URL.get_or_init(|| {
             if let Some(url) = env_var::BUN_CRASH_REPORT_URL::get() {
@@ -3741,7 +3737,6 @@ mod draft {
         }
         // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
         // buffer suffices — `panic_impl` erases to &'static for the abort path.
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(

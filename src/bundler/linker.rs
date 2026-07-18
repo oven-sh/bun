@@ -139,7 +139,6 @@ mod hardcoded_module {
 ///
 /// The linker is a
 /// per-transpile singleton whose output paths flow into `ImportRecord.path:
-/// Path<'static>`. PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
 /// fabricating `&'static [u8]`; route through the `relative_paths_list`
 /// interner instead so the bytes are owned by a true process-lifetime
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).

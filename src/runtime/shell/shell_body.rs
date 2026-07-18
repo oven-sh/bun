@@ -671,7 +671,6 @@ pub use test as Test;
 /// `Interpreter::parse`. `bun.String` is `Copy` (no `Drop`) for FFI, so the
 /// per-element `deref()` must be explicit. Wrapping the `Vec`
 /// avoids the unit-state `scopeguard` + raw-pointer-reborrow pattern that is UB
-/// under Stacked Borrows (PORTING.md §Idiom-map: `defer <side effect>`).
 pub struct JsStrings(pub Vec<BunString>);
 
 impl JsStrings {

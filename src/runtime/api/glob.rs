@@ -15,7 +15,6 @@ use bun_core::paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
-// generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,

@@ -66,7 +66,6 @@ bun_core::define_scoped_log!(log, fs_watch, hidden);
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).
-// PORTING.md §Global mutable state: init-once-then-read-only → `OnceLock`.
 // `DEFAULT_MANAGER_MUTEX` still serializes the *fallible* init path so a failed
 // `Platform::init` can be retried on a later `get()` without two threads
 // racing to allocate; `OnceLock` provides the Acquire/Release publish so the

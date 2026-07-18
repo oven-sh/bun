@@ -617,7 +617,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
     };
     if let Some(ptr) = parsed.map.as_mut() {
         // The Arc is freshly created in `parse_json` and we hold the only ref
-        // here, so `Arc::get_mut` succeeds. (PORTING.md §Pointers — no raw
         // *mut cast through Arc::as_ptr.)
         if let Some(map) = std::sync::Arc::get_mut(ptr) {
             map.underlying_provider = provider.to_source_content_ptr();

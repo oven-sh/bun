@@ -2490,7 +2490,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self: ServerPools<SSL, DEBUG>,
     {
         httplog!("listen");
-        // reshaped for borrowck (PORTING.md §Forbidden — aliased
         // `&mut`). No long-lived `&mut Self` is held across re-derives from
         // `this`; each use site reborrows fresh and the borrow ends before the
         // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so

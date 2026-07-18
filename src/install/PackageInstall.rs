@@ -248,7 +248,6 @@ impl Step {
     }
 }
 
-// PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
 // (no `Atomic<Method>`) — writers are the CLI option-load and the
 // clonefile/hardlink fallback in `install_with_method`, all on the install
 // main thread; isolated_install workers snapshot via `supported_method()`
@@ -514,7 +513,6 @@ impl HasWorkPoolTask for HardLinkWindowsInstallTask {
 #[cfg(windows)]
 pub(crate) type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
 
-// PORTING.md §Global mutable state: written once on the main thread by
 // `init_queue()` before any worker `run_from_thread_pool` reads it; workers
 // only ever take `&HardLinkQueue` (all queue methods are `&self`).
 #[cfg(windows)]

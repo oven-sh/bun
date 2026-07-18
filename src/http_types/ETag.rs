@@ -193,7 +193,6 @@ impl HeaderEntryColumns for HeaderEntryList {
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
-    // No allocator field: non-AST crate → global mimalloc (PORTING.md §allocators).
 }
 
 impl Clone for Headers {

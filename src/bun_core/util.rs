@@ -2076,7 +2076,6 @@ impl Version {
 /// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
 /// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.
 ///
-/// This exists to replace `static mut` (banned per docs/PORTING.md §Global
 /// mutable state). Unlike `static mut`, taking `&RACY` does not assert
 /// uniqueness; callers stay in raw-ptr land via `.get()` and only deref for
 /// the duration of a single statement.
@@ -3079,7 +3078,6 @@ pub mod time {
 // A per-call-site `static once` cache cannot be manufactured
 // from a plain fn without leaking, so the canonical form is the
 // `runtime_embed_file!` macro below (per-site `OnceLock<String>` — sanctioned
-// by PORTING.md §Forbidden, "true process-lifetime singleton"). The fn form is
 // kept so existing draft callers type-check; it's only reachable when the
 // `codegen_embed` feature is off (debug fast-iteration), where it panics with
 // a migration hint.
@@ -3188,7 +3186,6 @@ macro_rules! __runtime_embed_impl {
 // ── StringBuilder ─────────────────────────────────────────────────────────
 // Count-then-allocate-then-append arena
 // for building a single contiguous buffer. Allocator param dropped per
-// PORTING.md §Allocators (always `bun.default_allocator`).
 //
 // Returned sub-slices borrow `*self`. To let spans outlive the builder
 // without self-referential lifetimes, callers stash `(offset, len)` via
@@ -5623,7 +5620,6 @@ pub mod perf {
 // The JSC-touching parts (`toJS`, the field map,
 // multipart parser) stay in `bun_runtime::webcore::form_data`; T0 owns only
 // the encoding-detection types so `Request`/`Response`/`Body` can name them
-// without a runtime→core cycle. Per PORTING.md §JSC: `to_js` is an extension
 // method that lives in the higher-tier crate.
 pub mod form_data {
     /// `FormData.Encoding` — `union(enum) { URLEncoded, Multipart: []const u8 }`.

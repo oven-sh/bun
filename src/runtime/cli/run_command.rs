@@ -198,7 +198,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// Find the "best" shell to use. Cached to only run once.
     pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
         // Process-lifetime; written exactly once on the CLI thread.
-        // PORTING.md §Global mutable state: scratch buffer behind
         // a `Once` gate → RacyCell.
         static SHELL_BUF: bun_core::RacyCell<PathBuffer> =
             bun_core::RacyCell::new(PathBuffer::ZEROED);
@@ -1287,7 +1286,6 @@ pub struct Run {
 }
 
 // Process-global, written once in `boot`.
-// PORTING.md §Global mutable state: `Run` is `!Sync` (raw ptrs); RacyCell so
 // `boot`/`boot_standalone` can `ptr::write` it on the single CLI thread and
 // the `holdAPILock` trampoline can re-derive `&mut Run` from the static.
 static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
@@ -1865,7 +1863,6 @@ impl RunCommand {
 
             // Park the
             // bytes in the per-process `runner_arena()` instead of leaking
-            // (PORTING.md §Forbidden bars per-call leaks).
             let stored: &'static [u8] =
                 runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
@@ -3923,7 +3920,6 @@ pub enum BunXFastPath {}
 #[cfg(windows)]
 mod bunx_fast_path_buffers {
     use super::*;
-    // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
     pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);

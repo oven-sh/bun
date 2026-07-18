@@ -183,7 +183,6 @@ pub(super) mod dc {
     /// `DeclarationList`s, routing each `Property` through `dc::property`.
     ///
     /// Threads the real `'bump` lifetime instead of fabricating
-    /// `'static` (PORTING.md §Forbidden: `unsafe { &*(p as *const _) }` to
     /// extend a lifetime). Callers whose storage is still pinned to
     /// `DeclarationBlock<'static>` must fix that storage type — the lie
     /// belongs there, not here, and collapses when `CssRule<'bump, R>`
@@ -830,7 +829,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         core::mem::swap(&mut sty.rules, &mut rulesss);
         // Empty block: route through the centralized `'bump`-erasure helper
         // instead of fabricating
-        // `&'static Arena` here (PORTING.md §Forbidden).
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),
             declarations: dc::decl_block_empty_static(context.arena),

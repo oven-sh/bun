@@ -110,7 +110,6 @@ pub struct PackCommand;
 
 pub struct Context<'a> {
     pub manager: &'a mut PackageManager,
-    // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
     pub command_ctx: Command::Context<'a>,
 
     /// `bun pack` does not require a lockfile, but

@@ -629,7 +629,6 @@ impl FileReader {
         // long-lived `&mut Vec<u8>`. `reader_buffer` points inside `self.reader` while
         // we still hold `&self` and mutate `self.buffered`/`self.pending` etc.
         // interleaved with reads/clears of `*reader_buffer`. Holding a `&mut Vec` here
-        // would be the aliased-&mut forbidden pattern (PORTING.md §Forbidden patterns).
         // Use a raw ptr
         // and deref only at the exact use sites below.
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();

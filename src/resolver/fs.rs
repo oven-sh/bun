@@ -175,7 +175,6 @@ impl strings::Appender for FilenameStoreAppender {
     }
 }
 
-// PORTING.md §Global mutable state: highest-fd watermark, written from
 // resolver pool / bundler / router and read from the file-limit check below.
 // `AtomicCell` (not `RacyCell`) because those callers run on different
 // threads. POSIX-only fd ceiling tracking (Windows handles aren't ordered
@@ -457,7 +456,6 @@ pub struct DifferentCase<'a> {
 
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
-// aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
 // at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
     pub entry: *mut Entry,
@@ -982,7 +980,6 @@ pub struct RealFS {
 }
 
 pub(crate) mod limit {
-    // PORTING.md §Global mutable state: written once at init in
     // `adjust_ulimit`, read elsewhere — Atomic for the scalar, RacyCell for
     // the POD struct (no Atomic<Rlimit>).
     #[cfg(unix)]

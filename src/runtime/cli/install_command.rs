@@ -77,7 +77,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 //
                 // Process-lifetime storage for the rewritten positionals —
                 // `Global::exit(0)` follows immediately.
-                // `OnceLock` (not leaking) per PORTING.md §Forbidden.
                 static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                     std::sync::OnceLock::new();

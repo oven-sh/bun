@@ -54,7 +54,6 @@ pub struct ThreadPool {
     // borrow on `ThreadPool`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub worker_pool_is_owned: bool,
-    // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
     // the field so `get_worker` can take `&self` — `Worker::get` is entered
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
     // would alias `&mut ThreadPool` across threads (UB before the lock is even
@@ -99,7 +98,6 @@ impl Default for ThreadPool {
 mod io_thread_pool {
     use super::*;
 
-    // PORTING.md §Global mutable state: init/drop guarded by `MUTEX` +
     // `REF_COUNT`. RacyCell so accessors stay in raw-ptr land; the mutex
     // provides synchronization.
     static THREAD_POOL: bun_core::RacyCell<MaybeUninit<ThreadPoolLib::ThreadPool>> =

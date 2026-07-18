@@ -111,7 +111,6 @@ pub struct S3Credentials {
 
 pub struct Loader<'a> {
     pub map: &'a mut Map,
-    // allocator dropped — global mimalloc (see PORTING.md §Allocators)
     pub env_local: Option<bun_ast::Source>,
     pub env_development: Option<bun_ast::Source>,
     pub env_production: Option<bun_ast::Source>,
@@ -138,7 +137,6 @@ static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
 // name, so RwLock<Option> (not OnceLock) — a 2nd call with an override must update the cache.
 static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core::RwLock::new(None);
 
-// PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 impl<'a> Loader<'a> {
@@ -336,7 +334,6 @@ impl<'a> Loader<'a> {
         // across rehashes and Bun never removes/overwrites the proxy env vars
         // after they are read here, so the slices are valid for `'a`.
         // Encapsulating the extension here keeps every caller (PackageManager,
-        // fetch, upgrade, create) free of `transmute` (PORTING.md §Forbidden).
         let extend = |s: &[u8]| -> &'a [u8] {
             // SAFETY: `s` points into a `Box<[u8]>` owned by `*self.map`, which is
             // borrowed for `'a`; the boxed allocation is address-stable and never
@@ -1346,7 +1343,6 @@ impl Default for Map {
 
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
-    /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
         let envp_count = self.map.count();
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
@@ -1587,7 +1583,6 @@ impl Map {
 }
 
 /// Owns the `K=V\0` strings backing a NULL-terminated envp array.
-/// Dropping this frees every entry (PORTING.md §Forbidden: no Box::leak).
 ///
 /// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
 /// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
@@ -1632,7 +1627,6 @@ impl StdEnvMapWrapper {
 // We store a raw `*mut` in an AtomicPtr (overwritable) and hand
 // the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
 // site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the
-// moment two callers hold results simultaneously (PORTING.md §Forbidden: lifetime-extension
 // via `unsafe { &*(p as *const _) }`).
 pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null_mut());
 

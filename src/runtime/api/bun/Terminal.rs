@@ -851,7 +851,6 @@ mod lib_util {
     use super::*;
     use bun_core::ZStr;
 
-    // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
     // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
     // JS-thread-only.
     static HANDLE: core::sync::atomic::AtomicPtr<c_void> =

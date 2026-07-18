@@ -9,7 +9,6 @@ pub struct SourceMap {
 pub struct SourceMapInner {
     // PERF: using Vec<T>; may want bun_core::alloc_impl::ArenaVec<'bump, T> if hot
     // The `*const [u8]` elements of `sources`/`sources_content`/`names` are
-    // arena-owned slices erased to raw pointers per PORTING.md §Allocators
     // (AST crates) — never dereferenced after the arena resets; they become
     // `&'bump [u8]` once the CSS crate threads the arena lifetime.
     pub sources: Vec<*const [u8]>,

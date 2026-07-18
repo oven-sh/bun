@@ -79,7 +79,6 @@ pub enum ImportKind {
 }
 
 // E0015: EnumMap indexing isn't const; the lookup table is folded into match
-// arms inside label()/error_label() below — zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
 // when the data is pure const).
 //
 // If these are changed, make sure to update
@@ -1530,7 +1529,6 @@ pub struct Log {
     /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
     /// lifetime-erased borrow into the just-pushed box. The borrow is valid
     /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
-    /// growth. See PORTING.md §Allocators (arena pattern).
     pub owned_strings: Vec<Box<[u8]>>,
 
     /// Incremental line/column scanner for the messages this log creates, so
@@ -1627,7 +1625,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-// PORTING.md §Global mutable state: written by CLI startup, read by every
 // `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
 // — Acquire/Release, no `unsafe` at call sites.
 pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
@@ -2651,7 +2648,6 @@ pub struct Source {
     pub path: bun_core::paths::fs::Path<'static>,
 
     /// `Cow` so `source_from_file` / `File::to_source_at` can hand
-    /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
     /// arm covers parser/transpiler-fed
     /// arena slices (via `IntoStr`). Prefer the `.contents()` accessor at
     /// call-sites — it derefs to `&[u8]` regardless of arm.
@@ -2663,7 +2659,6 @@ pub struct Source {
     ///
     /// `Cow` because the cached value is produced by
     /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); per
-    /// PORTING.md §Forbidden this cannot be `&'static [u8]` + leak.
     pub identifier_name: Cow<'static, [u8]>,
 
     pub index: Index,

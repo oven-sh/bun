@@ -88,7 +88,6 @@ pub struct RuntimeState {
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
-    /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub transpiler_arena: Box<bun_core::alloc_impl::Arena>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
@@ -126,7 +125,6 @@ thread_local! {
 /// Note: returns `*mut` (NOT `&'static mut`) — `auto_tick` holds the
 /// pointer across `timer.get_timeout`/`drain_timers`, which fire JS callbacks
 /// that may re-enter `runtime_state()`. Handing out `&'static mut` would mint
-/// aliased `&mut` to the same allocation (UB per PORTING.md §Forbidden).
 /// Callers dereference per-field under `// SAFETY:` blocks, mirroring the
 /// raw-ptr-per-field style already used for `vm`/`el` in `auto_tick`.
 #[inline]
@@ -322,7 +320,6 @@ unsafe fn init_runtime_state(
     // Note: `heap::alloc` is paired with `heap::take` in
     // [`deinit_runtime_state`] below — called from `VirtualMachine::deinit` /
     // worker `destroy()` via the `RuntimeHooks::deinit_runtime_state` slot.
-    // PORTING.md §Forbidden permits
     // `into_raw`-without-reclaim only for true process-lifetime singletons via
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
@@ -2057,7 +2054,6 @@ unsafe fn transpile_source_code(
 ///
 /// Note: takes `*mut VirtualMachine` (NOT `&mut`) — the body re-enters
 /// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
-/// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
 /// the raw ptr, mirroring `auto_tick` above.
 fn transpile_source_code_inner(
     jsc_vm: *mut VirtualMachine,
@@ -2445,7 +2441,6 @@ fn transpile_source_code_inner(
                 // `'static` BSSStringList stores, but the `transpile_file`
                 // entry path borrows a heap `Utf8Slice` that drops at frame
                 // exit — so re-intern into the same `FilenameStore` here
-                // instead of transmuting the lifetime (PORTING.md §Forbidden).
                 //
                 // When `disable_transpilying` is true the
                 // `parse_result` is consumed *within this frame* (the
@@ -4040,7 +4035,6 @@ unsafe fn get_loader_and_virtual_source<'a>(
 thread_local! {
     /// Per-thread shared `BufferPrinter`. Lazy-init in [`transpile_file`];
     /// never freed (process-lifetime singleton —
-    /// PORTING.md §Forbidden permits the leak for true thread-local singletons).
     static TRANSPILE_PRINTER: Cell<*mut bun_js_printer::BufferPrinter> =
         const { Cell::new(ptr::null_mut()) };
 
@@ -4868,7 +4862,6 @@ unsafe fn _resolve<'a>(
         // The caller
         // clones `ret_path` into an owned string unconditionally, so
         // returning the borrowed slice is sufficient and avoids a leak
-        // (PORTING.md §Forbidden (leaking)).
         *ret_path = specifier;
         return Ok(());
     }
@@ -5048,7 +5041,6 @@ unsafe fn resolve_hook(
     let global_ref = unsafe { &*global };
     // Note: `bun_vm_ptr()` returns the FFI `*mut VirtualMachine` directly
     // (mutable provenance from C++); we go through a raw ptr (not `&mut`) for
-    // the resolver/log writes below to avoid aliasing (PORTING.md §Forbidden —
     // same raw-ptr-per-field style as `load_preloads`/`transpile_source_code`).
     // Going through `bun_vm() -> &VirtualMachine -> *mut` would be UB to write
     // through under Stacked Borrows.

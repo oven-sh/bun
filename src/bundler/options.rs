@@ -1079,7 +1079,6 @@ impl ResolveFileExtensions {
 /// Convert a static `&[&[u8]]` default into an owned `Box<[Box<[u8]>]>`.
 /// We own them so
 /// user-provided lists (e.g. `transform.extension_order`) can be stored without
-/// `Box::leak` (PORTING.md §Forbidden patterns).
 #[inline]
 pub(crate) fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
     s.iter().map(|b| Box::<[u8]>::from(*b)).collect()
@@ -1341,7 +1340,6 @@ pub struct BundleOptions<'a> {
     /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
     /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
     /// unrelated to `'a`; a typed reference forced an `unsafe { &*(p as *const _) }`
-    /// lifetime-extension cast at every call site (PORTING.md §Forbidden).
     /// The sole consumer (`PackageManager::init_with_runtime` via the resolver's
     /// `BundleOptions.install`) only reads through it.
     pub install: Option<core::ptr::NonNull<api::BunInstall>>,

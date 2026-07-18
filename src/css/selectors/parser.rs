@@ -25,7 +25,6 @@ type CResult<T> = css::Result<T>;
 
 // Arena lifetimes: this module uses `Vec`/`Box` and a `Str`
 // alias for source-borrowed byte slices until the crate-wide `'bump` re-threading
-// (`bun_core::alloc_impl::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators
 // (AST crates)) lands.
 //
 // NOTE: `Str` is `&'static [u8]` here (not `crate::Str = *const [u8]`) to match
@@ -67,7 +66,6 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
 /// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
 /// Returns a raw arena
 /// pointer (`*const [u8]`) — `Ident.v`'s field type — so we don't fabricate a
-/// `'static` lifetime (PORTING.md §Forbidden: never `Box::leak` to satisfy
 /// `&'static`). Re-threading `&'bump Bump` would widen `Ident.v` to
 /// `&'bump [u8]`.
 #[inline]

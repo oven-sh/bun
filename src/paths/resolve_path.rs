@@ -8,7 +8,6 @@ use bun_core::{WStr, ZStr, strings};
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
 // — the contract is "valid until next call on this thread". RefCell's
 // runtime borrow tracking cannot express that contract and would force an
-// unsafe-lifetime-extend through `RefCell::as_ptr` (PORTING.md §Forbidden).
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
@@ -367,7 +366,6 @@ fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
 }
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow
-/// per-access — PORTING.md §Global mutable state. Valid until the next call on
 /// this thread; do not hold across re-entry.
 #[inline]
 pub fn relative_to_common_path_buf() -> *mut PathBuffer {

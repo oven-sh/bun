@@ -7151,7 +7151,6 @@ impl NodeFS {
                     if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
-                            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with
                             // matches what we hand it (capacity == len).
                             let raw =
@@ -8312,7 +8311,6 @@ impl NodeFS {
     /// Free-function form of [`os_path_into_sync_error_buf`] that does not borrow
     /// `&mut self`. Needed by `mkdir_recursive_os_path_impl`, which holds a long-lived
     /// `&mut OSPathBuffer` reinterpreted from `sync_error_buf` and so must not reborrow
-    /// `&mut self` on its error-return paths (PORTING.md §Forbidden aliased `&mut`).
     fn os_path_into_buf<'a>(buf: &'a mut PathBuffer, slice: &[OSPathChar]) -> &'a [u8] {
         #[cfg(windows)]
         {

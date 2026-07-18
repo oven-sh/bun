@@ -87,7 +87,6 @@ pub struct PackageJSON {
     pub source: bun_ast::Source,
     /// Owns the file bytes that `source.contents` (and the
     /// `&'static [u8]` map values below) borrow. Replaces the prior
-    /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
@@ -303,7 +302,6 @@ impl SideEffects {
 /// Thin extension trait that delegates to
 /// `bun_core::paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
 /// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
 /// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
 /// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
 /// call-sites that only need a transient borrow.
@@ -1044,7 +1042,6 @@ impl PackageJSON {
         };
         // See SAFETY note on `contents_static` above — move ownership of the
         // backing buffer into the returned struct (replaces the prior
-        // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
         package_json.json_tape = parsed_json.tape;
         Some(package_json)

@@ -195,7 +195,6 @@ use crate::strings_impl::EncodeIntoResult;
 /// Thin wrapper over the canonical T0 `crate::strings_impl::allocate_latin1_into_utf8_with_list`.
 /// Kept `Result`-typed for source-compat with existing callers (TextEncoder /
 /// encoding.rs / ConsoleObject) — the bun_core impl is infallible per
-/// PORTING.md §Allocators (panic-on-OOM), so this is always `Ok`.
 pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> {
     Ok(crate::strings_impl::allocate_latin1_into_utf8_with_list(
         Vec::with_capacity(latin1_.len()),

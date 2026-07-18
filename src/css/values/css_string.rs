@@ -9,7 +9,6 @@ pub use css::Printer;
 /// and remains valid for the lifetime of the parse + print session (i.e. as
 /// long as the originating `ParserInput`/arena lives). Stored as a raw slice
 /// pointer rather than `&'static [u8]` so the arena lifetime is not laundered
-/// to `'static` (see PORTING.md §Forbidden patterns). A future refactor
 /// should thread an explicit `'bump` lifetime here.
 pub type CssString = *const [u8];
 

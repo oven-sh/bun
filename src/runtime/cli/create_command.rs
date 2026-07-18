@@ -32,7 +32,6 @@ use crate::cli::which_npm_client::NPMClient;
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub mod SourceFileProjectGenerator;
 
-// PORTING.md §Global mutable state: single-thread CLI scratch buffer →
 // RacyCell. Touched on the main thread for `--open` *and* the spawned git
 // thread (sequenced — git thread writes after main is done with it).
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
@@ -253,7 +252,6 @@ impl CreateOptions {
 }
 
 const BUN_CREATE_DIR: &[u8] = b".bun-create";
-// PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
 static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 pub(crate) struct CreateCommand;
@@ -2080,7 +2078,6 @@ impl ExampleTag {
     }
 }
 
-// PORTING.md §Global mutable state: single-threaded CLI scratch state →
 // RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
 // process-lifetime, not stack locals.
 static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
@@ -2737,7 +2734,6 @@ struct GitHandler;
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
 // bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
-// PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
 // on the main CLI thread → RacyCell.
 static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);

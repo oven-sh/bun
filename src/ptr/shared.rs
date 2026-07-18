@@ -1,6 +1,5 @@
 //! Shared (reference-counted) pointers.
 //!
-//! Per `docs/PORTING.md` §Pointers, the Rust port maps `bun.ptr.Shared(*T)` →
 //! `std::rc::Rc<T>` and `bun.ptr.AtomicShared(*T)` → `std::sync::Arc<T>` directly,
 //! and explicitly forbids introducing a custom `bun_core::ptr::Shared<T>` to shave the
 //! weak-count header word ("4 uses tree-wide, 8 bytes per allocation is negligible,
@@ -57,7 +56,6 @@ use std::rc::Rc;
 /// | `Self.adoptRawUnsafe(p)`    | `unsafe { Rc::from_raw(p) }`                  |
 /// | `Self.cloneFromRawUnsafe(p)`| `unsafe { Rc::increment_strong_count(p); Rc::from_raw(p) }` |
 ///
-// PERF: Rc carries a weak-count header — profile if hot (PORTING.md §Pointers).
 pub type Shared<T> = Rc<T>;
 
 /// A shared pointer allocated using a specific type of allocator.

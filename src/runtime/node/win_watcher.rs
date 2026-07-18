@@ -34,7 +34,6 @@ pub static fs_watch: bun_core::ScopedLogger =
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
 // `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
 // (each Worker is its own OS thread + VM), so an unguarded read+write
 // would be a data race. Mirror the posix

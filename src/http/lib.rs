@@ -1042,7 +1042,6 @@ bun_core::comptime_string_map! {
 
 // ── shared per-thread buffers ───────────────────────────────────────────
 // All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
-// is the alias-safe static cell per docs/PORTING.md §Global mutable state.
 const PRINT_EVERY: usize = 0;
 static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 
@@ -1159,7 +1158,6 @@ impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     }
 }
 
-/// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
 /// HTTP-thread-only, so the `&'static mut` is the unique live borrow at every
 /// call site. Callers must not hold the result across a call that re-enters
 /// this accessor (per-statement reborrow shape — same contract the prior
@@ -4191,7 +4189,6 @@ impl<'a> HTTPClient<'a> {
         // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
         // `body: &mut MutableString` borrow). Holding that result across the
         // `is_done` mutations below would require a second live `&mut Self`,
-        // which PORTING.md §Forbidden flags as aliased `&mut`. Instead:
         // snapshot every owned/Copy field out of the result, drop it, mutate
         // `self` directly, then rebuild a fresh `HTTPClientResult` for the
         // callback from the snapshotted fields + the restored body.

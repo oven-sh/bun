@@ -117,7 +117,6 @@ pub(crate) fn call_exit_handler(
 }
 
 // bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
-// via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
 // keep the embedded count; the derive emits `ThreadSafeRefCounted` +
 // `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
 // handles `poller.deinit()`.

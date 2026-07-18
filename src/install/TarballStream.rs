@@ -621,7 +621,6 @@ impl TarballStream {
                 None,
             )
         };
-        // PORTING.md §Forbidden: `transmute::<c_int, enum>` is UB for any value not
         // declared as a discriminant. Map known ARCHIVE_* codes explicitly and treat
         // anything else as Fatal.
         let rc: lib::Result = match rc_raw {

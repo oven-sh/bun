@@ -70,7 +70,6 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-// A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; callers
 // mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. A future reshape
 // could push interior mutability down to those per-`File` fields (`UnsafeCell<…>`)
@@ -431,7 +430,6 @@ pub enum LazySourceMap {
 }
 
 /// It probably is not possible to run two decoding jobs on the same file
-// PORTING.md §Concurrency: `bun_sys::threading::Guarded` for const-init statics.
 static INIT_LOCK: bun_sys::threading::Guarded<()> = bun_sys::threading::Guarded::new(());
 
 impl LazySourceMap {

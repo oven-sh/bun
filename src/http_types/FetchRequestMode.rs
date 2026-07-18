@@ -23,5 +23,4 @@ impl FetchRequestMode {
     /// `FetchRequestMode::MAP`.
     pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
     // `to_js` is provided as an extension-trait method in `bun_http_jsc`
-    // (see PORTING.md §Idiom map, *_jsc alias rule).
 }

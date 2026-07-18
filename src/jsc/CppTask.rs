@@ -48,7 +48,6 @@ impl EventLoopTaskNoContext {
     }
 
     /// Get the VM that created this task. `VirtualMachine` is process-lifetime
-    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
     /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
     /// route mutation through the VM's safe interior accessors (e.g.
     /// `event_loop_shared()`).

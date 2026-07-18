@@ -101,7 +101,6 @@ impl ParsedShellScript {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
-        // Per PORTING.md §JSC: flip the self-wrapper ref to `.Finalized` first; other
         // cells may already be swept so the weak JSValue must not be touched again.
         self.this_jsvalue.finalize();
         // `export_env`/`args` have `Drop` impls; `cwd: Option<BunString>` does not

@@ -852,7 +852,6 @@ impl Encoding {
     }
 }
 
-// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
 unsafe extern "C" {
     safe fn WebCore_BufferEncodingType_toJS(
@@ -1849,7 +1848,6 @@ pub struct Dirent {
 
 pub type DirentKind = bun_sys::FileKind;
 
-// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
 // `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
 // pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout

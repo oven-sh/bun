@@ -783,7 +783,6 @@ mod holder {
     // OWNED — global singleton, leaked.
     // OnceLock<Box<PackageManager>> can't express allocate-then-fill
     // (no `&mut` after set), so a raw ptr is used instead.
-    // PORTING.md §Global mutable state: ptr written once on main thread, read
     // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
     pub(super) static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
@@ -793,7 +792,6 @@ mod holder {
 
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
     // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
-    // Owned by the singleton, never freed. Avoids `Box::leak` per PORTING.md §Forbidden.
     // (These statics could go away if `dot_env::Loader.map` were retyped to an owned
     // `Box<Map>`, making this an owned `Box<dot_env::Loader>` field on `PackageManager`.)
     // Write-once during single-threaded init; never read afterwards (kept only
@@ -806,7 +804,6 @@ mod holder {
         bun_core::AtomicCell::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
-    /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
     pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
@@ -816,7 +813,6 @@ mod holder {
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
-// PORTING.md §Global mutable state: single-thread (main) scratch buffers →
 // RacyCell. `ROOT_PACKAGE_JSON_PATH` is a slice into the buf above it; written
 // once in `init()`, read on main + CLI commands afterwards.
 static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
@@ -912,7 +908,6 @@ impl PackageManager {
         // returns `Option<URL<'a>>` where `'a` is the loader's map lifetime —
         // i.e. `'static` here. The lifetime contract (env-map values are
         // process-lifetime `Box<[u8]>`) is encapsulated in `bun_dotenv`, not at
-        // every call site (PORTING.md §Forbidden: never mint `'static` from
         // a borrowed reference).
         self.env_mut().get_http_proxy_for(url)
     }
@@ -1091,7 +1086,6 @@ impl PackageManager {
 
 // `Transpiler` is non-`Copy` and self-referential, so cache
 // a process-static raw pointer.
-// PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
 static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
     transpiler::Transpiler<'static>,
 > = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
@@ -2227,7 +2221,6 @@ pub fn init(
     };
     // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
     // string. Park it in
-    // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
     // (never `Box::leak` to mint `&'static`). `init()` runs once on
     // the main thread, so `.set()` cannot race; ignore the already-set case for
     // hot-reload re-entry (the existing CA path stays valid for the process).

@@ -119,7 +119,6 @@ impl EnvStr {
     pub fn slice(&self) -> &[u8] {
         // NOTE: the returned slice borrows either external memory (Tag::Slice) or the
         // RefCountedStr buffer. Tying the return lifetime to `&self` prevents the caller from
-        // conjuring `&'static [u8]` (PORTING.md §Forbidden: lifetime-extension via raw-pointer
         // deref). `EnvStr` is still `Copy`, so this is a best-effort bound — the caller is
         // responsible for keeping the backing storage alive.
         match self.tag() {

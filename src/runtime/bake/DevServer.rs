@@ -410,7 +410,6 @@ pub struct DevServer {
     //
     // `MaybeUninit` until `Framework::init_transpiler` populates them in place
     // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
-    // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
     pub server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     pub client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     pub ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
@@ -2528,7 +2527,6 @@ impl DevServer {
     /// Note: raw-pointer receiver. A previous version of this body bound
     /// long-lived `&mut RouteBundle` / `&mut Type` from
     /// `&mut *self_ptr` and then reborrowed `&mut *self_ptr` again — overlapping
-    /// `&mut` UB. Per docs/PORTING.md §Global mutable state we instead stay in
     /// raw-ptr land: hold `*mut Self` / `*mut Type` and deref per-access via
     /// place projection (`(*this).field`), never materializing a whole-struct
     /// `&mut DevServer` while a sub-borrow is live.
@@ -2819,7 +2817,6 @@ impl DevServer {
         method: Method,
     ) {
         // Note: erase `self` to a raw pointer so the `route_bundle` borrow
-        // doesn't conflict with the `&mut self` calls below. Per docs/PORTING.md §Global mutable state: hold
         // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `route_bundles` is not reallocated for the duration of this fn.

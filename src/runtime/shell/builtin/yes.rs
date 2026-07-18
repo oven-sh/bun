@@ -189,7 +189,6 @@ impl Yes {
 }
 
 // `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit `Drop` impl
-// needed (PORTING.md §Allocators).
 
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever.

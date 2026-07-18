@@ -1223,7 +1223,6 @@ impl Renameat2Flags {
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall tag. Newtype-over-u8; the discriminants are part of the FFI /
 // cross-lang comparison surface and must stay stable.
-// PORTING.md §Forbidden flags wrong-discriminants as a logic-bug.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -4469,7 +4468,6 @@ mod windows_impl {
         // `SaferiIsExecutableFileType(path, FALSE)`. Honors the
         // system security policy and recognizes `.js/.lnk/.pif/.pl/.shs/.url/
         // .vbs/...` in addition to `.exe/.cmd/.bat/.com` . Do NOT hand-roll an extension whitelist —
-        // PORTING.md §Forbidden bars re-implementing linked OS API surface.
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_core::paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
         // `bFromShellExecute = FALSE` so `.exe` files are included
@@ -6410,7 +6408,6 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
 macro_rules! dlsym_with_handle {
     ($T:ty, $name:literal, $handle:expr) => {{
         static ONCE: ::std::sync::Once = ::std::sync::Once::new();
-        // PORTING.md §Global mutable state: init-once fn ptr → AtomicPtr.
         // `Once` already provides happens-before; AtomicPtr just makes the
         // slot `Sync` without `static mut`.
         static PTR: ::core::sync::atomic::AtomicPtr<::core::ffi::c_void> =

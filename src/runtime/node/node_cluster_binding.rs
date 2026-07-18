@@ -29,7 +29,6 @@ unsafe extern "C" {
 
 // ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
-// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
 // fields (`Strong`). RacyCell — single-thread access is the contract.
 pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
@@ -37,7 +36,6 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 /// `&mut` to the (lazily-initialized) JS-thread singleton.
 ///
 /// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
-/// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
 /// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]

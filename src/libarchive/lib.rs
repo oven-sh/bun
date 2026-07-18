@@ -745,7 +745,6 @@ pub mod lib {
         }
 
         /// Returns a `Result` the caller inspects, so this
-        /// cannot be `Drop`. Explicit-close per PORTING.md §Idiom map.
         pub fn close(self) -> IteratorResult<()> {
             let a = self.archive();
             match a.read_close() {

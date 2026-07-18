@@ -50,7 +50,6 @@ fn format_name(f: codecs::Format) -> &'static str {
 }
 
 // `pub const js = jsc.Codegen.JSImage;` — `fromJS`/`fromJSDirect`/`toJS` are
-// provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
 // `generated_classes.rs::js_Image`; re-export that module here so callers use
 // `js::source_js_set_cached` / `js::source_js_get_cached`.

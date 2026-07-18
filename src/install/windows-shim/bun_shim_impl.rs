@@ -381,7 +381,6 @@ impl core::fmt::Write for NtWriter {
     }
 }
 
-// PORTING.md §Global mutable state: standalone single-threaded shim exe (or
 // just-before-exit path when linked into bun). RacyCell — no concurrency.
 static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0; 512]);
 // Length of the argument written into `FAILURE_REASON_DATA[..len]`. The data

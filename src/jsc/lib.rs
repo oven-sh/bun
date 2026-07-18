@@ -37,7 +37,6 @@ use core::ffi::{c_char, c_void};
 // Proc-macro re-exports. `#[bun_jsc::host_fn]` / `#[bun_jsc::JsClass]` /
 // `#[bun_jsc::host_call]` are implemented in the `bun_jsc_macros` crate
 // (Rust forbids `proc-macro = true` crates from exporting non-macro items).
-// See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_call, host_fn};
@@ -47,7 +46,6 @@ pub use bun_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_call
 /// Rust cannot express an ABI as a runtime value
 /// — `extern "..."` takes a string literal, not an expression. The
 /// `#[bun_jsc::host_fn]` / `#[bun_jsc::host_call]` attribute macros emit the
-/// correct ABI per-target instead. See PORTING.md §FFI / §JSC types.
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub const CONV: &str = "sysv64";
 #[cfg(not(all(windows, target_arch = "x86_64")))]

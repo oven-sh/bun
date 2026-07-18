@@ -1459,6 +1459,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
+                env_dots: bun_core::handle_oom(self.define.env_dots.clone()),
                 drop_debugger: self.define.drop_debugger,
             }),
             drop: self.drop.clone(),
@@ -1747,6 +1748,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: Default::default(),
                 dots: Default::default(),
+                env_dots: Default::default(),
                 drop_debugger: false,
             }),
             loaders,

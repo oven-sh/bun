@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -45,6 +46,91 @@ for (let backend of ["api", "cli"] as const) {
         stdout: process.env.PATH + "\n",
       },
     });
+
+    // An explicit `--define process.env.X=...` must beat an env-derived value
+    // for the same key. This is the cross-platform observable guarantee of
+    // routing env-derived defines through a separate map that is consulted
+    // only after the user define table.
+    if (backend === "cli")
+      itBundled("env/inline-explicit-define-wins", {
+        env: {
+          BUN_TEST_ENV_DEFINE_WINS: "from_env",
+        },
+        define: {
+          "process.env.BUN_TEST_ENV_DEFINE_WINS": '"from_define"',
+        },
+        backend: backend,
+        dotenv: "inline",
+        files: {
+          "/a.js": `
+        console.log(process.env.BUN_TEST_ENV_DEFINE_WINS);
+      `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("out.js");
+          expect(out).toContain('"from_define"');
+          expect(out).not.toContain("from_env");
+        },
+        run: {
+          env: {
+            BUN_TEST_ENV_DEFINE_WINS: "from_runtime",
+          },
+          stdout: "from_define\n",
+        },
+      });
+
+    // On Windows the OS reports env-var names in their stored case (`Path`,
+    // `SystemRoot`), but `process.env` reads are case-insensitive at runtime.
+    // `env: "inline"` must match that: any casing in source resolves to the
+    // same value. On POSIX env vars are case-sensitive, so only the exact
+    // spelling inlines and the other two read the (unset) runtime env.
+    if (backend === "cli")
+      itBundled("env/inline-env-var-name-case", {
+        env: {
+          BUN_TEST_Env_Inline_MixedCase: "inlined",
+        },
+        backend: backend,
+        dotenv: "inline",
+        files: {
+          "/a.js": `
+        console.log(process.env.BUN_TEST_Env_Inline_MixedCase);
+        console.log(process.env.BUN_TEST_ENV_INLINE_MIXEDCASE);
+        console.log(process.env.bun_test_env_inline_mixedcase);
+      `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("out.js");
+          if (isWindows) expect(out).not.toContain("process.env.");
+        },
+        run: {
+          env: {
+            BUN_TEST_Env_Inline_MixedCase: "runtime",
+          },
+          stdout: isWindows ? "inlined\ninlined\ninlined\n" : "inlined\nundefined\nundefined\n",
+        },
+      });
+
+    // `--env PREFIX_*` prefix matching is likewise case-insensitive on
+    // Windows only.
+    if (backend === "cli")
+      itBundled("env/prefix-env-var-name-case", {
+        env: {
+          Bun_Test_Prefix_A: "a",
+          BUN_TEST_PREFIX_B: "b",
+        },
+        backend: backend,
+        dotenv: "BUN_TEST_PREFIX_*",
+        files: {
+          "/a.js": `
+        console.log(process.env.Bun_Test_Prefix_A);
+        console.log(process.env.bun_test_prefix_a);
+        console.log(process.env.BUN_TEST_PREFIX_B);
+      `,
+        },
+        run: {
+          stdout: isWindows ? "a\na\nb\n" : "undefined\nundefined\nb\n",
+        },
+      });
 
     // Test disable mode - no env vars are inlined
     itBundled("env/disable", {

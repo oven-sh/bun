@@ -297,7 +297,9 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Bo
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
                 // `source_index` without rewriting the path. Externals/chunk refs fall through.
                 let import_path: &[u8] = 'path: {
-                    if record.source_index.is_valid() {
+                    if record.source_index.is_valid()
+                        && record.source_index.get() != Index::RUNTIME.get()
+                    {
                         let idx = record.source_index.get() as usize;
                         if idx < sources.len() {
                             let pretty = sources[idx].path.pretty;

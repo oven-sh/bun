@@ -559,6 +559,25 @@ describe("bundler metafile", () => {
     }
   });
 
+  test("metafile does not leak internal runtime source name for runtime-helper imports", async () => {
+    using dir = tempDir("metafile-runtime-helper", {
+      "entry.js": `using x = { [Symbol.dispose]() {} };\nconsole.log(x);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = result.metafile as Metafile;
+    const entryKey = Object.keys(metafile.inputs).find(k => k.endsWith("entry.js"))!;
+    for (const imp of metafile.inputs[entryKey].imports) {
+      expect(imp.path).not.toBe("runtime");
+    }
+    expect("runtime" in metafile.inputs).toBe(false);
+  });
+
   test("metafile handles circular imports", async () => {
     using dir = tempDir("metafile-circular-test", {
       "a.js": `import { b } from "./b.js"; export const a = 1; console.log(b);`,

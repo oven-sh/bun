@@ -67,7 +67,6 @@ function debuglogImpl(enabled, set) {
   if (debugs[set] === undefined) {
     if (enabled) {
       const pid = process.pid;
-      emitWarningIfNeeded(set);
       const impl = function () {
         const msg = format.$apply(undefined, arguments);
         console.error("%s %d: %s", set, pid, msg);
@@ -81,14 +80,15 @@ function debuglogImpl(enabled, set) {
   return debugs[set];
 }
 
+var warnedSets;
 function debuglog(set, cb) {
-  function init() {
-    set = set.toUpperCase();
-    enabled = debugEnvRegex.test(set);
+  set = set.toUpperCase();
+  const enabled = debugEnvRegex.test(set);
+  if (enabled && !(warnedSets ||= new Set()).has(set)) {
+    warnedSets.add(set);
+    emitWarningIfNeeded(set);
   }
-  let enabled;
   let debug = function () {
-    init();
     debug = debuglogImpl(enabled, set);
     if (typeof cb === "function") {
       Object.defineProperty(debug, "enabled", {
@@ -103,20 +103,17 @@ function debuglog(set, cb) {
     }
     return debug.$apply(undefined, arguments);
   };
-  let test = () => {
-    init();
-    test = () => enabled;
-    return enabled;
-  };
+  let resolved = false;
   const logger = function () {
-    if (enabled === false) return;
+    if (resolved && !enabled) return;
+    resolved = true;
     return debug.$apply(undefined, arguments);
   };
   Object.defineProperty(logger, "name", { __proto__: null, value: "logger", configurable: true });
   Object.defineProperty(logger, "enabled", {
     __proto__: null,
     get() {
-      return test();
+      return enabled;
     },
     configurable: true,
     enumerable: true,

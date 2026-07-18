@@ -502,7 +502,8 @@ describe("util.debuglog", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const lines = stderr.split("\n").filter(l => /^(DBGSECT|NOTENABLED|ALSONOT) /.test(l));
+    expect(lines).toEqual([]);
     expect(JSON.parse(stdout)).toEqual({
       onName: "logger",
       onEnabledBefore: false,

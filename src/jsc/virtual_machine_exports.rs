@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use crate::event_loop::ConcurrentTask;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,

@@ -1716,53 +1716,50 @@ impl QuicEndpoint {
         }
     }
 
+    /// Queues the handshake-failure close both timeout lists deliver.
+    fn expire_session(&self, session: *mut QuicSession) -> bool {
+        let Some(session) = self.live_session(session) else {
+            return false;
+        };
+        session.push_event(session::SessionEvent::PeerClose {
+            app_error: false,
+            code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
+            reason: b"handshake failed".to_vec(),
+        });
+        session.push_event(session::SessionEvent::Closed);
+        true
+    }
+
     fn sweep_provisional(&self) {
         let now = now_ns();
-        let mut expired: [*mut QuicSession; 4] = [null_mut(); 4];
         let mut n_expired = 0usize;
+        // Unbounded, like `pending_verneg` below: a fixed cap left the overflow
+        // in `provisional`, where `on_new_conn` can still match it and promote
+        // a session that was already past its deadline as a successful one.
+        let mut expired: Vec<*mut QuicSession> = Vec::new();
         self.provisional.with_mut(|v| {
             v.retain(|p| {
-                if now.saturating_sub(p.created_ns) < PROVISIONAL_TIMEOUT_NS
-                    || n_expired == expired.len()
-                {
+                if now.saturating_sub(p.created_ns) < PROVISIONAL_TIMEOUT_NS {
                     return true;
                 }
-                expired[n_expired] = p.session;
-                n_expired += 1;
+                expired.push(p.session);
                 false
             });
         });
-        for &session in &expired[..n_expired] {
-            if let Some(session) = self.live_session(session) {
-                session.push_event(session::SessionEvent::PeerClose {
-                    app_error: false,
-                    code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
-                    reason: b"handshake failed".to_vec(),
-                });
-                session.push_event(session::SessionEvent::Closed);
-            }
-        }
         // A probe has no lsquic conn, so no handshake or idle timeout covers
         // it, and RFC 9000 s6.1 makes the reply optional with no retransmit:
         // without this a dropped reply hangs `opened` and `close()` forever.
-        let mut verneg_expired: Vec<*mut QuicSession> = Vec::new();
         self.pending_verneg.with_mut(|v| {
             v.retain(|(session, _, created_ns)| {
                 if now.saturating_sub(*created_ns) < PROVISIONAL_TIMEOUT_NS {
                     return true;
                 }
-                verneg_expired.push(*session);
+                expired.push(*session);
                 false
             });
         });
-        for session in verneg_expired {
-            if let Some(session) = self.live_session(session) {
-                session.push_event(session::SessionEvent::PeerClose {
-                    app_error: false,
-                    code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
-                    reason: b"handshake failed".to_vec(),
-                });
-                session.push_event(session::SessionEvent::Closed);
+        for session in expired {
+            if self.expire_session(session) {
                 n_expired += 1;
             }
         }

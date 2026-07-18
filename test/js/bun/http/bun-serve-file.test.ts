@@ -1138,3 +1138,64 @@ console.log("OK");
   },
   60_000,
 );
+
+// FileRoute borrows the blob store's path slice for the duration of the
+// request (no per-request copy). A burst of concurrent requests under ASAN
+// would surface a use-after-free if that borrow were unsound.
+test("file route serves a burst of concurrent requests after reloads with duplicate routes", async () => {
+  using dir = tempDir("file-route-path-borrow", {
+    "hello.txt": "hello from file route",
+  });
+  const file = () => new Response(Bun.file(join(String(dir), "hello.txt")));
+
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/f": file() },
+    fetch: () => new Response("fallback", { status: 404 }),
+  });
+
+  // Re-register the same path several times at the same method; reload
+  // dedups the list so the last registration wins.
+  for (let i = 0; i < 3; i++) {
+    server.reload({
+      routes: {
+        "/a": new Response("a-old"),
+        "/f": file(),
+        "/b": new Response("b"),
+      },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+    server.reload({
+      routes: {
+        "/a": new Response("a-new"),
+        "/f": file(),
+        "/b": new Response("b"),
+      },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+  }
+
+  const N = 64;
+  const bodies = await Promise.all(
+    Array.from({ length: N }, () => fetch(`${server.url}f`).then(r => r.text())),
+  );
+  expect(bodies.every(b => b === "hello from file route")).toBe(true);
+
+  // HEAD goes through FileRoute::on with the same borrowed path.
+  const headBodies = await Promise.all(
+    Array.from({ length: N }, () =>
+      fetch(`${server.url}f`, { method: "HEAD" }).then(async r => ({
+        status: r.status,
+        len: r.headers.get("content-length"),
+        body: await r.text(),
+      })),
+    ),
+  );
+  expect(
+    headBodies.every(r => r.status === 200 && r.len === String("hello from file route".length) && r.body === ""),
+  ).toBe(true);
+
+  // Non-file static route that was reloaded with a duplicate key: last wins.
+  const a = await fetch(`${server.url}a`).then(r => r.text());
+  expect(a).toBe("a-new");
+});

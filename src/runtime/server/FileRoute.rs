@@ -329,18 +329,14 @@ impl FileRoute {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        // Clone the path so the borrow into `this.blob.store`
-        // doesn't span the scopeguard creation (the guard's closure may free
-        // `*this_ptr` on early-return drop).
-        let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
-            Some(p) => p.to_vec(),
-            None => {
-                req.set_yield(true);
-                Self::on_response_complete(this_ptr, resp);
-                return;
-            }
+        // `path` borrows from the blob's store. The route-table ref plus the
+        // `ref_()` above keep `*this_ptr` (and its owned store) alive for the
+        // whole function, and nothing below mutates `this.blob.store`.
+        let Some(path) = this.blob.store.get().as_ref().unwrap().get_path() else {
+            req.set_yield(true);
+            Self::on_response_complete(this_ptr, resp);
+            return;
         };
-        let path: &[u8] = path_buf.as_slice();
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 

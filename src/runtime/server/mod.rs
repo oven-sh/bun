@@ -2201,6 +2201,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut needs_plugins = dev_server.is_some();
         let mut has_static_route_for_star_path = false;
 
+        // Paths of explicit user HEAD routes (typically empty). Precomputed so
+        // the per-static-route check below scans this small set instead of the
+        // full user-route list.
+        let user_head_route_paths: Vec<&[u8]> = self
+            .user_routes
+            .iter()
+            .filter_map(|r| match &r.route.method {
+                server_config::RouteMethod::Specific(m) if *m == http_method::Method::HEAD => {
+                    Some(r.route.path.as_bytes())
+                }
+                _ => None,
+            })
+            .collect();
+
         for entry in &self.config.static_routes {
             if &*entry.path == b"/*" {
                 has_static_route_for_star_path = true;
@@ -2223,16 +2237,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // An explicit HEAD handler route must stay the HEAD handler for its
             // path: uWS keeps the last registration for a method and path, and
             // static routes register after user routes.
-            let path_has_user_head_route =
-                self.user_routes
-                    .iter()
-                    .any(|route| match &route.route.method {
-                        server_config::RouteMethod::Specific(method) => {
-                            *method == http_method::Method::HEAD
-                                && route.route.path.as_bytes() == &*entry.path
-                        }
-                        server_config::RouteMethod::Any => false,
-                    });
+            let path_has_user_head_route = user_head_route_paths.contains(&&*entry.path);
 
             // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h3_app` are the live uWS app handles owned by `self`.

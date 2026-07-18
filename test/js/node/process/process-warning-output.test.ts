@@ -96,19 +96,19 @@ describe("process.emitWarning default stderr report", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("passing an Error instance leaves its .stack untouched even when ctor is given", async () => {
+  test.concurrent("passing an Error instance leaves it unmutated even when ctor/code/detail are given", async () => {
     const src = `
       function outer() {
         const e = new Error("boom");
         const orig = e.stack;
-        process.emitWarning(e, { ctor: outer });
+        process.emitWarning(e, { ctor: outer, code: "X", detail: "Y" });
         process.emitWarning(e, "Type", "CODE", outer);
-        console.log(e.stack === orig ? "same" : "changed");
+        console.log(JSON.stringify({ stack: e.stack === orig, code: e.code, detail: e.detail }));
       }
       outer();
     `;
     const { stdout, exitCode } = await run([], src);
-    expect(stdout).toBe("same\n");
+    expect(JSON.parse(stdout)).toEqual({ stack: true, code: undefined, detail: undefined });
     expect(exitCode).toBe(0);
   });
 

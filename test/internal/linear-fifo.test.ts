@@ -32,3 +32,24 @@ test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch 
   // remove offset 5 -> index=(12+5)&15=1 < head -> wrapped-prefix sub-branch, drops 205.
   expect(linearFifoOrderedRemoveProbe(1)).toEqual([200, 201, 202, 203, 204, 206, 207]);
 });
+
+// Scenarios 2/3 cover `ensure_total_capacity`/`realign` on a wrapped buffer.
+// The old `realign` wrapped branch rotated via a 2KB stack scratch in a loop
+// that memmoved the whole buffer once per 2KB of `head` (effectively quadratic,
+// and an infinite loop when `size_of::<T>() > 2048`). The fix grows by copying
+// the two readable segments directly into the new allocation, and realigns via
+// a single O(n) rotation. On a build without the fix these scenarios are
+// unimplemented and return `[]`.
+test("ensure_total_capacity on a wrapped Dynamic buffer preserves FIFO order", () => {
+  // write 12, read 10, write 12 -> head=10, count=14, buf_len=16 (wraps), then grow to 64.
+  expect(linearFifoOrderedRemoveProbe(2)).toEqual([
+    10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+  ]);
+});
+
+test("realign on a wrapped Static buffer preserves FIFO order", () => {
+  // write 12, read 10, write 12 -> head=10, count=14, buf_len=16 (wraps), then realign.
+  expect(linearFifoOrderedRemoveProbe(3)).toEqual([
+    10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+  ]);
+});

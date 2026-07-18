@@ -7,9 +7,6 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 
-// 4096 is the conservative minimum page size on every platform Bun ships on.
-const PAGE_SIZE_MIN: usize = 4096;
-
 /// Selects the fifo's backing-storage strategy.
 ///
 /// Rust cannot branch struct layout on a const-generic enum payload, so
@@ -35,6 +32,9 @@ pub trait LinearFifoBuffer<T> {
 
     fn as_slice(&self) -> &[T];
     fn as_mut_slice(&mut self) -> &mut [T];
+    /// The whole backing allocation as `MaybeUninit<T>`, for bulk moves that
+    /// must remain sound when some slots are uninitialized.
+    fn as_uninit_mut(&mut self) -> &mut [MaybeUninit<T>];
     #[inline]
     fn len(&self) -> usize {
         self.as_slice().len()
@@ -136,6 +136,10 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
     fn as_mut_slice(&mut self) -> &mut [T] {
         assume_init_slice_mut(self.0.as_mut_slice())
     }
+    #[inline]
+    fn as_uninit_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        self.0.as_mut_slice()
+    }
 }
 
 // ── .Slice ────────────────────────────────────────────────────────────────────
@@ -154,6 +158,17 @@ impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
         self.0
+    }
+    #[inline]
+    fn as_uninit_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        // SAFETY: `MaybeUninit<T>` has identical layout to `T` and no validity
+        // invariants; widening `&mut [T]` to `&mut [MaybeUninit<T>]` is sound.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.0.as_mut_ptr().cast::<MaybeUninit<T>>(),
+                self.0.len(),
+            )
+        }
     }
 }
 
@@ -174,6 +189,10 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
         assume_init_slice_mut(&mut self.0)
+    }
+    #[inline]
+    fn as_uninit_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        &mut self.0
     }
 
     fn realloc(&mut self, new_size: usize) -> Result<(), AllocError> {
@@ -281,40 +300,14 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
             self.head = 0;
         } else {
-            // Stable Rust cannot size a stack array by `size_of::<T>()`, so use
-            // a fixed byte scratch (page_size/2 bytes, no heap) and compute the
-            // element count at runtime.
-            //
-            // The scratch is a `[MaybeUninit<u8>; _]` (alignment 1). Reading or
-            // writing through it as `*mut T` would violate
-            // `ptr::copy_nonoverlapping`'s alignment precondition for any
-            // `align_of::<T>() > 1`, so the tmp↔buf transfers are done at byte
-            // granularity instead — `*mut u8` only requires 1-byte alignment,
-            // which both the scratch and `buf` (cast down from `*T`) satisfy.
-            let mut tmp_bytes = [MaybeUninit::<u8>::uninit(); PAGE_SIZE_MIN / 2];
-            let tmp_ptr: *mut u8 = tmp_bytes.as_mut_ptr().cast::<u8>();
-            let t_size = mem::size_of::<T>();
-            let tmp_len = (PAGE_SIZE_MIN / 2) / t_size;
-
-            while self.head != 0 {
-                let n = self.head.min(tmp_len);
-                let m = buf_len - n;
-                let buf = self.buf.as_mut_slice();
-                // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
-                // `n * size_of::<T>()` raw bytes (no `T` typed access through
-                // the 1-aligned scratch). The buf→buf shift overlaps, so use
-                // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
-                unsafe {
-                    ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
-                    ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
-                    ptr::copy_nonoverlapping(
-                        tmp_ptr,
-                        buf.as_mut_ptr().add(m).cast::<u8>(),
-                        n * t_size,
-                    );
-                }
-                self.head -= n;
-            }
+            // Readable region wraps: left-rotate the whole buffer by `head` so
+            // the tail `[head..buf_len)` lands at `[0..)` with the wrapped
+            // prefix following. `[MaybeUninit<T>]::rotate_left` is O(buf_len)
+            // and moves raw bytes without typed reads, so the uninitialized
+            // hole between the two readable segments is harmless.
+            let head = self.head;
+            self.buf.as_uninit_mut().rotate_left(head);
+            self.head = 0;
         }
         // set unused area to undefined
         #[cfg(debug_assertions)]
@@ -356,20 +349,28 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             return Ok(());
         }
         if B::DYNAMIC {
-            self.realign();
             let new_size = if B::POWERS_OF_TWO {
                 size.checked_next_power_of_two().ok_or(AllocError)?
             } else {
                 size
             };
+            let head = self.head;
             let count = self.count;
+            let old_len = self.buf_len();
             let old = self.buf.alloc_swap(new_size)?;
             if count > 0 {
-                let new = self.buf.as_mut_slice();
-                // After realign(), head==0 so readableSlice(0) == old[0..count].
-                // SAFETY: old and new are disjoint allocations.
+                let new = self.buf.as_uninit_mut();
+                let old_ptr = old.as_ptr();
+                let tail = old_len - head;
+                // SAFETY: `old` and `new` are disjoint allocations; `head < old_len`
+                // and `count <= old_len <= new_size` so all offsets are in-bounds.
                 unsafe {
-                    ptr::copy_nonoverlapping(old.as_ptr().cast::<T>(), new.as_mut_ptr(), count);
+                    if tail >= count {
+                        ptr::copy_nonoverlapping(old_ptr.add(head), new.as_mut_ptr(), count);
+                    } else {
+                        ptr::copy_nonoverlapping(old_ptr.add(head), new.as_mut_ptr(), tail);
+                        ptr::copy_nonoverlapping(old_ptr, new.as_mut_ptr().add(tail), count - tail);
+                    }
                 }
             }
             // `self.allocator.free(self.buf)` — `old` drops here.
@@ -1116,5 +1117,141 @@ mod tests {
                 "contents mismatch for offset {offset}"
             );
         }
+    }
+
+    fn peek_all<T, B>(fifo: &LinearFifo<T, B>) -> Vec<T>
+    where
+        T: Copy,
+        B: LinearFifoBuffer<T>,
+    {
+        (0..fifo.readable_length())
+            .map(|i| fifo.peek_item(i))
+            .collect()
+    }
+
+    // Regression for the wrapped branch of `realign()`: the old stack-scratch
+    // loop moved the whole buffer once per 2KB of `head` (quadratic), and when
+    // `size_of::<T>() > 2048` the per-iteration step was 0 so it never
+    // terminated. The new path is a single O(buf_len) rotation.
+    #[test]
+    fn realign_wrapped_preserves_contents_all_heads() {
+        // For every wrapped (head, count) layout in a 16-slot buffer, realign
+        // and compare against the pre-realign readable order.
+        let cap = 16usize;
+        for head in 1..cap {
+            for count in (cap - head + 1)..=cap {
+                let mut fifo = WrapFifo::init();
+                for v in 0..head as i32 {
+                    fifo.write_item(v).unwrap();
+                }
+                for _ in 0..head {
+                    fifo.read_item().unwrap();
+                }
+                for v in 0..count as i32 {
+                    fifo.write_item(1000 + v).unwrap();
+                }
+                assert_eq!(fifo.head, head);
+                assert_eq!(fifo.count, count);
+                assert!(fifo.buf_len() - fifo.head < fifo.count, "must wrap");
+
+                let before = peek_all(&fifo);
+                fifo.realign();
+                assert_eq!(fifo.head, 0);
+                assert_eq!(fifo.count, count);
+                assert_eq!(peek_all(&fifo), before, "head={head} count={count}");
+            }
+        }
+    }
+
+    #[test]
+    fn realign_wrapped_large_element_terminates() {
+        // size_of::<T>() > 2048 made the old loop's step size 0.
+        type Big = [u8; 3000];
+        let mut fifo = LinearFifo::<Big, StaticBuffer<Big, 4>>::init();
+        fifo.write_item([1; 3000]).unwrap();
+        fifo.write_item([2; 3000]).unwrap();
+        fifo.write_item([3; 3000]).unwrap();
+        fifo.read_item().unwrap();
+        fifo.read_item().unwrap();
+        fifo.write_item([4; 3000]).unwrap();
+        fifo.write_item([5; 3000]).unwrap();
+        // head=2, count=3, buf_len=4: wrapped.
+        assert!(fifo.buf_len() - fifo.head < fifo.count);
+        fifo.realign();
+        assert_eq!(fifo.head, 0);
+        assert_eq!(fifo.readable_length(), 3);
+        assert_eq!(fifo.peek_item(0)[0], 3);
+        assert_eq!(fifo.peek_item(1)[0], 4);
+        assert_eq!(fifo.peek_item(2)[0], 5);
+    }
+
+    #[test]
+    fn ensure_total_capacity_wrapped_grow_preserves_contents() {
+        let mut fifo = LinearFifo::<u32, DynamicBuffer<u32>>::init();
+        fifo.ensure_total_capacity(16).unwrap();
+        assert_eq!(fifo.buf_len(), 16);
+        for v in 0..12u32 {
+            fifo.write_item(v).unwrap();
+        }
+        for _ in 0..10 {
+            fifo.read_item().unwrap();
+        }
+        for v in 100..112u32 {
+            fifo.write_item(v).unwrap();
+        }
+        // head=10, count=14, buf_len=16: wrapped.
+        assert_eq!(fifo.head, 10);
+        assert_eq!(fifo.count, 14);
+        assert!(fifo.buf_len() - fifo.head < fifo.count);
+
+        let before = peek_all(&fifo);
+        fifo.ensure_total_capacity(64).unwrap();
+        assert_eq!(fifo.head, 0);
+        assert_eq!(fifo.buf_len(), 64);
+        assert_eq!(fifo.count, 14);
+        assert_eq!(peek_all(&fifo), before);
+        assert_eq!(
+            before,
+            vec![
+                10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111
+            ]
+        );
+    }
+
+    #[test]
+    fn ensure_total_capacity_nonwrapped_grow_preserves_contents() {
+        let mut fifo = LinearFifo::<u32, DynamicBuffer<u32>>::init();
+        fifo.ensure_total_capacity(16).unwrap();
+        for v in 0..10u32 {
+            fifo.write_item(v).unwrap();
+        }
+        for _ in 0..3 {
+            fifo.read_item().unwrap();
+        }
+        // head=3, count=7, buf_len=16: not wrapped.
+        assert!(fifo.buf_len() - fifo.head >= fifo.count);
+        let before = peek_all(&fifo);
+        fifo.ensure_total_capacity(64).unwrap();
+        assert_eq!(fifo.head, 0);
+        assert_eq!(peek_all(&fifo), before);
+    }
+
+    #[test]
+    fn ensure_total_capacity_empty_nonzero_head() {
+        let mut fifo = LinearFifo::<u32, DynamicBuffer<u32>>::init();
+        fifo.ensure_total_capacity(8).unwrap();
+        for v in 0..5u32 {
+            fifo.write_item(v).unwrap();
+        }
+        for _ in 0..5 {
+            fifo.read_item().unwrap();
+        }
+        assert_eq!(fifo.count, 0);
+        assert_ne!(fifo.head, 0);
+        fifo.ensure_total_capacity(32).unwrap();
+        assert_eq!(fifo.head, 0);
+        assert_eq!(fifo.count, 0);
+        fifo.write_item(42).unwrap();
+        assert_eq!(fifo.read_item(), Some(42));
     }
 }

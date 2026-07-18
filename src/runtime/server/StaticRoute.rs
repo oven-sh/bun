@@ -490,10 +490,14 @@ impl StaticRoute {
 
         debug_assert_eq!(names.len(), values.len());
         for (name, value) in names.iter().zip(values) {
-            resp.write_header(
-                &buf[name.offset as usize..][..name.length as usize],
-                &buf[value.offset as usize..][..value.length as usize],
-            );
+            let name = &buf[name.offset as usize..][..name.length as usize];
+            resp.write_header(name, &buf[value.offset as usize..][..value.length as usize]);
+            // This baked Date is written raw, which does not set uWS's
+            // HTTP_WROTE_DATE_HEADER; mark it so the terminator's writeMark()
+            // does not append a second Date (RFC 9110 5.6.6).
+            if name.eq_ignore_ascii_case(b"date") {
+                resp.mark_wrote_date_header();
+            }
         }
         if !matches!(resp, AnyResponse::H3(_)) {
             if let Some(srv) = self.server.get() {

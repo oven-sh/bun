@@ -43,6 +43,7 @@ pub struct FileRoute {
     has_last_modified_header: bool,
     has_content_length_header: bool,
     has_content_range_header: bool,
+    has_date_header: bool,
 }
 
 pub struct InitOptions<'a> {
@@ -122,6 +123,7 @@ impl FileRoute {
             has_last_modified_header: headers.get(b"last-modified").is_some(),
             has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
+            has_date_header: headers.get(b"date").is_some(),
             blob,
             headers,
             status_code: opts.status_code,
@@ -181,6 +183,7 @@ impl FileRoute {
                     has_last_modified_header: headers.get(b"last-modified").is_some(),
                     has_content_length_header: headers.get(b"content-length").is_some(),
                     has_content_range_header: headers.get(b"content-range").is_some(),
+                    has_date_header: headers.get(b"date").is_some(),
                     blob,
                     headers,
                     status_code,
@@ -205,6 +208,7 @@ impl FileRoute {
                     has_content_length_header: false,
                     has_last_modified_header: false,
                     has_content_range_header: false,
+                    has_date_header: false,
                     status_code: 200,
                     stat_hash: Cell::new(StatHash::default()),
                 }))));
@@ -266,6 +270,12 @@ impl FileRoute {
 
         if self.has_content_length_header {
             resp.mark_wrote_content_length_header();
+        }
+        // A baked Date was written raw above without setting uWS's
+        // HTTP_WROTE_DATE_HEADER; mark it so the terminating writeMark() does not
+        // append a second Date (RFC 9110 5.6.6).
+        if self.has_date_header {
+            resp.mark_wrote_date_header();
         }
     }
 
@@ -500,7 +510,6 @@ impl FileRoute {
         req.set_yield(false);
 
         this.write_status_code(status_code, resp);
-        resp.write_mark();
         this.write_headers(resp);
 
         // Bodiless statuses end before the range switch so a 304 emits no

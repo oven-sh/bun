@@ -1265,6 +1265,19 @@ extern "C"
     }
   }
 
+  // Mark a Date header as already written, so a later writeMark() (from
+  // internalEnd or uws_res_end_without_body) does not append a second one.
+  // Callers that write Date via the raw writeHeader() path must use this.
+  void uws_res_mark_wrote_date_header(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_DATE_HEADER;
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_DATE_HEADER;
+    }
+  }
+
   void uws_res_write_mark(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1363,6 +1376,10 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
+        // Every other termination path reaches writeMark() through internalEnd();
+        // this one hand-rolls the terminator, so Date is written here instead
+        // (RFC 9110 6.6.1). writeMark() is idempotent.
+        uwsRes->writeMark();
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
@@ -1383,6 +1400,10 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
       {
+        // Every other termination path reaches writeMark() through internalEnd();
+        // this one hand-rolls the terminator, so Date is written here instead
+        // (RFC 9110 6.6.1). writeMark() is idempotent.
+        uwsRes->writeMark();
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.
         uwsRes->AsyncSocket<false>::write("\r\n", 2);

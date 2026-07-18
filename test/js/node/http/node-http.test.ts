@@ -3836,6 +3836,7 @@ it.concurrent("an over-limit request arriving in a later read is answered before
   const drops: string[] = [];
   const { promise: firstResponseBarrier, resolve: unblockFirstResponse } = Promise.withResolvers<void>();
   const { promise: sawFirstDrop, resolve: onFirstDrop } = Promise.withResolvers<void>();
+  const { promise: sawSecondDrop, resolve: onSecondDrop } = Promise.withResolvers<void>();
   const server = createServer(async (req, res) => {
     req.resume();
     await firstResponseBarrier;
@@ -3844,18 +3845,23 @@ it.concurrent("an over-limit request arriving in a later read is answered before
   server.maxRequestsPerSocket = 1;
   server.on("dropRequest", req => {
     drops.push(req.url);
-    onFirstDrop();
+    (drops.length === 1 ? onFirstDrop : onSecondDrop)();
   });
+  let socket: ReturnType<typeof connect> | undefined;
   try {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
     const { promise: raw, resolve: gotRaw } = Promise.withResolvers<string>();
-    const socket = connect(port, "127.0.0.1");
+    const { promise: socketClosed, resolve: onSocketClosed } = Promise.withResolvers<void>();
+    socket = connect(port, "127.0.0.1");
     let data = "";
     socket.on("data", chunk => (data += chunk));
-    socket.on("close", () => gotRaw(data));
+    socket.on("close", () => {
+      gotRaw(data);
+      onSocketClosed();
+    });
     socket.on("error", () => {});
     await once(socket, "connect");
     // Read #1: /a is handled, /b is over the limit and queued behind it.
@@ -3863,15 +3869,19 @@ it.concurrent("an over-limit request arriving in a later read is answered before
     await sawFirstDrop;
     // Let the server's deferred-end callback (same event loop) run first.
     await new Promise<void>(resolve => setImmediate(resolve));
-    // Read #2: /c is over the limit too, queued behind /b.
+    // Read #2: /c is over the limit too, queued behind /b. Racing against the
+    // socket closing turns a regression that ends the connection too early
+    // into an assertion failure instead of a hang on the missing drop.
     socket.write(rawGet("/c"));
-    await once(server, "dropRequest");
+    await Promise.race([sawSecondDrop, socketClosed]);
     unblockFirstResponse();
 
     const out = await raw;
     expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
     expect(drops).toEqual(["/b", "/c"]);
   } finally {
+    unblockFirstResponse();
+    socket?.destroy();
     server.close();
   }
 });

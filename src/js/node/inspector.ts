@@ -13,6 +13,15 @@ const { isAbsolute } = require("node:path");
 // receives the plain `{ code, message }` object (Node delivers protocol
 // errors as plain objects, not Error instances).
 const kProtocolError = Symbol("kProtocolError");
+// #handleMethod return marker: the method is not handled locally and must be
+// dispatched through the in-process CDP backend by post().
+const kInProcess = Symbol("kInProcess");
+
+// Node surfaces a backend protocol error to the callback as an Error whose
+// message is "Inspector error <code>: <message>" and code ERR_INSPECTOR_COMMAND.
+function makeProtocolError(error: { code?: number; message?: string }) {
+  return $ERR_INSPECTOR_COMMAND(`${error.code ?? -32000}: ${error.message ?? "Unknown error"}`);
+}
 
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
@@ -33,9 +42,39 @@ const waitForNodeInspectorConnection = $newCppFunction(
   0,
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
+// In-process CDP: dispatch translated JSC-protocol messages against this
+// realm's inspector controller synchronously on the calling thread, and get
+// back every message the backend produced (see BunDebugger.cpp).
+const dispatchInProcessInspectorMessage = $newCppFunction(
+  "BunDebugger.cpp",
+  "jsFunction_dispatchInProcessInspectorMessage",
+  2,
+);
+const drainInProcessInspectorMessages = $newCppFunction(
+  "BunDebugger.cpp",
+  "jsFunction_drainInProcessInspectorMessages",
+  0,
+);
+const disconnectInProcessInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_disconnectInProcessInspector", 0);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
 
+// Captured at module load so the console-hook stack capture keeps working
+// (and stays safe) after user code replaces or freezes globalThis.Error.
+const ErrorObject = globalThis.Error;
+const errorCaptureStackTrace = ErrorObject.captureStackTrace;
+
 let activeInspectorUrl: string | undefined;
+
+// Same check as Node's internal/net.js isLoopback().
+function isLoopbackHost(host: string) {
+  const hostLower = host.toLowerCase();
+  return (
+    hostLower === "localhost" ||
+    hostLower.startsWith("127.") ||
+    hostLower === "[::1]" ||
+    hostLower === "[0:0:0:0:0:0:0:1]"
+  );
+}
 
 function open(port?: number, host?: string, wait?: boolean) {
   if (activeInspectorUrl !== undefined) {
@@ -50,6 +89,17 @@ function open(port?: number, host?: string, wait?: boolean) {
     if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) {
       throw $ERR_OUT_OF_RANGE("port", ">= 0 && <= 65535", port);
     }
+  }
+  // Node warns whenever a non-loopback host is passed, before binding.
+  if (typeof host === "string" && host && !isLoopbackHost(host)) {
+    process.emitWarning(
+      "Binding the inspector to a public IP with an open port is insecure, " +
+        "as it allows external hosts to connect to the inspector " +
+        "and perform a remote code execution attack. " +
+        "Documentation can be found at " +
+        "https://nodejs.org/api/cli.html#--inspecthostport",
+      "SecurityWarning",
+    );
   }
   const portNumber = port === undefined || port === null ? process.debugPort : port;
   const hostname = typeof host === "string" && host.length > 0 ? host : "127.0.0.1";
@@ -117,6 +167,53 @@ function waitForDebugger() {
   waitForNodeInspectorConnection();
 }
 
+// --- In-process CDP backend --------------------------------------------------
+// Methods the hand-written Session switch does not cover are translated by the
+// same CDP<->JSC adapter the WebSocket server uses (internal/inspector/cdp),
+// and dispatched synchronously against this realm's inspector controller on
+// the calling thread. All in-process sessions share the one native channel;
+// each session owns an adapter and matches replies by command id.
+let InspectorCDPAdapter: any;
+const inProcessAdapters = new Set<any>();
+let drainScheduled = false;
+// JSC broadcasts every backend reply to every attached frontend, so backend
+// command ids must be unique across all in-process adapters and above the
+// range remote WebSocket clients count from (they start at 1).
+const kFirstInProcessBackendId = 100_000_000;
+const kLastInProcessBackendId = 2_000_000_000;
+let nextInProcessBackendId = kFirstInProcessBackendId;
+function allocateInProcessBackendId() {
+  const id = nextInProcessBackendId++;
+  if (nextInProcessBackendId > kLastInProcessBackendId) nextInProcessBackendId = kFirstInProcessBackendId;
+  return id;
+}
+
+// Fans a backend message out to every session adapter; each ignores ids it
+// did not issue. Delivery to user code is deferred by the adapter's
+// writeToClient, so nothing here re-enters user JS.
+function deliverBackendMessages(messages: string[]) {
+  for (const message of messages) {
+    for (const adapter of inProcessAdapters) adapter.handleBackendMessage(message);
+  }
+}
+
+// Delivers whatever the native channel buffered outside a synchronous
+// dispatch (Debugger.scriptParsed raised while user code compiles, deferred
+// Runtime.awaitPromise replies, ...). Registered natively as the channel's
+// wake callback and also scheduled after each dispatch.
+function drainInProcessBackend() {
+  drainScheduled = false;
+  if (inProcessAdapters.size === 0) return;
+  const messages = drainInProcessInspectorMessages();
+  if (messages.length) deliverBackendMessages(messages);
+}
+
+function scheduleBackendDrain() {
+  if (drainScheduled) return;
+  drainScheduled = true;
+  queueMicrotask(drainInProcessBackend);
+}
+
 // Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
 // calls. This monkey-patches globalThis.console (not JSC's ConsoleClient as
 // cdp.ts does), so pre-captured refs bypass it and no stackTrace is emitted.
@@ -182,7 +279,7 @@ function toRemoteObject(arg: unknown): object {
 // original method but are not re-emitted.
 let emittingConsoleAPI = false;
 
-function emitConsoleAPICalled(type: string, args: unknown[]) {
+function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object) {
   if (emittingConsoleAPI) return;
   emittingConsoleAPI = true;
   try {
@@ -195,15 +292,14 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
       try {
         // A fresh message per session: a listener that mutates its payload
         // must not contaminate what the next session receives.
-        const message = {
-          method: "Runtime.consoleAPICalled",
-          params: {
-            type,
-            args: args.map(toRemoteObject),
-            executionContextId: 1,
-            timestamp,
-          },
+        const params: any = {
+          type,
+          args: args.map(toRemoteObject),
+          executionContextId: 1,
+          timestamp,
         };
+        if (stackTrace !== undefined) params.stackTrace = stackTrace;
+        const message = { method: "Runtime.consoleAPICalled", params };
         // Node's Session#onMessage emits the method-specific event first,
         // then the generic "inspectorNotification".
         session.emit("Runtime.consoleAPICalled", message);
@@ -226,11 +322,75 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
   }
 }
 
+// V8 attaches the JS call stack to Runtime.consoleAPICalled; clients (and
+// Node's tests) navigate from the top frame to the console call site. The
+// CallSite objects Bun's captureStackTrace produces already carry
+// source-mapped (original) positions, unlike raw JSC frames.
+function captureConsoleStackTrace(hook: Function) {
+  const holder: { stack?: any } = {};
+  const previousPrepare = ErrorObject.prepareStackTrace;
+  const previousLimit = ErrorObject.stackTraceLimit;
+  try {
+    ErrorObject.prepareStackTrace = (_error, sites) => sites;
+    ErrorObject.stackTraceLimit = 30;
+    errorCaptureStackTrace.$call(ErrorObject, holder, hook);
+    const sites = holder.stack;
+    if (!$isJSArray(sites)) return undefined;
+    const callFrames: object[] = [];
+    for (const site of sites) {
+      let fileName: string | undefined;
+      let functionName: string | undefined;
+      let line = 0;
+      let column = 0;
+      try {
+        fileName = site.getFileName();
+        functionName = site.getFunctionName();
+        line = site.getLineNumber() | 0;
+        column = site.getColumnNumber() | 0;
+      } catch {
+        continue;
+      }
+      if (!fileName) continue;
+      let url = fileName;
+      if (isAbsolute(fileName)) {
+        try {
+          url = pathToFileURL(fileName).href;
+        } catch {}
+      }
+      $arrayPush(callFrames, {
+        functionName: functionName ?? "",
+        scriptId: "",
+        url,
+        lineNumber: line > 0 ? line - 1 : 0,
+        columnNumber: column > 0 ? column - 1 : 0,
+      });
+    }
+    return { callFrames };
+  } finally {
+    ErrorObject.prepareStackTrace = previousPrepare;
+    ErrorObject.stackTraceLimit = previousLimit;
+  }
+}
+
+// The stack capture writes Error's statics; if user code froze them or
+// swapped Error, degrade to no stackTrace — a console call must never throw.
+function tryCaptureConsoleStackTrace(hook: Function) {
+  try {
+    return captureConsoleStackTrace(hook);
+  } catch {
+    return undefined;
+  }
+}
+
 function makeConsoleHook(type: string, original: Function): Function {
-  return function (this: unknown, ...args: unknown[]) {
-    emitConsoleAPICalled(type, args);
+  const hook = function (this: unknown, ...args: unknown[]) {
+    // Skip the stack capture entirely when the emit is guarded out.
+    if (!emittingConsoleAPI && runtimeEnabledSessions.size > 0) {
+      emitConsoleAPICalled(type, args, tryCaptureConsoleStackTrace(hook));
+    }
     return original.$apply(this, args);
   };
+  return hook;
 }
 
 function installConsoleHooks() {
@@ -415,10 +575,16 @@ function responseFromObject(params: any, key: string, withUrl: boolean) {
   };
 }
 
+// Each session's delivery is isolated: a throwing listener becomes a
+// process warning (Node's contract) and never starves other sessions.
 function emitToSession(session: Session, method: string, params: object) {
   const message = { method, params };
-  session.emit(method, message);
-  session.emit("inspectorNotification", message);
+  try {
+    session.emit(method, message);
+    session.emit("inspectorNotification", message);
+  } catch (error) {
+    process.emitWarning(error);
+  }
 }
 
 // Each enabled session owns its buffer, so the event is applied once per session.
@@ -571,16 +737,93 @@ const Network = {
 
 // Node routes every entry point through broadcastToFrontend, which defaults a
 // missing params to {} and then validateObject()s it.
-for (const name of Object.keys(Network)) {
-  const original = Network[name];
-  Network[name] = function (params = {}) {
-    if (typeof params !== "object" || params === null || $isArray(params)) {
-      // Node's validateObject renders this type name lowercase.
-      throw $ERR_INVALID_ARG_TYPE("params", "object", params);
-    }
-    return original.$call(this, params);
-  };
+function guardEventParams(domain: Record<string, Function>) {
+  for (const name of Object.keys(domain)) {
+    const original = domain[name];
+    domain[name] = function (params = {}) {
+      if (typeof params !== "object" || params === null || $isArray(params)) {
+        // Node's validateObject renders this type name lowercase.
+        throw $ERR_INVALID_ARG_TYPE("params", "object", params);
+      }
+      return original.$call(this, params);
+    };
+  }
 }
+guardEventParams(Network);
+
+// --- DOMStorage domain ------------------------------------------------------
+// Mirrors src/inspector/dom_storage_agent.cc: validate then emit. Only the
+// event surface exists; there is no storage backend to inspect.
+const domStorageEnabledSessions = new Set<Session>();
+
+function emitDOMStorageEvent(method: string, params: object) {
+  for (const session of domStorageEnabledSessions) emitToSession(session, method, params);
+}
+
+// storageId sub-fields carry their own error wording ("... in storageId").
+function storageIdFromObject(params: any) {
+  const raw = requireEventObject(params, "storageId");
+  const securityOrigin = raw.securityOrigin;
+  if (typeof securityOrigin !== "string") throw new TypeError("Missing securityOrigin in storageId");
+  const storageKey = raw.storageKey;
+  if (typeof storageKey !== "string") throw new TypeError("Missing storageKey in storageId");
+  return { securityOrigin, isLocalStorage: raw.isLocalStorage === true, storageKey };
+}
+
+const DOMStorage = {
+  domStorageItemAdded(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    const key = requireEventString(params, "key");
+    const newValue = requireEventString(params, "newValue");
+    emitDOMStorageEvent("DOMStorage.domStorageItemAdded", { storageId, key, newValue });
+  },
+
+  domStorageItemRemoved(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    const key = requireEventString(params, "key");
+    emitDOMStorageEvent("DOMStorage.domStorageItemRemoved", { storageId, key });
+  },
+
+  domStorageItemUpdated(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    const key = requireEventString(params, "key");
+    const oldValue = requireEventString(params, "oldValue");
+    const newValue = requireEventString(params, "newValue");
+    emitDOMStorageEvent("DOMStorage.domStorageItemUpdated", { storageId, key, oldValue, newValue });
+  },
+
+  domStorageItemsCleared(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    emitDOMStorageEvent("DOMStorage.domStorageItemsCleared", { storageId });
+  },
+
+  // Pseudo-event (not part of CDP): seeds the agent's storage map. There
+  // is no backing storage here, but the payload is still validated the way
+  // Node does, including hostile Proxy storage maps.
+  registerStorage(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    if (typeof params.isLocalStorage !== "boolean") throw new TypeError("Missing isLocalStorage in event");
+    const storageMap = requireEventObject(params, "storageMap");
+    let keys: string[];
+    try {
+      keys = Object.getOwnPropertyNames(storageMap);
+    } catch {
+      throw new TypeError("Failed to get property names from storageMap");
+    }
+    for (const key of keys) {
+      try {
+        String(storageMap[key]);
+      } catch {
+        throw new TypeError("Failed to get value from storageMap");
+      }
+    }
+  },
+};
+guardEventParams(DOMStorage);
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
 // ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
@@ -732,6 +975,100 @@ class Session extends EventEmitter {
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
+  #adapter: any = undefined;
+  // Resolvers for in-flight in-process commands, keyed by client command id.
+  #pendingResults: Map<number, (err: any, result?: any) => void> = new Map();
+  #nextCommandId = 1;
+  #dispatchingClientCommand = false;
+
+  // Lazily route this session's untranslated commands through the CDP<->JSC
+  // adapter and the in-process native channel; replies land in
+  // #pendingResults keyed by command id, events go to session listeners.
+  #inProcessAdapter() {
+    if (this.#adapter !== undefined) return this.#adapter;
+    InspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter;
+    const adapter = new InspectorCDPAdapter(
+      (backendMessage: string) => {
+        // The command executes here, on this thread; hand every message it
+        // produced (response + events) back through the adapters.
+        deliverBackendMessages(dispatchInProcessInspectorMessage(backendMessage, drainInProcessBackend));
+        scheduleBackendDrain();
+      },
+      (clientMessage: string) => this.#deliverClientMessage(clientMessage),
+      allocateInProcessBackendId,
+    );
+    inProcessAdapters.add(adapter);
+    this.#adapter = adapter;
+    return adapter;
+  }
+
+  // Runs Node's Session#onMessage contract for one adapter message: a reply
+  // completes its post() callback, an event is emitted (method-specific first).
+  // A throw from user code becomes a process warning, never a swallowed error.
+  #onClientMessage(parsed: any) {
+    try {
+      if (parsed.id !== undefined) {
+        const done = this.#pendingResults.$get(parsed.id);
+        if (done === undefined) return;
+        this.#pendingResults.$delete(parsed.id);
+        if (parsed.error) done({ code: parsed.error.code, message: parsed.error.message });
+        else done(null, parsed.result ?? {});
+        return;
+      }
+      if (typeof parsed.method === "string") {
+        const message = { method: parsed.method, params: parsed.params ?? {} };
+        this.emit(parsed.method, message);
+        this.emit("inspectorNotification", message);
+      }
+    } catch (error) {
+      process.emitWarning(error);
+    }
+  }
+
+  // Client messages produced during a post() dispatch are delivered after
+  // the dispatch unwinds, so a throwing callback can neither be misread by
+  // the adapter as a command failure nor run before post() returns. Messages
+  // produced by the backend on its own (Debugger.paused inside the pause
+  // loop, drained events) are delivered immediately: pause listeners must
+  // observe the pause before execution continues.
+  #deliverClientMessage(clientMessage: string) {
+    let parsed;
+    try {
+      parsed = JSON.parse(clientMessage);
+    } catch {
+      return;
+    }
+    if (this.#dispatchingClientCommand) {
+      queueMicrotask(() => this.#onClientMessage(parsed));
+    } else {
+      this.#onClientMessage(parsed);
+    }
+  }
+
+  // Streams a V8-format heap snapshot to this session as
+  // HeapProfiler.addHeapSnapshotChunk events, matching V8's chunked delivery.
+  #emitHeapSnapshot() {
+    const snapshot = Bun.generateHeapSnapshot("v8");
+    const chunkSize = 100 * 1024;
+    for (let offset = 0; offset < snapshot.length; offset += chunkSize) {
+      emitToSession(this, "HeapProfiler.addHeapSnapshotChunk", { chunk: snapshot.slice(offset, offset + chunkSize) });
+    }
+  }
+
+  // Dispatches `method` through the in-process CDP backend. `done` is called
+  // exactly once with (protocolError, result).
+  #postInProcess(method: string, params: object | undefined, done: (err: any, result?: any) => void) {
+    const adapter = this.#inProcessAdapter();
+    const id = this.#nextCommandId++;
+    this.#pendingResults.$set(id, done);
+    const message = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
+    this.#dispatchingClientCommand = true;
+    try {
+      adapter.handleClientMessage(message);
+    } finally {
+      this.#dispatchingClientCommand = false;
+    }
+  }
 
   connect() {
     if (this.#connected) {
@@ -759,7 +1096,20 @@ class Session extends EventEmitter {
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.$delete(this);
     networkEnabledSessions.$delete(this);
+    domStorageEnabledSessions.$delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
+    if (this.#adapter !== undefined) {
+      inProcessAdapters.$delete(this.#adapter);
+      this.#adapter = undefined;
+      // Node's contract: every callback still waiting on a reply is failed
+      // with ERR_INSPECTOR_CLOSED rather than left dangling.
+      const pending = this.#pendingResults;
+      this.#pendingResults = new Map();
+      for (const done of pending.values()) {
+        process.nextTick(done, { code: -32000, closed: true });
+      }
+      if (inProcessAdapters.size === 0) disconnectInProcessInspector();
+    }
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
     // pausing the process, matching Node's disconnect() contract.
@@ -781,7 +1131,7 @@ class Session extends EventEmitter {
       params = undefined;
     }
     if (params !== undefined && params !== null && typeof params !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("params", "Object", params);
+      throw $ERR_INVALID_ARG_TYPE("params", "object", params);
     }
     if (callback !== undefined) validateFunction(callback, "callback");
 
@@ -794,10 +1144,29 @@ class Session extends EventEmitter {
       throw error;
     }
 
-    const result = this.#handleMethod(method, params as object | undefined);
+    let result = this.#handleMethod(method, params as object | undefined);
+
+    // Methods without local handling execute on the real inspector backend.
+    // The in-process backend is bound to the main realm; worker sessions
+    // keep Node's method-not-found protocol error instead.
+    if (result === kInProcess) {
+      if (!Bun.isMainThread) {
+        result = $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
+      } else {
+        // Node's post() is asynchronous: with a callback the reply arrives
+        // through it; without one nothing is returned and a protocol error
+        // is neither thrown nor otherwise observable.
+        this.#postInProcess(method, params as object | undefined, (error, value) => {
+          if (!callback) return;
+          if (error === null || error === undefined) callback(null, value);
+          else if (error.closed) callback($ERR_INSPECTOR_CLOSED());
+          else callback(makeProtocolError(error), undefined);
+        });
+        return;
+      }
+    }
 
     if (callback) {
-      // Callback API - async
       queueMicrotask(() => {
         if (result instanceof Error) {
           callback(result, undefined);
@@ -847,6 +1216,14 @@ class Session extends EventEmitter {
 
       case "Network.disable":
         networkEnabledSessions.$delete(this);
+        return {};
+
+      case "DOMStorage.enable":
+        domStorageEnabledSessions.$add(this);
+        return {};
+
+      case "DOMStorage.disable":
+        domStorageEnabledSessions.$delete(this);
         return {};
 
       case "Network.streamResourceContent": {
@@ -981,11 +1358,27 @@ class Session extends EventEmitter {
         return { result: buildScriptCoverageList(scripts, false, false) };
       }
 
-      // Configuration-only Debugger commands are forwarded to the inspector
-      // server started by inspector.open() (vitest --inspect-brk uses
-      // Debugger.enable + Debugger.setBreakpointByUrl to stop at the first
-      // test file). The forwarding is fire-and-forget: results such as
-      // breakpointId are not available in-process.
+      // HeapProfiler snapshotting: V8 streams the snapshot as
+      // addHeapSnapshotChunk events and then answers the command. There is no
+      // allocation-tracking timeline to keep, so start/stopTrackingHeapObjects
+      // reduce to "no-op" and "emit a snapshot" respectively.
+      case "HeapProfiler.enable":
+      case "HeapProfiler.disable":
+      case "HeapProfiler.startTrackingHeapObjects":
+      case "HeapProfiler.collectGarbage":
+        return {};
+
+      case "HeapProfiler.takeHeapSnapshot":
+      case "HeapProfiler.stopTrackingHeapObjects": {
+        this.#emitHeapSnapshot();
+        return {};
+      }
+
+      // When an inspector server is active (inspector.open() / vitest
+      // --inspect-brk), Debugger configuration must reach that server's
+      // backend so breakpoints pause where the remote debugger controls
+      // resumption. The forwarding is fire-and-forget. Without a server these
+      // fall through to the in-process backend below.
       case "Debugger.enable":
       case "Debugger.disable":
       case "Debugger.setBreakpointByUrl":
@@ -995,11 +1388,7 @@ class Session extends EventEmitter {
       case "Debugger.setSkipAllPauses":
       case "Debugger.setAsyncCallStackDepth":
       case "Debugger.setBlackboxPatterns": {
-        if (activeInspectorUrl === undefined) {
-          return $ERR_INSPECTOR_COMMAND(
-            `-32000: Inspector method "${method}" requires an active inspector (call inspector.open() first)`,
-          );
-        }
+        if (activeInspectorUrl === undefined) return kInProcess;
         if (!this.#forwardedDebugger) {
           this.#forwardedDebugger = true;
           postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
@@ -1075,8 +1464,11 @@ class Session extends EventEmitter {
         return {};
       }
 
+      // Everything else (Runtime.evaluate/getProperties/callFunctionOn,
+      // Debugger.getScriptSource/getPossibleBreakpoints, HeapProfiler, ...)
+      // is translated and executed by the in-process CDP backend.
       default:
-        return $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
+        return kInProcess;
     }
   }
 }
@@ -1096,6 +1488,7 @@ export default {
   waitForDebugger,
   Session,
   Network,
+  DOMStorage,
 };
 
 hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);

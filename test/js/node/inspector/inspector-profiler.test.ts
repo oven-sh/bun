@@ -419,12 +419,23 @@ describe("node:inspector", () => {
   });
 
   describe("unsupported methods", () => {
-    test("unsupported method throws ERR_INSPECTOR_COMMAND", () => {
+    // Like Node, post() is asynchronous: without a callback it returns
+    // undefined and never throws for a backend error; the protocol error is
+    // delivered to the callback instead.
+    test("unknown method reports ERR_INSPECTOR_COMMAND to the callback, not by throwing", async () => {
       const session = new inspector.Session();
       session.connect();
-      expect(() => session.post("Runtime.evaluate")).toThrow(
-        expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }),
-      );
+      let returned: unknown = Symbol("unset");
+      expect(() => {
+        returned = session.post("Nonexistent.domain");
+      }).not.toThrow();
+      expect(returned).toBeUndefined();
+      const { promise, resolve } = Promise.withResolvers<any>();
+      session.post("Nonexistent.domain", err => resolve(err));
+      const err = await promise;
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ERR_INSPECTOR_COMMAND");
+      expect(err.message).toBe("Inspector error -32601: 'Nonexistent.domain' wasn't found");
       session.disconnect();
     });
   });

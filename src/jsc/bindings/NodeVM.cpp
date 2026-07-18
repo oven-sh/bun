@@ -1880,6 +1880,12 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
     JSObject* options = nullptr;
     bool any = false;
 
+    // Node's default (lib/vm.js): filename is "evalmachine.<anonymous>"
+    // whenever no string was supplied — no options object at all, and an
+    // options object whose filename is absent or undefined, all render the
+    // same origin.
+    this->filename = "evalmachine.<anonymous>"_s;
+
     if (!optionsArg.isUndefined()) {
         if (optionsArg.isObject()) {
             options = asObject(optionsArg);
@@ -1900,8 +1906,6 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
                 return false;
             }
-        } else {
-            this->filename = "evalmachine.<anonymous>"_s;
         }
 
         auto lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s));

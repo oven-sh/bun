@@ -149,7 +149,7 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub(crate) fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> core::cmp::Ordering {
+    pub(crate) fn order(&self, lhs: DependencyID, rhs: DependencyID) -> core::cmp::Ordering {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::order(l.name.slice(self.string_buf), r.name.slice(self.string_buf))
@@ -664,7 +664,7 @@ impl Stringifier {
                         string_buf: buf,
                         deps_buf,
                     };
-                    tree_deps_sort_buf.sort_by(|&a, &b| ctx.cmp(a, b));
+                    tree_deps_sort_buf.sort_by(|&a, &b| ctx.order(a, b));
                 }
 
                 for &dep_id in &tree_deps_sort_buf {
@@ -745,7 +745,7 @@ impl Stringifier {
                             string_buf: buf,
                             deps_buf,
                         };
-                        pkg_deps_sort_buf.sort_by(|&a, &b| ctx.cmp(a, b));
+                        pkg_deps_sort_buf.sort_by(|&a, &b| ctx.order(a, b));
                     }
 
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }

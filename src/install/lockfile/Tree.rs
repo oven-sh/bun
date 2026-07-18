@@ -731,7 +731,7 @@ impl Tree {
 
         {
             let sorter = DepSorter { lockfile };
-            builder.sort_buf.sort_unstable_by(|a, b| sorter.cmp(*a, *b));
+            builder.sort_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
         }
 
         // reshaped for borrowck — iterate over a snapshot of sort_buf indices since

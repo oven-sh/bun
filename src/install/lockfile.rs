@@ -227,7 +227,7 @@ pub(crate) struct DepSorter<'a> {
 }
 
 impl<'a> DepSorter<'a> {
-    pub(crate) fn cmp(&self, l: DependencyID, r: DependencyID) -> Ordering {
+    pub(crate) fn order(&self, l: DependencyID, r: DependencyID) -> Ordering {
         let deps_buf = self.lockfile.buffers.dependencies.as_slice();
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 

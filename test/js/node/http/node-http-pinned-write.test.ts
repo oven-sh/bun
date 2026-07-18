@@ -245,163 +245,100 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     });
   });
 
-  test.skipIf(isWindows)(
-    "a resizable ArrayBuffer is copied into backpressure, not held by reference",
-    async () => {
-      // resize() mprotect()s trimmed pages PROT_NONE and pin() doesn't block
-      // it, so a retained raw slice faults on spill / EFAULT-spins on drain.
-      // Run in a child so the crash is observed as exit != 0.
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-          const http = require("node:http");
-          const net = require("node:net");
-          const { once } = require("node:events");
-          const { createHash } = require("node:crypto");
-          const CHUNK_SIZE = ${CHUNK_SIZE};
+  // 8 MB overflows the Linux/macOS loopback send+recv buffers with a paused
+  // client while keeping the spill + drain under the default test timeout.
+  const RESIZABLE_CHUNK_SIZE = 8 * 1024 * 1024;
+  const resizableChild = (afterWrite: string) => `
+    const http = require("node:http");
+    const net = require("node:net");
+    const { once } = require("node:events");
+    const { createHash } = require("node:crypto");
+    const CHUNK_SIZE = ${RESIZABLE_CHUNK_SIZE};
 
-          const ab = new ArrayBuffer(CHUNK_SIZE, { maxByteLength: CHUNK_SIZE });
-          const payload = Buffer.from(ab);
-          const pattern = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
-          for (let off = 0; off < CHUNK_SIZE; off += 256) payload.set(pattern, off);
-          const expectedHash = createHash("sha1").update(payload).digest("hex");
+    const ab = new ArrayBuffer(CHUNK_SIZE, { maxByteLength: CHUNK_SIZE });
+    const payload = Buffer.from(ab);
+    const pattern = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+    for (let off = 0; off < CHUNK_SIZE; off += 256) payload.set(pattern, off);
+    const expectedHash = createHash("sha1").update(payload).digest("hex");
 
-          const server = http.createServer((req, res) => {
-            res.writeHead(200, {
-              "Content-Type": "application/octet-stream",
-              "Content-Length": String(CHUNK_SIZE),
-            });
-            res.write(payload);
-            // Shrink below a page so the whole retained tail is PROT_NONE.
-            ab.resize(1024);
-            // end() spills any held tail; memcpy from PROT_NONE if held by reference.
-            res.end();
-          });
-          await once(server.listen(0), "listening");
-          const port = server.address().port;
-
-          const socket = net.connect(port, "127.0.0.1");
-          await once(socket, "connect");
-          socket.pause();
-          socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-          // Let the server handler run while the client is paused so write()
-          // reports backpressure.
-          await new Promise(r => setImmediate(r));
-
-          const chunks = [];
-          socket.on("data", c => chunks.push(c));
-          const closed = once(socket, "close");
-          socket.resume();
-          await closed;
-
-          const received = Buffer.concat(chunks);
-          const headerEnd = received.indexOf("\\r\\n\\r\\n");
-          const body = received.subarray(headerEnd + 4);
-          const bodyHash = createHash("sha1").update(body).digest("hex");
-          console.log(JSON.stringify({
-            bodyLength: body.length,
-            hashMatches: bodyHash === expectedHash,
-          }));
-          server.close();
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+    let detachedAfterWrite;
+    const wrote = Promise.withResolvers();
+    const server = http.createServer(async (req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(CHUNK_SIZE),
       });
+      res.write(payload);
+      ab.resize(1024);
+      // The tail was copied, so the buffer is unpinned and transfer() detaches.
+      try { ab.transfer(); } catch {}
+      detachedAfterWrite = ab.detached;
+      ${afterWrite}
+    });
+    await once(server.listen(0), "listening");
+    const port = server.address().port;
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify({ bodyLength: CHUNK_SIZE, hashMatches: true }),
-        stderr: expect.any(String),
-      });
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+    await wrote.promise;
 
-  test.skipIf(isWindows)(
-    "resizing a resizable ArrayBuffer after write() does not wedge drain",
-    async () => {
-      // Drain path: send() on PROT_NONE pages returns EFAULT -> 0 consumed ->
-      // onWritable re-arms forever. Bound the child so a spin surfaces as exit 1.
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-          const http = require("node:http");
-          const net = require("node:net");
-          const { once } = require("node:events");
-          const { createHash } = require("node:crypto");
-          const CHUNK_SIZE = ${CHUNK_SIZE};
+    const chunks = [];
+    socket.on("data", c => chunks.push(c));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
 
-          const guard = setTimeout(() => {
-            process.stderr.write("drain never fired\\n");
-            process.exit(1);
-          }, 15000);
+    const received = Buffer.concat(chunks);
+    const headerEnd = received.indexOf("\\r\\n\\r\\n");
+    const body = received.subarray(headerEnd + 4);
+    const bodyHash = createHash("sha1").update(body).digest("hex");
+    console.log(JSON.stringify({
+      detachedAfterWrite,
+      bodyLength: body.length,
+      hashMatches: bodyHash === expectedHash,
+    }));
+    server.close();
+  `;
 
-          const ab = new ArrayBuffer(CHUNK_SIZE, { maxByteLength: CHUNK_SIZE });
-          const payload = Buffer.from(ab);
-          const pattern = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
-          for (let off = 0; off < CHUNK_SIZE; off += 256) payload.set(pattern, off);
-          const expectedHash = createHash("sha1").update(payload).digest("hex");
+  test.skipIf(isWindows)("a resizable ArrayBuffer is copied into backpressure, not held by reference", async () => {
+    // resize() mprotect()s trimmed pages PROT_NONE and pin() doesn't block
+    // it, so a retained raw slice faults on spill / EFAULT-spins on drain.
+    // Run in a child so the crash is observed as exit != 0.
+    await using proc = Bun.spawn({
+      // end() spills any held tail; memcpy from PROT_NONE if held by reference.
+      cmd: [bunExe(), "-e", resizableChild(`wrote.resolve(); res.end();`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-          const wrote = Promise.withResolvers();
-          const server = http.createServer(async (req, res) => {
-            res.writeHead(200, {
-              "Content-Type": "application/octet-stream",
-              "Content-Length": String(CHUNK_SIZE),
-            });
-            res.write(payload);
-            ab.resize(1024);
-            wrote.resolve();
-            await once(res, "drain");
-            res.end();
-          });
-          await once(server.listen(0), "listening");
-          const port = server.address().port;
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ detachedAfterWrite: true, bodyLength: RESIZABLE_CHUNK_SIZE, hashMatches: true }),
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  });
 
-          const socket = net.connect(port, "127.0.0.1");
-          await once(socket, "connect");
-          socket.pause();
-          socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-          await wrote.promise;
+  test.skipIf(isWindows)("resizing a resizable ArrayBuffer after write() does not wedge drain", async () => {
+    // Drain path: send() on PROT_NONE pages returns EFAULT -> 0 consumed ->
+    // onWritable re-arms forever. `await using` kills the child on timeout.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", resizableChild(`wrote.resolve(); await once(res, "drain"); res.end();`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-          const chunks = [];
-          socket.on("data", c => chunks.push(c));
-          const closed = once(socket, "close");
-          socket.resume();
-          await closed;
-
-          const received = Buffer.concat(chunks);
-          const headerEnd = received.indexOf("\\r\\n\\r\\n");
-          const body = received.subarray(headerEnd + 4);
-          const bodyHash = createHash("sha1").update(body).digest("hex");
-          clearTimeout(guard);
-          console.log(JSON.stringify({
-            bodyLength: body.length,
-            hashMatches: bodyHash === expectedHash,
-          }));
-          server.close();
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify({ bodyLength: CHUNK_SIZE, hashMatches: true }),
-        stderr: expect.any(String),
-      });
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ detachedAfterWrite: true, bodyLength: RESIZABLE_CHUNK_SIZE, hashMatches: true }),
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  });
 
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;

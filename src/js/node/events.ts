@@ -65,9 +65,8 @@ function EventEmitter(opts) {
     this._eventsCount = 0;
     this[kShapeMode] = false;
   } else {
-    // Preallocated `_events` (streams): give the count an own slot too, like
-    // node, so it is never left to the prototype default / undefined.
-    this._eventsCount ??= 0;
+    // Preallocated `_events` (streams). The count comes from the prototype
+    // default `EventEmitterPrototype._eventsCount = 0`, as in node.
     this[kShapeMode] = true;
   }
 

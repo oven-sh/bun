@@ -331,11 +331,14 @@ struct us_socket_t {
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
 
-/* Latch a pending action. A higher (or equal) action supersedes; a lower one
- * never downgrades a close already parked. */
+/* Latch a pending action. A higher action supersedes; an equal action keeps a
+ * nonzero code already parked (the SNI-abort path re-latches DETACH(0) after
+ * the JS callback may have parked DETACH(RESET)); a lower action is ignored. */
 static inline void us_internal_socket_set_pending(struct us_socket_t *s, unsigned char action, unsigned char code) {
-    if (action >= s->pending_action) {
+    if (action > s->pending_action) {
         s->pending_action = action;
+        s->pending_code = code;
+    } else if (action == s->pending_action && (code || !s->pending_code)) {
         s->pending_code = code;
     }
 }

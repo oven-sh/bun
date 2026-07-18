@@ -1352,9 +1352,8 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from
        * inside it destroyed the socket); freeing now would leave BoringSSL
        * working on freed memory when control returns. The driver frees it
-       * when the call unwinds; keep any close code already parked. */
-      us_internal_socket_set_pending(s, US_PENDING_ACTION_DETACH,
-          s->pending_action == US_PENDING_ACTION_DETACH ? s->pending_code : 0);
+       * when the call unwinds. */
+      us_internal_socket_set_pending(s, US_PENDING_ACTION_DETACH, 0);
       return;
     }
     SSL_free(s_ssl(s));

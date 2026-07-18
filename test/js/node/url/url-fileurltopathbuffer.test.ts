@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fileURLToPathBuffer, parse as urlParse, pathToFileURL } from "node:url";
+import { fileURLToPathBuffer, pathToFileURL, parse as urlParse } from "node:url";
 
 // Behavior verified against node v26.3.0: fileURLToPathBuffer decodes the URL
 // pathname's percent-escapes literally into bytes, so non-UTF-8 sequences

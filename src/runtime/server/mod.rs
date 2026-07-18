@@ -584,15 +584,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper while it is strongly rooted, or None once the
-    /// server has gone idle and downgraded. Dispatch trampolines should
-    /// answer 503+close on None. Checking strong (not just Finalized) closes
-    /// the dead-but-unswept window where `JsRef::Weak` holds a stale address.
+    /// Returns the wrapper while it is alive (`Strong` or `Weak`), or `None`
+    /// once `finalize()` has set `Finalized`. `Weak` means the wrapper cell is
+    /// still live (its WriteBarrier slots still root the handlers); only
+    /// `Finalized` means the slots are gone and the `config` shadows may point
+    /// at freed cells. Dispatch trampolines answer 503+close on `None`.
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
-        match &self.js_value {
-            jsc::JsRef::Strong(_) => self.js_value.try_get(),
-            _ => None,
-        }
+        self.js_value.try_get()
     }
 }
 
@@ -1793,8 +1791,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
         if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
-            // Wrapper-rooted handlers need the wrapper to outlive every
-            // dispatch; downgrade only once nothing can call them.
+            // Make the wrapper collectible. Dispatch still works while it is
+            // `Weak` (its WriteBarrier slots still root the handlers); the
+            // `js_value_for_dispatch` gate only trips once the wrapper is
+            // actually finalized.
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

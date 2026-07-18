@@ -631,22 +631,25 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
-// Shared rig for the two "late keep-alive 503" tests below: open a raw TCP
+// Shared rig for the two "late keep-alive" tests below: open a raw TCP
 // socket, hold the first request in-flight across stop()/close(), pipeline a
 // second request behind it, release, GC, and print the second response's
 // status line. The subprocess runs the rig so a (former) panic in the dispatch
 // trampoline surfaces as a non-zero exit instead of taking down the runner.
 //
-// To reach the 503 guard the wrapper must already be downgraded when the late
-// request dispatches. We sequence that by holding the FIRST request in-flight
-// (pending_requests > 0) across stop(), pipelining the LATE request behind it,
-// then releasing: first completes → pending_requests drops to 0 →
-// deinit_if_we_can() downgrades js_value → uws reads the pipelined request →
-// the trampoline's js_value_for_dispatch() gate fires → 503.
+// The wrapper's `js_value` downgrades to Weak once the first request
+// completes (pending_requests → 0 in `deinit_if_we_can`). While Weak the
+// wrapper cell is still alive and its WriteBarrier slots still root the
+// handlers, so the pipelined request must dispatch cleanly — no panic, and a
+// 200 from the same handler. The `respond_stopped_503` guard in the
+// trampolines is a safety net for the `Finalized` case (wrapper GC'd while
+// `self` still lives between `finalize()` and the next-tick
+// `schedule_deinit`); that window is not deterministically reachable from a
+// test, so these pin the Weak→dispatch path plus clean collection afterwards.
 //
 // `serverSnippet` must define `port` (the listen port) and `stop()` in scope,
 // and may read `release`/`inflight`/`hits` for the hold protocol.
-async function runLateKeepAlive503(reqPath: string, serverSnippet: string) {
+async function runLateKeepAlive(reqPath: string, serverSnippet: string) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -710,9 +713,10 @@ async function runLateKeepAlive503(reqPath: string, serverSnippet: string) {
         })();
         // The only server binding is now out of scope.
 
-        // First request completes → pending_requests → 0 → js_value downgrades.
-        // The pipelined request then hits the trampoline with the wrapper
-        // gone → 503. Previously: panic.
+        // First request completes → pending_requests → 0 → js_value downgrades
+        // to Weak. The pipelined request then hits the trampoline with the
+        // wrapper still alive (Weak) → handler runs → 200. Previously: panic
+        // (or 503 when the gate checked Strong-only).
         release.resolve();
         const first = await nextResponse();
         if (!first.includes("200")) throw new Error("first request failed: " + first);
@@ -736,19 +740,19 @@ async function runLateKeepAlive503(reqPath: string, serverSnippet: string) {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Must actually reach the 503 guard — empty would mean the socket was closed
-  // before dispatch and the guard was never exercised.
+  // Must actually dispatch — empty would mean the socket was closed before the
+  // pipelined request reached the trampoline.
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: expect.stringMatching(/^HTTP\/1\.1 503\b/),
+    stdout: expect.stringMatching(/^HTTP\/1\.1 200\b/),
     stderr: "",
     exitCode: 0,
   });
 }
 
-test("late keep-alive request to a route after stop()+GC answers 503", async () => {
+test("late keep-alive request to a route after stop() dispatches while the wrapper is Weak", async () => {
   // Per-route handlers live in ServerRouteList, which is reachable from JS only
   // through the Server wrapper — exercises on_user_route_request's gate.
-  await runLateKeepAlive503(
+  await runLateKeepAlive(
     "/r",
     `
       const server = Bun.serve({
@@ -770,11 +774,11 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
   );
 });
 
-test("late keep-alive request to a node:http server after close()+GC answers 503", async () => {
+test("late keep-alive request to a node:http server after close() dispatches while the wrapper is Weak", async () => {
   // Same shape but through node:http so the request dispatches via
-  // on_node_http_request_with_upgrade_ctx — the trampoline that was missing
-  // the 503 guard until the respond_stopped_503 helper sweep.
-  await runLateKeepAlive503(
+  // on_node_http_request_with_upgrade_ctx — the trampoline that would panic
+  // on a stale shadow without the `js_value_for_dispatch` gate.
+  await runLateKeepAlive(
     "/",
     `
       const http = require("node:http");

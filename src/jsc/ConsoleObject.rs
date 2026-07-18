@@ -3363,7 +3363,7 @@ pub mod formatter {
             {
                 continue;
             }
-            let Some(ctor) = pointer.get_own_truthy(global, "constructor")? else {
+            let Some(ctor) = pointer.fast_get_direct(global, jsc::BuiltinName::constructor) else {
                 return Ok(true);
             };
             if !ctor.is_callable() {

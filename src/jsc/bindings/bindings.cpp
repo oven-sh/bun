@@ -4941,6 +4941,7 @@ enum class BuiltinNamesMap : uint8_t {
     signal,
     cmd,
     toPrimitive,
+    constructor,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5022,6 +5023,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::toPrimitive: {
         return vm.propertyNames->toPrimitiveSymbol;
+    }
+    case BuiltinNamesMap::constructor: {
+        return vm.propertyNames->constructor;
     }
     default: {
         ASSERT_NOT_REACHED();

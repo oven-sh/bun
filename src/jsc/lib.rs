@@ -1148,6 +1148,7 @@ pub enum BuiltinName {
     signal,
     cmd,
     toPrimitive,
+    constructor,
 }
 
 #[allow(non_upper_case_globals)]

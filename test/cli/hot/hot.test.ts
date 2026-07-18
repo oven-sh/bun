@@ -781,11 +781,21 @@ it(
   "timers keep firing after a failed reload is fixed",
   async () => {
     const root = join(cwd, "hot-timer-entry.ts");
-    const src = (gen: number) =>
-      `const GEN = ${gen};\n` +
-      `setInterval(() => console.log("TICK " + GEN), 16);\n` +
-      `console.log("EVAL " + GEN);\n`;
-    writeFileSync(root, src(1));
+    // Every write is padded to the same width so a reload that races the write
+    // (cached-fd read mid-overwrite) never sees a stale tail from a longer
+    // previous generation.
+    const PAD = 256;
+    const pad = (s: string) => s + Buffer.alloc(PAD - s.length, " ").toString() + "\n";
+    const src = (gen: number, extra = "") =>
+      pad(
+        `const GEN = ${gen};\n` +
+          `setInterval(() => console.log("TICK " + GEN), 16);\n` +
+          `console.log("EVAL " + GEN);\n` +
+          extra,
+      );
+    let lastWrite = src(1);
+    const save = (content: string) => writeFileSync(root, (lastWrite = content));
+    save(src(1));
 
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "run", root],
@@ -820,6 +830,13 @@ it(
       notify();
     });
 
+    // Re-save periodically in case the watcher coalesced or raced the edit
+    // (same pattern driveErrorReloadCycle uses above).
+    const resave = setInterval(() => {
+      writeFileSync(root, lastWrite);
+      notify();
+    }, 1000);
+
     const waitFor = async (pred: () => boolean, what: string) => {
       while (!pred()) {
         if (exited) {
@@ -828,37 +845,46 @@ it(
         await new Promise<void>(r => waiters.push(r));
       }
     };
-
     const countTicks = (gen: number) => (out.match(new RegExp(`TICK ${gen}\\b`, "g")) ?? []).length;
 
-    // Generation 1 evaluates and its interval fires.
-    await waitFor(() => out.includes("EVAL 1"), "EVAL 1");
-    await waitFor(() => countTicks(1) >= 3, "gen 1 ticks");
+    try {
+      // Generation 1 evaluates and its interval fires.
+      await waitFor(() => out.includes("EVAL 1"), "EVAL 1");
+      await waitFor(() => countTicks(1) >= 3, "gen 1 ticks");
 
-    // Break the file with a syntax error; wait for the error on stderr.
-    writeFileSync(root, "const GEN = ((;\n");
-    await waitFor(() => /error/i.test(err), "syntax error on stderr");
+      // Break the file with a syntax error; wait for the error on stderr.
+      save(pad("const GEN = ((;\n"));
+      await waitFor(() => /error/i.test(err), "syntax error on stderr");
 
-    // Fix the file. The new generation must evaluate AND its interval must fire.
-    writeFileSync(root, src(2));
-    await waitFor(() => out.includes("EVAL 2"), "EVAL 2 after fix");
-    // Without the fix the run loop is wedged in tick_possibly_forever()
-    // (which never drains timers) and this never resolves.
-    await waitFor(() => countTicks(2) >= 3, "gen 2 ticks after fix");
+      // Fix the file. The new generation must evaluate AND its interval must fire.
+      save(src(2));
+      await waitFor(() => out.includes("EVAL 2"), "EVAL 2 after fix");
+      // Without the fix the run loop is wedged in tick_possibly_forever()
+      // (which never drains timers) and this never resolves.
+      await waitFor(() => countTicks(2) >= 3, "gen 2 ticks after fix");
 
-    // on_before_exit() on the wedged path armed exit_on_uncaught_exception;
-    // without the matching reset the next uncaught exception would exit the
-    // process instead of surviving like a fresh --hot run.
-    writeFileSync(root, src(3) + `setTimeout(() => { throw new Error("post-recovery-throw"); }, 0);\n`);
-    await waitFor(() => err.includes("post-recovery-throw"), "post-recovery uncaught exception on stderr");
-    expect(exited).toBe(false);
+      // on_before_exit() on the wedged path armed exit_on_uncaught_exception;
+      // without the matching reset the next uncaught exception would exit the
+      // process instead of surviving like a fresh --hot run. Guard on a global
+      // so duplicate reloads of this generation schedule at most one throw.
+      save(
+        src(
+          3,
+          `if (!globalThis.__thrown) { globalThis.__thrown = 1; ` +
+            `setTimeout(() => { throw new Error("post-recovery-throw"); }, 0); }\n`,
+        ),
+      );
+      await waitFor(() => err.includes("post-recovery-throw"), "post-recovery uncaught exception on stderr");
+      expect(exited).toBe(false);
 
-    // Recovery is durable: one more good edit's timers fire.
-    writeFileSync(root, src(4));
-    await waitFor(() => out.includes("EVAL 4"), "EVAL 4");
-    await waitFor(() => countTicks(4) >= 3, "gen 4 ticks");
-
-    runner.kill();
+      // Recovery is durable: one more good edit's timers fire.
+      save(src(4));
+      await waitFor(() => out.includes("EVAL 4"), "EVAL 4");
+      await waitFor(() => countTicks(4) >= 3, "gen 4 ticks");
+    } finally {
+      clearInterval(resave);
+      runner.kill();
+    }
   },
   timeout,
 );

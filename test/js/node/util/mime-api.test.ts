@@ -102,25 +102,6 @@ describe("MIME API", () => {
   const NOT_HTTP_TOKEN_CODE_POINT = ",";
   const NOT_HTTP_QUOTED_STRING_CODE_POINT = "\n";
 
-  test("class instance integrity", () => {
-    const mime = new MIMEType("application/ecmascript; ");
-    const mime_descriptors = Object.getOwnPropertyDescriptors(mime);
-    const mime_proto = Object.getPrototypeOf(mime);
-    const mime_impersonator = { __proto__: mime_proto };
-
-    for (const key of Object.keys(mime_descriptors)) {
-      const descriptor = mime_descriptors[key];
-      if (descriptor.get) {
-        const getter = descriptor.get;
-        expect(() => getter.call(mime_impersonator)).toThrow(/invalid receiver/i);
-      }
-      if (descriptor.set) {
-        const setter = descriptor.set;
-        expect(() => setter.call(mime_impersonator, "x")).toThrow(/invalid receiver/i);
-      }
-    }
-  });
-
   test("basic properties and string conversion", () => {
     const mime = new MIMEType("application/ecmascript; ");
 

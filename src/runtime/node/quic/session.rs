@@ -1702,8 +1702,7 @@ impl QuicSession {
             );
             self.emit_qlog(global, &chunk, true);
         }
-        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken
-        {
+        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken {
             Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
             None if self.conn.get().is_null() => {
                 match self.final_conn_status.with_mut(Option::take) {

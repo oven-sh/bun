@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { createRequire } from "node:module";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -45,6 +46,82 @@ describe("ResolveMessage", () => {
     } catch (e: any) {
       expect(e.code).toBe("MODULE_NOT_FOUND");
     }
+  });
+
+  // resolve_maybe_needs_trailing_slash's ENAMETOOLONG guard (at MAX_PATH_BYTES * 1.5)
+  // used to build a ResolveMessage without .resolve metadata, so one byte over
+  // the threshold dropped .code/.specifier/.importKind entirely.
+  const threshold = isWindows ? 147453 : isMacOS ? 1536 : 6144;
+  // 200000 > u16::MAX exercises the BabyString length clamp. On Windows the
+  // at-threshold case would push 147 KB through the full resolver (untested
+  // territory), so only run it where the at-threshold length is small.
+  const longSpecifierLengths = isWindows ? [threshold + 1, 200000] : [threshold, threshold + 1, 200000];
+  it.each(longSpecifierLengths)("has code/specifier/importKind for long specifier (len=%d)", async len => {
+    const cjsRequire = createRequire(import.meta.url);
+    const builtin = "node:x" + Buffer.alloc(len - 6, "a").toString();
+    // .specifier is stored as a BabyString (u16 len) so very long specifiers
+    // are clamped; assert it is a non-empty prefix rather than exact equality.
+    const expectSpecifier = (got: string, full: string) => {
+      expect(got.length).toBeGreaterThan(0);
+      expect(full.startsWith(got)).toBe(true);
+      if (len <= 0xffff) expect(got).toBe(full);
+    };
+
+    let e: any;
+    try {
+      cjsRequire(builtin);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, importKind: e.importKind }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      importKind: "require-call",
+    });
+    expectSpecifier(e.specifier, builtin);
+
+    try {
+      await import(builtin);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, importKind: e.importKind }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      importKind: "import-statement",
+    });
+    expectSpecifier(e.specifier, builtin);
+
+    // The relative case is only exercised above the threshold; at the threshold
+    // it would go through the real resolver with a near-PATH_MAX path.
+    if (len > threshold) {
+      const relative = "./x" + Buffer.alloc(len - 3, "a").toString();
+      try {
+        cjsRequire(relative);
+        expect.unreachable();
+      } catch (err) {
+        e = err;
+      }
+      expect({ code: e.code, importKind: e.importKind }).toEqual({
+        code: "MODULE_NOT_FOUND",
+        importKind: "require-call",
+      });
+      expectSpecifier(e.specifier, relative);
+    }
+
+    // Bun.resolveSync uses IS_A_FILE_PATH=false, so the length guard never
+    // fires and the specifier reaches the post-_resolve fallback at any length.
+    try {
+      Bun.resolveSync(builtin, import.meta.dir);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, importKind: e.importKind }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      importKind: "import-statement",
+    });
+    expectSpecifier(e.specifier, builtin);
   });
 
   it("invalid data URL import", async () => {

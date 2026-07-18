@@ -4308,8 +4308,18 @@ impl VirtualMachine {
                 crate::CrateError::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
                 import_kind,
             );
+            // BabyString packs (u16 offset, u16 len); clamp so the stored
+            // prefix is long enough for `get_code`'s `node:` check instead of
+            // wrapping to 0/1 bytes for specifiers > u16::MAX.
+            let spec = specifier_utf8.slice();
+            let spec = &spec[..spec.len().min(u16::MAX as usize)];
             let msg = bun_ast::Msg {
-                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
+                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
+                metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                    specifier: bun_ast::BabyString::r#in(&printed, spec),
+                    import_kind,
+                    err: bun_ast::Error::ModuleNotFound,
+                }),
                 ..Default::default()
             };
             *res = ErrorableString::err(
@@ -4449,10 +4459,12 @@ impl VirtualMachine {
                         err,
                         import_kind,
                     );
+                    let spec = specifier_utf8.slice();
+                    let spec = &spec[..spec.len().min(u16::MAX as usize)];
                     bun_ast::Msg {
                         data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                         metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
-                            specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
+                            specifier: bun_ast::BabyString::r#in(&printed, spec),
                             import_kind,
                             err: bun_ast::Error::ModuleNotFound,
                         }),

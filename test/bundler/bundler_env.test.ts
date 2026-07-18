@@ -1,5 +1,5 @@
-import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -204,3 +204,70 @@ for (let backend of ["api", "cli"] as const) {
       });
   });
 }
+
+// Direct `bun build` spawn so the Windows path is covered independently of the
+// itBundled registration path (which currently skips on Windows, see #34552).
+describe("bundler/env via spawn", () => {
+  async function buildInline(
+    src: string,
+    extra: { env?: Record<string, string>; define?: Record<string, string>; dotenv?: string } = {},
+  ) {
+    using dir = tempDir("bundler-env-inline", { "a.js": src });
+    const cmd = [bunExe(), "build", String(dir) + "/a.js", "--env", extra.dotenv ?? "inline"];
+    for (const [k, v] of Object.entries(extra.define ?? {})) cmd.push(`--define:${k}=${v}`);
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...(extra.env ?? {}) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test("process.env.X matches the env-var name case-insensitively on Windows only", async () => {
+    const out = await buildInline(
+      `console.log(process.env.BUN_TEST_Env_Mixed);
+console.log(process.env.BUN_TEST_ENV_MIXED);
+console.log(process.env.bun_test_env_mixed);
+`,
+      { env: { BUN_TEST_Env_Mixed: "inlined" } },
+    );
+    const inlined = (out.match(/"inlined"/g) ?? []).length;
+    if (isWindows) {
+      expect(out).not.toContain("process.env.");
+      expect(inlined).toBe(3);
+    } else {
+      expect(inlined).toBe(1);
+      expect(out).toContain("process.env.BUN_TEST_ENV_MIXED");
+      expect(out).toContain("process.env.bun_test_env_mixed");
+    }
+  });
+
+  test("--env PREFIX_* matches case-insensitively on Windows only", async () => {
+    const out = await buildInline(
+      `console.log(process.env.Bun_Test_EnvPfx_A);
+console.log(process.env.BUN_TEST_ENVPFX_B);
+`,
+      { env: { Bun_Test_EnvPfx_A: "a", BUN_TEST_ENVPFX_B: "b" }, dotenv: "BUN_TEST_ENVPFX_*" },
+    );
+    if (isWindows) {
+      expect(out).not.toContain("process.env.");
+      expect(out).toContain('"a"');
+      expect(out).toContain('"b"');
+    } else {
+      expect(out).toContain("process.env.Bun_Test_EnvPfx_A");
+      expect(out).toContain('"b"');
+    }
+  });
+
+  test("process.env?.X is not inlined by --env inline", async () => {
+    const out = await buildInline(`console.log(process.env?.BUN_TEST_ENV_OPT);\n`, {
+      env: { BUN_TEST_ENV_OPT: "inlined" },
+    });
+    expect(out).toContain("process.env?.BUN_TEST_ENV_OPT");
+    expect(out).not.toContain('"inlined"');
+  });
+});

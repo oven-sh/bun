@@ -1404,10 +1404,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Checked after `dots` so an explicit `--define process.env.X=...`
         // (which lives in `dots`) wins. On Windows `env_dots` is keyed
         // case-insensitively so `process.env.PATH` matches the OS's `Path`.
-        if !defines.env_dots.is_empty() {
-            if let Some(data) = defines.env_dots.get(e_.name.slice()) {
-                const PROCESS_ENV: &[&[u8]; 2] = &[b"process", b"env"];
-                if p.is_dot_define_match(e_.target, PROCESS_ENV) {
+        if !defines.env_dots.is_empty() && e_.optional_chain.is_none() {
+            const PROCESS_ENV: &[&[u8]; 2] = &[b"process", b"env"];
+            if p.is_dot_define_match(e_.target, PROCESS_ENV) {
+                if let Some(data) = defines.env_dots.get(e_.name.slice()) {
                     if in_.assign_target == js_ast::AssignTarget::None {
                         if !data.valueless() {
                             *e = p.value_for_define(

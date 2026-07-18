@@ -914,11 +914,9 @@ test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
 
-// A fired once() wrapper must release its emitter so a held wrapper (e.g.
-// pinned by JSC's conservative stack scan inside emit()) cannot keep an
-// http.ClientRequest alive and hang the test-gc-http-client* suite.
-// wrapped.listener is kept (node asserts it survives emit); only the closure
-// captures are cleared.
+// A fired once() wrapper must drop its closure refs so holding it (a cached
+// rawListeners() result, the COW array emit() iterates) does not retain the
+// emitter. wrapped.listener stays: node asserts it survives emit.
 test("once() wrapper releases its target after firing", async () => {
   const src = `
     const { EventEmitter } = require("events");

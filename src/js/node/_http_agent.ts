@@ -283,8 +283,8 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options.encoding = null;
 
   const oncreate = once((err, s) => {
-    // Release `cb` (onSocketCreated.bind(this, req)) from this closure's scope
-    // so a conservatively-pinned arrow cannot keep `req` alive past this call.
+    // `cb` is onSocketCreated.bind(this, req); release it from this closure's
+    // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
     cb = undefined;
     // Pass the socket along with the error: proxy-tunnel failures with a

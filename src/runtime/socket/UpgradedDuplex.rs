@@ -52,6 +52,13 @@ pub(crate) struct UpgradedDuplex {
     /// forever, so stage them here and replay them from
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: Vec<u8>,
+    /// Peer EOF that arrived before the TLS engine existed. Same race as
+    /// [`Self::pending_data`]: a duplex that writes its last bytes and calls
+    /// `end()` in the tick before `StartTLS` runs would otherwise have the EOF
+    /// dropped, leaving the readable side waiting on data that will never come.
+    /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
+    /// the original data-then-EOF order.
+    pub pending_end: bool,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -66,6 +73,26 @@ pub struct CertError {
 // `Box<CStr>` drops automatically — no explicit Drop needed.
 
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
+
+/// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
+/// `js_upgrade_duplex_to_tls` and applied by
+/// [`UpgradedDuplex::apply_server_verify`]. Ignored for client upgrades.
+#[derive(Clone, Copy)]
+pub(crate) struct ServerVerify {
+    /// `requestCert` — whether to send a CertificateRequest at all.
+    pub request_cert: bool,
+    /// `rejectUnauthorized` — only meaningful when `request_cert` is set.
+    pub reject_unauthorized: bool,
+}
+
+/// Never abort the handshake from inside BoringSSL: the verification result is
+/// read back as `verify_error` and enforced in JS. Mirrors `us_verify_callback`.
+unsafe extern "C" fn always_continue_server_verify(
+    _preverify_ok: core::ffi::c_int,
+    _store_ctx: *mut bun_boringssl_sys::X509_STORE_CTX,
+) -> core::ffi::c_int {
+    1
+}
 
 pub struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
@@ -253,7 +280,11 @@ impl UpgradedDuplex {
         // Nothing to replay, or the engine never came up (the socket died
         // before `StartTLS`). Bail before `mem::take` so the bytes are not
         // destroyed by a drain that could not deliver them.
-        if self.pending_data.is_empty() || self.wrapper.is_none() {
+        if self.wrapper.is_none() {
+            return;
+        }
+        if self.pending_data.is_empty() {
+            self.drain_pending_end();
             return;
         }
         // `receive_data` can re-enter this object (it drives BoringSSL, which
@@ -275,6 +306,23 @@ impl UpgradedDuplex {
             };
             wrapper.receive_data(chunk);
         }
+        self.drain_pending_end();
+    }
+
+    /// Replay an EOF that landed before the engine came up. Split out so both
+    /// `drain_pending` exits report it, and kept after the staged bytes so the
+    /// engine sees data-then-EOF in the order the peer sent it.
+    fn drain_pending_end(&mut self) {
+        if !self.pending_end {
+            return;
+        }
+        self.pending_end = false;
+        // A re-entrant teardown during the byte replay above can neuter the
+        // engine; do not synthesize an EOF into a dead socket.
+        if self.wrapper.is_none() {
+            return;
+        }
+        (self.handlers.on_end)(self.handlers.ctx);
     }
 
     pub(crate) fn on_timeout(&mut self) {
@@ -314,6 +362,7 @@ impl UpgradedDuplex {
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: 0,
             pending_data: Vec::new(),
+            pending_end: false,
         }
     }
 
@@ -366,10 +415,48 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
+    /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
+    ///
+    /// `us_ssl_ctx_from_options` turns on `SSL_VERIFY_PEER |
+    /// SSL_VERIFY_FAIL_IF_NO_PEER_CERT` whenever the options carry a `ca`,
+    /// because for a server that flag is what decides whether a
+    /// CertificateRequest is sent. Node instead keys that off `requestCert`
+    /// alone, so a server given `ca` but no `requestCert` must not ask for a
+    /// client certificate. The real-fd upgrade path already corrects this
+    /// per-SSL; without the same correction here a duplex-wrapped server
+    /// rejects every cert-less client with UNABLE_TO_GET_ISSUER_CERT.
+    ///
+    /// Client sockets are untouched: their verify mode is set by `SSLWrapper`
+    /// itself so `verify_error` is populated for the JS `rejectUnauthorized`
+    /// decision.
+    fn apply_server_verify(&mut self, is_client: bool, verify: ServerVerify) {
+        if is_client {
+            return;
+        }
+        let Some(ssl) = self.ssl() else { return };
+        let mode = if verify.request_cert {
+            bun_boringssl_sys::SSL_VERIFY_PEER
+                | if verify.reject_unauthorized {
+                    bun_boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                } else {
+                    0
+                }
+        } else {
+            bun_boringssl_sys::SSL_VERIFY_NONE
+        };
+        // SAFETY: `ssl` is this wrapper's live `SSL*`, before any handshake
+        // byte has been processed. The callback always returns 1 so BoringSSL
+        // never aborts mid-flight; JS reads `verify_error` and decides.
+        unsafe {
+            bun_boringssl_sys::SSL_set_verify(ssl, mode, Some(always_continue_server_verify));
+        }
+    }
+
     pub(crate) fn start_tls(
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
+        verify: ServerVerify,
     ) -> Result<(), crate::Error> {
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
@@ -386,6 +473,7 @@ impl UpgradedDuplex {
             },
         )?);
 
+        self.apply_server_verify(is_client, verify);
         self.wrapper.as_mut().unwrap().start();
         Ok(())
     }
@@ -398,6 +486,7 @@ impl UpgradedDuplex {
         &mut self,
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
+        verify: ServerVerify,
     ) -> Result<(), crate::Error> {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
@@ -423,6 +512,7 @@ impl UpgradedDuplex {
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 
+        self.apply_server_verify(is_client, verify);
         self.wrapper.as_mut().unwrap().start();
         Ok(())
     }
@@ -585,6 +675,7 @@ impl UpgradedDuplex {
         }
         self.ssl_error = CertError::default();
         self.pending_data = Vec::new();
+        self.pending_end = false;
     }
 }
 
@@ -642,6 +733,10 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
+        } else {
+            // EOF before `start_tls` ran. Hold it so `drain_pending` reports it
+            // in order, after any bytes staged in the same window.
+            this.pending_end = true;
         }
     }
     Ok(JSValue::UNDEFINED)

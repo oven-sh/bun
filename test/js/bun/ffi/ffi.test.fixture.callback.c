@@ -275,6 +275,8 @@ static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   // Decode a double-encoded integer (JIT tier-up, Math.* provenance, etc.);
   // int64_t intermediate keeps u32 callers (uint32_t)JSVALUE_TO_INT32(...) defined.
   val.asInt64 -= DoubleEncodeOffset;
+  // NaN check also catches undefined/null/bool, whose decoded bits are all NaNs.
+  if (val.asDouble != val.asDouble) return 0;
   return (int32_t)(int64_t)val.asDouble;
 }
 

@@ -2415,7 +2415,7 @@ where
         if self.request_body_readable_stream_ref.has() {
             let global_this = self.server().global_this();
             let strong = core::mem::take(&mut self.request_body_readable_stream_ref);
-            if let Some(readable) = strong.get(&global_this) {
+            if let Some(readable) = strong.get(global_this) {
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
                     let mut err =

@@ -1,5 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -911,4 +912,51 @@ test("getEventListeners", () => {
 
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
+});
+
+// A fired once() wrapper must release its emitter so a held wrapper (e.g.
+// pinned by JSC's conservative stack scan inside emit()) cannot keep an
+// http.ClientRequest alive and hang the test-gc-http-client* suite.
+test("once() wrapper releases its target after firing", async () => {
+  const src = `
+    const { EventEmitter } = require("events");
+    const held = [];
+    const total = 8;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    (function () {
+      for (let i = 0; i < total; i++) {
+        const ee = new EventEmitter();
+        ee.once("x", function () {});
+        held.push(ee.rawListeners("x")[0]);
+        ee.emit("x");
+        registry.register(ee);
+      }
+    })();
+    let iters = 0;
+    setImmediate(function check() {
+      Bun.gc(true);
+      if (collected === total) {
+        console.log("collected " + collected + "/" + total + " holding " + held.length + " wrappers");
+        return;
+      }
+      if (++iters > 50) {
+        console.log("stuck " + collected + "/" + total + " holding " + held.length + " wrappers");
+        process.exit(1);
+      }
+      setImmediate(check);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "collected 8/8 holding 8 wrappers",
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -731,15 +731,7 @@ impl Tree {
 
         {
             let sorter = DepSorter { lockfile };
-            builder.sort_buf.sort_unstable_by(|a, b| {
-                if DepSorter::is_less_than(&sorter, *a, *b) {
-                    core::cmp::Ordering::Less
-                } else if DepSorter::is_less_than(&sorter, *b, *a) {
-                    core::cmp::Ordering::Greater
-                } else {
-                    core::cmp::Ordering::Equal
-                }
-            });
+            builder.sort_buf.sort_unstable_by(|a, b| sorter.cmp(*a, *b));
         }
 
         // reshaped for borrowck — iterate over a snapshot of sort_buf indices since

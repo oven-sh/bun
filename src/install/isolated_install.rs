@@ -662,15 +662,7 @@ pub(crate) fn install_isolated_packages(
             // and devDependency handling to match `hoistDependency`
             {
                 let sorter = lockfile::DepSorter { lockfile };
-                dep_ids_sort_buf.sort_by(|a, b| {
-                    if sorter.is_less_than(*a, *b) {
-                        core::cmp::Ordering::Less
-                    } else if sorter.is_less_than(*b, *a) {
-                        core::cmp::Ordering::Greater
-                    } else {
-                        core::cmp::Ordering::Equal
-                    }
-                });
+                dep_ids_sort_buf.sort_by(|a, b| sorter.cmp(*a, *b));
             }
 
             peer_dep_ids.clear();

@@ -612,6 +612,7 @@ pub trait VersionExt {
     ) -> Result<Version, crate::Error>;
     fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
+    fn cmp_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> Ordering;
     fn to_version(
         alias: String,
         alias_hash: PackageNameHash,
@@ -651,16 +652,16 @@ impl VersionExt for Version {
     }
 
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        let tag_order = lhs.tag.cmp(rhs.tag);
-        if tag_order != Ordering::Equal {
-            return tag_order == Ordering::Less;
-        }
+        Self::cmp_with_tag(string_buf, lhs, rhs) == Ordering::Less
+    }
 
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
+    fn cmp_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> Ordering {
+        lhs.tag.cmp(rhs.tag).then_with(|| {
+            strings::order(
+                lhs.literal.slice(string_buf),
+                rhs.literal.slice(string_buf),
+            )
+        })
     }
 
     fn to_version(

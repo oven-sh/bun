@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::cmp::Ordering;
 
 use bun_collections::HashMap;
 use bun_core::strings;
@@ -95,15 +94,8 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
             let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
             if dependency_versions.len() > 1 {
-                dependency_versions.sort_by(|a, b| {
-                    if dependency::Version::is_less_than_with_tag(string_buf, a, b) {
-                        Ordering::Less
-                    } else if dependency::Version::is_less_than_with_tag(string_buf, b, a) {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    }
-                });
+                dependency_versions
+                    .sort_by(|a, b| dependency::Version::cmp_with_tag(string_buf, a, b));
             }
             requested_versions.insert(i, (requested_version_start, j));
 

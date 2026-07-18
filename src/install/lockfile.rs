@@ -227,21 +227,16 @@ pub(crate) struct DepSorter<'a> {
 }
 
 impl<'a> DepSorter<'a> {
-    pub(crate) fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
+    pub(crate) fn cmp(&self, l: DependencyID, r: DependencyID) -> Ordering {
         let deps_buf = self.lockfile.buffers.dependencies.as_slice();
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let l_dep = &deps_buf[l as usize];
         let r_dep = &deps_buf[r as usize];
 
-        match l_dep.behavior.cmp(r_dep.behavior) {
-            Ordering::Less => true,
-            Ordering::Greater => false,
-            Ordering::Equal => {
-                strings::order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf))
-                    == Ordering::Less
-            }
-        }
+        l_dep.behavior.cmp(r_dep.behavior).then_with(|| {
+            strings::order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf))
+        })
     }
 }
 

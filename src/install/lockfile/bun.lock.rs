@@ -149,11 +149,10 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub(crate) fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
+    pub(crate) fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> core::cmp::Ordering {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
-        strings::cmp_strings_asc(
-            (),
+        strings::order(
             l.name.slice(self.string_buf),
             r.name.slice(self.string_buf),
         )
@@ -668,15 +667,7 @@ impl Stringifier {
                         string_buf: buf,
                         deps_buf,
                     };
-                    tree_deps_sort_buf.sort_by(|&a, &b| {
-                        if ctx.is_less_than(a, b) {
-                            core::cmp::Ordering::Less
-                        } else if ctx.is_less_than(b, a) {
-                            core::cmp::Ordering::Greater
-                        } else {
-                            core::cmp::Ordering::Equal
-                        }
-                    });
+                    tree_deps_sort_buf.sort_by(|&a, &b| ctx.cmp(a, b));
                 }
 
                 for &dep_id in &tree_deps_sort_buf {
@@ -757,15 +748,7 @@ impl Stringifier {
                             string_buf: buf,
                             deps_buf,
                         };
-                        pkg_deps_sort_buf.sort_by(|&a, &b| {
-                            if ctx.is_less_than(a, b) {
-                                core::cmp::Ordering::Less
-                            } else if ctx.is_less_than(b, a) {
-                                core::cmp::Ordering::Greater
-                            } else {
-                                core::cmp::Ordering::Equal
-                            }
-                        });
+                        pkg_deps_sort_buf.sort_by(|&a, &b| ctx.cmp(a, b));
                     }
 
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }

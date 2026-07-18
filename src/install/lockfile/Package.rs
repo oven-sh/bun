@@ -339,16 +339,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
 /// once instead of per-`R`).
 #[inline]
 fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Ordering {
-    // `slice::sort_by` requires
-    // a total order (and panics since 1.81 when violated), so derive
-    // `Ordering::Equal` from the predicate symmetrically.
-    if Dependency::is_less_than(buf, a, b) {
-        core::cmp::Ordering::Less
-    } else if Dependency::is_less_than(buf, b, a) {
-        core::cmp::Ordering::Greater
-    } else {
-        core::cmp::Ordering::Equal
-    }
+    Dependency::cmp(buf, a, b)
 }
 
 /// Field tags for the binary lockfile serializer (`bun.lockb`). The

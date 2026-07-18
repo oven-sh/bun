@@ -63,35 +63,41 @@ it("homedir", () => {
 });
 
 describe.skipIf(isWindows)("homedir honors $HOME", () => {
-  const envVar = "HOME";
-  const child = `process.stdout.write(JSON.stringify(require("node:os").homedir()))`;
+  const child = `
+    const os = require("node:os");
+    process.stdout.write(JSON.stringify({ homedir: os.homedir(), userInfo: os.userInfo().homedir }));
+  `;
   const run = async env => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", child],
       env,
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(exitCode).toBe(0);
-    return stdout;
+    return JSON.parse(stdout);
   };
-  // Minimal env so nothing else contributes a HOME.
-  const base = { PATH: bunEnv.PATH, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" };
+  const base = { ...bunEnv, HOME: undefined };
 
   it.concurrent("returns $HOME verbatim when set", async () => {
-    expect(await run({ ...base, [envVar]: "/bun-homedir-test" })).toBe('"/bun-homedir-test"');
+    const { homedir, userInfo } = await run({ ...base, HOME: "/bun-homedir-test" });
+    expect(homedir).toBe("/bun-homedir-test");
+    // os.userInfo().homedir comes from the passwd entry, not $HOME.
+    expect(userInfo).not.toBe("/bun-homedir-test");
   });
 
   it.concurrent("returns $HOME verbatim when set to the empty string", async () => {
     // uv_os_homedir: an empty-but-set $HOME is still "set"; Node returns "".
-    expect(await run({ ...base, [envVar]: "" })).toBe('""');
+    const { homedir, userInfo } = await run({ ...base, HOME: "" });
+    expect(homedir).toBe("");
+    expect(userInfo).not.toBe("");
   });
 
   it.concurrent("falls back to the passwd entry only when $HOME is unset", async () => {
-    const out = await run({ ...base });
-    expect(out).toStartWith('"');
-    expect(out).not.toBe('""');
+    const { homedir, userInfo } = await run({ ...base });
+    expect(typeof homedir).toBe("string");
+    expect(homedir).not.toBe("");
+    expect(homedir).toBe(userInfo);
   });
 });
 

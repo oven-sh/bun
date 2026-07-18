@@ -747,85 +747,92 @@ mod _impl {
             if let Some(home) = env_var::HOME.get() {
                 return Ok(BunString::init(home));
             }
-
-            // From libuv:
-            // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-            // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-            // > will not usually be large.
-            // Instead of always using an allocation, first try a stack allocation
-            // of 4096, then fallback to heap.
-            let mut stack_string_bytes = [0u8; 4096];
-            let mut heap_bytes: Vec<u8>;
-            let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
-            let mut using_heap = false;
-
-            // SAFETY: zeroed POD
-            let mut pw: libc::passwd = bun_core::ffi::zeroed();
-            let mut result: *mut libc::passwd = core::ptr::null_mut();
-
-            let ret: c_int = loop {
-                // SAFETY: valid buffers and out-pointer
-                let ret = unsafe {
-                    libc::getpwuid_r(
-                        libc::geteuid(),
-                        &raw mut pw,
-                        string_bytes.as_mut_ptr().cast::<c_char>(),
-                        string_bytes.len(),
-                        &raw mut result,
-                    )
-                };
-
-                if ret == bun_sys::E::EINTR as c_int {
-                    continue;
-                }
-
-                // If the system call wants more memory, double it.
-                if ret == bun_sys::E::ERANGE as c_int {
-                    let len = string_bytes.len();
-                    heap_bytes = vec![0u8; len * 2];
-                    string_bytes = &mut heap_bytes[..];
-                    using_heap = true;
-                    continue;
-                }
-
-                break ret;
-            };
-            let _ = using_heap;
-
-            if ret != 0 {
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(
-                        // `ret` is a libc errno; `E::from_raw` is the centralized
-                        // `@enumFromInt` (debug-asserts the discriminant).
-                        bun_sys::E::from_raw(ret as u16),
-                        bun_sys::Tag::uv_os_homedir,
-                    )
-                    .to_js(global),
-                ));
-            }
-
-            if result.is_null() {
-                // bionic has no passwd entries for app uids; with HOME also unset
-                // (zygote/run-as), return a usable default rather than throwing.
-                #[cfg(target_os = "android")]
-                {
-                    return Ok(BunString::static_("/data/local/tmp"));
-                }
-                // in uv__getpwuid_r, null result throws UV_ENOENT.
-                #[cfg(not(target_os = "android"))]
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
-                        .to_js(global),
-                ));
-            }
-
-            return Ok(if !pw.pw_dir.is_null() {
-                // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
-                BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
-            } else {
-                BunString::empty()
-            });
+            homedir_from_passwd(global)
         }
+    }
+
+    // pw_dir of getpwuid_r(geteuid()). Node's os.userInfo().homedir comes from
+    // uv_os_get_passwd and never consults $HOME, so user_info() calls this
+    // directly while os.homedir() only reaches it when $HOME is unset.
+    #[cfg(not(windows))]
+    fn homedir_from_passwd(global: &JSGlobalObject) -> JsResult<BunString> {
+        // From libuv:
+        // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
+        // > is frequently 1024 or 4096, so we can just use that directly. The pwent
+        // > will not usually be large.
+        // Instead of always using an allocation, first try a stack allocation
+        // of 4096, then fallback to heap.
+        let mut stack_string_bytes = [0u8; 4096];
+        let mut heap_bytes: Vec<u8>;
+        let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
+        let mut using_heap = false;
+
+        // SAFETY: zeroed POD
+        let mut pw: libc::passwd = bun_core::ffi::zeroed();
+        let mut result: *mut libc::passwd = core::ptr::null_mut();
+
+        let ret: c_int = loop {
+            // SAFETY: valid buffers and out-pointer
+            let ret = unsafe {
+                libc::getpwuid_r(
+                    libc::geteuid(),
+                    &raw mut pw,
+                    string_bytes.as_mut_ptr().cast::<c_char>(),
+                    string_bytes.len(),
+                    &raw mut result,
+                )
+            };
+
+            if ret == bun_sys::E::EINTR as c_int {
+                continue;
+            }
+
+            // If the system call wants more memory, double it.
+            if ret == bun_sys::E::ERANGE as c_int {
+                let len = string_bytes.len();
+                heap_bytes = vec![0u8; len * 2];
+                string_bytes = &mut heap_bytes[..];
+                using_heap = true;
+                continue;
+            }
+
+            break ret;
+        };
+        let _ = using_heap;
+
+        if ret != 0 {
+            return Err(global.throw_value(
+                bun_sys::Error::from_code(
+                    // `ret` is a libc errno; `E::from_raw` is the centralized
+                    // `@enumFromInt` (debug-asserts the discriminant).
+                    bun_sys::E::from_raw(ret as u16),
+                    bun_sys::Tag::uv_os_homedir,
+                )
+                .to_js(global),
+            ));
+        }
+
+        if result.is_null() {
+            // bionic has no passwd entries for app uids; with HOME also unset
+            // (zygote/run-as), return a usable default rather than throwing.
+            #[cfg(target_os = "android")]
+            {
+                return Ok(BunString::static_("/data/local/tmp"));
+            }
+            // in uv__getpwuid_r, null result throws UV_ENOENT.
+            #[cfg(not(target_os = "android"))]
+            return Err(global.throw_value(
+                bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
+                    .to_js(global),
+            ));
+        }
+
+        Ok(if !pw.pw_dir.is_null() {
+            // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
+            BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
+        } else {
+            BunString::empty()
+        })
     }
 
     pub(crate) fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1591,7 +1598,10 @@ mod _impl {
 
         let result = JSValue::create_empty_object(global_this, 5);
 
+        #[cfg(windows)]
         let home = homedir(global_this)?;
+        #[cfg(not(windows))]
+        let home = homedir_from_passwd(global_this)?;
         let home = scopeguard::guard(home, |h| h.deref());
 
         result.put(global_this, b"homedir", home.to_js(global_this)?);

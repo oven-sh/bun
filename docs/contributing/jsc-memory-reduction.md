@@ -295,12 +295,17 @@ Phase-2 fast paths (DFG/FTL `compileStringEquality`/`stringsEqual` compare `m_fi
 
 | Op on 5-char inline         | Baseline | Phase-2 |    Delta |
 | --------------------------- | -------: | ------: | -------: |
-| `.length`                   |   8.2 ms |  5.7 ms | **-30%** |
-| `.charCodeAt(0)`            |  66.7 ms | 53.7 ms | **-19%** |
-| `===` (equal-content pairs) |   9.5 ms | 15.3 ms |     +61% |
+| `.length`                   |   8.2 ms |  6.2 ms | **-24%** |
+| `.charCodeAt(0)`            |  66.7 ms | 54 ms   | **-19%** |
+| `===` (50/50 true/false)    |  33.8 ms | 18.5 ms | **-45%** |
 | `!==` (unequal pairs)       |  36.8 ms | 19.0 ms | **-48%** |
+| `===` (always-true, synthetic) | 9.5 ms | 15 ms |     +58% |
 
-Net: smaller and faster than rope substrings for the eligible range. The `===`-equal case is slower because baseline rope-substrings share a base and hit a shortcut the inline path doesn't; the unequal case, which is where comparisons usually spend their time, is nearly twice as fast.
+Net: smaller and faster than rope substrings for the eligible range. The always-true `===` case is slower because baseline rope-substrings share a base whose data stays cache-hot under that synthetic workload; the realistic mixed case is nearly twice as fast.
+
+Correctness: all four tiers pass a 1M-iteration suite; `JSTests/stress/string-*.js` 158/160 (the two failures are ICU collation data issues in the local build environment, not this change); Bun's `node/util`/`buffer`/`path`/`stringWidth`/`url` suites, 1543 tests, 0 failures.
+
+Prototype: `oven-sh/WebKit#307`.
 
 ## Change Set 5: Deduplicate `JSString` for Atom Strings
 

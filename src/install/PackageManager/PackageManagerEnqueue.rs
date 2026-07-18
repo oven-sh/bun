@@ -511,10 +511,15 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
-        id if id == invalid_package_id => 'brk: {
-            this.drain_dependency_list();
+    // Flush/schedule any network tasks that the enqueue above wrote into
+    // `network_task_fifo` but did not schedule. When the on-disk `.npm`
+    // manifest cache resolves a package synchronously, the tarball download
+    // task is queued here and `resolutions[dep_id]` is already valid, so we
+    // must drain before deciding whether to wait.
+    this.drain_dependency_list();
 
+    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
+        id if id == invalid_package_id || this.pending_task_count() > 0 => 'brk: {
             struct Closure {
                 err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`

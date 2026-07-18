@@ -1779,7 +1779,12 @@ impl<'a> Parser<'a> {
                             && !p.has_top_level_return
                             && !p.has_with_scope
                     );
-                    // Use ESM if the file has ES module syntax (import)
+                    // Use ESM if the file has ES module syntax (import).
+                    // Node rejects `import` in a .cjs/"type":"commonjs" file
+                    // the same way it rejects `export`/TLA (handled above),
+                    // but import-only in explicit-CJS is deliberately still
+                    // allowed here: it is far more prevalent in the wild than
+                    // export/TLA, and rejecting it would be much more breaking.
                     exports_kind = if p.has_es_module_syntax {
                         js_ast::ExportsKind::Esm
                     } else {

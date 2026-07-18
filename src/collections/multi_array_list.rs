@@ -1345,7 +1345,8 @@ fn aligned_alloc<T, A: Allocator>(
         .map_err(|_| AllocError)
 }
 
-// Index-based context sorts — port of `mem.sortContext` / `mem.sortUnstableContext`.
+// Index-based context sorts — same `less`/`swap` callback API as Zig's
+// `mem.sortContext` / `mem.sortUnstableContext`, not the same algorithms.
 
 const SMALL_SORT_THRESHOLD: usize = 32;
 

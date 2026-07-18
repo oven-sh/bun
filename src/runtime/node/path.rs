@@ -183,7 +183,12 @@ fn lowercase_windows_path_t<T: PathCharCwd>(src: &[T]) -> Vec<T> {
     let bytes: &[u8] = bytemuck::cast_slice::<T, u8>(src);
     // Valid UTF-8: str::to_lowercase implements Final_Sigma like JS.
     if let Some(s) = strings::str_utf8(bytes) {
-        return s.to_lowercase().into_bytes().into_iter().map(T::from_u8).collect();
+        return s
+            .to_lowercase()
+            .into_bytes()
+            .into_iter()
+            .map(T::from_u8)
+            .collect();
     }
     // WTF-8 with an unpaired surrogate: fall back to per-codepoint fold.
     let mut out: Vec<T> = Vec::with_capacity(bytes.len());

@@ -1050,6 +1050,7 @@ function onconnection(err, clientHandle) {
       _socket[khandshakeTimer] = undefined;
       const err = $ERR_TLS_HANDSHAKE_TIMEOUT();
       _socket._hadError = true;
+      _socket[ktlsClientErrorEmitted] = true;
       self.emit("tlsClientError", err, _socket);
       if (!_socket.destroyed) _socket.destroy();
     }, handshakeTimeout);
@@ -1208,7 +1209,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       }
       return;
     }
-    if (err && !self.destroyed) {
+    if (err && !self.destroyed && socket === self._handle) {
       // Teardown noise or already-reported error (SocketEmitEndNT's fall-through):
       // nothing more is coming, close quietly so 'close' still fires.
       self.destroy();

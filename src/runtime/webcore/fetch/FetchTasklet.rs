@@ -199,8 +199,13 @@ pub(crate) mod undici_diagnostics {
             return;
         };
         request.ensure_still_alive();
-        if this.result.fail.is_some() || this.abort_reason.has() {
-            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, JSValue::UNDEFINED);
+        let aborted = this
+            .signal_store
+            .aborted
+            .load(core::sync::atomic::Ordering::Relaxed);
+        if this.result.fail.is_some() || this.abort_reason.has() || aborted {
+            let err = this.abort_reason.get().unwrap_or(JSValue::UNDEFINED);
+            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, err);
         } else {
             jsc::cpp::Bun__undiciDiagnosticsOnComplete(global, request);
         }
@@ -1129,7 +1134,11 @@ impl FetchTasklet {
                 let mut result = self.on_reject();
 
                 promise_value.ensure_still_alive();
-                let r = promise.reject_with_async_stack(&global_this, result.to_js(&global_this));
+                let err_js = result.to_js(&global_this);
+                if self.diagnostics_request.has() {
+                    undici_diagnostics::on_error(self, &global_this, err_js);
+                }
+                let r = promise.reject_with_async_stack(&global_this, err_js);
                 result.reset();
 
                 tracker.did_dispatch(&global_this);
@@ -1190,7 +1199,11 @@ impl FetchTasklet {
             // get_abort_error consumes abort_reason and clears the signal handler.
             let mut err = self.get_abort_error().unwrap();
             promise_value.ensure_still_alive();
-            let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
+            let err_js = err.to_js(&global_this);
+            if self.diagnostics_request.has() {
+                undici_diagnostics::on_error(self, &global_this, err_js);
+            }
+            let r = promise.reject_with_async_stack(&global_this, err_js);
             err.reset();
             tracker.did_dispatch(&global_this);
             self.promise = jsc::JSPromiseStrong::empty();

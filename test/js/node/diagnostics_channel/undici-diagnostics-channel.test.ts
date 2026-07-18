@@ -55,6 +55,7 @@ process.stdout.write(JSON.stringify({
   sendHeaders: { keys: Object.keys(sendHeaders).sort(), hasRequestLine: sendHeaders.headers.startsWith("GET /p?q=1 HTTP/1.1") },
   bodySent: !!fired["undici:request:bodySent"],
   errorFired: fired["undici:request:error"]?.length > 0 && errRequest?.completed === true,
+  errorIsError: fired["undici:request:error"]?.[0]?.error instanceof Error,
   trailersOnErrorPath: (fired["undici:request:trailers"] ?? []).length - trailersCountOk,
 }));
 `;
@@ -92,6 +93,7 @@ describe("fetch()", () => {
     expect(out.sendHeaders.hasRequestLine).toBe(true);
     expect(out.bodySent).toBe(true);
     expect(out.errorFired).toBe(true);
+    expect(out.errorIsError).toBe(true);
     expect(out.trailersOnErrorPath).toBe(0);
 
     expect(exitCode).toBe(0);

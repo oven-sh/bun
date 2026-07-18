@@ -235,7 +235,10 @@ pub fn is_absolute_loose(p: &[u8]) -> bool {
 // seam side already has one, and stripping exactly one leading sep when both
 // sides have one. Byte-level / ASCII-sep only — never normalizes.
 fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::new();
+    // Upper bound (bytes + one sep per part) also covers the NUL the SENTINEL
+    // caller appends, so push(0)/into_boxed_slice() don't reallocate.
+    let cap = parts.iter().map(|p| p.len()).sum::<usize>() + parts.len();
+    let mut out: Vec<u8> = Vec::with_capacity(cap);
     let mut prev_last: Option<u8> = None;
     for p in parts {
         if p.is_empty() {

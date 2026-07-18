@@ -698,10 +698,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // `close_disallowing_cwd(fd)` is covered explicitly on
                 // both exit paths below (Err arm and post-Ok); no `?` between here
                 // and those calls, so a scopeguard is unnecessary.
-                let pat_slice = self.walker.pattern_components[idx as usize]
-                    .pattern_slice(&self.walker.pattern)
-                    .to_vec();
-                let pathz = dupe_z(&pat_slice);
+                let pathz = dupe_z(
+                    self.walker.pattern_components[idx as usize]
+                        .pattern_slice(&self.walker.pattern),
+                );
                 // SAFETY: dupe_z NUL-terminates
                 let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
                 let stat_result: Stat = match A::statat(fd, pathz_ref) {
@@ -1987,15 +1987,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<Option<MatchedPath>, AllocError> {
         let subdir_parts: &[&[u8]] = &[&dir_name[0..dir_name.len()], entry_name];
         let name_matched_path = self.join(subdir_parts)?;
-        // PERF: two lookups here (contains_key + insert); profile if hot.
-        if self.matched_paths.contains_key(&name_matched_path) {
+        if self.matched_paths.insert(&name_matched_path, ()).is_some() {
             log!(
                 "(dupe) prepared match: {}",
                 bstr::BStr::new(&name_matched_path)
             );
             return Ok(None);
         }
-        self.matched_paths.insert(&name_matched_path, ());
         // if SENTINEL { return name[0..name.len()-1 :0]; }
         log!("prepared match: {}", bstr::BStr::new(&name_matched_path));
         Ok(Some(name_matched_path))
@@ -2405,9 +2403,7 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
     if SENTINEL {
         let s = resolve_path::join_z_spill::<platform::Auto>(&mut spill, parts);
         // include trailing NUL in the owned box
-        let mut v = s.as_bytes().to_vec();
-        v.push(0);
-        v.into_boxed_slice()
+        Box::from(s.as_bytes_with_nul())
     } else {
         Box::from(resolve_path::join_spill::<platform::Auto>(
             &mut spill, parts,

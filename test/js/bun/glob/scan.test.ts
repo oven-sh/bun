@@ -877,6 +877,49 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
 });
 
+// Coverage for the per-path allocation hot spots: the subdir/match join (both
+// the absolute-normalizing and the non-normalizing branch), the literal-tail
+// statat() shortcut, and the matched-path dedupe map.
+describe("deep tree walk path joining", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+  const files: Record<string, string> = {};
+  const relExpected: string[] = [];
+  for (const top of ["a", "b", "c"]) {
+    for (const mid of ["d", "e", "f"]) {
+      for (const leaf of ["g", "h", "i"]) {
+        const dirRel = `${top}/${mid}/${leaf}`;
+        files[`${dirRel}/target.txt`] = "";
+        files[`${dirRel}/other.log`] = "";
+        relExpected.push(`${dirRel}/target.txt`);
+      }
+    }
+  }
+  relExpected.sort();
+
+  test.each([false, true])("wildcard walk (absolute: %p)", absolute => {
+    using dir = tempDir("glob-scan-join-walk", files);
+    const cwd = String(dir);
+    const out = norm(Array.from(new Bun.Glob("*/*/*/*.txt").scanSync({ cwd, absolute })));
+    const expected = absolute ? relExpected.map(p => norm([path.join(cwd, p)])[0]) : relExpected;
+    expect(out).toEqual(expected);
+  });
+
+  test.each([false, true])("literal-tail walk (absolute: %p)", absolute => {
+    using dir = tempDir("glob-scan-join-literal", files);
+    const cwd = String(dir);
+    const out = norm(Array.from(new Bun.Glob("*/*/*/target.txt").scanSync({ cwd, absolute })));
+    const expected = absolute ? relExpected.map(p => norm([path.join(cwd, p)])[0]) : relExpected;
+    expect(out).toEqual(expected);
+  });
+
+  test("overlapping brace alternatives dedupe to one result per file", () => {
+    using dir = tempDir("glob-scan-join-dedupe", files);
+    const cwd = String(dir);
+    const out = norm(Array.from(new Bun.Glob("{*,a,b,c}/*/*/*.txt").scanSync({ cwd })));
+    expect(out).toEqual(relExpected);
+  });
+});
+
 // scan() keeps the cwd string it is given verbatim, but child paths pushed for
 // symlink work items are joined and normalized. The entry-name offset stored on
 // those work items must be derived from the normalized joined path, not from the

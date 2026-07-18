@@ -960,7 +960,12 @@ function highlightRegExp(regexpString) {
         write("]");
         i++;
         inClass = false;
-      } else if (ch === "-" && regexpString[i - 1] !== "[" && i + 1 < regexpString.length && regexpString[i + 1] !== "]") {
+      } else if (
+        ch === "-" &&
+        regexpString[i - 1] !== "[" &&
+        i + 1 < regexpString.length &&
+        regexpString[i + 1] !== "]"
+      ) {
         writeDepth("-", 1, 1);
       } else {
         write(ch);

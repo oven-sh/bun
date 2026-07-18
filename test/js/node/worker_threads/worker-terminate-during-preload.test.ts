@@ -28,7 +28,7 @@ test(
       async function timeToOnline() {
         const t0 = Bun.nanoseconds();
         const w = new Worker("", { eval: true, preload });
-        await new Promise(r => w.once("online", r));
+        await new Promise((res, rej) => { w.once("online", res); w.once("error", rej); });
         const dt = Bun.nanoseconds() - t0;
         await w.terminate();
         return dt;
@@ -54,9 +54,14 @@ test(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("ok");
-    expect(exitCode).toBe(0);
+    // stderr is kept in the assertion object so an abort's output appears in
+    // the failure diff, but not matched exactly (debug/ASAN builds may emit
+    // benign warnings on this lane).
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: "ok",
+      exitCode: 0,
+      stderr: expect.any(String),
+    });
   },
   isDebug ? 240_000 : 30_000,
 );

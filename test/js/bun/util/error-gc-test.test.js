@@ -2,6 +2,17 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { tmpdirSync } from "harness";
 import { join } from "path";
+
+// These tests intentionally call Bun.gc(true) hundreds to thousands of times to
+// force finalizers between stack-trace materializations. When the full suite
+// runs in a single process the heap is large, so each synchronous GC is ~60ms
+// instead of <1ms — the loops below are milliseconds of real work plus many
+// seconds of GC. Give each test headroom proportional to its sync-GC count so
+// they don't trip the default 5s timeout under that load.
+const GC_HEAVY_TIMEOUT_SMALL = 60_000; // ~200 sync GCs + 100k Bun.inspect
+const GC_HEAVY_TIMEOUT_MEDIUM = 120_000; // ~1000 fresh-Error Bun.inspect + gc()
+const GC_HEAVY_TIMEOUT_LARGE = 300_000; // ~2000 sync GCs (try + finally)
+
 // This test checks that printing stack traces increments and decrements
 // reference-counted strings
 test("error gc test", () => {
@@ -27,7 +38,7 @@ test("error gc test", () => {
     fn();
     Bun.gc(true);
   }
-});
+}, GC_HEAVY_TIMEOUT_SMALL);
 
 test("error gc test #2", () => {
   for (let i = 0; i < 1000; i++) {
@@ -43,7 +54,7 @@ test("error gc test #3", () => {
     Bun.inspect(err);
     Bun.gc();
   }
-});
+}, GC_HEAVY_TIMEOUT_MEDIUM);
 
 // This test fails if:
 // - it crashes
@@ -93,4 +104,4 @@ test("error gc test #4", () => {
   for (let i = 0; i < 1000; i++) {
     iterate();
   }
-});
+}, GC_HEAVY_TIMEOUT_LARGE);

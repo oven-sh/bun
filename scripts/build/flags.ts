@@ -885,6 +885,21 @@ export const linkerFlags: Flag[] = [
     desc: "LTO at link time (matches compile-side -flto=full)",
   },
   {
+    // LLVM's MergeFunctions pass during LTO codegen. Off by default in the
+    // lto<O2> pipeline; -mllvm routes the cl::opt into lld's LTO backend
+    // (same mechanism as the darwin -whole-program-visibility entry above).
+    // Unlike raising --icf=safe to --icf=all (section-level folding), this is
+    // address-identity-safe by construction: an address-taken function is
+    // never collapsed onto another symbol, it becomes a tail-call thunk that
+    // keeps its own distinct address. That is exactly the property whose loss
+    // forced 218430c731 to revert ICF (identical JS constructor host
+    // functions folded to one address broke `expect.any(Ctor)`). Full-LTO
+    // links only: under ThinLTO the pass runs per module and merges little.
+    flag: ["-Wl,-mllvm,-enable-merge-functions"],
+    when: c => c.unix && !c.darwin && c.lto && c.release,
+    desc: "Merge structurally identical functions during LTO codegen (address-identity-safe, unlike ICF)",
+  },
+  {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.
     // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
     // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
@@ -1498,6 +1513,16 @@ export const stripFlags: Flag[] = [
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
     when: c => c.linux && c.abi === "gnu" && c.release,
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
+  },
+  {
+    // .comment is every TU's compiler-version string plus the linker's own
+    // build path, which today leaks `/checkout/src/llvm-project/llvm <sha>`
+    // into the shipped binary. .note.stapsdt is libstdc++'s SystemTap probe
+    // descriptors; bun registers no stap probes and nothing reads it. Both
+    // are non-allocated metadata, so removing them cannot affect runtime.
+    flag: ["-R", ".comment", "-R", ".note.stapsdt"],
+    when: c => c.linux && c.release,
+    desc: "Remove compiler-version strings and libstdc++'s unused SystemTap probe notes",
   },
 ];
 

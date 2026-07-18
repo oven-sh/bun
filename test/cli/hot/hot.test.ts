@@ -776,3 +776,134 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+it(
+  "stops the previous Bun.serve() listener when a reload binds a different port",
+  async () => {
+    const root = join(cwd, "hot-serve-port.ts");
+    const src = (gen: number, port: number) =>
+      `const GEN = ${gen};\n` +
+      `const srv = Bun.serve({ port: ${port}, hostname: "127.0.0.1", ` +
+      `fetch() { return new Response("G" + GEN); } });\n` +
+      `console.log("EVAL " + GEN + " PORT " + srv.port);\n`;
+
+    const freePorts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const probe = Bun.serve({ port: 0, fetch: () => new Response("") });
+      freePorts.push(probe.port);
+      probe.stop(true);
+    }
+
+    writeFileSync(root, src(1, 0));
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let out = "";
+    let stderr = "";
+    const stderrDrain = (async () => {
+      for await (const c of runner.stderr) stderr += new TextDecoder().decode(c);
+    })();
+    const reader = (async function* () {
+      for await (const c of runner.stdout) {
+        out += new TextDecoder().decode(c);
+        yield;
+      }
+    })();
+
+    async function waitForEval(gen: number): Promise<number> {
+      while (true) {
+        const m = out.match(new RegExp(`EVAL ${gen} PORT (\\d+)`));
+        if (m) return +m[1];
+        const { done } = await reader.next();
+        if (done) throw new Error(`child exited before EVAL ${gen}\nstdout: ${out}\nstderr: ${stderr}`);
+      }
+    }
+
+    const port0 = await waitForEval(1);
+    const ports = [port0, ...freePorts];
+
+    for (let g = 2; g <= 4; g++) {
+      writeFileSync(root, src(g, ports[g - 1]));
+      await waitForEval(g);
+    }
+
+    const results: string[] = [];
+    for (const port of ports) {
+      try {
+        const r = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) });
+        results.push(await r.text());
+      } catch {
+        results.push("DOWN");
+      }
+    }
+    runner.kill();
+    await stderrDrain;
+
+    // Old generations must be torn down; only the latest stays listening.
+    expect(results).toEqual(["DOWN", "DOWN", "DOWN", "G4"]);
+  },
+  timeout,
+);
+
+it(
+  "reuses the same Bun.serve() listener across reloads when the port is unchanged",
+  async () => {
+    const root = join(cwd, "hot-serve-sameport.ts");
+    const src = (gen: number) =>
+      `const GEN = ${gen};\n` +
+      `const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", ` +
+      `fetch() { return new Response("G" + GEN); } });\n` +
+      `console.log("EVAL " + GEN + " PORT " + srv.port);\n`;
+
+    writeFileSync(root, src(1));
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let out = "";
+    let stderr = "";
+    const stderrDrain = (async () => {
+      for await (const c of runner.stderr) stderr += new TextDecoder().decode(c);
+    })();
+    const reader = (async function* () {
+      for await (const c of runner.stdout) {
+        out += new TextDecoder().decode(c);
+        yield;
+      }
+    })();
+
+    async function waitForEval(gen: number): Promise<number> {
+      while (true) {
+        const m = out.match(new RegExp(`EVAL ${gen} PORT (\\d+)`));
+        if (m) return +m[1];
+        const { done } = await reader.next();
+        if (done) throw new Error(`child exited before EVAL ${gen}\nstdout: ${out}\nstderr: ${stderr}`);
+      }
+    }
+
+    const port1 = await waitForEval(1);
+    writeFileSync(root, src(2));
+    const port2 = await waitForEval(2);
+    writeFileSync(root, src(3));
+    const port3 = await waitForEval(3);
+
+    const r = await fetch(`http://127.0.0.1:${port1}/`, { signal: AbortSignal.timeout(2000) });
+    const body = await r.text();
+    runner.kill();
+    await stderrDrain;
+
+    expect({ port2, port3, body }).toEqual({ port2: port1, port3: port1, body: "G3" });
+  },
+  timeout,
+);

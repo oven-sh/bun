@@ -313,6 +313,7 @@ pub struct VirtualMachine {
     pub worker: Option<*const c_void>,
     pub ipc: Option<IPCInstanceUnion>,
     pub hot_reload_counter: u32,
+    pub hot_map_swept_at: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
@@ -1840,6 +1841,11 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// Stop every `Bun.serve()` listener in the `--hot` map whose generation
+    /// predates `vm.hot_reload_counter`. `NewServer` lives in `bun_runtime`;
+    /// low-tier `report_exception_in_hot_reloaded_module_if_needed` dispatches
+    /// here once the reloaded module's promise has fulfilled.
+    pub stop_stale_hot_servers: fn(vm: &mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -3469,7 +3475,16 @@ impl VirtualMachine {
                     crate::JSPromise::opaque_mut(promise).set_handled();
                 }
             }
-            crate::js_promise::Status::Fulfilled => {}
+            crate::js_promise::Status::Fulfilled => {
+                if self.hot_reload == HOT_RELOAD_HOT
+                    && self.hot_map_swept_at != self.hot_reload_counter
+                {
+                    self.hot_map_swept_at = self.hot_reload_counter;
+                    if let Some(hooks) = runtime_hooks() {
+                        (hooks.stop_stale_hot_servers)(self);
+                    }
+                }
+            }
         }
 
         if self.hot_reload_deferred {

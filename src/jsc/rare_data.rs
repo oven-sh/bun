@@ -63,12 +63,17 @@ pub struct HotMap {
 pub struct HotMapEntry {
     pub tag: u8,
     pub ptr: *mut (),
+    /// `VirtualMachine::hot_reload_counter` at the time this entry was last
+    /// inserted or matched. Entries whose generation is behind the current
+    /// counter after a reload settles are orphaned listeners and get stopped.
+    pub generation: u32,
 }
 impl Default for HotMapEntry {
     fn default() -> Self {
         Self {
             tag: 0,
             ptr: core::ptr::null_mut(),
+            generation: 0,
         }
     }
 }
@@ -93,6 +98,30 @@ impl HotMap {
         }
         // `get_or_put` already boxed the key; the map owns its keys.
         *gop.value_ptr = entry;
+    }
+
+    /// Stamp an existing entry with the current reload generation. No-op on
+    /// miss (the caller already holds the entry it just matched).
+    pub fn touch(&mut self, key: &[u8], generation: u32) {
+        if let Some(v) = self._map.get_ptr_mut(key) {
+            v.generation = generation;
+        }
+    }
+
+    /// Remove and return every entry whose `generation` predates
+    /// `current_generation`. Used by the post-reload sweep to stop listeners
+    /// the new module generation did not re-register.
+    pub fn drain_stale(&mut self, current_generation: u32) -> Vec<HotMapEntry> {
+        let mut stale: Vec<HotMapEntry> = Vec::new();
+        self._map.retain(|_, v| {
+            if v.generation < current_generation {
+                stale.push(*v);
+                false
+            } else {
+                true
+            }
+        });
+        stale
     }
 
     pub fn remove(&mut self, key: &[u8]) {

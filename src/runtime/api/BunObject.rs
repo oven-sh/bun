@@ -1619,6 +1619,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
     use crate::server::{AnyServer, AnyServerTag};
     use bun_jsc::rare_data::HotMapEntry;
 
+    let hot_reload_counter = vm.hot_reload_counter;
     if config.allow_hot {
         if let Some(hot) = vm.hot_map() {
             if config.id.is_empty() {
@@ -1626,6 +1627,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             }
 
             if let Some(entry) = hot.get_entry(&config.id) {
+                hot.touch(&config.id, hot_reload_counter);
                 macro_rules! reload {
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
@@ -1728,6 +1730,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                         HotMapEntry {
                             tag: $tag as u8,
                             ptr: server.cast::<()>(),
+                            generation: hot_reload_counter,
                         },
                     );
                 }

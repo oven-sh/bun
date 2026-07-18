@@ -1487,6 +1487,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    stop_stale_hot_servers,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1567,6 +1568,35 @@ unsafe fn parse_worker_exec_argv_allow_addons(
 fn cron_clear_all_teardown(vm: &mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
+}
+
+/// After a `--hot` reload's module promise fulfills, stop every `Bun.serve()`
+/// listener that was not re-registered by the new module generation. The new
+/// code has already run its `Bun.serve()` calls (matching entries were
+/// `touch`ed, new ones inserted at the current counter); anything still at an
+/// older generation is an orphan the user no longer has a handle to.
+fn stop_stale_hot_servers(vm: &mut VirtualMachine) {
+    use crate::server::{AnyServer, AnyServerTag};
+    let counter = vm.hot_reload_counter;
+    let Some(hot) = vm.hot_map() else { return };
+    let stale = hot.drain_stale(counter);
+    for entry in stale {
+        let tag = match entry.tag {
+            t if t == AnyServerTag::HTTPServer as u8 => AnyServerTag::HTTPServer,
+            t if t == AnyServerTag::HTTPSServer as u8 => AnyServerTag::HTTPSServer,
+            t if t == AnyServerTag::DebugHTTPServer as u8 => AnyServerTag::DebugHTTPServer,
+            t if t == AnyServerTag::DebugHTTPSServer as u8 => AnyServerTag::DebugHTTPSServer,
+            _ => continue,
+        };
+        let mut any = AnyServer {
+            tag,
+            ptr: entry.ptr,
+        };
+        // Graceful stop: closes the listener and unrefs, leaving in-flight
+        // requests to drain. `NewServer::stop`'s own `hot.remove(id)` is a
+        // no-op since `drain_stale` already dropped the key.
+        any.stop(false);
+    }
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —

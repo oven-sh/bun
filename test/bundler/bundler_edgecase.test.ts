@@ -2744,6 +2744,24 @@ describe("bundler", () => {
       expect(out).not.toContain("na_ve");
     },
   });
+  // The tree-shaking liveness pass used to recurse once per import-graph edge,
+  // overflowing the stack on long linear chains under debug+ASAN. 3000 modules
+  // reliably crashed the old recursive walk.
+  const deepChainDepth = 3000;
+  itBundled("edgecase/DeepImportChainTreeShaking", {
+    files: {
+      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+      [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+      ...Object.fromEntries(
+        Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+          `/m${i}.js`,
+          `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+        ]),
+      ),
+    },
+    backend: "cli",
+    run: { stdout: String(deepChainDepth) },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

@@ -393,11 +393,7 @@ test("structuredClone of a file-backed plain Blob stays a Blob", async () => {
   // These inputs share a Data::File store but have is_jsdom_file=false;
   // the structured-clone round-trip must not promote them to File.prototype.
   const bunFile = Bun.file(import.meta.path);
-  const inputs = [
-    bunFile.slice(0, 5),
-    new Blob([bunFile]),
-    await new Response(bunFile).blob(),
-  ];
+  const inputs = [bunFile.slice(0, 5), new Blob([bunFile]), await new Response(bunFile).blob()];
   for (const input of inputs) {
     expect(Object.getPrototypeOf(input)).toBe(Blob.prototype);
     const clone = structuredClone(input);

@@ -27,6 +27,7 @@
 
 use bun_loop::ConcurrentTask::{Task, task_tag};
 use crate::JSGlobalObject;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 #[cfg(not(windows))]
 use crate::vm::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
@@ -77,6 +78,7 @@ mod posix {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     use bun_loop::posix_event_loop::{Flags, Owner, poll_tag};
     use crate::JSGlobalObject;
+    use crate::jsc_ext::JSGlobalObjectExt as _;
     use crate::vm::virtual_machine::VirtualMachine;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     use bun_sys::Fd;
@@ -257,6 +259,7 @@ mod windows {
 
     use bun_loop::ConcurrentTask::ConcurrentTask;
     use crate::JSGlobalObject;
+    use crate::jsc_ext::JSGlobalObjectExt as _;
     use crate::vm::virtual_machine::VirtualMachine;
 
     type HANDLE = *mut c_void;

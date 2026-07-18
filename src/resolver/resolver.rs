@@ -4847,18 +4847,16 @@ impl<'a> Resolver<'a> {
                         original_path
                     };
 
-                // Load the original path relative to the "baseUrl" from tsconfig.json
-                let mut absolute_original_path: &[u8] = substituted;
-                if !bun_paths::is_absolute(substituted) {
-                    let parts: [&[u8]; 2] = [abs_base_url, substituted];
-                    let Some(joined) = self
-                        .fs_ref()
-                        .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
-                    else {
-                        continue;
-                    };
-                    absolute_original_path = joined;
-                }
+                // Resolve against "baseUrl" and normalize. The captured text
+                // may carry `..`, so normalize unconditionally; an absolute
+                // `substituted` replaces the base inside abs_buf_checked.
+                let parts: [&[u8]; 2] = [abs_base_url, substituted];
+                let Some(absolute_original_path) = self
+                    .fs_ref()
+                    .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
+                else {
+                    continue;
+                };
 
                 if self
                     .load_as_file_or_directory(absolute_original_path, kind, out)

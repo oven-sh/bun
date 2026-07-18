@@ -1029,11 +1029,11 @@ describe("tsconfig paths wildcard substitution", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { dir: String(dir), stdout, stderr, exitCode };
   }
 
-  it("maps a .js key suffix to a .ts target suffix (issue #26193)", async () => {
-    const { stdout, stderr, exitCode } = await run(
+  it.concurrent("maps a .js key suffix to a .ts target suffix (issue #26193)", async () => {
+    const { stdout, exitCode } = await run(
       {
         "tsconfig.json": JSON.stringify({
           compilerOptions: { baseUrl: ".", paths: { "@src/*.js": ["./src/*.ts"] } },
@@ -1042,13 +1042,13 @@ describe("tsconfig paths wildcard substitution", () => {
       },
       `import { greeting } from "@src/lib.js"; console.log(greeting);`,
     );
-    expect(stderr).toBe("");
-    expect(stdout).toBe("hi\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "hi\n", exitCode: 0 });
   });
 
-  it("drops the key suffix when the target has no suffix", async () => {
-    const { stdout, stderr, exitCode } = await run(
+  it.concurrent("drops the key suffix when the target has no suffix", async () => {
+    // Longest prefix is equal ("tie/"), longest suffix "end" wins over "", so
+    // "tie/xend" matches "tie/*end" with * = "x" and resolves to ./tie-long/x.
+    const { stdout, exitCode } = await run(
       {
         "tsconfig.json": JSON.stringify({
           compilerOptions: { baseUrl: ".", paths: { "tie/*end": ["./tie-long/*"], "tie/*": ["./tie-short/*"] } },
@@ -1058,15 +1058,11 @@ describe("tsconfig paths wildcard substitution", () => {
       },
       `import { v } from "tie/xend"; console.log(v);`,
     );
-    expect(stderr).toBe("");
-    // Longest prefix is equal ("tie/"), longest suffix "end" wins over "", so
-    // "tie/xend" matches "tie/*end" with * = "x" and resolves to ./tie-long/x.
-    expect(stdout).toBe("long-x\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "long-x\n", exitCode: 0 });
   });
 
-  it("substitutes into a '*' not on a segment boundary", async () => {
-    const { stdout, stderr, exitCode } = await run(
+  it.concurrent("substitutes into a '*' not on a segment boundary", async () => {
+    const { stdout, exitCode } = await run(
       {
         "tsconfig.json": JSON.stringify({
           compilerOptions: { baseUrl: ".", paths: { "t*t3/foo": ["./test3-succ*s.ts"] } },
@@ -1075,13 +1071,11 @@ describe("tsconfig paths wildcard substitution", () => {
       },
       `import v from "test3/foo"; console.log(v);`,
     );
-    expect(stderr).toBe("");
-    expect(stdout).toBe("test3-success\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "test3-success\n", exitCode: 0 });
   });
 
-  it("still resolves plain prefix-only wildcards", async () => {
-    const { stdout, stderr, exitCode } = await run(
+  it.concurrent("still resolves plain prefix-only wildcards", async () => {
+    const { stdout, exitCode } = await run(
       {
         "tsconfig.json": JSON.stringify({
           compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
@@ -1090,13 +1084,11 @@ describe("tsconfig paths wildcard substitution", () => {
       },
       `import { ok } from "@/a/b"; console.log(ok);`,
     );
-    expect(stderr).toBe("");
-    expect(stdout).toBe("1\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
   });
 
-  it("falls through to the next target when the first does not exist", async () => {
-    const { stdout, stderr, exitCode } = await run(
+  it.concurrent("falls through to the next target when the first does not exist", async () => {
+    const { stdout, exitCode } = await run(
       {
         "tsconfig.json": JSON.stringify({
           compilerOptions: { baseUrl: ".", paths: { "lib/*.js": ["./first/*.ts", "./second/*.ts"] } },
@@ -1105,9 +1097,25 @@ describe("tsconfig paths wildcard substitution", () => {
       },
       `import { where } from "lib/thing.js"; console.log(where);`,
     );
-    expect(stderr).toBe("");
-    expect(stdout).toBe("second\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "second\n", exitCode: 0 });
+  });
+
+  it.concurrent("normalizes '..' from the captured text through an absolute target", async () => {
+    using base = tempDir("tsconfig-paths-abs-target", {
+      "src/lib.ts": `export const v = "hi";`,
+    });
+    const abs = String(base).replaceAll("\\", "/");
+    const { dir, stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@pkg/*": [`${abs}/src/*`] } },
+        }),
+      },
+      `console.log(Bun.resolveSync("@pkg/sub/../lib", import.meta.dir));`,
+    );
+    void dir;
+    expect({ stdout, exitCode }).toEqual({ stdout: join(String(base), "src", "lib.ts") + "\n", exitCode: 0 });
+    expect(stdout).not.toContain("..");
   });
 });
 

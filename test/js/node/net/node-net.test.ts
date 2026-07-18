@@ -739,6 +739,7 @@ it("should not hang after FIN", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
   const server = net.createServer(c => {
+    c.on("error", () => {});
     c.write("Hello client");
     c.end();
   });

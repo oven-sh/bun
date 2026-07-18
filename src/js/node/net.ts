@@ -149,6 +149,7 @@ const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
+const ktlsClientErrorEmitted = Symbol("ktlsClientErrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
 // Set when pause() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
@@ -816,6 +817,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         err = tlsHandshakeError(verifyError);
       }
       self.emit("_tlsError", err);
+      self[ktlsClientErrorEmitted] = true;
       server?.emit("tlsClientError", err, self);
       self._hadError = true;
       // error before handshake on the server side will only be emitted using tlsClientError
@@ -927,6 +929,18 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   binaryType: "buffer",
 } as const;
 
+// Node's onSocketTLSError (lib/_tls_wrap.js): attached to every server-
+// accepted TLSSocket. Before 'secureConnection' the socket is still owned by
+// the TLS machinery, so an error is reported through 'tlsClientError' instead
+// of as an unhandled 'error'. After 'secureConnection' the listener is inert,
+// but its presence keeps the default EventEmitter throw from firing.
+function onServerSocketTLSError(err) {
+  if (!this._secureEstablished && !this[ktlsClientErrorEmitted]) {
+    this[ktlsClientErrorEmitted] = true;
+    this._server?.emit("tlsClientError", err, this);
+  }
+}
+
 // Node.js-compatible onconnection: assigned to server._handle.onconnection in
 // kRealListen and invoked from ServerHandlers.open with `this` bound to the
 // listener handle. Kept as a standalone function so tests/cluster can wrap it.
@@ -1006,6 +1020,15 @@ function onconnection(err, clientHandle) {
   self._connections++;
   _socket.server = self;
   _socket._server = self;
+
+  // Node's tlsConnectionListener attaches onSocketTLSError to every accepted
+  // TLSSocket: pre-handshake it routes to 'tlsClientError'; post-handshake it
+  // is inert but its presence keeps an unhandled 'error' from throwing, since
+  // user code only sees the socket at 'secureConnection'. A plain TCP server's
+  // accepted socket gets no such listener (Node throws on unhandled 'error').
+  if (isTLS) {
+    _socket.on("error", onServerSocketTLSError);
+  }
 
   if (pauseOnConnect) {
     _socket.pause();
@@ -1183,6 +1206,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
+      return;
+    }
+    if (err && !self.destroyed) {
+      // Teardown noise or already-reported error (SocketEmitEndNT's fall-through):
+      // nothing more is coming, close quietly so 'close' still fires.
+      self.destroy();
       return;
     }
     self[kended] = true;

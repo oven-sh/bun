@@ -4,10 +4,12 @@ import {
   compileFunction,
   constants,
   createContext,
+  measureMemory,
   runInContext,
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1238,12 +1240,10 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
 });
 
 describe("node:vm validation error messages match Node.js", () => {
-  const vm = require("node:vm");
-
   test("measureMemory options.mode uses 'property' for dotted names", async () => {
     let err: any;
     try {
-      await vm.measureMemory({ mode: "bogus" });
+      await measureMemory({ mode: "bogus" });
     } catch (e) {
       err = e;
     }
@@ -1254,7 +1254,7 @@ describe("node:vm validation error messages match Node.js", () => {
   test("measureMemory options.execution uses 'property' for dotted names", async () => {
     let err: any;
     try {
-      await vm.measureMemory({ execution: "bogus" });
+      await measureMemory({ execution: "bogus" });
     } catch (e) {
       err = e;
     }
@@ -1265,7 +1265,7 @@ describe("node:vm validation error messages match Node.js", () => {
   test("createContext options.microtaskMode uses 'property' for dotted names", () => {
     let err: any;
     try {
-      vm.createContext({}, { microtaskMode: "bogus" });
+      createContext({}, { microtaskMode: "bogus" });
     } catch (e) {
       err = e;
     }
@@ -1278,7 +1278,7 @@ describe("node:vm validation error messages match Node.js", () => {
   test("SourceTextModule options.context renders 'an vm.Context'", () => {
     let err: any;
     try {
-      new vm.SourceTextModule("1", { context: {} });
+      new SourceTextModule("1", { context: {} });
     } catch (e) {
       err = e;
     }

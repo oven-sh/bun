@@ -41,6 +41,19 @@ it("uncaught exception during top-level await is immediately fatal", async () =>
   expect(exitCode).toBe(1);
 });
 
+it("unhandled rejection during top-level await is immediately fatal (#22546)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/exit-code-unhandled-rejection-during-tla-fixture.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("rejected-during-tla");
+  expect(exitCode).toBe(1);
+});
+
 it("uncaught exception during top-level await is survivable with a listener", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), import.meta.dir + "/exit-code-uncaught-during-tla-handled-fixture.mjs"],

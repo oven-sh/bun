@@ -11,6 +11,9 @@ describe.concurrent("jsx", () => {
         env.NODE_ENV = node_env;
         env.CHILD_NODE_ENV = child_node_env;
         env.TSCONFIG_JSX = "react-jsxdev";
+        // Each child calls Bun.build; cap the bundler's worker pool so 20
+        // concurrent children stay under the cgroup pids.max on CI boxes.
+        env.UV_THREADPOOL_SIZE = "2";
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", path.join(import.meta.dirname, "jsx-dev", "jsx-dev.tsx")],
           cwd: import.meta.dirname,
@@ -29,6 +32,7 @@ describe.concurrent("jsx", () => {
         env.NODE_ENV = node_env;
         env.CHILD_NODE_ENV = child_node_env;
         env.TSCONFIG_JSX = "react-jsx";
+        env.UV_THREADPOOL_SIZE = "2";
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", path.join(import.meta.dirname, "jsx-production-entry.ts")],
           cwd: import.meta.dirname,

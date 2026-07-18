@@ -1,0 +1,299 @@
+import { spawn } from "bun";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { join } from "path";
+
+// Inspector tests spawn subprocesses and wait for inspector activation — 5s default is too short.
+setDefaultTimeout(60_000);
+
+// Timeout for waiting on stream reader loops (30s matches runtime-inspector.test.ts)
+const STREAM_TIMEOUT_MS = 30_000;
+
+// Helper: read from a stream until condition is met. Each read is raced
+// against a timeout so a silent-but-alive child still fails with the
+// accumulated output in the message.
+async function readStreamUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  condition: (output: string) => boolean,
+  timeoutMs = STREAM_TIMEOUT_MS,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let output = "";
+  let timer!: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`)),
+      timeoutMs,
+    );
+    timer.unref();
+  });
+  timeout.catch(() => {});
+
+  try {
+    while (!condition(output)) {
+      const { value, done } = await Promise.race([reader.read(), timeout]);
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+    return output;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Helper: wait for the full inspector banner (header + footer = 2 occurrences of "Bun Inspector")
+function hasBanner(stderr: string): boolean {
+  return (stderr.match(/Bun Inspector/g) || []).length >= 2;
+}
+
+// Windows-specific tests (file mapping mechanism) - Windows only
+describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
+  test.skipIf(isASAN)("inspector activates via file mapping mechanism", async () => {
+    // This is the primary Windows test - verify the file mapping mechanism works
+    using dir = tempDir("windows-file-mapping-test", {
+      "target.js": `
+        const fs = require("fs");
+        const path = require("path");
+
+        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+        console.log("READY");
+
+        // Keep process alive
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    await using targetProc = spawn({
+      cmd: [bunExe(), "--inspect-port=0", "target.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const reader = targetProc.stdout.getReader();
+    await readStreamUntil(reader, s => s.includes("READY"));
+    reader.releaseLock();
+
+    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+    expect(pid).toBeGreaterThan(0);
+
+    // Use _debugProcess which uses file mapping on Windows
+    await using debugProc = spawn({
+      cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [debugStderr, debugExitCode] = await Promise.all([debugProc.stderr.text(), debugProc.exited]);
+
+    expect(debugStderr).not.toContain("error:");
+    expect(debugExitCode).toBe(0);
+
+    // Wait for the debugger to start by reading stderr until the full banner appears
+    const stderrReader = targetProc.stderr.getReader();
+    const targetStderr = await readStreamUntil(stderrReader, hasBanner);
+    stderrReader.releaseLock();
+
+    targetProc.kill();
+    await targetProc.exited;
+
+    // Verify inspector actually started
+    expect(targetStderr).toContain("Bun Inspector");
+    expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
+  });
+
+  test.skipIf(isASAN)("_debugProcess works with current process's own pid", async () => {
+    // The target calls _debugProcess(process.pid) on itself: it opens its own
+    // file mapping, reads its own handler pointer, and CreateRemoteThread's
+    // into itself while the JS thread is returning from the syscall.
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "--inspect-port=0",
+        "-e",
+        `setImmediate(() => process._debugProcess(process.pid)); setInterval(() => {}, 1000);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderrReader = proc.stderr.getReader();
+    const stderr = await readStreamUntil(stderrReader, hasBanner);
+    stderrReader.releaseLock();
+
+    proc.kill();
+    await proc.exited;
+
+    expect(stderr).toContain("Bun Inspector");
+  });
+
+  test.skipIf(isASAN)("inspector does not activate twice via file mapping", async () => {
+    using dir = tempDir("windows-twice-test", {
+      "target.js": `
+        const fs = require("fs");
+        const path = require("path");
+
+        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+        console.log("READY");
+
+        // Keep process alive until parent kills it
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    await using targetProc = spawn({
+      cmd: [bunExe(), "--inspect-port=0", "target.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const reader = targetProc.stdout.getReader();
+    await readStreamUntil(reader, s => s.includes("READY"));
+    reader.releaseLock();
+
+    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+    expect(pid).toBeGreaterThan(0);
+
+    // Set up stderr reader to wait for debugger to start
+    const stderrReader = targetProc.stderr.getReader();
+
+    // Call _debugProcess twice
+    await using debug1 = spawn({
+      cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await debug1.exited;
+
+    // Wait for the full banner
+    let stderr = await readStreamUntil(stderrReader, hasBanner);
+
+    await using debug2 = spawn({
+      cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await debug2.exited;
+
+    // Kill and collect remaining stderr via the existing reader until EOF.
+    targetProc.kill();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    stderr += decoder.decode();
+    stderrReader.releaseLock();
+    await targetProc.exited;
+
+    // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
+    const matches = stderr.match(/Bun Inspector/g);
+    expect(matches?.length ?? 0).toBe(2);
+  });
+
+  test.skipIf(isASAN)("multiple Windows processes can have inspectors sequentially", async () => {
+    // Test sequential activation: activate first, shut down, then activate second.
+    // Each process uses a random port, so concurrent would also work, but
+    // sequential tests the full lifecycle.
+    using dir = tempDir("windows-multi-test", {
+      "target.js": `
+        const fs = require("fs");
+        const path = require("path");
+        const id = process.argv[2];
+
+        fs.writeFileSync(path.join(process.cwd(), "pid-" + id), String(process.pid));
+        console.log("READY-" + id);
+
+        // Keep process alive until parent kills it
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    // First process: activate inspector, verify, then shut down
+    {
+      await using target1 = spawn({
+        cmd: [bunExe(), "--inspect-port=0", "target.js", "1"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const reader1 = target1.stdout.getReader();
+      await readStreamUntil(reader1, s => s.includes("READY-1"));
+      reader1.releaseLock();
+
+      const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
+      expect(pid1).toBeGreaterThan(0);
+
+      await using debug1 = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid1})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [debug1Stderr, debug1ExitCode] = await Promise.all([debug1.stderr.text(), debug1.exited]);
+      expect(debug1Stderr).not.toContain("error:");
+      expect(debug1ExitCode).toBe(0);
+
+      // Wait for the full banner
+      const stderrReader1 = target1.stderr.getReader();
+      const stderr1 = await readStreamUntil(stderrReader1, hasBanner);
+      stderrReader1.releaseLock();
+
+      expect(stderr1).toContain("Bun Inspector");
+
+      target1.kill();
+      await target1.exited;
+    }
+
+    // Second process
+    {
+      await using target2 = spawn({
+        cmd: [bunExe(), "--inspect-port=0", "target.js", "2"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const reader2 = target2.stdout.getReader();
+      await readStreamUntil(reader2, s => s.includes("READY-2"));
+      reader2.releaseLock();
+
+      const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
+      expect(pid2).toBeGreaterThan(0);
+
+      await using debug2 = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid2})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [debug2Stderr, debug2ExitCode] = await Promise.all([debug2.stderr.text(), debug2.exited]);
+      expect(debug2Stderr).not.toContain("error:");
+      expect(debug2ExitCode).toBe(0);
+
+      // Wait for the full banner
+      const stderrReader2 = target2.stderr.getReader();
+      const stderr2 = await readStreamUntil(stderrReader2, hasBanner);
+      stderrReader2.releaseLock();
+
+      expect(stderr2).toContain("Bun Inspector");
+
+      target2.kill();
+      await target2.exited;
+    }
+  });
+});

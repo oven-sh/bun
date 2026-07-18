@@ -549,6 +549,11 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    /// `--disable-sigusr1`: leave SIGUSR1 at its default action instead of
+    /// arming the runtime-inspector handler.
+    pub disable_sigusr1: bool,
+    /// `--inspect-port`: port for the runtime-activated inspector.
+    pub inspect_port: Option<Box<[u8]>>,
 }
 
 #[derive(Default)]
@@ -611,6 +616,8 @@ impl Default for RuntimeOptions {
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            disable_sigusr1: false,
+            inspect_port: None,
         }
     }
 }

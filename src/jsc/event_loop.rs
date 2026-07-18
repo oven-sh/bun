@@ -482,6 +482,12 @@ impl EventLoop {
     pub fn tick_concurrent_with_count(&mut self) -> usize {
         self.update_counts();
 
+        // SAFETY: `vm()` returns the live owning VM; `is_main_thread` is a
+        // zero-valid bool set in `VirtualMachine::init`.
+        if unsafe { (*self.vm()).is_main_thread } {
+            crate::runtime_inspector::check_and_activate_inspector();
+        }
+
         #[cfg(unix)]
         {
             if let Some(signal_handler) = self.signal_handler {

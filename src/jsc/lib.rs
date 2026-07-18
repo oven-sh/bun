@@ -489,6 +489,8 @@ pub mod posix_signal_handle;
 pub mod resolve_path_jsc;
 #[path = "resolver_jsc.rs"]
 pub mod resolver_jsc;
+#[path = "RuntimeInspector.rs"]
+pub mod runtime_inspector;
 #[path = "virtual_machine_exports.rs"]
 pub mod virtual_machine_exports;
 

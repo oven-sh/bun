@@ -113,6 +113,11 @@ pub struct InitOptions {
     /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
+    /// `--disable-sigusr1`: leave SIGUSR1 at its default action instead of
+    /// arming the runtime-inspector handler.
+    pub disable_sigusr1: bool,
+    /// `--inspect-port`: port for the runtime-activated inspector.
+    pub inspect_port: Option<&'static [u8]>,
 }
 
 impl Default for InitOptions {
@@ -130,6 +135,8 @@ impl Default for InitOptions {
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
             mini_mode: false,
+            disable_sigusr1: false,
+            inspect_port: None,
         }
     }
 }
@@ -316,6 +323,9 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
+    /// Port for runtime inspector activation (`--inspect-port`); `None` falls
+    /// back to the runtime-inspector default.
+    pub inspect_port: Option<&'static [u8]>,
     pub has_terminated: bool,
 
     #[cfg(debug_assertions)]

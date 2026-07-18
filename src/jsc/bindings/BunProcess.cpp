@@ -1393,6 +1393,9 @@ extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObj
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
+#ifdef SIGUSR1
+extern "C" void Bun__Sigusr1Handler__uninstall();
+#endif
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 
@@ -1571,6 +1574,13 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         action.sa_flags = SA_RESTART;
 
                         sigaction(signalNumber, &action, nullptr);
+
+#ifdef SIGUSR1
+                        // A user SIGUSR1 listener replaces the runtime-
+                        // inspector activation handler.
+                        if (signalNumber == SIGUSR1)
+                            Bun__Sigusr1Handler__uninstall();
+#endif
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -4279,6 +4289,104 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+
+    if (callFrame->argumentCount() < 1) {
+        return Bun::ERR::MISSING_ARGS(scope, globalObject, "The \"pid\" argument must be specified"_s);
+    }
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (pid <= 0) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "pid"_s, callFrame->argument(0), "must be a positive integer"_s);
+    }
+
+#if !OS(WINDOWS)
+    int result = kill(pid, SIGUSR1);
+    if (result < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
+        return {};
+    }
+#else
+    // Node.js on Windows throws a plain Error whose message is the
+    // FormatMessageW string (see winapi_strerror in node.cc), with no .code
+    // or .syscall. Match that so test/js/node/test/parallel/test-debug-process.js
+    // passes.
+    auto throwWinapiError = [&](DWORD err) {
+        LPWSTR buf = nullptr;
+        DWORD n = FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+            NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&buf, 0, NULL);
+        WTF::String message;
+        if (buf && n > 0) {
+            while (n > 0 && (buf[n - 1] == L'\r' || buf[n - 1] == L'\n' || buf[n - 1] == L' '))
+                n--;
+            message = WTF::String({ buf, n });
+        } else {
+            message = makeString("Unknown error "_s, static_cast<unsigned>(err));
+        }
+        if (buf)
+            LocalFree(buf);
+        throwVMError(globalObject, scope, message);
+    };
+
+    wchar_t mappingName[64];
+    swprintf(mappingName, 64, L"bun-debug-handler-%d", pid);
+
+    HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
+    if (!hMapping) {
+        throwWinapiError(GetLastError());
+        return {};
+    }
+
+    void* pFunc = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, sizeof(void*));
+    if (!pFunc) {
+        DWORD err = GetLastError();
+        CloseHandle(hMapping);
+        throwWinapiError(err);
+        return {};
+    }
+
+    LPTHREAD_START_ROUTINE threadProc = *reinterpret_cast<LPTHREAD_START_ROUTINE*>(pFunc);
+    UnmapViewOfFile(pFunc);
+    CloseHandle(hMapping);
+
+    // The target writes the handler pointer after creating the named mapping;
+    // a reader that races the install window sees zeroed memory. Treat that
+    // the same as no mapping so the caller retries instead of CreateRemoteThread
+    // failing (or worse, succeeding with a bogus entry point).
+    if (!threadProc) {
+        throwWinapiError(ERROR_FILE_NOT_FOUND);
+        return {};
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) {
+        throwWinapiError(GetLastError());
+        return {};
+    }
+
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, threadProc, NULL, 0, NULL);
+    if (!hThread) {
+        DWORD err = GetLastError();
+        CloseHandle(hProcess);
+        throwWinapiError(err);
+        return {};
+    }
+
+    // Wait briefly so the remote thread finishes signalling the target
+    // before we close the handle.
+    WaitForSingleObject(hThread, 1000);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+#endif
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4431,7 +4539,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_functionDebugProcess                        Function 1
   _eval                            processGetEval                                      CustomAccessor
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0

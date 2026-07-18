@@ -1462,8 +1462,7 @@ impl VirtualMachine {
         // during this drain arms the JSC termination trap; re-entering JS then
         // asserts `!exception()` in `Interpreter::executeCallImpl`. Bail out
         // like `spin()`; `shutdown()` clears the trap before the 'exit' emit.
-        let terminated =
-            |vm: &Self| vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
+        let terminated = |vm: &Self| vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
 
         ExitHandler::dispatch_on_before_exit(self);
         let mut dispatch = false;

@@ -200,6 +200,153 @@ test("static sibling import waits for an indirectly-shared TLA dep in the same E
   expect(exitCode).toBe(0);
 });
 
+// A TLA module that is suspended at its await inside an import cycle must be
+// resumed even if a sibling module throws while the DFS is still on the stack.
+// Previously the resume path in JSModuleRecord::evaluate() saw the graph-level
+// evaluationError the cycle root had stamped on it and re-threw instead of
+// resuming, silently abandoning everything after the await.
+test("TLA module in a cycle resumes after its await when a sibling throws", async () => {
+  using dir = tempDir("tla-cycle-sibling-throw", {
+    "entry.mjs": `
+      globalThis.LOG = [];
+      globalThis.FLAG = "never-started";
+      try { await import("./a.mjs"); } catch (e) { LOG.push("caught:" + e.message); }
+      await 0; await 0; // let any trailing microtasks drain
+      console.log(JSON.stringify({ log: LOG, flag: FLAG }));
+    `,
+    "a.mjs": `
+      import "./b.mjs";
+      import "./c.mjs";
+      LOG.push("a:body");
+    `,
+    "b.mjs": `
+      import "./a.mjs"; // cycle: keeps b on the DFS stack
+      LOG.push("b:before-await");
+      globalThis.FLAG = "started";
+      await 0;
+      LOG.push("b:after-await");
+      globalThis.FLAG = "done";
+      LOG.push("b:end");
+    `,
+    "c.mjs": `
+      LOG.push("c:throws");
+      throw new Error("boom");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const out = JSON.parse(stdout.trim());
+  expect({ out, stderr }).toEqual({
+    out: {
+      log: ["b:before-await", "c:throws", "b:after-await", "b:end", "caught:boom"],
+      flag: "done",
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Same scenario, but the suspended body has a try/finally around the await.
+// The finally block must run.
+test("TLA module in a cycle runs finally after its await when a sibling throws", async () => {
+  using dir = tempDir("tla-cycle-sibling-throw-finally", {
+    "entry.mjs": `
+      globalThis.LOG = [];
+      try { await import("./a.mjs"); } catch (e) { LOG.push("caught:" + e.message); }
+      await 0; await 0;
+      console.log(JSON.stringify(LOG));
+    `,
+    "a.mjs": `
+      import "./b.mjs";
+      import "./c.mjs";
+    `,
+    "b.mjs": `
+      import "./a.mjs";
+      let ran = false;
+      try {
+        await 0;
+        ran = true;
+      } finally {
+        LOG.push("b:finally ran=" + ran);
+      }
+      LOG.push("b:after-finally");
+    `,
+    "c.mjs": `
+      throw new Error("boom");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: ["b:finally ran=true", "b:after-finally", "caught:boom"],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Multiple awaits in the suspended body: every resume must fire, not just the
+// first one.
+test("TLA module in a cycle resumes across multiple awaits when a sibling throws", async () => {
+  using dir = tempDir("tla-cycle-sibling-throw-multi", {
+    "entry.mjs": `
+      globalThis.LOG = [];
+      try { await import("./a.mjs"); } catch (e) { LOG.push("caught:" + e.message); }
+      for (let i = 0; i < 4; i++) await 0;
+      console.log(JSON.stringify(LOG));
+    `,
+    "a.mjs": `
+      import "./b.mjs";
+      import "./c.mjs";
+    `,
+    "b.mjs": `
+      import "./a.mjs";
+      LOG.push("b:0");
+      await 0;
+      LOG.push("b:1");
+      await 0;
+      LOG.push("b:2");
+    `,
+    "c.mjs": `
+      throw new Error("boom");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const out = JSON.parse(stdout.trim());
+  // b's body must reach every await point; the import() still rejects with c's error.
+  expect(out.filter((s: string) => s.startsWith("b:"))).toEqual(["b:0", "b:1", "b:2"]);
+  expect(out).toContain("caught:boom");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/30634
 test("sibling dynamic imports sharing a TLA wrapper wait for its post-await exports", async () => {
   using dir = tempDir("dyn-tla-shared-wrapper", {

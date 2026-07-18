@@ -1392,8 +1392,6 @@ mod __css_validation {
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
-    use crate::bun_css::LocalScopeAdapter as SliceBoxAdapter;
-
     pub(super) fn validate_css_import_composes(
         this: &mut LinkerContext,
         id: usize,
@@ -1427,10 +1425,7 @@ mod __css_validation {
                 };
                 for name in compose.names.slice() {
                     let name_v = name.v();
-                    if !other_css_ast
-                        .local_scope
-                        .contains_adapted(name_v, &SliceBoxAdapter)
-                    {
+                    if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
@@ -1615,8 +1610,7 @@ mod __css_validation {
                                 };
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
-                                    let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
+                                    let Some(other_name) = other_ast.local_scope.get(name_v)
                                     else {
                                         continue;
                                     };
@@ -1638,9 +1632,7 @@ mod __css_validation {
                             // inside this file
                             for name in compose.names.slice() {
                                 let name_v = name.v();
-                                let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                else {
+                                let Some(name_entry) = ast.local_scope.get(name_v) else {
                                     continue;
                                 };
                                 self.visit(idx, ast, name_entry.ref_.to_real_ref(idx));

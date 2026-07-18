@@ -18,8 +18,6 @@ use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-use crate::bun_css::LocalScopeAdapter as SliceBoxAdapter;
-
 pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
@@ -162,7 +160,7 @@ pub fn generate_code_for_lazy_export(
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
                     let loc = ast
                         .local_scope
-                        .get_adapted(name, &SliceBoxAdapter)
+                        .get(name)
                         .unwrap()
                         .loc;
 
@@ -224,9 +222,8 @@ pub fn generate_code_for_lazy_export(
                                         };
                                         for name in compose.names.slice() {
                                             let name_v = name.v();
-                                            let Some(other_name_entry) = other_file
-                                                .local_scope
-                                                .get_adapted(name_v, &SliceBoxAdapter)
+                                            let Some(other_name_entry) =
+                                                other_file.local_scope.get(name_v)
                                             else {
                                                 continue;
                                             };
@@ -268,8 +265,7 @@ pub fn generate_code_for_lazy_export(
                                     // it is from the current file
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
-                                        let Some(name_entry) =
-                                            ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
+                                        let Some(name_entry) = ast.local_scope.get(name_v)
                                         else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],

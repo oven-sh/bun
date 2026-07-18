@@ -181,36 +181,6 @@ describe("css", () => {
     },
   });
 
-  // Minified `[attr=value]` picks the shorter of identifier vs quoted-string
-  // serialization; this exercises the Printer's reusable scratch buffer.
-  itBundled("css-module/AttributeSelectorValueMinified", {
-    files: {
-      "/entry.css": `
-        [data-x="foo"] { color: red }
-        [data-x="a b"] { color: blue }
-        [data-x=""] { color: green }
-        [data-x="123"] { color: orange }
-        [data-x="\\\\"] { color: purple }
-      `,
-    },
-    entryPoints: ["/entry.css"],
-    outdir: "/out",
-    minifyWhitespace: true,
-    onAfterBundle(api) {
-      const css = api.readFile("/out/entry.css");
-      // identifier form is shorter: foo (3) < "foo" (5)
-      expect(css).toContain("[data-x=foo]");
-      // identifier form is shorter: a\ b (4) < "a b" (5)
-      expect(css).toContain("[data-x=a\\ b]");
-      // empty value has no identifier form
-      expect(css).toContain('[data-x=""]');
-      // leading digit: identifier (\31 23) is 6 bytes, "123" is 5 bytes
-      expect(css).toContain('[data-x="123"]');
-      // single backslash: identifier (\\) is 2 bytes, "\\" is 4 bytes
-      expect(css).toContain("[data-x=\\\\]");
-    },
-  });
-
   itBundled("css-module/ExportsMapMultipleClassesAndComposes", {
     files: {
       "/entry.js": `

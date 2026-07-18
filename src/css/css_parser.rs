@@ -9,7 +9,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_ast::Log;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -2379,22 +2379,7 @@ pub struct LocalEntry {
 /// ref. We use this ref as a layer of indirection during the bundling stage
 /// because we don't know the final generated class names for local scope
 /// until print time.
-pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
-
-/// Borrowed-`&[u8]` probe into [`LocalScope`] so lookups don't box the key.
-/// Matches the map's default `AutoContext` hashing for `Box<[u8]>`.
-pub struct LocalScopeAdapter;
-impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for LocalScopeAdapter {
-    #[inline]
-    fn hash(&self, key: &[u8]) -> u32 {
-        use bun_collections::array_hash_map::ArrayHashContext;
-        bun_collections::AutoContext.hash(key)
-    }
-    #[inline]
-    fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-        a == &**b
-    }
-}
+pub type LocalScope = StringArrayHashMap<LocalEntry>;
 /// Local symbol renaming results go here
 pub type LocalsResultsMap = ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
@@ -3436,10 +3421,8 @@ impl<'a> Parser<'a> {
         let name_static: &'static [u8] = unsafe { src_str(name) };
 
         // Borrowed probe so a repeated class/id name doesn't box a fresh key
-        // per selector; only a miss allocates the stored `Box<[u8]>`.
-        let gop = local_scope
-            .get_or_put_adapted(name, &LocalScopeAdapter)
-            .expect("unreachable");
+        // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
+        let gop = local_scope.get_or_put(name).expect("unreachable");
         let entry = gop.value_ptr;
         if gop.found_existing {
             let prev_tag = entry.ref_.tag();
@@ -3454,7 +3437,6 @@ impl<'a> Parser<'a> {
                 original_name: name_static.into(),
                 ..Default::default()
             });
-            *gop.key_ptr = Box::<[u8]>::from(name);
             *entry = LocalEntry {
                 ref_: CssRef::new(inner_index, tag),
                 loc,

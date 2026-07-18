@@ -47,12 +47,12 @@ public:
     WEBCORE_EXPORT bool isNode() const { return false; };
     bool removeAllListeners();
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
+    WEBCORE_EXPORT bool removeOnceListenerByWrapper(const Identifier& eventType, JSC::JSObject* wrapper);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
@@ -109,6 +109,7 @@ private:
 
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
     void invalidateEventListenerRegions();
+    void emitRemoveListenerEvent(const Identifier& eventType, JSC::JSObject* listener);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

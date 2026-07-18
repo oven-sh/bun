@@ -48,12 +48,30 @@ void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<Ev
     addListener(eventType, listener.releaseNonNull(), once, prepend);
 }
 
-void EventEmitter::removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener)
+static inline Identifier removeListenerEventName(JSC::VM& vm)
 {
-    if (!listener)
+    return Identifier::fromString(vm, "removeListener"_s);
+}
+
+// https://nodejs.org/api/events.html#event-removelistener
+void EventEmitter::emitRemoveListenerEvent(const Identifier& eventType, JSC::JSObject* listener)
+{
+    auto* context = scriptExecutionContext();
+    if (!context)
         return;
 
-    removeListener(eventType, *listener);
+    auto& vm = context->vm();
+    auto removeListenerEventType = removeListenerEventName(vm);
+    if (!hasEventListeners(removeListenerEventType))
+        return;
+
+    MarkedArgumentBuffer args;
+    args.append(JSC::identifierToSafePublicJSValue(vm, eventType));
+    args.append(listener ? JSC::JSValue(listener) : JSC::jsUndefined());
+    if (args.hasOverflowed()) [[unlikely]]
+        return;
+
+    emit(removeListenerEventType, args);
 }
 
 bool EventEmitter::removeListener(const Identifier& eventType, EventListener& listener)
@@ -62,12 +80,39 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
     if (!data)
         return false;
 
+    // Read before removing: the registration holds the reference that keeps this listener alive.
+    auto* listenerFunction = listener.jsFunction();
+
     if (data->eventListenerMap.remove(eventType, listener)) {
         eventListenersDidChange();
 
         if (this->onDidChangeListener)
             this->onDidChangeListener(*this, eventType, false);
+
+        emitRemoveListenerEvent(eventType, listenerFunction);
         return true;
+    }
+    return false;
+}
+
+// `once()` listeners are stored unwrapped, so removeListener() has to accept the wrapper that
+// rawListeners() handed out and resolve it back to the registration it was made for.
+bool EventEmitter::removeOnceListenerByWrapper(const Identifier& eventType, JSC::JSObject* wrapper)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    auto* listeners = data->eventListenerMap.find(eventType);
+    if (!listeners)
+        return false;
+
+    for (auto& registration : *listeners) {
+        if (registration->onceWrapper() != wrapper)
+            continue;
+        // Keep the callback alive: removing the registration drops the map's reference to it.
+        Ref<EventListener> callback = registration->callback();
+        return removeListener(eventType, callback.get());
     }
     return false;
 }
@@ -79,22 +124,67 @@ void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
 
 bool EventEmitter::removeAllListeners()
 {
+    // 'removeListener' handlers run user JS in this frame, and `map` points into this object.
+    Ref<EventEmitter> protectedThis(*this);
+
     auto* data = eventTargetData();
     if (!data)
         return false;
 
     auto& map = data->eventListenerMap;
-    bool any = !map.isEmpty();
+    if (map.isEmpty())
+        return false;
+
+    if (auto* context = scriptExecutionContext()) {
+        auto removeListenerEventType = removeListenerEventName(context->vm());
+        // Drain one event type at a time so 'removeListener' and onDidChangeListener both fire,
+        // leaving the 'removeListener' event itself for last as Node does.
+        for (auto& eventType : map.eventTypes()) {
+            if (eventType == removeListenerEventType)
+                continue;
+            removeAllListeners(eventType);
+        }
+        removeAllListeners(removeListenerEventType);
+    }
+
+    // A 'removeListener' handler may have registered listeners for event types the drain above had
+    // already snapshotted past. Node wipes those silently (`_events = {}`), so no event fires for
+    // them here either, but the native side still has to hear about it or an OS signal handler
+    // installed by that late registration would outlive the listener that asked for it.
+    auto orphaned = map.eventTypes();
     map.clear();
+    if (this->onDidChangeListener) {
+        for (auto& eventType : orphaned)
+            this->onDidChangeListener(*this, eventType, false);
+    }
+
     this->m_thisObject.clear();
-    return any;
+    return true;
 }
 
 bool EventEmitter::removeAllListeners(const Identifier& eventType)
 {
+    // 'removeListener' handlers run user JS between iterations, and `data` points into this object.
+    Ref<EventEmitter> protectedThis(*this);
+
     auto* data = eventTargetData();
     if (!data)
         return false;
+
+    auto* context = scriptExecutionContext();
+    if (context && hasEventListeners(removeListenerEventName(context->vm()))) {
+        auto* listenersVector = data->eventListenerMap.find(eventType);
+        if (!listenersVector)
+            return false;
+
+        // Node removes listeners in LIFO order, emitting 'removeListener' for each one. Iterate a
+        // copy: each removal can run JS that mutates the live vector.
+        SimpleEventListenerVector listeners = *listenersVector;
+        bool removedAny = false;
+        for (size_t i = listeners.size(); i > 0; --i)
+            removedAny |= removeListener(eventType, listeners[i - 1]->callback());
+        return removedAny;
+    }
 
     if (data->eventListenerMap.removeAll(eventType)) {
         eventListenersDidChange();
@@ -227,15 +317,32 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         auto& callback = registeredListener->callback();
 
+        JSObject* jsFunction = callback.jsFunction();
+        const bool isOnce = registeredListener->isOnce();
+
+        if (isOnce) {
+            // Removing a once() listener emits 'removeListener', which can re-enter and reach this
+            // registration through another in-flight snapshot. Node's once() wrapper guards against
+            // running twice with a `fired` flag; this is that guard.
+            if (registeredListener->hasFired()) [[unlikely]]
+                continue;
+            registeredListener->markAsFired();
+
+            // Node stores once() listeners wrapped and fires the wrapper. We only materialize one on
+            // demand, so fire it when it exists, or a wrapper the caller is still holding from
+            // rawListeners() would invoke the listener a second time.
+            if (auto* onceWrapper = registeredListener->onceWrapper())
+                jsFunction = onceWrapper;
+        }
+
         // Make sure the JS wrapper and function stay alive until the end of this scope. Otherwise,
         // event listeners with 'once' flag may get collected as soon as they get unregistered below,
         // before we call the js function.
-        JSObject* jsFunction = callback.jsFunction();
         JSC::EnsureStillAliveScope wrapperProtector(callback.wrapper());
         JSC::EnsureStillAliveScope jsFunctionProtector(jsFunction);
 
         // Do this before invocation to avoid reentrancy issues.
-        if (registeredListener->isOnce())
+        if (isOnce)
             removeListener(eventType, callback);
 
         if (!jsFunction) [[unlikely]]

@@ -1,8 +1,10 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, expect, it } from "bun:test";
+import { once } from "events";
 import { mkdirSync, rmSync } from "fs";
 import { isWindows, tmpdirSync } from "harness";
 import { request } from "http";
+import { createServer } from "net";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
 
@@ -214,6 +216,108 @@ it("works with node:http", async () => {
   }
 
   await Promise.all(promises);
+});
+
+it.skipIf(isWindows)("reuses the connection (keep-alive)", async () => {
+  function makeServer() {
+    let connections = 0;
+    const heads: string[] = [];
+    const srv = createServer(sock => {
+      connections++;
+      let buf = "";
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+          heads.push(buf.slice(0, i));
+          buf = buf.slice(i + 4);
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+    });
+    return { srv, connections: () => connections, heads };
+  }
+
+  const tcp = makeServer();
+  tcp.srv.listen(0, "127.0.0.1");
+  await once(tcp.srv, "listening");
+  try {
+    const tcpPort = (tcp.srv.address() as import("net").AddressInfo).port;
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(`http://127.0.0.1:${tcpPort}/x`);
+      expect(await res.text()).toBe("ok");
+    }
+
+    const sock = makeServer();
+    const sockPath = join(tmpdirSync(), "ka.sock");
+    sock.srv.listen(sockPath);
+    await once(sock.srv, "listening");
+    try {
+      for (let i = 0; i < 3; i++) {
+        const res = await fetch("http://localhost/x", { unix: sockPath });
+        expect(await res.text()).toBe("ok");
+      }
+
+      const connHdr = /^connection: (.*)$/im.exec(sock.heads[0] ?? "")?.[1] ?? "(none)";
+      expect({
+        tcp_conns: tcp.connections(),
+        unix_conns: sock.connections(),
+        unix_request_connection_header: connHdr,
+      }).toEqual({
+        tcp_conns: 1,
+        unix_conns: 1,
+        unix_request_connection_header: "keep-alive",
+      });
+    } finally {
+      sock.srv.close();
+    }
+  } finally {
+    tcp.srv.close();
+  }
+});
+
+it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
+  function makeServer() {
+    let connections = 0;
+    const srv = createServer(sock => {
+      connections++;
+      let buf = "";
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.slice(i + 4);
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+    });
+    return { srv, connections: () => connections };
+  }
+
+  const dir = tmpdirSync();
+  const a = makeServer();
+  const b = makeServer();
+  const aPath = join(dir, "a.sock");
+  const bPath = join(dir, "b.sock");
+  a.srv.listen(aPath);
+  b.srv.listen(bPath);
+  await Promise.all([once(a.srv, "listening"), once(b.srv, "listening")]);
+  try {
+    // Same URL, two socket paths — must not cross-reuse.
+    for (let i = 0; i < 3; i++) {
+      expect(await (await fetch("http://localhost/x", { unix: aPath })).text()).toBe("ok");
+      expect(await (await fetch("http://localhost/x", { unix: bPath })).text()).toBe("ok");
+    }
+    // A TCP request to the same URL hostname must not reuse a pooled unix socket.
+    await expect(fetch("http://localhost:1/x", { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
+
+    expect({ a: a.connections(), b: b.connections() }).toEqual({ a: 1, b: 1 });
+  } finally {
+    a.srv.close();
+    b.srv.close();
+  }
 });
 
 it("handle redirect to non-unix", async () => {

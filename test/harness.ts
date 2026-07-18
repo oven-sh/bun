@@ -1874,7 +1874,9 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    // kill(0) is a no-op existence check — it was leaking a ~15-thread Verdaccio
+    // per test file and exhausting the cgroup pids.max budget (EAGAIN cascade).
+    this.process?.kill("SIGKILL");
   }
 
   /**

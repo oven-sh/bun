@@ -2,6 +2,7 @@ use crate::vm::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
 };
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::node::validators::{validate_object, validate_string};
 use bun_core::collections::smallvec::SmallVec;
 use bun_core::{ZigString, ZigStringSlice, strings};

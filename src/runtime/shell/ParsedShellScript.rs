@@ -277,13 +277,13 @@ fn create_parsed_shell_script_impl(
                 if let Some(lex) = out_lex_result.as_ref() {
                     debug_assert!(!lex.errors.is_empty());
                     let str = lex.combine_errors(arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     debug_assert!(!p.errors.is_empty());
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));

@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
+use super::throw;
 use super::{get_signature, Expect};
 
 pub(crate) fn to_match_object(
@@ -13,26 +14,19 @@ pub(crate) fn to_match_object(
     let args = args_buf.slice();
 
     if !received_object.is_object() {
-        let matcher_error =
-            "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n";
-        if not {
-            let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);
-            return this.throw(global, signature, format_args!("{matcher_error}"));
-        }
-
-        let signature: &str = get_signature("toMatchObject", "<green>expected<r>", false);
-        return this.throw(global, signature, format_args!("{matcher_error}"));
+        let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
+        return throw!(
+            this, global, signature,
+            "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n",
+        );
     }
 
     if args.len() < 1 || !args[0].is_object() {
-        let matcher_error =
-            "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n";
-        if not {
-            let signature: &str = get_signature("toMatchObject", "", true);
-            return this.throw(global, signature, format_args!("{matcher_error}"));
-        }
-        let signature: &str = get_signature("toMatchObject", "", false);
-        return this.throw(global, signature, format_args!("{matcher_error}"));
+        let signature: &str = get_signature("toMatchObject", "", not);
+        return throw!(
+            this, global, signature,
+            "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n",
+        );
     }
 
     let property_matchers = args[0];
@@ -58,9 +52,9 @@ pub(crate) fn to_match_object(
 
     if not {
         let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);
-        return this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter));
+        return throw!(this, global, signature, "\n\n{}\n", diff_formatter);
     }
 
     let signature: &str = get_signature("toMatchObject", "<green>expected<r>", false);
-    this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
+    throw!(this, global, signature, "\n\n{}\n", diff_formatter)
 }

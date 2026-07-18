@@ -1014,7 +1014,7 @@ impl Image {
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
             let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-            if !s.eql_utf8(b"dataurl") {
+            if !s.eql_comptime(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
                 )));

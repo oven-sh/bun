@@ -75,6 +75,10 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 // "an instance of Foo", ...) — the "Received ..." part of ERR_INVALID_ARG_TYPE messages.
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue value);
 
+// Appends the value the way Node's `%s` error-message substitution renders it: primitives
+// stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
+void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
+
 enum Bound {
     LOWER,
     UPPER,

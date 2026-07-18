@@ -315,4 +315,19 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(Bun.inspect(ReadableStream.prototype).length > 0).toBeTrue();
     expect(Bun.inspect(TransformStream.prototype).length > 0).toBeTrue();
   });
+
+  // Unlike the classes above, these two brand-check, matching Node.
+  test.each([
+    ["TextEncoderStream", () => new TextEncoderStream()],
+    ["TextDecoderStream", () => new TextDecoderStream()],
+  ])("%s throws ERR_INVALID_THIS on a wrong receiver", (className, create) => {
+    const instance = create();
+    expect(() => instance[customSymbol].call()).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_THIS", name: "TypeError" }),
+    );
+    expect(() => instance[customSymbol].call({}, 2, {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+    // The prototype hosting the method is never passed to it, so inspecting it
+    // formats as a plain object instead of throwing.
+    expect(inspect(globalThis[className].prototype)).toContain("encoding: [Getter]");
+  });
 });

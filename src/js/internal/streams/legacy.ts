@@ -111,7 +111,9 @@ function prependListener(emitter, event, fn) {
   // the prependListener() method. The goal is to eventually remove this hack.
   let events, existing;
   if (!(events = emitter._events) || !(existing = events[event])) emitter.on(event, fn);
-  else if (ArrayIsArray(existing)) existing.unshift(fn);
+  // A fresh array, not unshift(): node:events iterates stored arrays without
+  // cloning, so a stored `_events` array must never be mutated in place.
+  else if (ArrayIsArray(existing)) events[event] = [fn, ...existing];
   else events[event] = [fn, existing];
 }
 

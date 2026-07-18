@@ -1415,6 +1415,35 @@ extern "C"
       }
     return uwsRes->write(stringViewFromC(data, *length), length);
   }
+  size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first) nonnull_fn_decl;
+
+  size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->tryWriteBody(stringViewFromC(data, length), is_first);
+    }
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->tryWriteBody(stringViewFromC(data, length), is_first);
+  }
+
+  void uws_res_spill_body(int ssl, uws_res_r res, const char *data, size_t length) nonnull_fn_decl;
+
+  void uws_res_spill_body(int ssl, uws_res_r res, const char *data, size_t length)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->spillBodyTail(stringViewFromC(data, length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->spillBodyTail(stringViewFromC(data, length));
+    }
+  }
+
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)
   {

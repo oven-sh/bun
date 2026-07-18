@@ -1392,21 +1392,6 @@ mod __css_validation {
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
-    /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
-    /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
-    struct SliceBoxAdapter;
-    impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
-        fn hash(&self, key: &[u8]) -> u32 {
-            // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
-            // (std `Hash` over the byte slice → wyhash truncated to u32).
-            use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-            AutoContext.hash(key)
-        }
-        fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-            a == &**b
-        }
-    }
-
     pub(super) fn validate_css_import_composes(
         this: &mut LinkerContext,
         id: usize,
@@ -1440,10 +1425,7 @@ mod __css_validation {
                 };
                 for name in compose.names.slice() {
                     let name_v = name.v();
-                    if !other_css_ast
-                        .local_scope
-                        .contains_adapted(name_v, &SliceBoxAdapter)
-                    {
+                    if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
@@ -1628,9 +1610,7 @@ mod __css_validation {
                                 };
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
-                                    let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                    else {
+                                    let Some(other_name) = other_ast.local_scope.get(name_v) else {
                                         continue;
                                     };
                                     let other_name_ref =
@@ -1651,9 +1631,7 @@ mod __css_validation {
                             // inside this file
                             for name in compose.names.slice() {
                                 let name_v = name.v();
-                                let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                else {
+                                let Some(name_entry) = ast.local_scope.get(name_v) else {
                                     continue;
                                 };
                                 self.visit(idx, ast, name_entry.ref_.to_real_ref(idx));

@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMExceptionHandling.h"
@@ -237,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond, (
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     ASSERT(request->m_view);
     if (request->m_view->isDetached())
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
     ASSERT(request->m_view->byteLength() > 0);
 
     readableByteStreamControllerRespond(lexicalGlobalObject, request->m_controller.get(), bytesWritten);
@@ -260,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWit
     if (!request->m_controller)
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     if (view->isDetached())
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond with a view whose ArrayBuffer is detached"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot respond with a view whose ArrayBuffer is detached"_s);
 
     readableByteStreamControllerRespondWithNewView(lexicalGlobalObject, request->m_controller.get(), view);
     RETURN_IF_EXCEPTION(scope, {});

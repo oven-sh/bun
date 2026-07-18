@@ -344,9 +344,6 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
-        // Only the `SubprocessPipeReader` arm acts on this; everything else
-        // no-ops (no other parent type wires a `MaxBuf`).
-        fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
     }
 }
 
@@ -367,8 +364,6 @@ bun_dispatch::link_interface! {
 ///     on_reader_error  = |this, err| (*this).on_reader_error(err);
 ///     loop_            = |this| (*this).loop_();
 ///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
-///     // ↓ optional — only `SubprocessPipeReader` overrides this
-///     on_max_buffer_overflow = |this, maxbuf| { ... };
 /// }
 /// ```
 ///
@@ -411,7 +406,6 @@ macro_rules! __impl_buffered_reader_parent_body {
         on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
         loop_ = |$l_this:ident| $lp:expr;
         event_loop = |$e_this:ident| $ev:expr;
-        $( on_max_buffer_overflow = |$mb_this:ident, $mb_buf:ident| $mb:block; )?
     ) => {
         // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
         // contract — `this` is the `*mut Self` registered via `set_parent`; a
@@ -446,15 +440,6 @@ macro_rules! __impl_buffered_reader_parent_body {
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
                 unsafe { $ev }
             }
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn on_max_buffer_overflow(
-                    $mb_this: *mut Self,
-                    $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
-                ) {
-                    unsafe { $mb }
-                }
-            )?
         }
     };
 }
@@ -482,8 +467,6 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
-                on_max_buffer_overflow(maxbuf) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_max_buffer_overflow(this, maxbuf),
             }
         }
     };

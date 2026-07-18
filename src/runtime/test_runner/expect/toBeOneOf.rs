@@ -4,6 +4,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -90,33 +91,31 @@ pub(crate) fn to_be_one_of(
     let mut formatter2 = super::make_formatter(global_this);
     if not {
         let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected to not be one of: <green>{}<r>\nReceived: <red>{}<r>\n",
-                ),
-                list_value.to_fmt(&mut formatter),
-                expected.to_fmt(&mut formatter2),
+            concat!(
+                "\n\n",
+                "Expected to not be one of: <green>{}<r>\nReceived: <red>{}<r>\n",
             ),
+            list_value.to_fmt(&mut formatter),
+            expected.to_fmt(&mut formatter2),
         );
     }
 
     let signature = get_signature("toBeOneOf", "<green>expected<r>", false);
-    return this.throw(
+    return throw!(
+        this,
         global_this,
         signature,
-        format_args!(
-            concat!(
-                "\n\n",
-                "Expected to be one of: <green>{}<r>\n",
-                "Received: <red>{}<r>\n",
-            ),
-            list_value.to_fmt(&mut formatter),
-            expected.to_fmt(&mut formatter2),
+        concat!(
+            "\n\n",
+            "Expected to be one of: <green>{}<r>\n",
+            "Received: <red>{}<r>\n",
         ),
+        list_value.to_fmt(&mut formatter),
+        expected.to_fmt(&mut formatter2),
     );
 }
 

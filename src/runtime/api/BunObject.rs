@@ -549,7 +549,7 @@ pub(crate) fn braces(
     // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
     const MAX_BRACE_EXPANSIONS: u32 = 65536;
     if expansion_count > MAX_BRACE_EXPANSIONS {
-        return Err(global.throw_pretty(format_args!(
+        return Err(global.throw(format_args!(
             "Too many brace expansions ({} > {})",
             expansion_count, MAX_BRACE_EXPANSIONS
         )));
@@ -571,12 +571,10 @@ pub(crate) fn braces(
         Ok(()) => {}
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
-            return Err(
-                global.throw_pretty(format_args!("Unexpected token while expanding braces"))
-            );
+            return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
         Err(Braces::ParserError::TooManyBraces) => {
-            return Err(global.throw_pretty(format_args!("Too many braces in brace expansion")));
+            return Err(global.throw(format_args!("Too many braces in brace expansion")));
         }
     }
 
@@ -1596,6 +1594,19 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         break 'brk config;
     };
 
+    // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
+    // past that point the raw-`JSValue` handler shadows have no GC root until
+    // `wrap_handler_slot` writes them into the wrapper's WriteBarrier slots.
+    // For a data-property options object the user's `{ fetch: fn }` on this
+    // stack still retains them, but a Proxy- or accessor-backed options
+    // object returns a fresh fn that nothing else holds. `compute_id`,
+    // `listen()`'s `set_routes`, and the `ptr_to_js` wrapper allocation can
+    // all trigger a GC in that window, so gcProtect each handler for its
+    // duration. `Protected`'s `Drop` unprotects on every exit path (including
+    // a thrown `listen()` and the hot-reload early return).
+    let _handler_pins: [bun_jsc::js_value::Protected; 10] =
+        crate::server::protect_handler_shadows(&config);
+
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
@@ -1658,7 +1669,40 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
+            // Mirror the handler callbacks into the wrapper's WriteBarrier
+            // slots — the wrapper is the sole GC root for these; `ServerConfig`
+            // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
+            // The async-context wrap is applied here (not in `from_js`) so the
+            // freshly-allocated wrapper fn is rooted by the slot immediately.
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_request,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_request_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_error,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_error_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_node_http_request,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_node_http_request_set,
+            );
+            // Skip the 7-slot write when there's no websocket config: the
+            // slots default ZERO so `write_ws_handler_slots`'s clear path
+            // would be 7 wasted FFI calls.
+            if server_ref.config.websocket.is_some() {
+                server_ref.write_ws_handler_slots(obj, global_object);
+            }
             server_ref.js_value.set_strong(obj, global_object);
+            // Slots are rooted; release the scoped gcProtects and run the
+            // "server just started" GC nudge split out of `listen()`.
+            drop(_handler_pins);
+            server_ref.gc_hint_after_listen();
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {

@@ -3517,12 +3517,10 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = &*server;
-            if let Some(on_error) = server.config().on_error.as_ref()
-                && !self.flags.has_called_error_handler()
-            {
+            let on_error = server.config().on_error;
+            if !on_error.is_empty() && !self.flags.has_called_error_handler() {
                 self.flags.set_has_called_error_handler(true);
                 let result = on_error
-                    .get()
                     .call(
                         server.global_this(),
                         server.js_value().try_get().unwrap_or(JSValue::UNDEFINED),

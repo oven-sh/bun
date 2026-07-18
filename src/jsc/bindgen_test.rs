@@ -39,7 +39,7 @@ pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
             // Binding functions can propagate out-of-memory and JS exceptions
             // directly; other failures (like this integer overflow) must be
             // converted into a thrown error. Remember to be descriptive.
-            Err(global.throw_pretty(format_args!("Integer overflow while adding")))
+            Err(global.throw(format_args!("Integer overflow while adding")))
         }
     }
 }

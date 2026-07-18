@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 bun_core::comptime_string_map! {
     static JS_TYPE_OF_MAP: &'static [u8] = {
@@ -86,35 +87,33 @@ pub(crate) fn to_be_type_of(
 
     if not {
         let signature = get_signature("toBeTypeOf", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected type: not <green>{}<r>\n",
-                    "Received type: <red>\"{}\"<r>\nReceived value: <red>{}<r>\n",
-                ),
-                expected_str,
-                bstr::BStr::new(what_is_the_type),
-                received,
-            ),
-        );
-    }
-
-    let signature = get_signature("toBeTypeOf", "", false);
-    this.throw(
-        global,
-        signature,
-        format_args!(
             concat!(
                 "\n\n",
-                "Expected type: <green>{}<r>\n",
+                "Expected type: not <green>{}<r>\n",
                 "Received type: <red>\"{}\"<r>\nReceived value: <red>{}<r>\n",
             ),
             expected_str,
             bstr::BStr::new(what_is_the_type),
             received,
+        );
+    }
+
+    let signature = get_signature("toBeTypeOf", "", false);
+    throw!(
+        this,
+        global,
+        signature,
+        concat!(
+            "\n\n",
+            "Expected type: <green>{}<r>\n",
+            "Received type: <red>\"{}\"<r>\nReceived value: <red>{}<r>\n",
         ),
+        expected_str,
+        bstr::BStr::new(what_is_the_type),
+        received,
     )
 }

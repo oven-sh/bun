@@ -385,6 +385,66 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("concurrent ReadableStream uploads route each chunk to its own stream", async () => {
+    // Exercises the async_http_id -> stream index on the client session: each
+    // JS-side body chunk wakes the HTTP thread which must resolve the target
+    // stream without crossing the other 23 in-flight uploads.
+    let sessions = 0;
+    const server = makeH2Server();
+    server.on("session", () => sessions++);
+    server.on("stream", stream => {
+      const chunks: Buffer[] = [];
+      stream.on("data", c => chunks.push(c));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end(Buffer.concat(chunks));
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const url = "https://localhost:${port}/";
+        const opts = { tls: { rejectUnauthorized: false } };
+        const N = 24, M = 24;
+        // Warmup so the h2 session exists and SETTINGS have been exchanged
+        // before the concurrent burst; otherwise requests can fan out to
+        // additional connections while the first is still handshaking.
+        await fetch(url, { ...opts, method: "POST", body: "warmup" }).then(r => r.text());
+        const results = await Promise.all(
+          Array.from({ length: N }, (_, i) => {
+            let k = 0;
+            const body = new ReadableStream({
+              pull(ctrl) {
+                if (k < M) {
+                  ctrl.enqueue(new TextEncoder().encode(i + ":" + k + ","));
+                  k++;
+                } else ctrl.close();
+              },
+            });
+            return fetch(url, { ...opts, method: "POST", body, duplex: "half" }).then(r => r.text());
+          }),
+        );
+        const bad = results
+          .map((got, i) => {
+            const want = Array.from({ length: M }, (_, k) => i + ":" + k + ",").join("");
+            return got === want ? null : i + " got=" + JSON.stringify(got);
+          })
+          .filter(Boolean);
+        if (bad.length) throw new Error("mismatch: " + bad.join(" | "));
+        console.log("ok", results.length);
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok 24");
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
   test("POST with ReadableStream body larger than initial send window", async () => {
     await withH2Server(
       (req, res) => {

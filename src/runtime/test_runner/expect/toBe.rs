@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
+use super::throw;
 use super::DiffFormatter;
 use super::Expect;
 
@@ -41,10 +42,11 @@ impl Expect {
 
         if not {
             let signature = Expect::get_signature("toBe", "<green>expected<r>", true);
-            return this.throw(
+            return throw!(
+                this,
                 global_this,
                 signature,
-                format_args!("\n\nExpected: not <green>{}<r>\n", right.to_fmt(&mut formatter)),
+                "\n\nExpected: not <green>{}<r>\n", right.to_fmt(&mut formatter),
             );
         }
 
@@ -53,36 +55,34 @@ impl Expect {
             // Rust format strings must be literals, so branch the call on
             // `has_custom_label` instead.
             if !has_custom_label {
-                return this.throw(
+                return throw!(
+                    this,
                     global_this,
                     signature,
-                    format_args!(
-                        concat!(
-                            "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>",
-                            "\n\nExpected: <green>{}<r>\n",
-                            "Received: serializes to the same string\n",
-                        ),
-                        right.to_fmt(&mut formatter),
+                    concat!(
+                        "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>",
+                        "\n\nExpected: <green>{}<r>\n",
+                        "Received: serializes to the same string\n",
                     ),
+                    right.to_fmt(&mut formatter),
                 );
             } else {
-                return this.throw(
+                return throw!(
+                    this,
                     global_this,
                     signature,
-                    format_args!(
-                        concat!(
-                            "\n\nExpected: <green>{}<r>\n",
-                            "Received: serializes to the same string\n",
-                        ),
-                        right.to_fmt(&mut formatter),
+                    concat!(
+                        "\n\nExpected: <green>{}<r>\n",
+                        "Received: serializes to the same string\n",
                     ),
+                    right.to_fmt(&mut formatter),
                 );
             }
         }
 
         if right.is_string() && left.is_string() {
             let diff_format = DiffFormatter { expected: Some(right), received: Some(left), expected_string: None, received_string: None, global_this: Some(global_this), not };
-            return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
+            return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }
 
         // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters
@@ -90,14 +90,13 @@ impl Expect {
         // received value — `make_formatter` is a trivial struct init with no shared
         // state between values.
         let mut formatter2 = super::make_formatter(global_this);
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n",
-                right.to_fmt(&mut formatter),
-                left.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n",
+            right.to_fmt(&mut formatter),
+            left.to_fmt(&mut formatter2),
         );
     }
 }

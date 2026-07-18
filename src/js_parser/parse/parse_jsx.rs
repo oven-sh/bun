@@ -348,7 +348,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(p.source),
                             end_tag.range,
                             format_args!(
-                                "Expected closing JSX tag to match opening tag \"\\<{}\\>\"",
+                                "Expected closing JSX tag to match opening tag \"<{}>\"",
                                 bstr::BStr::new(tag.name)
                             ),
                             format_args!("Opening tag here:"),

@@ -1547,6 +1547,68 @@ describe("deno_task", () => {
       .exitCode(1)
       .runAsTest("zero arguments after re-direct");
 
+    describe("multiple arguments after re-direct (ambiguous)", () => {
+      // bash: `*.txt: ambiguous redirect`, exit 1, tree unchanged.
+      // Previously bun concatenated the matched names into one bogus path.
+      TestBuilder.command`echo hi > *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching multiple files");
+
+      TestBuilder.command`echo hi >> *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest(">> glob matching multiple files");
+
+      TestBuilder.command`cat < *.txt`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr(s => {
+          expect(s).toContain("ambiguous redirect");
+          expect(s).not.toContain("a1.txt");
+          expect(s).not.toContain("b2.txt");
+        })
+        .exitCode(1)
+        .runAsTest("< glob matching multiple files");
+
+      TestBuilder.command`echo hi > {a,b}.txt; ls`
+        .ensureTempDir()
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout("")
+        .runAsTest("> brace expansion producing multiple words");
+
+      TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log("hi")' > *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr(s => expect(s).toContain("ambiguous redirect"))
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching multiple files (subprocess)");
+
+      // Control: a glob that matches exactly one file redirects to it.
+      TestBuilder.command`echo hi > a1*`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .exitCode(0)
+        .fileEquals("a1.txt", "hi\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching a single file writes to it");
+    });
+
     TestBuilder.command`echo foo bar > file.txt; cat < file.txt`
       .ensureTempDir()
       .stdout("foo bar\n")

@@ -241,6 +241,25 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfiesExact("5.0.0-beta.1", "5.0.0", false);
   });
 
+  test("long version components are not treated as wildcards", () => {
+    // A component >20 bytes must parse to its numeric value (or clamp on overflow),
+    // not fall through to a wildcard. node-semver loose mode agrees with all of these.
+    const twenty = Buffer.alloc(20, "9").toString();
+    const twentyOne = Buffer.alloc(21, "9").toString();
+    for (const big of [twenty, twentyOne]) {
+      testSatisfies("^" + big, "1.0.0", false);
+      testSatisfies("^" + big, "5.0.0", false);
+      testSatisfies("~" + big, "1.0.0", false);
+      testSatisfies("~" + big, "5.0.0", false);
+      testSatisfies("~1." + big, "2.0.0", false);
+    }
+    // 31 bytes but value 5: must be Some(5), not wildcard and not Some(0).
+    const padded = Buffer.alloc(30, "0").toString() + "5";
+    testSatisfies("^" + padded, "5.2.0", true);
+    testSatisfies("^" + padded, "0.5.0", false);
+    testSatisfies("^" + padded, "6.0.0", false);
+  });
+
   test("ranges", () => {
     testSatisfies("~1.2.3", "1.2.3", true);
     testSatisfies("~1.2", "1.2.0", true);

@@ -219,7 +219,7 @@ impl<'a> Parser<'a> {
                 expr.loc,
                 format_args!(
                     "expected {} but received {}",
-                    <&str>::from(token),
+                    token.type_name(),
                     expr.data.tag_name()
                 ),
             );

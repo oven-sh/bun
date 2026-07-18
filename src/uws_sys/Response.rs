@@ -277,6 +277,30 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// Write body bytes without copying the unwritten tail into uWS backpressure.
+    /// Returns the number of body bytes accepted. See `HttpResponse::tryWriteBody`.
+    pub fn try_write_body(&mut self, data: &[u8], is_first: bool) -> usize {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_try_write_body(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+                is_first,
+            )
+        }
+    }
+
+    /// Copy the body tail into the uWS backpressure buffer and close out the
+    /// chunk framing. See `HttpResponse::spillBodyTail`.
+    pub fn spill_body(&mut self, data: &[u8]) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_spill_body(Self::ssl_flag(), self.downcast(), data.as_ptr(), data.len())
+        }
+    }
+
     pub fn get_write_offset(&mut self) -> u64 {
         c::uws_res_get_write_offset(Self::ssl_flag(), self.as_raw())
     }
@@ -799,6 +823,14 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write(data))
     }
 
+    pub fn try_write_body(self, data: &[u8], is_first: bool) -> usize {
+        any_dispatch!(self, |r| r.try_write_body(data, is_first))
+    }
+
+    pub fn spill_body(self, data: &[u8]) {
+        any_dispatch!(self, |r| r.spill_body(data))
+    }
+
     pub fn end(self, data: &[u8], close_connection: bool) {
         any_dispatch!(self, |r| r.end(data, close_connection))
     }
@@ -1128,6 +1160,19 @@ pub mod c {
             data: *const u8,
             length: *mut usize,
         ) -> bool;
+        pub(crate) fn uws_res_try_write_body(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+            is_first: bool,
+        ) -> usize;
+        pub(crate) fn uws_res_spill_body(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+        );
         pub(crate) safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;

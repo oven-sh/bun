@@ -3,6 +3,7 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -140,8 +141,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     bool fatal = false;
     bool ignoreBOM = false;
     JSValue options = callFrame->argument(1);
-    // Web IDL: `optional TextDecoderOptions options = {}` — undefined/null mean defaults.
+    // Web IDL: `optional TextDecoderOptions options = {}` — undefined/null mean defaults, and
+    // any other non-object is a TypeError (Node reports it as ERR_INVALID_ARG_TYPE, matching
+    // what `new TextDecoder(label, options)` itself throws for the same value).
     if (!options.isUndefinedOrNull()) {
+        if (!options.isObject())
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options"_s, "object"_s, options);
         JSValue fatalValue = options.get(lexicalGlobalObject, names.fatalPublicName());
         RETURN_IF_EXCEPTION(scope, {});
         fatal = fatalValue.toBoolean(lexicalGlobalObject);
@@ -185,8 +190,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSTextDecoderStream>(thisValue);
+    // Node brand-checks here (lib/internal/webstreams/encoding.js) — unlike its other web
+    // streams classes, whose inspect methods just fault on a bad `this`.
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     // encoding/fatal/ignoreBOM live on the TextDecoder held by m_decoder; read them via the
     // public prototype getters this class already exposes so no extra coupling is introduced.
     JSObject* data = constructEmptyObject(lexicalGlobalObject);

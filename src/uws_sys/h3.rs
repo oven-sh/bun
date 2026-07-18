@@ -159,6 +159,15 @@ impl Response {
             WriteResult::Backpressure(len)
         }
     }
+    pub fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
+        // node:http (the only caller) never reaches HTTP/3; fall through to
+        // the copying write for AnyResponse dispatch parity.
+        let _ = self.write(data);
+        data.len()
+    }
+    pub fn spill_body(&mut self, data: &[u8]) {
+        let _ = self.write(data);
+    }
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live FFI handle; status ptr/len valid for read
         unsafe { c::uws_h3_res_write_status(self, status.as_ptr(), status.len()) }

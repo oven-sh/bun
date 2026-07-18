@@ -539,6 +539,21 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
+    /// `write_str(&self.scratchbuf[range])` with the field borrows split so
+    /// callers can fill `scratchbuf` and flush it through the same `&mut self`.
+    pub(crate) fn write_scratchbuf(&mut self, range: core::ops::Range<usize>) -> PrintResult<()> {
+        let s = &self.scratchbuf[range];
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!s.contains(&b'\n'));
+        }
+        self.col += u32::try_from(s.len()).expect("int cast");
+        if self.dest.write_all(s).is_err() {
+            return Err(self.add_fmt_error());
+        }
+        Ok(())
+    }
+
     /// Like `write_str`, but newline-containing byte content is permitted:
     /// `line`/`col` are tracked across newlines (matching `write_char` applied
     /// byte-by-byte), whereas `write_str` debug-asserts that no newlines are

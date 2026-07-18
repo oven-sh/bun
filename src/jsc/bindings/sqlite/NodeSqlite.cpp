@@ -1457,13 +1457,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     // function(name, func) or function(name, options, func)
     size_t fnIndex = callFrame->argumentCount() < 3 ? 1 : 2;
     JSValue fnVal = callFrame->argument(fnIndex);
-    JSValue optsVal = fnIndex == 2 ? callFrame->argument(1) : jsUndefined();
 
     bool useBigIntArgs = false;
     bool varargs = false;
     bool deterministic = false;
     bool directOnly = false;
-    if (!optsVal.isUndefined()) {
+    // Node validates on arity: with three arguments the middle one MUST be an
+    // object, so `function(name, undefined, fn)` throws.
+    if (fnIndex == 2) {
+        JSValue optsVal = callFrame->uncheckedArgument(1);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -1636,8 +1638,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
 
     WTF::String table;
     WTF::String dbName = "main"_s;
-    JSValue optsVal = callFrame->argument(0);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 0: an explicit `createSession(undefined)`
+    // throws while `createSession()` does not.
+    if (callFrame->argumentCount() > 0) {
+        JSValue optsVal = callFrame->uncheckedArgument(0);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -2285,8 +2289,11 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
     DatabaseSyncOpenConfiguration config {};
     bool openImmediately = true;
 
-    JSValue optsVal = callFrame->argument(1);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 1, not IsUndefined(): an explicit
+    // second argument must be an object (so `new DatabaseSync(p, undefined)`
+    // throws while `new DatabaseSync(p)` does not).
+    if (callFrame->argumentCount() > 1) {
+        JSValue optsVal = callFrame->uncheckedArgument(1);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -3894,8 +3901,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     WTF::String targetName = "main"_s;
     JSObject* progressFn = nullptr;
 
-    JSValue optsVal = callFrame->argument(2);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 2: an explicit `backup(db, p, undefined)`
+    // throws while `backup(db, p)` does not.
+    if (callFrame->argumentCount() > 2) {
+        JSValue optsVal = callFrame->uncheckedArgument(2);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }

@@ -1650,6 +1650,16 @@ impl<'a> ESModule<'a> {
             return result;
         }
 
+        // Fast path: without a '%' there is no percent-encoding, so INVALID_PERCENT_CHARS
+        // cannot match, decode_into is the identity, and result.path is already the owned
+        // decoded buffer. Only the directory check remains.
+        if !strings::contains_char(&result.path, b'%') {
+            if strings::ends_with_any(&result.path, b"/\\") {
+                result.status = Status::UnsupportedDirectoryImport;
+            }
+            return result;
+        }
+
         // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
         // respectively), then throw an Invalid Module Specifier error.
         // This must be checked on the still-encoded path, before percent-decoding.
@@ -1693,7 +1703,7 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        // Copy out — see `Resolution.path` note. PERF: avoid the alloc if hot.
+        // Copy out — see `Resolution.path` note.
         result.path = Box::<[u8]>::from(resolved_path);
         result
     }

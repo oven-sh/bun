@@ -132,6 +132,12 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--no-warnings" && process.versions.bun) {
+        // Harmless under Bun; keep scanning so a later --expose-internals (or
+        // --expose-gc) in the same Flags line still installs its shim instead
+        // of re-spawning the test as a child process.
+        continue;
+      }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
         globalThis.gc ??= () => Bun.gc(true);
         break;
@@ -1324,6 +1330,29 @@ function installBunExposeInternalsShim() {
       this.code = "ERR_HTTP2_ERROR";
     }
   }
+
+  // Webstreams tests read Node's `stream[kState].state` / `.storedError` and
+  // use isPromisePending from internal/webstreams/util. Bun's web streams keep
+  // that state in private fields; surface it through the same kState shape via
+  // bun:internal-for-testing.
+  const kWebStreamState = Symbol('kState');
+  let getWebStreamState;
+  try {
+    ({ getWebStreamState } = require('bun:internal-for-testing'));
+  } catch {
+    // bun:internal-for-testing is gated; without it the kState lookups below
+    // return undefined and the test fails on the assertion rather than here.
+  }
+  if (typeof getWebStreamState === 'function') {
+    for (const ctor of [ReadableStream, WritableStream]) {
+      Object.defineProperty(ctor.prototype, kWebStreamState, {
+        __proto__: null,
+        configurable: true,
+        get() { return getWebStreamState(this); },
+      });
+    }
+  }
+
   Bun.plugin({
     name: "node-test-expose-internals",
     setup(build) {
@@ -1345,6 +1374,13 @@ function installBunExposeInternalsShim() {
         // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
         // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
         exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
+      }));
+      build.module("internal/webstreams/util", () => ({
+        loader: "object",
+        exports: {
+          kState: kWebStreamState,
+          isPromisePending: promise => Bun.peek.status(promise) === "pending",
+        },
       }));
       // node's internal/http: serve the very same symbols Bun's _http_outgoing
       // attaches to OutgoingMessage instances, so tests poke at real state.

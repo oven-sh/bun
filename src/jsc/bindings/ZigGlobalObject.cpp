@@ -754,9 +754,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer keys;
     for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
-        if (!key.first || !entry || !isModuleEvaluated(entry->record()))
+        auto* specifier = std::get<0>(key);
+        if (!specifier || !entry || !isModuleEvaluated(entry->record()))
             continue;
-        keys.append(jsString(vm, String { key.first }));
+        keys.append(jsString(vm, String { specifier }));
     }
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);

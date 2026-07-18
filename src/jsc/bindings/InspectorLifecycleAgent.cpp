@@ -150,8 +150,8 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     {
         Vector<String> keys;
         for (auto& [key, entry] : global->moduleLoader()->moduleMap()) {
-            if (key.first)
-                keys.append(String { key.first });
+            if (auto* specifier = std::get<0>(key))
+                keys.append(String { specifier });
         }
         // ModuleMap is hash-ordered; sort so the inspector output is stable.
         std::sort(keys.begin(), keys.end(), WTF::codePointCompareLessThan);

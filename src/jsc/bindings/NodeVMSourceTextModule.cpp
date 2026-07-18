@@ -433,7 +433,7 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
 
         const auto& loaded = record->loadedModules();
         for (const auto& request : record->requestedModules()) {
-            auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
+            auto iter = loaded.find(request.moduleMapKey());
             if (iter == loaded.end()) {
                 missingSpecifier = request.m_specifier.string();
                 return false;

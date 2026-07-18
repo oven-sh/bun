@@ -1679,7 +1679,12 @@ async function drainSubtestChain(node: TestNode) {
   } while (chain !== node.subtestChain);
 }
 
-function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, release: () => void): Promise<undefined> {
+function scheduleSuiteSubtest(
+  parent: TestNode,
+  suite: TestNode,
+  build: unknown,
+  release: () => void,
+): Promise<undefined> {
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.

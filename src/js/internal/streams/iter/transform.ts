@@ -676,7 +676,9 @@ function decompressZstd(options = kNullPrototype) {
   return makeZlibTransform(
     (cb, onErr) => createZstdHandle(ZSTD_DECOMPRESS, options, cb, onErr),
     ZSTD_e_continue,
-    ZSTD_e_end,
+    // Finishing with ZSTD_e_end asks the decoder to verify the frame ended, and
+    // node's zstd decoder never verifies it, so finish leniently here as well.
+    ZSTD_e_continue,
   );
 }
 
@@ -740,7 +742,8 @@ function decompressZstdSync(options = kNullPrototype) {
   return makeZlibTransformSync(
     (cb, onErr) => createZstdHandle(ZSTD_DECOMPRESS, options, cb, onErr),
     ZSTD_e_continue,
-    ZSTD_e_end,
+    // See decompressZstd: node's zstd decoder does not verify the frame ended.
+    ZSTD_e_continue,
   );
 }
 

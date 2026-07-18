@@ -752,6 +752,15 @@ const zstdDefaultOpts = {
   fullFlush: ZSTD_e_flush,
 };
 
+// ZSTD_e_end is what asks the decoder to verify the frame ended, and node's
+// zstd decoder never verifies it, so decompression finishes leniently by
+// default. DecompressionStream("zstd") opts in, as the WHATWG spec requires.
+const zstdDecompressDefaultOpts = {
+  flush: ZSTD_e_continue,
+  finishFlush: ZSTD_e_continue,
+  fullFlush: ZSTD_e_flush,
+};
+
 class Zstd extends ZlibBase {
   constructor(opts, mode, initParamsArray, maxParam) {
     $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
@@ -778,7 +787,7 @@ class Zstd extends ZlibBase {
 
     const writeState = new Uint32Array(2);
     handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
-    super(opts, mode, handle, zstdDefaultOpts);
+    super(opts, mode, handle, mode === ZSTD_DECOMPRESS ? zstdDecompressDefaultOpts : zstdDefaultOpts);
     this._writeState = writeState;
   }
 }

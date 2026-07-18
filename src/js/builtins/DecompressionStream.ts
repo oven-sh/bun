@@ -7,7 +7,10 @@ export function initializeDecompressionStream(this, format) {
     "deflate-raw": zlib.createInflateRaw,
     "gzip": zlib.createGunzip,
     "brotli": zlib.createBrotliDecompress,
-    "zstd": zlib.createZstdDecompress,
+    // The other four already error on input that ends mid-stream, as the spec
+    // requires. node:zlib's zstd decoder finishes leniently by default (node
+    // never checks the frame ended); ZSTD_e_end turns that check on.
+    "zstd": () => zlib.createZstdDecompress({ finishFlush: zlib.constants.ZSTD_e_end }),
   };
 
   if (!(format in builders))

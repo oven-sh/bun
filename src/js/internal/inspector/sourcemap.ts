@@ -230,7 +230,9 @@ export function mappingsFromDataURL(sourceMapURL: string): string | undefined {
   const meta = sourceMapURL.slice(0, comma);
   const payload = sourceMapURL.slice(comma + 1);
   try {
-    const json = meta.includes(";base64") ? Buffer.from(payload, "base64").toString("utf8") : decodeURIComponent(payload);
+    const json = meta.includes(";base64")
+      ? Buffer.from(payload, "base64").toString("utf8")
+      : decodeURIComponent(payload);
     const map = JSON.parse(json);
     return typeof map?.mappings === "string" ? map.mappings : undefined;
   } catch {

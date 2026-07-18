@@ -1,5 +1,6 @@
 use bstr::BStr;
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::node::PathLike;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::BlobExt as _;

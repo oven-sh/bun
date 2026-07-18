@@ -1787,8 +1787,15 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         let mut part_len: u16 = parts.len() as u16;
 
         while part_i < part_len {
-            if P::P.is_absolute(parts[part_i as usize]) {
-                cwd = parts[part_i as usize];
+            let part = parts[part_i as usize];
+            // An absolute part resets the join root. This branch produces a
+            // host-POSIX path, so under `Loose` a Windows drive-letter part
+            // (`C:/x`) must not become the root: the result would not be
+            // absolute on this host (e.g. a bare import specifier `C:/`
+            // joined under `node_modules`). Separator-rooted parts still
+            // reset; drive-letter parts join as ordinary components.
+            if P::P.is_absolute(part) && is_sep_any(part[0]) {
+                cwd = part;
                 parts = &parts[part_i as usize + 1..];
 
                 part_len = parts.len() as u16;

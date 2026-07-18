@@ -2158,18 +2158,22 @@ test.concurrent("bun.lock and yarn.lock round-trip a large workspace set", async
     ),
   ];
   for (let i = 0; i < N; i++) {
+    // Each package depends on the next three (wrapping) with a distinct
+    // request literal per edge, so every target's requested-version bucket
+    // holds literals that name that target.
     const deps: Record<string, string> = {};
-    // Each package depends on the next three (wrapping), so every package
-    // is requested from several others.
-    for (let j = 1; j <= 3; j++) {
-      deps[`pkg-${pad((i + j) % N)}`] = "workspace:*";
-    }
+    const t1 = (i + 1) % N;
+    const t2 = (i + 2) % N;
+    const t3 = (i + 3) % N;
+    deps[`pkg-${pad(t1)}`] = "workspace:*";
+    deps[`pkg-${pad(t2)}`] = `workspace:^1.0.${t2}`;
+    deps[`pkg-${pad(t3)}`] = `workspace:~1.0.${t3}`;
     writes.push(
       write(
         join(packageDir, "packages", `pkg-${pad(i)}`, "package.json"),
         JSON.stringify({
           name: `pkg-${pad(i)}`,
-          version: "1.0.0",
+          version: `1.0.${i}`,
           dependencies: deps,
         }),
       ),
@@ -2192,15 +2196,18 @@ test.concurrent("bun.lock and yarn.lock round-trip a large workspace set", async
   const bunLock = await file(join(packageDir, "bun.lock")).text();
   const yarnLock = await file(join(packageDir, "yarn.lock")).text();
 
-  // yarn.lock should list every workspace package once, each with three
-  // requesters collapsed to a single "workspace:*" key and three deps.
+  // Each package's key line lists exactly its own four requesters (root's
+  // workspace path plus the three literals that reference its index). A
+  // bucketing bug would surface as a literal carrying the wrong index here.
+  const keyLines = yarnLock.split("\n").filter(l => l.endsWith(":") && l.startsWith('"pkg-'));
+  expect(keyLines.length).toBe(N);
   for (let i = 0; i < N; i++) {
     const name = `pkg-${pad(i)}`;
-    expect(yarnLock).toContain(`"${name}@workspace:*":\n`);
+    expect(keyLines).toContain(
+      `"${name}@packages/${name}", "${name}@workspace:*", "${name}@workspace:^1.0.${i}", "${name}@workspace:~1.0.${i}":`,
+    );
     expect(yarnLock).toContain(`  version "workspace:packages/${name}"\n`);
   }
-  const depLines = yarnLock.split("\n").filter(l => /^ {4}pkg-\d{3} "workspace:\*"$/.test(l));
-  expect(depLines.length).toBe(N * 3);
 
   // Second install reparses bun.lock with N workspace rows and should see
   // no diff.

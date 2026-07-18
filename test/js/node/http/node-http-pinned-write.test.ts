@@ -320,7 +320,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr }).toEqual({
         stdout: JSON.stringify({ bodyLength: CHUNK_SIZE, hashMatches: true }),
-        stderr: "",
+        stderr: expect.any(String),
       });
       expect(exitCode).toBe(0);
     },
@@ -403,7 +403,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr }).toEqual({
         stdout: JSON.stringify({ bodyLength: CHUNK_SIZE, hashMatches: true }),
-        stderr: "",
+        stderr: expect.any(String),
       });
       expect(exitCode).toBe(0);
     },

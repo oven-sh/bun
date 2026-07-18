@@ -1025,8 +1025,10 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
     if let Some(hset) = stream.take_header_set() {
         let pairs = hset.pairs();
-        /// RFC 9114 §8.1: malformed message (a request carrying :status).
-        const H3_MESSAGE_ERROR: u64 = 0x105;
+        /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
+        /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
+        /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
+        const H3_MESSAGE_ERROR: u64 = 0x10e;
         let has_status = pairs
             .chunks_exact(2)
             .find(|kv| kv[0] == b":status")

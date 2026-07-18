@@ -1294,7 +1294,9 @@ thread_local! {
 /// `WebWorker::shutdown` after `~VM`, so every JSC-backed handle on a leaked parser is dangling;
 /// `free_native_for_thread_exit` forgets those and drops the pure-Rust/C allocations (engine's
 /// stream HashMap, lshpack state, per-stream boxes, scratch Vecs). The pool itself is taken so
-/// the slot storage is released here rather than by the TLS destructor.
+/// the slot storage is released here rather than by the TLS destructor. Only the 256 inline
+/// hive slots are enumerated; `Fallback` keeps no record of heap-spill slots (>256 concurrent
+/// parsers on one thread), so those would still leak in that case.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__H2FrameParser__onThreadExit() {
     let Some(pool) = POOL.with_borrow_mut(Option::take) else {

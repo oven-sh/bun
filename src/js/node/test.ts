@@ -1640,8 +1640,9 @@ function runLateSubtest(
   mode: "skip" | "todo" | undefined,
   isSuite: boolean,
 ): Promise<undefined> {
+  // isExecutionPhase=true keeps isRunning() true without `started`, so a nested
+  // t.test() inside the body goes to scheduleSubtest instead of recursing here.
   const child = new TestNode(name, parent, options, isSuite, true);
-  child.finished = true;
   if (mode === "todo" || options.todo) child.todoFlag = true;
   if (mode === "skip" || options.skip) child.skipped = true;
   const failure = makeTestFailure("test could not be started because its parent finished");
@@ -1665,15 +1666,20 @@ function runLateSubtest(
       fn.length === 2 ? fn.$call(undefined, ctx, kDefaultFunction) : fn.$call(undefined, ctx),
     );
   } catch {}
-  // Mirror executeTestNode's cleanup so a late body's t.mock.method() does not
-  // leak into later tests (Node's postRun() resets mocks here too).
+  // Mirror executeTestNode: drain nested subtests the body scheduled, then
+  // reset mocks so a late body's t.mock.method() does not leak into later
+  // tests (Node's postRun() does both).
   const settle = () => {
+    child.finished = true;
     try {
       child.mockTracker?.reset();
     } catch {}
     return undefined;
   };
-  return Promise.resolve(body).then(settle, settle);
+  return Promise.resolve(body)
+    .catch(kDefaultFunction)
+    .then(() => drainSubtestChain(child))
+    .then(settle, settle);
 }
 
 // Awaits a node's subtest chain, including links appended while waiting.

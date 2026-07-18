@@ -24,6 +24,7 @@ use crate::bundler_jsc::options_jsc::{compile_target_from_js, compile_target_fro
 
 pub mod js_bundler {
     use super::*;
+    use crate::jsc_ext::JSGlobalObjectExt as _;
     use bun_core::ZigStringSlice;
 
     use bun_sys::FdExt;

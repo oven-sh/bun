@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 async function run(execArgv: string[], src: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...execArgv, "-e", src],
-    env: bunEnv,
+    env: { ...bunEnv, NODE_NO_WARNINGS: undefined },
     stdout: "pipe",
     stderr: "pipe",
   });

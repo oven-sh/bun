@@ -2004,9 +2004,9 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
         auto s = warning.getString(globalObject);
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
-        // Re-capture past ctor (util.deprecate passes its wrapper). With no
-        // ctor, getFramesForCaller's single framesToSkip drops the enclosing
-        // host-function frame so the stack starts at the user's call site.
+        // Re-capture past ctor (util.deprecate passes its wrapper). Without
+        // one, getFramesForCaller's framesToSkip=1 drops whichever native host
+        // function reached here (process.emitWarning, generateKeyPair, ...).
         Bun::captureStackTraceForError(globalObject, errorInstance, ctor.isCallable() ? ctor : jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {

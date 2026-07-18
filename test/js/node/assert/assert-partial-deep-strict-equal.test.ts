@@ -1,5 +1,5 @@
-import assert from "node:assert";
 import { describe, expect, test } from "bun:test";
+import assert from "node:assert";
 
 describe("assert.partialDeepStrictEqual", () => {
   test("TypedArrays, Buffers and DataViews match the expected bytes as an in-order subsequence", () => {

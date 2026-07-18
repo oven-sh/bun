@@ -303,13 +303,13 @@ impl FileRoute {
         unsafe { Self::on(this, req, resp, method) };
     }
 
-    // Takes `*mut FileRoute` (not `&self`) because the
-    // intrusive-refcounted heap object is captured raw into a `scopeguard`
-    // whose closure may free `*this` via `deref()` before the local `&Self`
-    // borrow lexically ends. Derive a single `&FileRoute` for all field reads;
-    // the only per-request mutation (`stat_hash.hash`) goes through `Cell`, so
-    // no `&mut Self` is ever materialized and the shared borrow stays valid
-    // under Stacked Borrows across that write.
+    // Takes `*mut FileRoute` (not `&self`) because `this_ptr` is stashed as
+    // `FileResponseStream`'s `ctx` userdata; the async `on_stream_complete`
+    // may hold the last ref after a reload drops the route table's. Within
+    // the body the route-table ref + the `ref_()` below keep `*this_ptr`
+    // alive, and the only per-request mutation (`stat_hash.hash`) goes
+    // through `Cell`, so a single `&FileRoute` is sound under Stacked
+    // Borrows for the whole call.
     /// # Safety
     /// `this_ptr` must point to a live heap `FileRoute` for the duration of
     /// this call. The `ref_()` taken below keeps it alive until

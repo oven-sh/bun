@@ -575,6 +575,7 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionGetEventListeners,
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
@@ -599,6 +600,7 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionListenerCount,
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
@@ -618,6 +620,7 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOnce,
     if (callFrame->argumentCount() < 3) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCastFast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
@@ -642,6 +645,7 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOn,
     if (callFrame->argumentCount() < 3) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCastFast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};

@@ -293,12 +293,12 @@ Performance (2M ops, patched RelWithDebInfo vs baseline release; builds not perf
 
 Phase-2 fast paths (DFG/FTL `compileStringEquality`/`stringsEqual` compare `m_fiber` words directly when both operands are inline; `ThunkGenerators::decodeString` decodes length/is8Bit/data from the fiber word; DFG/FTL string-length already had the shift+mask path from phase 1) replace the slow-path routing:
 
-| Op on 5-char inline | Baseline | Phase-2 | Delta |
-|---|---:|---:|---:|
-| `.length` | 8.2 ms | 5.7 ms | **-30%** |
-| `.charCodeAt(0)` | 66.7 ms | 53.7 ms | **-19%** |
-| `===` (equal-content pairs) | 9.5 ms | 15.3 ms | +61% |
-| `!==` (unequal pairs) | 36.8 ms | 19.0 ms | **-48%** |
+| Op on 5-char inline         | Baseline | Phase-2 |    Delta |
+| --------------------------- | -------: | ------: | -------: |
+| `.length`                   |   8.2 ms |  5.7 ms | **-30%** |
+| `.charCodeAt(0)`            |  66.7 ms | 53.7 ms | **-19%** |
+| `===` (equal-content pairs) |   9.5 ms | 15.3 ms |     +61% |
+| `!==` (unequal pairs)       |  36.8 ms | 19.0 ms | **-48%** |
 
 Net: smaller and faster than rope substrings for the eligible range. The `===`-equal case is slower because baseline rope-substrings share a base and hit a shortcut the inline path doesn't; the unequal case, which is where comparisons usually spend their time, is nearly twice as fast.
 

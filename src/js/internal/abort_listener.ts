@@ -26,8 +26,10 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
       listener.$call(signal, event);
     });
     removeEventListener = () => {
-      signal.removeEventListener("abort", counted);
+      // Remove the algorithm first so eventListenersDidChange() sees an empty
+      // m_abortAlgorithms and can cancel an unobserved AbortSignal.timeout timer.
       $removeAbortAlgorithmFromSignal(signal, algorithmId);
+      signal.removeEventListener("abort", counted);
     };
   }
   return {

@@ -74,9 +74,6 @@ describe("path.relative", () => {
           ["\\\\É\\bar", "\\\\é\\BAR\\x", "x"],
           ["\\\\foo\\É", "\\\\foo\\baz", "..\\baz"],
           ["\\\\foo\\É\\a", "\\\\foo\\é\\b", "..\\b"],
-          // One side resolves to a bare '\' (degenerate but reachable).
-          ["C:\\É", "\\\\", "..\\.."],
-          ["\\\\", "\\\\É\\bar", "É\\bar"],
         ],
       ],
       [

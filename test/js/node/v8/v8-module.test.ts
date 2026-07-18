@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 import { bunEnv, bunExe } from "harness";
+import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {

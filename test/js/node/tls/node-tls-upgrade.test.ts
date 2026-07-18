@@ -33,6 +33,33 @@ describe.each([
   });
 });
 
+// resetAndDestroy() on a tls.connect({ socket }) wrapper: the wrapped socket
+// must still be destroyed. The wrapped-socket teardown in _destroy runs after
+// this._handle's close so terminate() stays the first close on the shared
+// us_socket_t (first-close-wins).
+test("tls.connect({ socket }).resetAndDestroy() destroys the wrapped net.Socket", async () => {
+  const { promise: peerDone, resolve: peerResolve } = Promise.withResolvers<void>();
+  await using server = net.createServer(c => {
+    c.on("error", () => {});
+    c.on("close", () => peerResolve());
+    c.resume();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const netSock = net.connect({ host: "127.0.0.1", port: (server.address() as net.AddressInfo).port });
+  netSock.on("error", () => {});
+  await once(netSock, "connect");
+
+  const netClose = once(netSock, "close");
+  const tlsSock = tls.connect({ socket: netSock, servername: "localhost" });
+  tlsSock.on("error", () => {});
+  tlsSock.resetAndDestroy();
+
+  await netClose;
+  expect(netSock.destroyed).toBe(true);
+  await peerDone;
+});
+
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
   // enought to trigger backpressure
   const payload = Buffer.alloc(16 * 1024 * 4, "b").toString("utf8");

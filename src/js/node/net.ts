@@ -1968,16 +1968,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down the wrapped transport (tls.connect({ socket })) with this socket
-  // so the caller's 'close' fires on a failed handshake or mid-stream destroy
-  // too, not only on the graceful 'end' path kCloseRawConnection covers.
   const upgraded = this[kupgraded];
-  if (upgraded && !upgraded.destroyed) {
-    // On the upgradeTLS path upgraded._handle is the raw twin of this._handle
-    // (same us_socket_t; its close() is a no-op once this closes). For a
-    // duplex-wrapped net.Socket (named pipe) _handle owns its own fd.
-    upgraded.destroy?.();
-  }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2040,6 +2031,13 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   } else {
     callback(err);
     process.nextTick(emitCloseNT, this, !!err);
+  }
+
+  // Tear down the wrapped transport (tls.connect({ socket })) so its 'close'
+  // fires on a failed handshake too. After this._handle's close so terminate()
+  // stays first-close on the shared us_socket_t; the raw twin's close no-ops.
+  if (upgraded && !upgraded.destroyed) {
+    upgraded.destroy?.();
   }
 
   const server = this.server;

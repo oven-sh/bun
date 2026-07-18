@@ -1458,10 +1458,9 @@ impl VirtualMachine {
     }
 
     pub fn on_before_exit(&mut self) {
-        // Worker: an uncaught throw / `process.exit()` / parent `terminate()`
-        // during this drain arms the JSC termination trap; re-entering JS then
-        // asserts `!exception()` in `Interpreter::executeCallImpl`. Bail out
-        // like `spin()`; `shutdown()` clears the trap before the 'exit' emit.
+        // Worker: an uncaught throw / `process.exit()` / parent `terminate()` during
+        // this drain arms the JSC termination trap; re-entering JS then asserts
+        // `!exception()` in `Interpreter::executeCallImpl`. Bail out like `spin()`.
         let terminated = |vm: &Self| vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
 
         ExitHandler::dispatch_on_before_exit(self);

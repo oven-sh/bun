@@ -1781,7 +1781,7 @@ describe.concurrent("worker termination during the 'beforeExit' drain", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
   };
 
   test("uncaught throw from work a 'beforeExit' listener scheduled reports error and exits the worker", async () => {
@@ -1789,13 +1789,15 @@ describe.concurrent("worker termination during the 'beforeExit' drain", () => {
       `const { writeSync } = require("node:fs");
        let n = 0;
        process.on("beforeExit", () => {
-         writeSync(2, "W-BEFOREEXIT " + (++n) + "\\n");
+         writeSync(1, "W-BEFOREEXIT " + (++n) + "\\n");
          if (n === 1) setImmediate(() => { throw new Error("boom"); });
        });`,
     );
-    expect(stderr.trim()).toBe("W-BEFOREEXIT 1");
-    expect(stdout.split("\n").filter(Boolean)).toEqual(["WORKER-ERROR boom", "WORKER-EXIT 1"]);
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: ["W-BEFOREEXIT 1", "WORKER-ERROR boom", "WORKER-EXIT 1"],
+      exitCode: 0,
+      stderr: "",
+    });
   });
 
   test("process.exit() from work a 'beforeExit' listener scheduled exits the worker with that code", async () => {
@@ -1803,13 +1805,15 @@ describe.concurrent("worker termination during the 'beforeExit' drain", () => {
       `const { writeSync } = require("node:fs");
        let n = 0;
        process.on("beforeExit", () => {
-         writeSync(2, "W-BEFOREEXIT " + (++n) + "\\n");
+         writeSync(1, "W-BEFOREEXIT " + (++n) + "\\n");
          if (n === 1) setImmediate(() => { process.exit(42); });
        });`,
     );
-    expect(stderr.trim()).toBe("W-BEFOREEXIT 1");
-    expect(stdout.split("\n").filter(Boolean)).toEqual(["WORKER-EXIT 42"]);
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: ["W-BEFOREEXIT 1", "WORKER-EXIT 42"],
+      exitCode: 0,
+      stderr: "",
+    });
   });
 
   test("parent terminate() while the worker is draining after 'beforeExit' stops the worker", async () => {
@@ -1818,7 +1822,7 @@ describe.concurrent("worker termination during the 'beforeExit' drain", () => {
        const { parentPort } = require("node:worker_threads");
        let n = 0;
        process.on("beforeExit", () => {
-         writeSync(2, "W-BEFOREEXIT " + (++n) + "\\n");
+         writeSync(1, "W-BEFOREEXIT " + (++n) + "\\n");
          if (n === 1) setImmediate(() => {
            parentPort.postMessage("terminate-me");
            // Stay inside the drain loop until terminate() lands; the loop
@@ -1829,8 +1833,10 @@ describe.concurrent("worker termination during the 'beforeExit' drain", () => {
        });`,
       `w.on("message", () => w.terminate());`,
     );
-    expect(stderr.trim()).toBe("W-BEFOREEXIT 1");
-    expect(stdout).toMatch(/^WORKER-EXIT [01]\n$/);
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: ["W-BEFOREEXIT 1", expect.stringMatching(/^WORKER-EXIT [01]$/)],
+      exitCode: 0,
+      stderr: "",
+    });
   });
 });

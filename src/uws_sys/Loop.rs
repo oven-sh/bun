@@ -665,7 +665,7 @@ mod c {
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub(super) fn us_loop_idle_ns(loop_: *mut Loop) -> u64;
+        pub fn us_loop_idle_ns(loop_: *mut Loop) -> u64;
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
@@ -693,7 +693,7 @@ mod c {
 // event-loop thread parks inside it while worker threads call
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
-pub use c::{us_loop_run, us_wakeup_loop};
+pub use c::{us_loop_idle_ns, us_loop_run, us_wakeup_loop};
 
 unsafe extern "C" {
     // safe: no args; clears the C side's thread-local loop pointer — no preconditions.

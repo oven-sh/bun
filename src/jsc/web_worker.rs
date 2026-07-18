@@ -143,6 +143,10 @@ pub struct WebWorker {
     /// reads: `event_loop_handle` is swapped by `spawnSync` so following it from
     /// the parent would race and read the wrong loop's counters.
     elu_loop: Cell<*mut bun_uws::Loop>,
+    /// Parent's profiler config snapshotted in `create()` on the parent thread,
+    /// since `on_exit()` `.take()`s it on that thread and `start_vm` reading it
+    /// live would race.
+    parent_cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     vm_lock: Mutex,
 
     // ---- Parent-thread only -------------------------------------------------
@@ -423,15 +427,14 @@ pub(crate) unsafe extern "C" fn WebWorker__getELU(
     let loop_ptr = w.elu_loop.get();
     let live = !vm_ptr.is_null() && !loop_ptr.is_null();
     if live {
-        // No `&VirtualMachine` binding: the worker thread may hold a live mutable
-        // view. Raw-pointer access keeps any autoref scoped to the access, as the
-        // terminate path above does.
+        // No `&VirtualMachine` or `&Loop` binding: the worker thread holds
+        // `&mut` to both while parked. Raw-pointer access only, matching the
+        // us_wakeup_loop re-export convention in Loop.rs.
         // SAFETY: elu_loop was cached under vm_lock alongside vm; the real loop
         // outlives the vm publish window (freed only after vm is nulled).
-        let loop_ = unsafe { &*loop_ptr };
         // Idle BEFORE elapsed, matching node's order — reversed, idle is dated
         // after now and active = now - idle comes out short.
-        let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
+        let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
         // SAFETY: vm_ptr is published under vm_lock and non-null here;
         // loop_start is Copy and fixed before the VM was published.
         let elapsed_ms = unsafe { (*vm_ptr).loop_start }.elapsed().as_secs_f64() * 1000.0;
@@ -615,6 +618,8 @@ impl WebWorker {
             requested_terminate: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             elu_loop: Cell::new(core::ptr::null_mut()),
+            // SAFETY: `parent` is the calling thread's live VM (checked above).
+            parent_cpu_profiler_config: unsafe { (*parent).cpu_profiler_config },
             vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
@@ -1033,8 +1038,7 @@ impl WebWorker {
                 }
                 Some(config)
             } else if own_exec_argv.is_none() {
-                parent
-                    .cpu_profiler_config
+                self.parent_cpu_profiler_config
                     .map(|c| crate::bun_cpu_profiler::CPUProfilerConfig {
                         thread_id: self.execution_context_id,
                         ..c

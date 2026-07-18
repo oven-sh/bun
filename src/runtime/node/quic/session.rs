@@ -1486,11 +1486,14 @@ impl QuicSession {
                 .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
                 .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
         });
-        self.write_stat(IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT, now_ns());
-        self.write_stat(IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT, now_ns());
         if !ok {
             return;
         }
+        // Below the bail: a failed handshake sets handshake_completed = 0, so
+        // stamping these would show `handshakeCompleted === false` next to a
+        // non-zero `handshakeCompletedAt`. Node stamps them only on success.
+        self.write_stat(IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT, now_ns());
+        self.write_stat(IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT, now_ns());
         let (snap_sni, snap_cipher, alpn_bytes, snap_validation, early_data, have_peer_cert) = {
             let s = self.hsk_snapshot.get();
             match s.as_ref() {

@@ -2149,8 +2149,8 @@ pub fn parse_into_binary_lockfile(
             row_by_path.insert(row.key.slice(), idx);
         }
         for workspace_path in &workspace_path_snapshot {
-            let Some(&row_idx) = row_by_path
-                .get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
+            let Some(&row_idx) =
+                row_by_path.get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
             else {
                 continue;
             };
@@ -2195,8 +2195,7 @@ pub fn parse_into_binary_lockfile(
                     &mut lockfile.buffers.extern_strings,
                 )?;
             } else if let Some(bin_dir_expr) = value.get(b"binDir") {
-                pkg.bin =
-                    Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
+                pkg.bin = Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
             }
 
             // there should be no duplicates
@@ -3372,8 +3371,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
             row_by_path.insert(row.key.slice(), idx);
         }
         for workspace_path in lockfile.workspace_paths.values() {
-            let Some(&row_idx) = row_by_path
-                .get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
+            let Some(&row_idx) =
+                row_by_path.get(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()))
             else {
                 continue;
             };

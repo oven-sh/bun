@@ -1,5 +1,4 @@
 const { validateAbortSignal, validateFunction } = require("internal/validators");
-const { kResistStopPropagation } = require("internal/shared");
 
 function addAbortListener(signal: AbortSignal, listener: EventListener): Disposable {
   if (signal === undefined) {
@@ -12,10 +11,20 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
   if (signal.aborted) {
     queueMicrotask(() => listener());
   } else {
-    // TODO(atlowChemi) add { subscription: true } and return directly
-    signal.addEventListener("abort", listener, { once: true, [kResistStopPropagation]: true });
+    // The native EventTarget drops node's [kResistStopPropagation] listener
+    // option, so an earlier listener's stopImmediatePropagation() would
+    // silence this one. A native abort algorithm runs in runAbortSteps()
+    // before the 'abort' event dispatch and cannot be suppressed; algorithms
+    // are one-shot, preserving the `once` semantics.
+    const algorithmId = $addAbortAlgorithmToSignal(signal, function () {
+      removeEventListener = undefined;
+      const event = new Event("abort");
+      Object.defineProperty(event, "target", { value: signal, configurable: true });
+      Object.defineProperty(event, "currentTarget", { value: signal, configurable: true });
+      listener.$call(signal, event);
+    });
     removeEventListener = () => {
-      signal.removeEventListener("abort", listener);
+      $removeAbortAlgorithmFromSignal(signal, algorithmId);
     };
   }
   return {

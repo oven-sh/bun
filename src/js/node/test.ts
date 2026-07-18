@@ -423,13 +423,9 @@ async function runOneFile(
   await drainStderr;
   const exitCode = await proc.exited;
 
-  // A file that died before reporting anything (a top-level throw, a syntax
-  // error) is itself the failing test: node reports the file node as failed and
-  // counts it, and emits no per-file summary because the child never sent one.
-  // Two different failures: the file itself died before reporting anything (a
-  // top-level throw), or its tests failed. node reports the file node as failed
-  // either way, but only emits test:fail for the first — the second is already
-  // covered by the children's own events, and reports as `subtestsFailed`.
+  // Two failure shapes: the file died before reporting anything (top-level
+  // throw — node emits a file-level test:fail and no per-file summary), or its
+  // tests failed (covered by the children's events; completes `subtestsFailed`).
   const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
   const subtestsFailed = fileCounts.failed > 0;
   const fileDuration = Date.now() - fileStarted;

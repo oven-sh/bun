@@ -764,6 +764,17 @@ impl JunitReporter {
     }
 }
 
+/// Drain the event loop after a file's tests finish, like a node process
+/// would before exiting; the vendored-node-test runner opts in via
+/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
+/// completed async work. Off by default: bun suites keep exit-after-tests.
+pub(crate) fn should_drain_event_loop() -> bool {
+    static DRAIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DRAIN.get_or_init(|| {
+        std::env::var_os("BUN_TEST_DRAIN_EVENT_LOOP").is_some_and(|value| value == "1")
+    })
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -3260,6 +3271,17 @@ impl TestCommand {
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
+
+                // Node parity: a node test file exits only when the event loop
+                // drains, so in-flight async work (fs I/O, workers, sockets)
+                // completes before process 'exit' handlers verify mustCall()
+                // counts. Opt-in so bun's own suites keep exit-after-tests.
+                if should_drain_event_loop() {
+                    while vm.is_event_loop_alive() {
+                        vm.tick();
+                        vm.auto_tick_active();
+                    }
+                }
                 drop(buntest_strong);
             }
 

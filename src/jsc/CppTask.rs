@@ -34,7 +34,7 @@ impl CppTask {
         // than the raw FFI. Calling the raw extern left the simulated throw
         // unchecked, which then tripped `drainMicrotasks`'s scope ctor under
         // `BUN_JSC_validateExceptionChecks=1`.
-        unsafe { crate::cpp::Bun__performTask(global, std::ptr::from_mut::<CppTask>(self)) }
+        unsafe { crate::cpp::Bun__performTask(global, std::ptr::from_mut(self).cast()) }
     }
 }
 

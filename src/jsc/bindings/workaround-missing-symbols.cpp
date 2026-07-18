@@ -97,9 +97,13 @@ std::atomic<int> wtfStringCopyCount;
 #if defined(__x86_64__)
 #define BUN_GLIBC_BASE "GLIBC_2.2.5"
 #define BUN_GLIBC_2_4 "GLIBC_2.4"
+#define BUN_GLIBC_2_7 "GLIBC_2.7"
+#define BUN_GLIBC_2_12 "GLIBC_2.12"
 #elif defined(__aarch64__)
 #define BUN_GLIBC_BASE "GLIBC_2.17"
 #define BUN_GLIBC_2_4 "GLIBC_2.17"
+#define BUN_GLIBC_2_7 "GLIBC_2.17"
+#define BUN_GLIBC_2_12 "GLIBC_2.17"
 #endif
 
 #define BUN_SYMVER(sym, ver) __asm__(".symver " #sym "," #sym "@" ver)
@@ -107,6 +111,8 @@ std::atomic<int> wtfStringCopyCount;
 BUN_SYMVER(exp, BUN_GLIBC_BASE);
 BUN_SYMVER(exp2, BUN_GLIBC_BASE);
 BUN_SYMVER(expf, BUN_GLIBC_BASE);
+BUN_SYMVER(hypot, BUN_GLIBC_BASE);
+BUN_SYMVER(hypotf, BUN_GLIBC_BASE);
 BUN_SYMVER(log, BUN_GLIBC_BASE);
 BUN_SYMVER(log2, BUN_GLIBC_BASE);
 BUN_SYMVER(log2f, BUN_GLIBC_BASE);
@@ -138,11 +144,13 @@ float __wrap_expf(float x) { return expf(x); }
 float __wrap_powf(float x, float y) { return powf(x, y); }
 float __wrap_logf(float x) { return logf(x); }
 float __wrap_log2f(float x) { return log2f(x); }
+float __wrap_hypotf(float x, float y) { return hypotf(x, y); }
 double __wrap_exp(double x) { return exp(x); }
 double __wrap_exp2(double x) { return exp2(x); }
 double __wrap_pow(double x, double y) { return pow(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }
+double __wrap_hypot(double x, double y) { return hypot(x, y); }
 
 // glibc 2.24 added quick_exit@GLIBC_2.24 (the version that correctly skips
 // thread_local dtors per C11/C++11; the older @2.10 version ran them — see
@@ -378,10 +386,16 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
     BUN_SYMVER(sym, BUN_GLIBC_BASE);         \
     extern "C" void __wrap_##sym params { sym args; }
 
+BUN_WRAP_FWD(void*, dlopen, (const char* f, int fl), (f, fl))
+BUN_WRAP_FWD(int, dlclose, (void* h), (h))
 BUN_WRAP_FWD(void*, dlsym, (void* h, const char* s), (h, s))
 BUN_WRAP_FWD(void*, dlvsym, (void* h, const char* s, const char* v), (h, s, v))
 BUN_WRAP_FWD(int, dladdr, (const void* a, Dl_info* i), (a, i))
 BUN_WRAP_FWD(char*, dlerror, (), ())
+BUN_WRAP_FWD(int, pthread_create, (pthread_t * t, const pthread_attr_t* a, void* (*f)(void*), void* p), (t, a, f, p))
+BUN_WRAP_FWD(int, pthread_join, (pthread_t t, void** r), (t, r))
+BUN_WRAP_FWD(int, pthread_detach, (pthread_t t), (t))
+BUN_WRAP_FWD(int, pthread_sigmask, (int h, const sigset_t* s, sigset_t* o), (h, s, o))
 BUN_WRAP_FWD(int, pthread_key_create, (pthread_key_t * k, void (*d)(void*)), (k, d))
 BUN_WRAP_FWD(int, pthread_key_delete, (pthread_key_t k), (k))
 BUN_WRAP_FWD(void*, pthread_getspecific, (pthread_key_t k), (k))
@@ -397,8 +411,16 @@ BUN_WRAP_FWD(int, pthread_rwlock_unlock, (pthread_rwlock_t * l), (l))
 BUN_WRAP_FWD(int, pthread_rwlock_destroy, (pthread_rwlock_t * l), (l))
 BUN_WRAP_FWD(int, pthread_attr_setstacksize, (pthread_attr_t * a, size_t s), (a, s))
 BUN_WRAP_FWD(int, pthread_attr_setstack, (pthread_attr_t * a, void* s, size_t z), (a, s, z))
+BUN_WRAP_FWD(int, pthread_attr_getstack, (const pthread_attr_t* a, void** s, size_t* z), (a, s, z))
 BUN_WRAP_FWD(int, pthread_getattr_np, (pthread_t t, pthread_attr_t* a), (t, a))
 BUN_WRAP_FWD(int, pthread_kill, (pthread_t t, int s), (t, s))
+BUN_WRAP_FWD(int, sem_init, (sem_t * s, int p, unsigned v), (s, p, v))
+BUN_WRAP_FWD(int, sem_post, (sem_t * s), (s))
+BUN_WRAP_FWD(int, sem_wait, (sem_t * s), (s))
+
+// pthread_setname_np first appeared at 2.12 (x86_64), not the base version.
+BUN_SYMVER(pthread_setname_np, BUN_GLIBC_2_12);
+extern "C" int __wrap_pthread_setname_np(pthread_t t, const char* n) { return pthread_setname_np(t, n); }
 
 BUN_SYMVER(__pthread_key_create, BUN_GLIBC_BASE);
 extern "C" int __pthread_key_create(pthread_key_t*, void (*)(void*));
@@ -406,11 +428,19 @@ extern "C" int __wrap___pthread_key_create(pthread_key_t* k, void (*d)(void*)) {
 
 // Group B: stat family became real symbols in 2.33. Before that they were
 // header inlines around __fxstat*/__xmknod, which still exist at ≤ 2.17.
+extern "C" int __xstat(int, const char*, struct stat*);
+extern "C" int __xstat64(int, const char*, struct stat64*);
+extern "C" int __lxstat(int, const char*, struct stat*);
+extern "C" int __lxstat64(int, const char*, struct stat64*);
 extern "C" int __fxstat(int, int, struct stat*);
 extern "C" int __fxstat64(int, int, struct stat64*);
 extern "C" int __fxstatat(int, int, const char*, struct stat*, int);
 extern "C" int __fxstatat64(int, int, const char*, struct stat64*, int);
 extern "C" int __xmknod(int, const char*, mode_t, dev_t*);
+BUN_SYMVER(__xstat, BUN_GLIBC_BASE);
+BUN_SYMVER(__xstat64, BUN_GLIBC_BASE);
+BUN_SYMVER(__lxstat, BUN_GLIBC_BASE);
+BUN_SYMVER(__lxstat64, BUN_GLIBC_BASE);
 BUN_SYMVER(__fxstat, BUN_GLIBC_BASE);
 BUN_SYMVER(__fxstat64, BUN_GLIBC_BASE);
 BUN_SYMVER(__fxstatat, BUN_GLIBC_2_4);
@@ -421,11 +451,43 @@ BUN_SYMVER(__xmknod, BUN_GLIBC_BASE);
 #define _MKNOD_VER 0
 #endif
 
+extern "C" int __wrap_stat(const char* p, struct stat* st) { return __xstat(_STAT_VER, p, st); }
+extern "C" int __wrap_stat64(const char* p, struct stat64* st) { return __xstat64(_STAT_VER, p, st); }
+extern "C" int __wrap_lstat(const char* p, struct stat* st) { return __lxstat(_STAT_VER, p, st); }
+extern "C" int __wrap_lstat64(const char* p, struct stat64* st) { return __lxstat64(_STAT_VER, p, st); }
 extern "C" int __wrap_fstat(int fd, struct stat* st) { return __fxstat(_STAT_VER, fd, st); }
 extern "C" int __wrap_fstat64(int fd, struct stat64* st) { return __fxstat64(_STAT_VER, fd, st); }
 extern "C" int __wrap_fstatat(int dfd, const char* p, struct stat* st, int f) { return __fxstatat(_STAT_VER, dfd, p, st, f); }
 extern "C" int __wrap_fstatat64(int dfd, const char* p, struct stat64* st, int f) { return __fxstatat64(_STAT_VER, dfd, p, st, f); }
 extern "C" int __wrap_mknod(const char* p, mode_t m, dev_t d) { return __xmknod(_MKNOD_VER, p, m, &d); }
+
+// Group B': C23 scanf/strtol variants (glibc 2.38) accept the 0b prefix on
+// integer conversions. Nothing in bun relies on that, so forward to the C99
+// scanf (2.7) and plain strtol (base) ABI-compatible implementations.
+extern "C" int __isoc99_vscanf(const char*, va_list);
+extern "C" int __isoc99_vfscanf(FILE*, const char*, va_list);
+extern "C" int __isoc99_vsscanf(const char*, const char*, va_list);
+BUN_SYMVER(__isoc99_vscanf, BUN_GLIBC_2_7);
+BUN_SYMVER(__isoc99_vfscanf, BUN_GLIBC_2_7);
+BUN_SYMVER(__isoc99_vsscanf, BUN_GLIBC_2_7);
+BUN_SYMVER(strtol, BUN_GLIBC_BASE);
+BUN_SYMVER(strtoul, BUN_GLIBC_BASE);
+BUN_SYMVER(strtoull, BUN_GLIBC_BASE);
+
+extern "C" int __wrap___isoc23_vscanf(const char* f, va_list ap) { return __isoc99_vscanf(f, ap); }
+extern "C" int __wrap___isoc23_vfscanf(FILE* s, const char* f, va_list ap) { return __isoc99_vfscanf(s, f, ap); }
+extern "C" int __wrap___isoc23_vsscanf(const char* s, const char* f, va_list ap) { return __isoc99_vsscanf(s, f, ap); }
+extern "C" int __wrap___isoc23_sscanf(const char* s, const char* f, ...)
+{
+    va_list ap;
+    va_start(ap, f);
+    int r = __isoc99_vsscanf(s, f, ap);
+    va_end(ap);
+    return r;
+}
+extern "C" long __wrap___isoc23_strtol(const char* n, char** e, int b) { return strtol(n, e, b); }
+extern "C" unsigned long __wrap___isoc23_strtoul(const char* n, char** e, int b) { return strtoul(n, e, b); }
+extern "C" unsigned long long __wrap___isoc23_strtoull(const char* n, char** e, int b) { return strtoull(n, e, b); }
 
 // Group C: thin syscall wrappers added in 2.27/2.28. Kernel has had the
 // syscalls since 4.5 (copy_file_range), 3.17 (memfd_create), 4.11 (statx);

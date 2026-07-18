@@ -117,9 +117,10 @@ describe("encrypted PKCS#8", () => {
 });
 
 // Run the upstream Node v26.3.0 suites this change enables. Each is a plain
-// script that exits 0 on success; they are not bun:test files.
+// script that exits 0 on success; they are not bun:test files. Sequential:
+// seven concurrent ASAN debug bun processes doing full PQC workloads OOM.
 describe("upstream node/test/parallel", () => {
-  test.concurrent.each([
+  test.each([
     "test-crypto-pqc-keygen-ml-dsa.js",
     "test-crypto-pqc-keygen-ml-kem.js",
     "test-crypto-pqc-key-objects-ml-dsa.js",

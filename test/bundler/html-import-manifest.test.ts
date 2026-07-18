@@ -382,20 +382,26 @@ console.log("About manifest:", aboutHtml);
       files: Array<{ input?: string; path: string; loader: string }>;
     };
 
+    const absolute = /^(?:[A-Za-z]:|[\\/]|\.\.[\\/])/;
     expect(manifest.index).not.toContain("\\");
+    expect(manifest.index).not.toMatch(absolute);
 
-    const byLoader = Object.fromEntries(manifest.files.map(f => [f.loader, f]));
-    // Entry chunks are keyed by the entry HTML source, relative to `root`.
-    expect(byLoader.html.input).toBe("page/index.html");
-    expect(byLoader.js.input).toBe("page/index.html");
-    expect(byLoader.css.input).toBe("page/index.html");
-    // file-loader asset
-    expect(byLoader.file.input).toBe("page/icon.txt");
+    // Entry chunks are keyed by the entry HTML source, relative to `root`;
+    // the file-loader asset is keyed by its own source path.
+    expect(manifest.files.map(f => [f.loader, f.input])).toEqual([
+      ["js", "page/index.html"],
+      ["html", "page/index.html"],
+      ["css", "page/index.html"],
+      ["file", "page/icon.txt"],
+    ]);
     for (const f of manifest.files) {
       expect(f.path).not.toContain("\\");
-      if (f.input !== undefined) expect(f.input).not.toContain("\\");
+      expect(f.path).not.toMatch(absolute);
     }
-    expect(byLoader.file.path).toStartWith("./");
+    // file-loader asset path comes from `additional_output_files[].dest_path`,
+    // which was the one emitted with native `\` before the fix.
+    const asset = manifest.files.find(f => f.loader === "file")!;
+    expect(asset.path).toStartWith("./");
   });
 
   // The HTML chunk's etag must change when only a referenced JS/CSS chunk

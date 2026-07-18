@@ -21,7 +21,11 @@ function lazyBasename(p: string): string {
     if (c === 47 /* / */ || c === 92 /* \ */) break;
     i--;
   }
-  return p.slice(i);
+  let base = p.slice(i);
+  if (process.platform === "win32" && base.length > 4 && base.slice(-4).toLowerCase() === ".exe") {
+    base = base.slice(0, -4);
+  }
+  return base;
 }
 
 function writeOut(msg: string): void {
@@ -35,7 +39,10 @@ function onWarning(warning: Error): void {
   if (!(warning instanceof Error)) return;
   const isDeprecation = warning.name === "DeprecationWarning";
   if (isDeprecation && process.noDeprecation) return;
-  const trace = hasExecFlag("--trace-warnings") || (isDeprecation && hasExecFlag("--trace-deprecation"));
+  const trace =
+    (process as any).traceProcessWarnings ||
+    hasExecFlag("--trace-warnings") ||
+    (isDeprecation && ((process as any).traceDeprecation || hasExecFlag("--trace-deprecation")));
   let msg = `(${process.release?.name || "node"}:${process.pid}) `;
   const code = (warning as any).code;
   if (code) msg += `[${code}] `;

@@ -117,7 +117,20 @@ describe("process.emitWarning default stderr report", () => {
     const { stderr, exitCode } = await run(["--trace-warnings"], src);
     expect(stderr.split("\n")[0]).toMatch(/^\(\w+:\d+\) \[CODE10\] CustomWarning: trace me$/);
     expect(stderr).toMatch(/^\s+at /m);
+    expect(stderr).not.toMatch(/at emitWarning/);
     expect(stderr).not.toContain("--trace-warnings ...");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("process.traceDeprecation = true enables stack printing at runtime", async () => {
+    const src = `
+      process.traceDeprecation = true;
+      require("node:util").deprecate(() => 1, "dep msg F", "DEP0T6")();
+    `;
+    const { stderr, exitCode } = await run([], src);
+    expect(stderr.split("\n")[0]).toMatch(/^\(\w+:\d+\) \[DEP0T6\] DeprecationWarning: dep msg F$/);
+    expect(stderr).toMatch(/^\s+at /m);
+    expect(stderr).not.toContain("--trace-deprecation ...");
     expect(exitCode).toBe(0);
   });
 });

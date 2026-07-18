@@ -2004,12 +2004,11 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
         auto s = warning.getString(globalObject);
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
-        // Only the synthesized error gets its stack re-captured past `ctor`;
-        // a caller-supplied Error keeps whatever .stack it already had.
-        if (ctor.isCallable()) {
-            Bun::captureStackTraceForError(globalObject, errorInstance, ctor);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        // Re-capture past ctor (util.deprecate passes its wrapper). With no
+        // ctor, getFramesForCaller's single framesToSkip drops the enclosing
+        // host-function frame so the stack starts at the user's call site.
+        Bun::captureStackTraceForError(globalObject, errorInstance, ctor.isCallable() ? ctor : jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {

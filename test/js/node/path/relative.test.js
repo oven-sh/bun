@@ -35,6 +35,19 @@ describe("path.relative", () => {
           ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
           ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
           ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
+          // Slash-rooted (no drive letter) inputs where the shorter side has
+          // trimmed length 2 and is a proper prefix of the other. Node's JS
+          // falls through to String#slice with an inverted range, which
+          // yields ""; a naive Rust slice with the same indices panics.
+          ["/x..", "/x.", ""],
+          ["/xy.", "/xy", ""],
+          ["/abc", "/ab", ""],
+          ["\\x..", "\\x.", ""],
+          ["\\ab.", "\\ab", ""],
+          ["/xyz.", "/xy", ".."],
+          ["/xyzw", "/xy", ".."],
+          ["/abcde", "/ab", ".."],
+          ["/x.", "/x..", "."],
         ],
       ],
       [

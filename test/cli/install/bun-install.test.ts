@@ -71,8 +71,9 @@ const defaultOpts = { linker: "hoisted" as const };
 // git hosts; probe once so those live-network tests todo instead of failing.
 async function hostReachable(url: string): Promise<boolean> {
   try {
-    await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-    return true;
+    const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+    // A blocked proxy CONNECT surfaces as a 403 Response, not a throw.
+    return res.status !== 403;
   } catch {
     return false;
   }

@@ -7,10 +7,7 @@ import { itBundled } from "./expectBundled";
 // silently drops the test instead of failing it. This file guards harness-only options.
 describe("bundler", () => {
   itBundled("options/AcceptsTimeoutScale", {
-    files: {
-      "/entry.js": `console.log("timeoutScale ok");`,
-    },
-    run: { stdout: "timeoutScale ok" },
+    files: { "/entry.js": `console.log("timeoutScale ok");` },
     timeoutScale: 1,
   });
 });
@@ -24,13 +21,18 @@ test.skipIf(isWindows)("itBundled registers tests that set timeoutScale (not sil
   // and plugin/ResolveManySegfault on main.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.path, "-t", "AcceptsTimeoutScale"],
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      BUN_BUNDLER_TEST_USE_ESBUILD: undefined,
+      BUN_BUNDLER_TEST_FILTER: undefined,
+      BUN_BUNDLER_TEST_DEBUG: undefined,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = stdout + stderr;
   expect(output).toContain("options/AcceptsTimeoutScale");
-  expect(output).not.toContain("matched 0 tests");
+  expect(output).toContain("1 pass");
   expect(exitCode).toBe(0);
 });

@@ -4122,23 +4122,55 @@ pub mod bv2_impl {
                         let source = &mut sources[index];
 
                         let output_path: Box<[u8]> = {
-                            // TODO: outbase
-                            let pathname =
-                                Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Loose,
-                                    false,
-                                >(
-                                    &self.transpiler.options.root_dir,
-                                    source.path.text,
-                                ));
+                            let pathname = Fs::PathName::init(source.path.text);
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
-                            template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];
                             }
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
+
+                            if template.needs(options::PlaceholderField::Dir) {
+                                // `root_dir` was canonicalized via `get_fd_path`
+                                // when the bundler was configured; resolve the
+                                // asset's directory the same way so the relative
+                                // path lines up on Windows even when the cwd
+                                // (and thus `source.path.text`) carries 8.3
+                                // short names. Mirrors `compute_chunks`.
+                                let source_dir: &[u8] = if pathname.dir.is_empty() {
+                                    b"."
+                                } else {
+                                    pathname.dir
+                                };
+                                let mut real_path_buf = bun_paths::path_buffer_pool::get();
+                                let dir: &[u8] = 'dir: {
+                                    let Ok(dir_file) = bun_sys::File::openat(
+                                        bun_sys::Fd::cwd(),
+                                        source_dir,
+                                        bun_sys::O::PATH | bun_sys::O::DIRECTORY,
+                                        0,
+                                    ) else {
+                                        break 'dir &*bun_paths::resolve_path::normalize_buf::<
+                                            bun_paths::platform::Auto,
+                                        >(
+                                            source_dir, &mut real_path_buf.0
+                                        );
+                                    };
+                                    match dir_file.get_path(&mut real_path_buf) {
+                                        Ok(p) => p,
+                                        Err(_) => &*bun_paths::resolve_path::normalize_buf::<
+                                            bun_paths::platform::Auto,
+                                        >(
+                                            source_dir, &mut real_path_buf.0
+                                        ),
+                                    }
+                                };
+                                template.placeholder.dir = bun_paths::resolve_path::relative_alloc(
+                                    &self.transpiler.options.root_dir,
+                                    dir,
+                                )?;
+                            }
 
                             if template.needs(options::PlaceholderField::Hash) {
                                 template.placeholder.hash =

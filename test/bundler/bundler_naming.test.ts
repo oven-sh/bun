@@ -1,5 +1,8 @@
-import { describe } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { ESBUILD, itBundled } from "./expectBundled";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 
 describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {
@@ -190,6 +193,65 @@ describe("bundler", () => {
         stdout: "./lib/second/test.file",
       },
     ],
+  });
+  // assetNaming `[dir]` must be relative to the configured root even when
+  // the root directory and the asset's source path spell the same on-disk
+  // location differently. Bun canonicalizes `root` via the file descriptor
+  // (`GetFinalPathNameByHandle` on Windows, /proc/self/fd on Linux) but
+  // `Bun.build({ files })` source paths are the literal map keys; previously
+  // the uncanonicalized source path was relativized against the canonical
+  // root, so no common prefix was found and `[dir]` expanded to a long
+  // `_.._/_.._/...` traversal back into the source tree. On Windows this
+  // surfaced whenever the cwd contained an 8.3 short path component such as
+  // `C:\Users\RUNNER~1\...` (the default TEMP directory in CI).
+  test("naming/AssetNamingDirCanonicalRoot", async () => {
+    using base = tempDir("asset-naming-dir-canon", {
+      "real/src/lib/first/.keep": "",
+      "real/src/lib/second/.keep": "",
+    });
+    const real = join(String(base), "real");
+    const link = join(String(base), "project-link");
+    // A junction needs no elevation on Windows; on POSIX this is a plain
+    // directory symlink. Either way `root` below canonicalizes to `real/src`
+    // while the `files` map keys keep the `project-link` spelling.
+    symlinkSync(real, link, isWindows ? "junction" : "dir");
+
+    const entry = join(link, "src/lib/first/file.js").replaceAll("\\", "/");
+    const asset = join(link, "src/lib/second/data.file").replaceAll("\\", "/");
+    const root = join(link, "src");
+
+    const script = `
+      const result = await Bun.build({
+        entrypoints: [${JSON.stringify(entry)}],
+        files: {
+          ${JSON.stringify(entry)}: 'import f from "../second/data.file"; console.log(f);',
+          ${JSON.stringify(asset)}: "this is a file",
+        },
+        root: ${JSON.stringify(root)},
+        naming: { entry: "hello.[ext]", asset: "[dir]/test.[ext]" },
+        loader: { ".file": "file" },
+      });
+      if (!result.success) {
+        for (const m of result.logs) console.error(String(m));
+        process.exit(1);
+      }
+      for (const out of result.outputs) console.log(out.kind + " " + out.path);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(base),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const assetLine = stdout.split("\n").find(l => l.startsWith("asset "));
+    expect(assetLine).toBe("asset ./lib/second/test.file");
+    expect(stdout).not.toContain("_.._");
+    expect(exitCode).toBe(0);
   });
   itBundled("naming/AssetNoOverwrite", {
     todo: true,

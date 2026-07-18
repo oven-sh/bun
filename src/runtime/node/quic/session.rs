@@ -1398,7 +1398,15 @@ impl QuicSession {
                     let Some(stream) = self.live_stream(stream_ptr) else {
                         continue;
                     };
-                    if stream.mark_close_reported() || stream.is_announce_suppressed() {
+                    if stream.mark_close_reported() {
+                        continue;
+                    }
+                    // A suppressed stream was never surfaced to JS, so it gets
+                    // no onStreamClose -- but it still has to leave `streams`
+                    // and drop its self-root, or it lives until teardown.
+                    if stream.is_announce_suppressed() {
+                        self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                        stream.release_close_root();
                         continue;
                     }
                     // Runs the parked reader wakeup — user JS, which may destroy

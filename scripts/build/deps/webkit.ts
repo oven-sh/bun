@@ -9,10 +9,11 @@
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
 //
 // Preview build of oven-sh/WebKit#268 (PromiseFinallyAwaitJob carries the
-// async context across), on top of WebKit e5f7fc2b — which already has the
-// AsyncFunctionResume settle-ordering fix (#295). Re-pin to the autobuild tag
-// of its merge commit once it lands on WebKit main.
-export const WEBKIT_VERSION = "autobuild-preview-pr-268-86efe056";
+// async context across), on top of WebKit main a8d15c1c — which already has
+// the AsyncFunctionResume settle-ordering fix (#295) and the
+// AsyncContextSwapScope RAII helper (#301) that #268 now uses. Re-pin to the
+// autobuild tag of its merge commit once it lands on WebKit main.
+export const WEBKIT_VERSION = "autobuild-preview-pr-268-5f70edce";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

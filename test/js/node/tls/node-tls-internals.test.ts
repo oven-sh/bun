@@ -43,27 +43,21 @@ describe("NodeTLS.cpp", () => {
   // fails. Pair with test/regression/issue/31611.test.ts which pins
   // root_certs.h itself to Mozilla's certdata.txt.
   test("tls.rootCertificates matches the DER blobs in root_certs.h exactly", () => {
-    const headerPath = join(
-      import.meta.dirname,
-      "../../../../packages/bun-usockets/src/crypto/root_certs.h",
-    );
+    const headerPath = join(import.meta.dirname, "../../../../packages/bun-usockets/src/crypto/root_certs.h");
     const header = readFileSync(headerPath, "utf8");
 
     const sha256 = (buf: Uint8Array) =>
       createHash("sha256").update(buf).digest("hex").toUpperCase().match(/../g)!.join(":");
 
     const sourceFingerprints: string[] = [];
-    for (const m of header.matchAll(
-      /^static const unsigned char root_cert_der_\d+\[\] = \{\n([\s\S]*?)\};/gm,
-    )) {
+    for (const m of header.matchAll(/^static const unsigned char root_cert_der_\d+\[\] = \{\n([\s\S]*?)\};/gm)) {
       const bytes = Uint8Array.from(m[1].match(/0x[0-9a-f]{2}/gi)!, h => parseInt(h, 16));
       sourceFingerprints.push(sha256(bytes));
     }
 
     const tableEntries =
-      header
-        .match(/static struct us_cert_der_t root_certs\[\] = \{\n([\s\S]*?)\};/)?.[1]
-        .match(/\{root_cert_der_\d+,/g)?.length ?? 0;
+      header.match(/static struct us_cert_der_t root_certs\[\] = \{\n([\s\S]*?)\};/)?.[1].match(/\{root_cert_der_\d+,/g)
+        ?.length ?? 0;
 
     const runtimeFingerprints = rootCertificates.map(pem => new X509Certificate(pem).fingerprint256);
 

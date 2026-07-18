@@ -15,55 +15,17 @@
 //! "TestingAPIs.orderedRemoveProbe", 1)` — the path is only the codegen key;
 //! the implementation is this Rust function (see `dispatch_js2native.rs`).
 
-use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
+use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo, StaticBuffer};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 /// A 16-slot static buffer matches the real `weak_refs` FIFO in the dev
 /// server's source-map store and makes `POWERS_OF_TWO` true.
 type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 
-/// Builds a wrapped `LinearFifo` for the requested scenario, removes one item,
-/// and returns the live items (FIFO order) as a JS `number[]`.
-///
-/// Scenarios mirror issue #31563:
-///   0 — tail sub-branch (`index >= head`), `head < count`:
-///       write 12, read 8, write 10 → head=8 count=14, remove offset 6.
-///   1 — wrapped-prefix sub-branch (`index < head`), `head > count`:
-///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
-///
-/// Any other scenario value returns an empty array.
-pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let scenario = frame.argument(0).to_int32();
-
-    let mut fifo = ProbeFifo::init();
-    match scenario {
-        0 => {
-            for v in 0..12 {
-                fifo.write_item(v).unwrap();
-            }
-            for _ in 0..8 {
-                fifo.read_item().unwrap();
-            }
-            for v in 100..110 {
-                fifo.write_item(v).unwrap();
-            }
-            fifo.ordered_remove_item(6);
-        }
-        1 => {
-            for v in 0..12 {
-                fifo.write_item(v).unwrap();
-            }
-            for _ in 0..12 {
-                fifo.read_item().unwrap();
-            }
-            for v in 200..208 {
-                fifo.write_item(v).unwrap();
-            }
-            fifo.ordered_remove_item(5);
-        }
-        _ => {}
-    }
-
+fn fifo_to_js_array<B>(global: &JSGlobalObject, fifo: &LinearFifo<i32, B>) -> JsResult<JSValue>
+where
+    B: bun_collections::linear_fifo::LinearFifoBuffer<i32>,
+{
     let len = fifo.readable_length();
     let array = JSValue::create_empty_array(global, len)?;
     for i in 0..len {
@@ -74,4 +36,88 @@ pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         )?;
     }
     Ok(array)
+}
+
+/// Builds a wrapped `LinearFifo` for the requested scenario, applies the
+/// operation under test, and returns the live items (FIFO order) as a JS
+/// `number[]`.
+///
+/// Scenarios 0/1 mirror issue #31563 (`ordered_remove_item` wrapped bounds):
+///   0 — tail sub-branch (`index >= head`), `head < count`:
+///       write 12, read 8, write 10 → head=8 count=14, remove offset 6.
+///   1 — wrapped-prefix sub-branch (`index < head`), `head > count`:
+///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
+///
+/// Scenarios 2/3 cover the `realign`/`ensure_total_capacity` wrapped paths
+/// (the old stack-scratch rotation was effectively quadratic and could hang):
+///   2 — Dynamic buffer, head=10 count=14 buf_len=16 (wrapped), then grow to 64.
+///   3 — Static buffer, head=10 count=14 buf_len=16 (wrapped), then realign.
+///
+/// Any other scenario value returns an empty array.
+pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let scenario = frame.argument(0).to_int32();
+
+    match scenario {
+        0 => {
+            let mut fifo = ProbeFifo::init();
+            for v in 0..12 {
+                fifo.write_item(v).unwrap();
+            }
+            for _ in 0..8 {
+                fifo.read_item().unwrap();
+            }
+            for v in 100..110 {
+                fifo.write_item(v).unwrap();
+            }
+            fifo.ordered_remove_item(6);
+            fifo_to_js_array(global, &fifo)
+        }
+        1 => {
+            let mut fifo = ProbeFifo::init();
+            for v in 0..12 {
+                fifo.write_item(v).unwrap();
+            }
+            for _ in 0..12 {
+                fifo.read_item().unwrap();
+            }
+            for v in 200..208 {
+                fifo.write_item(v).unwrap();
+            }
+            fifo.ordered_remove_item(5);
+            fifo_to_js_array(global, &fifo)
+        }
+        2 => {
+            let mut fifo = LinearFifo::<i32, DynamicBuffer<i32>>::init();
+            fifo.ensure_total_capacity(16).unwrap();
+            for v in 0..12 {
+                fifo.write_item(v).unwrap();
+            }
+            for _ in 0..10 {
+                fifo.read_item().unwrap();
+            }
+            for v in 100..112 {
+                fifo.write_item(v).unwrap();
+            }
+            // head=10, count=14, buf_len=16: wrapped. Growing copies the two
+            // readable segments straight into the new allocation.
+            fifo.ensure_total_capacity(64).unwrap();
+            fifo_to_js_array(global, &fifo)
+        }
+        3 => {
+            let mut fifo = ProbeFifo::init();
+            for v in 0..12 {
+                fifo.write_item(v).unwrap();
+            }
+            for _ in 0..10 {
+                fifo.read_item().unwrap();
+            }
+            for v in 100..112 {
+                fifo.write_item(v).unwrap();
+            }
+            // head=10, count=14, buf_len=16: wrapped. realign() left-rotates.
+            fifo.realign();
+            fifo_to_js_array(global, &fifo)
+        }
+        _ => fifo_to_js_array(global, &ProbeFifo::init()),
+    }
 }

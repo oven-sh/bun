@@ -2487,7 +2487,11 @@ pub(crate) fn source_dir_relative_to_root(
     source_dir: &[u8],
     root_dir: &[u8],
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    let source_dir: &[u8] = if source_dir.is_empty() { b"." } else { source_dir };
+    let source_dir: &[u8] = if source_dir.is_empty() {
+        b"."
+    } else {
+        source_dir
+    };
     let mut buf = bun_paths::path_buffer_pool::get();
     let dir: &[u8] = 'dir: {
         let Ok(f) = bun_sys::File::openat(

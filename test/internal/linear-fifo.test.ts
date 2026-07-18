@@ -46,7 +46,9 @@ test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch 
 // scripts/rust-miri.ts for the same prerequisite check).
 const cargoBin = Bun.which("cargo");
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
-const workspaceResolvable = existsSync(path.join(repoRoot, "vendor", "lolhtml", "Cargo.toml"));
+const workspaceResolvable =
+  existsSync(path.join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&
+  existsSync(path.join(repoRoot, "build", "debug", "codegen", "build_options.rs"));
 const miriAvailable =
   !!cargoBin &&
   workspaceResolvable &&

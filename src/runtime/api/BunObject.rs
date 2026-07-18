@@ -1882,6 +1882,19 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
             }
         };
 
+        // JSC's `MAX_ARRAY_BUFFER_SIZE` (JavaScriptCore/runtime/PageCount.h).
+        // ArrayBufferContents RELEASE_ASSERTs this, so anything larger aborts.
+        const MAX_ARRAY_BUFFER_SIZE: usize = 1 << 32;
+        if map.len() > MAX_ARRAY_BUFFER_SIZE {
+            let len = map.len();
+            let _ = sys::munmap(map.as_ptr().cast_mut(), len);
+            let err = global_this.create_range_error_instance(format_args!(
+                "File is too large to mmap: {} bytes exceeds the maximum typed array size ({} bytes). Pass {{ size }} to map a smaller range.",
+                len, MAX_ARRAY_BUFFER_SIZE,
+            ));
+            return Err(global_this.throw_value(err));
+        }
+
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
             // SAFETY: ptr is the original mmap base, size is its length stuffed into a pointer.
             let _ = sys::munmap(ptr.cast::<u8>(), size as usize);

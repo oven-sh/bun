@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { gcTick, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tmpdirSync } from "harness";
+import { truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -83,6 +84,43 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(() => Bun.mmap(path, true)).toThrow("Expected options to be an object");
     expect(() => Bun.mmap(path, undefined)).not.toThrow();
     expect(() => Bun.mmap(path, null)).not.toThrow();
+  });
+
+  it("mmap file > 4 GiB throws RangeError instead of aborting", async () => {
+    // Sparse file: truncate() to 4 GiB + 1 uses no disk space.
+    const dir = tmpdirSync();
+    const big = join(dir, "big.bin");
+    writeFileSync(big, "");
+    truncateSync(big, 2 ** 32 + 1);
+    try {
+      // Spawned so a regression (SIGABRT) fails the test rather than the runner.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const f = ${JSON.stringify(big)};
+           try { Bun.mmap(f); console.log("no throw"); }
+           catch (e) { console.log("threw", e.name, e.message); }
+           // exactly 4 GiB must still succeed
+           console.log("at-limit", Bun.mmap(f, { size: 2 ** 32 }).length);
+           // and a capped size on the same file works
+           console.log("capped", Bun.mmap(f, { size: 4096 }).length);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout.trim().split("\n");
+      expect({ lines, signalCode: proc.signalCode, exitCode }).toEqual({
+        lines: [expect.stringMatching(/^threw RangeError .*4294967297/), "at-limit 4294967296", "capped 4096"],
+        signalCode: null,
+        exitCode: 0,
+      });
+    } finally {
+      unlinkSync(big);
+    }
   });
 
   it("mmap handles non-number offset/size without crashing", () => {

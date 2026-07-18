@@ -16,6 +16,7 @@ use bun_loop::{self as Async, Waker};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 

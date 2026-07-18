@@ -1,0 +1,303 @@
+{
+  "new_findings": [
+    {
+      "workload": "bun_install_cold",
+      "title": "PackageManifest::parse does ~22 O(n) linear property scans per version instead of one pass",
+      "file": "/workspace/bun/src/install/npm.rs",
+      "line": 2342,
+      "problem": "Both the count pass (loop at :2079) and the build pass (loop at :2342) call `version_obj.get(b\"…\")` for each key they need — dist, bin, directories, bundleDependencies, bundledDependencies, cpu, os, libc, hasInstallScript, dependencies/optionalDependencies/peerDependencies, peerDependenciesMeta — ≈9 calls in the count pass + ≈13 in the build pass. `ObjectJSON::get()` (src/ast/e.rs:1166) is `properties().iter().find(|p| p.key == key)`, i.e. a linear scan over the ~15 keys an abbreviated version object carries, and most of these queried keys (cpu/os/libc/directories/bundledDependencies) are usually *absent*, so each such scan walks all 15 entries.",
+      "evidence": "src/ast/e.rs:1166 `pub fn get(&self, key:&[u8])->Option<&JsonValue>{ self.properties().iter().find(|p| p.key.slice()==key)... }`. npm.rs count-pass lookups: :2112 dist, :2123 bin, :2152 directories, :2165+2166 bundle(d)Dependencies, :2186 pair.prop×3, :2209 peerDependenciesMeta. build-pass lookups: :2371/2373, :2393 cpu, :2397 os, :2401 libc, :2406 hasInstallScript, :2414 bin, :2552 directories, :2572 dist, :2622 pair.prop×3, :2628 peerDependenciesMeta, :2942 time.",
+      "proposed_fix": "In each of the two per-version loops, iterate `version_obj.properties()` once and dispatch via `match p.key.slice()` (byte-slice match, same key set is statically known) into local `Option<&JsonValue>` slots, then run the existing logic against those slots. Do the same for the `dist` sub-object (tarball/fileCount/unpackedSize/integrity/shasum — currently 5 separate `get()`s). No API changes; all work stays inside `parse()`.",
+      "workload_impact": "~22 scans × ~12 avg compares × ~100 versions/manifest × ~1000 unique manifests ≈ 26M short byte-slice compares reduced to 2 passes × 15 props × 100 × 1000 ≈ 3M (with one compare each). Order-of-magnitude: removes ~100-200ms of worker-thread CPU on a 1500-dep cold install; scales linearly with total published-versions-across-deps.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_install_cold",
+      "title": "O(V²) 'time' lookup inside per-version build loop (loop-invariant get plus linear inner scan)",
+      "file": "/workspace/bun/src/install/npm.rs",
+      "line": 2942,
+      "problem": "`json.get(b\"time\")` is evaluated on every iteration of the `for prop in versions` build loop even though the root object never changes; worse, when `time` is present (extended manifests, i.e. `minimumReleaseAge` configured) `time_obj.get().get(version_name)` does a linear scan over the `time` object, which has one entry per version — so the loop is O(V²) in version count. For packages with thousands of versions (typescript, next, @types/node) this dominates that manifest's parse time.",
+      "evidence": "npm.rs:2942-2951 sits between the `for prop in versions { ... }` header at :2342 and its closing brace at :2965. `ObjectJSON::get` at src/ast/e.rs:1166 is linear. A package like `next` has ~2800 versions → ~7.8M key compares for that manifest alone.",
+      "proposed_fix": "Hoist `let time_obj = json.get(b\"time\").and_then(|e| match &e.data { EObjectJSON(o)=>Some(o.get()), _=>None })` above the `for prop in versions` loop. When `Some`, either (a) build a one-shot `HashMap<u64/*wyhash(version_name)*/, f64>` from `time_obj.properties()` before the loop and O(1) look up inside, or (b) exploit that `time` and `versions` are both keyed by the same version strings: iterate `time` once into a `Vec<(hash, ms)>` sorted identically. Either turns O(V²) into O(V). For abbreviated manifests (default) the hoisted `time_obj` is `None` and the inner body is skipped entirely.",
+      "workload_impact": "Default cold install: removes V redundant root-object scans per manifest (~100×6 ≈ 600 compares × 1000 manifests ≈ 0.6M compares — minor). With `minimumReleaseAge` enabled (extended manifests): removes O(V²)→O(V) per manifest; for a Next.js tree the handful of multi-thousand-version packages each shed millions of compares — easily 0.5-2s of worker-thread CPU for `--minimum-release-age` installs.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_install_cold",
+      "title": "NetworkTask::for_manifest does a C++ WHATWG URL join + two separate URL::parse() on the same bytes per manifest",
+      "file": "/workspace/bun/src/install/NetworkTask.rs",
+      "line": 448,
+      "problem": "For every manifest enqueue (main-thread, on the latency-critical HTTP fan-out path): (1) `bun_url::join()` at :448 calls the WebKit `URL__getHrefJoin` FFI, which allocates a WTFStringImpl and runs the full WHATWG parser just to concatenate the known-good registry href with a package name; (2) `tmp.to_owned_slice().into_boxed_slice()` at :502 copies the result; (3) `URL::parse(&url_bytes)` at :505 parses it with the Rust-side parser for a same-origin check; (4) `URL::parse(...)` at :630 parses the *identical* bytes again for `AsyncHTTP::init`. That is 1 C++ WHATWG parse + 2 Rust URL parses + 1 WTFString alloc/deref + 1 Box alloc per unique package name.",
+      "evidence": "NetworkTask.rs:448 `bun_url::join(&String::borrow_utf8(scope.url.href()), &String::borrow_utf8(encoded_name))` → src/url/lib.rs:97 `URL__getHrefJoin` (C++ FFI). NetworkTask.rs:505 `let joined = URL::parse(&url_bytes);` used only for the origin check, then dropped. NetworkTask.rs:630 `let url = URL::parse(unsafe { detach_lifetime(&self.url_buf) });` — same bytes reparsed.",
+      "proposed_fix": "Reuse the `joined` `URL` from the origin check at :505 as the `url` passed to `AsyncHTTP::init` (move its construction after `self.url_buf = url_bytes` and detach its lifetime the same way the second parse does), eliminating the duplicate `URL::parse` at :630. Additionally, for the overwhelmingly common case where `scope.url.href()` equals the default registry and `name` contains no characters needing WHATWG normalization, build `url_buf` by direct concatenation (registry href trimmed of trailing '/' + '/' + encoded_name) and skip the C++ `bun_url::join` round-trip; fall back to `bun_url::join` only when the registry is non-default.",
+      "workload_impact": "Removes ~1 WTFStringImpl alloc/deref + ~1 redundant bun_url::URL::parse per unique manifest × ~1000 manifests ≈ ~1000 C++ allocations and ~1000 URL parses on the single main thread during request fan-out — ~2-10ms of main-thread time plus allocator pressure in the phase where faster enqueue directly widens HTTP concurrency.",
+      "confidence": "medium"
+    },
+    {
+      "workload": "bun_install_warm",
+      "title": "verify() does a full recursive JSON parse (~10 heap allocs) per package just to read name/version",
+      "file": "/workspace/bun/src/install/PackageInstall.rs",
+      "line": 977,
+      "problem": "`verify_package_json_name_and_version` (hit once per hoisted dependency on the warm path) calls `PackageJSONVersionChecker::parse()` → `parse_to_rows()` (src/parsers/json.rs:690), which builds a `StructuralIndex` (heap `win` Vec ≈8KB + `dirty` Vec), a heap `Box<JsonTape>`, and grows `scratch_props`/`tape.props`/`tape.items` Vecs while recursively parsing *every* nested object in the package.json (`dependencies`, `devDependencies`, `scripts`, `keywords`, …). After all that, the caller only reads the two top-level string values and breaks.",
+      "evidence": "src/parsers/json_stage2.rs:100 `Box::leak(Box::new(E::JsonTape::empty()))`; src/parsers/json_index.rs:68-69 `idx.win = Vec::with_capacity(win_cap); idx.dirty = vec![0; dirty_words];`; src/parsers/json_stage2.rs:813 `parse_json_value()` recurses into every nested object/array; src/parsers/json.rs:694-712 iterates top-level rows and stops once name+version found. All invoked from PackageInstall.rs:977-980 with a fresh `Log` and fresh parser per package.",
+      "proposed_fix": "Replace the `parse_to_rows` call in `PackageJSONVersionChecker::parse` (or add a dedicated fast path for `verify_package_json_name_and_version`) with a zero-alloc depth-0 byte scanner: walk bytes tracking brace/bracket depth and string state, capture the first `\"name\":\"…\"` and `\"version\":\"…\"` values at depth 1, and bail as soon as both are found. `name`/`version` are the first two keys in >99% of published packages, so this typically touches <150 bytes and never allocates. The existing `skip_ws_and_comments`/`skip_string_token` helpers in json.rs already provide the primitives.",
+      "workload_impact": "Removes ≈10 heap allocations × N hoisted deps (≈1500 in a typical Next.js-size project) = ~15,000 allocs per warm install, and skips full structural-index + stage-2 parse of ~3-6 MB of JSON. This is the single largest CPU cost of warm install after the unavoidable openat/read/close syscalls.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_install_warm",
+      "title": "filter()→hoist_dependency does an O(D×H) linear scan over the root tree's dep list on every warm install",
+      "file": "/workspace/bun/src/install/lockfile/Tree.rs",
+      "line": 1004,
+      "problem": "`install_hoisted_packages` unconditionally calls `lockfile.filter()` (src/install/hoisted_install.rs:100) to rebuild the hoisted tree. For each of D dependency edges, `hoist_dependency` recurses up to the root and linearly scans the current tree's placed-dependency list (`for i in 0..this_deps_len { if dep.name_hash != target_name_hash { continue } … }`). The root tree accumulates H≈unique-package-count entries, so most edges pay an O(H) scan, yielding O(D·H) total comparisons — each of which also does a random-access load into `deps[dep_id]` (cache-unfriendly).",
+      "evidence": "Tree.rs:1004-1013 linear loop comparing `dep.name_hash != target_name_hash`; Tree.rs:1108-1125 recurses to parent and re-scans; hoisted_install.rs:100 `(*lockfile_ptr).filter(...)` runs unconditionally before the install loop; Tree.rs:937 `builder.list.items_dependencies_mut()[dest.id].push(dep_id)` grows the very list that subsequent edges scan.",
+      "proposed_fix": "Add a `name_hash → index` side-table (e.g. `bun_collections::HashMap<u64,u32>`) to `BuilderEntry` (or at minimum keep one for tree id 0, which dominates). `hoist_dependency` then becomes a single hash lookup per ancestor instead of a linear scan; placement in `process_subtree` inserts into the map alongside the existing `push(dep_id)`.",
+      "workload_impact": "Turns O(D·H) into O(D). For a 1500-package project (~15K dep edges, root ~1200 entries) this removes ~15-20 million u64 comparisons + indirect loads from every warm install — roughly 10-30 ms of pure CPU before the link loop even starts.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_install_warm",
+      "title": "join_string_buf_t zero-fills a 4KB stack temp on every path join in the per-package verify path",
+      "file": "/workspace/bun/src/paths/resolve_path.rs",
+      "line": 1609,
+      "problem": "`NodeModulesFolder::open_file_without_opening_directories` (src/install/PackageInstaller.rs:169) calls `join_z_buf` → `join_string_buf_t`, which begins with `let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];` — a 4 KB memset — even though the function immediately computes `count` (the exact concatenated length, typically 60-120 bytes for `<cwd>/node_modules/<pkg>/package.json`) and writes only `count` bytes before reading. Combined with `PackageJSONVersionChecker::init` (src/parsers/json.rs:663-664) zeroing two more 1 KB buffers, that's ~6 KB of dead memset per package.",
+      "evidence": "resolve_path.rs:1609 `[T::from_u8(0); 4096]`; resolve_path.rs:1613-1619 computes `count` before any temp-buf read; json.rs:663-664 `found_version_buf: [0; 1024], found_name_buf: [0; 1024]` with only `len.min(1024)` bytes ever copied in (json.rs:699-706).",
+      "proposed_fix": "In `join_string_buf_t`, move the `count` computation above the temp-buf declaration and either (a) use `MaybeUninit::<[T; 4096]>::uninit()` (mirroring `PathBuffer::uninit()` / `depth_buf_uninit()` in Tree.rs:83) since every byte is written before read, or (b) zero only `temp_buf_[..count+1]`. In `PackageJSONVersionChecker`, leave `found_*_buf` uninitialised and rely on `found_*_len` for the valid range.",
+      "workload_impact": "Removes ~6 KB memset × N packages ≈ 9 MB of memset per 1500-package warm install. Small next to findings 1-2, but the `join_string_buf_t` fix also benefits every other path join in Bun (resolver, bundler, fs APIs).",
+      "confidence": "medium"
+    },
+    {
+      "workload": "bun_build_large",
+      "title": "NumberRenamer allocates & drops a fresh hashbrown HashMap for every AST scope",
+      "file": "/workspace/bun/src/js_printer/renamer.rs",
+      "line": 697,
+      "problem": "In `assign_names_recursive_with_number_scope`, each scope with symbols calls `number_scope_pool.get_init(NumberScope { name_counts: NameCountMap::with_capacity_and_hasher(symbol_count, ..) })` (line 697-717), and the walk-back at line 753 calls `put(s)` which `drop_in_place`s the `name_counts` HashMap (hive_array.rs:433). The HiveArrayFallback pool recycles the 2-field struct slot but NOT the HashMap's heap buffer, so every non-empty scope does one `hashbrown` table alloc + one free. `rename_symbols_in_chunk` is invoked per chunk and iterates every file in `files_in_order`, recursing into every scope — and it is serialized (one worker per chunk; typical non-code-split builds have 1 JS chunk).",
+      "evidence": "renamer.rs:697-718 constructs `NameCountMap::with_capacity_and_hasher(symbol_count, ..)` inside `get_init`; renamer.rs:743-755 `number_scope_pool.put(s)` per intermediate scope; hive_array.rs:419-437 `put` does `drop_in_place(value)` which frees `name_counts`; renameSymbolsInChunk.rs:403-413 resets `hive.used` per part but never reuses map capacity. This is the default (non-`--minify-identifiers`) path, taken by a plain `bun build`.",
+      "proposed_fix": "Keep a small `Vec<NameCountMap>` stack on `NumberRenamer` (or change `HiveArrayFallback::put` callers to instead `name_counts.clear()` and leave the slot claimed): on pop, `clear()` the map (retains buckets) and push it to the free-list; on push, pop a map, `clear()` + `reserve(symbol_count)`. This turns ~N alloc/free pairs into O(max scope depth) allocations total.",
+      "workload_impact": "Removes ~1 HashMap alloc + 1 free per non-empty scope. A 1000-module React app has ~30–50 scopes/module ⇒ ~30,000–50,000 hashbrown table alloc/free pairs eliminated on the serial per-chunk rename thread (the renameSymbolsInChunk step is a known TODO-parallelize hotspot per the file's own comment at line 16).",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_build_large",
+      "title": "StringJoiner watcher memmem-scans the entire bundle output for unique_key, but `estimated_count` is never read",
+      "file": "/workspace/bun/src/bun_core/string/StringJoiner.rs",
+      "line": 91,
+      "problem": "`push_node` runs `strings::index_of(data_slice, self.watcher.input)` (SIMD memmem) over every pushed slice to increment `watcher.estimated_count` whenever `watcher.input` is non-empty. `post_process_js_chunk` (postProcessJSChunk.rs:456) sets `watcher.input = chunk.unique_key` (25 bytes), so every `j.push(compile_result.code())` for each of the ~1000+ part_ranges scans that slice. But the only reads of `estimated_count` in the whole repo are StringJoiner's own unit tests (StringJoiner.rs:284,304). `break_output_into_pieces` (LinkerContext.rs:4079) then calls `j.contains(&self.unique_key_prefix)`, which re-scans every node's bytes a second time for effectively the same information.",
+      "evidence": "`rg estimated_count` returns only the StringJoiner definition/increment/tests — no bundler code reads it. postProcessJSChunk.rs:456-459 sets `watcher.input = chunk.unique_key`; LinkerContext.rs:4079 independently scans via `j.contains()`. postProcessCSSChunk.rs:20 and postProcessHTMLChunk.rs:18 do the same.",
+      "proposed_fix": "Either (a) set `watcher.input` to `c.unique_key_prefix` instead of `chunk.unique_key` and replace `j.contains(&self.unique_key_prefix)` in `break_output_into_pieces` with `j.watcher.estimated_count > 0` (and use the count to size `pieces`), eliminating the second full scan; or (b) simply stop setting `watcher.input` in post_process_* so the `input.len() > 0` gate short-circuits the dead scan.",
+      "workload_impact": "Eliminates one full memmem pass over the concatenated JS output per chunk. For a 1000-module app producing ~5–10 MB of printed JS, that is ~5–10 MB of redundant SIMD scanning removed from the single-threaded post-process step (and the same for CSS/HTML chunks).",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_build_large",
+      "title": "compute_reserved_names_for_scope heap-boxes every unbound global's name, once per module, via owning StringHashMap::put",
+      "file": "/workspace/bun/src/js_printer/renamer.rs",
+      "line": 1171,
+      "problem": "`rename_symbols_in_chunk` loops `for &source_index in files_in_order { compute_reserved_names_for_scope(...) }` (renameSymbolsInChunk.rs:129-136). Inside, for every `Unbound`/`must_not_be_renamed` symbol in each module scope it calls `names.put(symbol.original_name.slice(), 1)` (renamer.rs:1170-1172, 1180-1182). `StringHashMap::put` unconditionally allocates a `Box<[u8]>` key copy via `owned_key` (array_hash_map.rs:1883-1886), even when the key is already present (hashbrown's `insert` then drops the old boxed key). Every module references roughly the same ~15-30 unbound globals (`console`, `window`, `Array`, `Promise`, `Object`, `Math`, …), so after the first module almost every call is a duplicate insert that allocates-then-drops a Box.",
+      "evidence": "array_hash_map.rs:1883 `pub fn put(&mut self, key: &[u8], ..) { self.inner.insert(owned_key::<A>(key), value); }`; `owned_key` (array_hash_map.rs:1820) builds a `StringHashMapKey::owned(Box<[u8],A>)`. `symbol.original_name` is already documented in this file as 'an AST-arena slice that outlives the renamer' (renamer.rs:800, 1169) and the map itself is consumed inside `NumberRenamer::init` before the renamer returns, so no owned copy is needed. The zero-copy `put_borrowed`/`put_static_key` path already exists (array_hash_map.rs:1895, 2078).",
+      "proposed_fix": "Use the existing borrowed-key API: change lines 1170-1172 / 1180-1182 to the `unsafe put_borrowed`/`put_static_key` path (the AST-arena lifetime guarantee is already relied on throughout this file). Optionally gate on `!names.contains_key(name)` to skip the reinsert entirely.",
+      "workload_impact": "Removes ~1 Box<[u8]> alloc+free per unbound global per module on the serial per-chunk rename thread: ~1000 modules × ~15-30 unbound globals ≈ 15,000–30,000 heap alloc/free pairs eliminated (each ~8-16 B), plus the redundant hash+insert on duplicates.",
+      "confidence": "medium"
+    },
+    {
+      "workload": "serve_helloworld",
+      "title": "AbortSignal is heap-allocated for every request even when request.signal is never read",
+      "file": "/workspace/bun/src/runtime/server/server_body.rs",
+      "line": 3061,
+      "problem": "prepare_js_request_context_for() unconditionally does `let signal = AbortSignal::new(global); ctx.set_signal(signal); signal.pending_activity_ref(); AbortSignalRef::adopt(signal.ref_())` and stores it on both the RequestContext and the Request. WebCore__AbortSignal__new() does `new AbortSignal(context)` — a TZone heap allocation of a large object (RefCounted + EventTargetWithInlineData + 3 Vectors incl. inline-2 callback vector + 2 WeakListHashSets + Lock + atomic, ~200-300B) and registers it in ScriptExecutionContext::m_destructionObservers (UncheckedKeyHashSet insert). finalize_without_deinit() then does pending_activity_unref()+unref() (2 FFI), and the Request finalizer later does the last unref() which triggers HashSet.remove + delete. A hello-world handler never touches request.signal, so the entire lifecycle is dead weight. Request::get_signal() at Request.rs:782-794 already has lazy-create logic for when self.signal is None.",
+      "evidence": "server_body.rs:3061-3069 (eager create + pending_activity_ref + ref_); RequestContext.rs:1561-1570 (signal_release on every finalize); bindings.cpp:5534-5540 (`adoptRef(*new AbortSignal(context))`); AbortSignal.h:63,194-211 (object layout: Vectors/WeakListHashSets/Lock); ContextDestructionObserver.cpp:51-63 + ScriptExecutionContext.cpp:156-170 (HashSet add/remove on every AbortSignal ctor/dtor); Request.rs:782-794 (lazy getter already exists).",
+      "proposed_fix": "Stop creating the signal eagerly in prepare_js_request_context_for. Initialize `ctx.signal = None` and pass `signal: None` to Request::init. When JS reads `request.signal`, Request::get_signal()'s existing lazy branch creates it and should additionally hand the pointer back to the RequestContext via AnyRequestContext (so on_abort/finalize can still fire it). finalize_without_deinit/on_abort already guard on `self.signal.take()` being Some, so they no-op when it was never materialized.",
+      "workload_impact": "Per request: removes 1 C++ heap alloc/free (~200-300B), 1 UncheckedKeyHashSet insert + 1 remove, and 5 FFI calls (new, pending_activity_ref, ref_, pending_activity_unref, unref). At ~200k req/s hello-world, that is ~200k C++ allocations/sec and ~1M FFI round-trips/sec eliminated from the hot path.",
+      "confidence": "high"
+    },
+    {
+      "workload": "serve_helloworld",
+      "title": "drain_microtasks() (and to_blob_if_possible) run twice per synchronous response",
+      "file": "/workspace/bun/src/runtime/server/RequestContext.rs",
+      "line": 3124,
+      "problem": "For a handler that returns a Response synchronously, on_response() calls ctx.drain_microtasks() (line 2690) and body_value.to_blob_if_possible() (line 2736), then calls render()→do_render()→do_render_with_body() which immediately calls this.drain_microtasks() (line 3124) and value.to_blob_if_possible() (line 3128) again. No user JS executes between the two drains on this path. drain_microtasks() (is_async()==false on the sync path, so it does not early-return) performs jsc_vm.release_weak_refs() FFI + JSC__JSGlobalObject__drainMicrotasks() FFI + deferred_tasks.run() + uws_loop.drain_quic_if_necessary(). The duplicate exists only to serve the do_render_with_body_locked callback entry point.",
+      "evidence": "RequestContext.rs:2690 (drain #1) and 2736 (to_blob #1) in on_response; RequestContext.rs:3124 (drain #2) and 3128 (to_blob #2) in do_render_with_body; RequestContext.rs:627-640 (drain_microtasks gated on !is_async, i.e. it DOES run on sync path); event_loop.rs:311-352 (each drain = release_weak_refs FFI + drainMicrotasks FFI + deferred_tasks.run + drain_quic_if_necessary).",
+      "proposed_fix": "Remove the drain_microtasks()/to_blob_if_possible() prologue from do_render_with_body() and move it into do_render_with_body_locked (the only caller that has not already drained). The on_response/handle_resolve → render → do_render path then drains exactly once.",
+      "workload_impact": "Per synchronous request: removes 1 redundant drain = ~2-3 FFI calls (release_weak_refs, JSC__JSGlobalObject__drainMicrotasks, drain_quic_if_necessary) plus a redundant to_blob_if_possible() branch. At ~200k req/s, ~400-600k FFI round-trips/sec eliminated.",
+      "confidence": "high"
+    },
+    {
+      "workload": "serve_helloworld",
+      "title": "Range header is looked up via FFI for every request but only used on the sendfile path",
+      "file": "/workspace/bun/src/runtime/server/RequestContext.rs",
+      "line": 1349,
+      "problem": "RequestContext::create() unconditionally initializes `range: RangeRequest::raw_from_request(&Self::any_request(req))`, which calls `req.header(b\"range\")` → uws_req_get_header FFI → uWS bloom-filter check + linear strncasecmp scan over all request headers. The parsed `self.range` is only ever read inside the sendfile/Bun.file() branch (RequestContext.rs:1889,1891); for a hello-world string/blob response it is never consulted.",
+      "evidence": "RequestContext.rs:1349 (eager init in create()); RangeRequest.rs:127-131 (raw_from_request → req.header(b\"range\")); uws_sys/Request.rs:72-83 (FFI to uws_req_get_header); HttpParser.h:262-276 (getHeader = bloom guard + linear header scan); RequestContext.rs:1889,1891 (only reads of self.range, inside the sendfile path).",
+      "proposed_fix": "Drop the eager computation in create() (initialize `range: Raw::None`) and compute it lazily at the single point of use in do_sendfile(): on the sync path the uWS `req` is still live (self.req.is_some()); on the async path to_async has already copied headers into FetchHeaders, so query that instead.",
+      "workload_impact": "Per request: removes 1 FFI call (uws_req_get_header) and the associated bloom/strncasecmp work over ~8 typical request headers. At ~200k req/s, ~200k FFI round-trips/sec eliminated from the GET-string-response path.",
+      "confidence": "medium"
+    },
+    {
+      "workload": "fetch_throughput",
+      "title": "Per-callback memcpy of body bytes into scheduled_response_buffer (then source is discarded)",
+      "file": "/workspace/bun/src/runtime/webcore/fetch/FetchTasklet.rs",
+      "line": 2430,
+      "problem": "On every HTTP-thread progress callback, `scheduled_response_buffer.write(response_buffer.list.as_slice())` copies the entire chunk, then `response_buffer.reset()` clears the source two lines later. `scheduled_response_buffer` is also never pre-reserved to Content-Length, so Vec doubling adds another ~1× payload of realloc-memcpy. All of this runs under `task_ref.mutex`.",
+      "evidence": "Lines 2428-2441: `handle_oom(task_ref.scheduled_response_buffer.write(task_ref.response_buffer.list.as_slice())); ... task_ref.response_buffer.reset();`. `MutableString::write` is `Vec::extend_from_slice` (src/bun_core/string/MutableString.rs:107). No `reserve` of `body_size`/Content-Length anywhere in `callback`. uSockets recv buffer is 512KB (packages/bun-usockets/src/libusockets.h:95 LIBUS_RECV_BUFFER_LENGTH=524288) so 100MB ≈ 200 callbacks.",
+      "proposed_fix": "When `scheduled_response_buffer.list.is_empty()` do `core::mem::swap(&mut task_ref.scheduled_response_buffer.list, &mut task_ref.response_buffer.list)` instead of write+reset; only fall back to `extend_from_slice` when coalescing onto non-empty bytes. Additionally `scheduled_response_buffer.list.reserve(content_length)` once from `result.body_size` so the coalescing path doesn't realloc. response_buffer re-grows to one chunk (≤512KB) on the next recv, which is cheap.",
+      "workload_impact": "Removes ≈100MB direct memcpy + ≈100MB Vec-growth realloc-memcpy per 100MB fetched (≈200 callbacks × 512KB, all under the tasklet mutex on the HTTP thread). Cuts body-byte copy amplification from 3× payload to ~1× for `await res.arrayBuffer()`.",
+      "confidence": "high"
+    },
+    {
+      "workload": "fetch_throughput",
+      "title": "is_streaming tests body_receive_mode.is_some() instead of the mode value, forcing per-chunk callbacks in BufferAll",
+      "file": "/workspace/bun/src/http/lib.rs",
+      "line": 4770,
+      "problem": "`let is_streaming = self.signals.get(Field::ResponseBodyStreaming) || self.signals.body_receive_mode.is_some();` — fetch() always wires body_receive_mode via `Store::to_with_backpressure()` (Signals.rs:120-124, FetchTasklet.rs:1920), so `.is_some()` is always true and every recv chunk triggers progress_update → FetchTasklet::callback even after the consumer called `.arrayBuffer()`/`.text()` and set `BodyReceiveMode::BufferAll` (i.e. 'just buffer, I don't need chunks').",
+      "evidence": "lib.rs:4770-4772 gates per-chunk progress on `.is_some()`. Signals.rs:103 defaults the atomic to AutoPause; FetchTasklet.rs:1680 sets BufferAll on `.arrayBuffer()`. No code path reads the enum value here. Same pattern in the chunked path at lib.rs:4859-4860.",
+      "proposed_fix": "Load the atomic and treat only AutoPause/Paused as streaming: `let is_streaming = signals.get(Field::ResponseBodyStreaming) || matches!(signals.body_receive_mode_value(), Some(BodyReceiveMode::AutoPause | BodyReceiveMode::Paused));`. When BufferAll/Ignore, accumulate in body_out_str and fire a single progress_update at `is_done` (plus pre-reserve body_out_str to `content_length.min(PREALLOCATE_MAX)` at line 4752 so the accumulation doesn't realloc).",
+      "workload_impact": "For `await res.arrayBuffer()` on 100MB: eliminates ≈200 progress_update/FetchTasklet::callback round-trips per download (≈200 mutex lock+unlock, ≈200 sync_progress_from, ≈200 has_schedule_callback CAS) and, combined with the swap above, collapses the HTTP-thread handoff to one move of a 100MB Vec instead of 200×512KB appends.",
+      "confidence": "high"
+    },
+    {
+      "workload": "fetch_throughput",
+      "title": "on_body_received hands scheduled_response_buffer to ByteStream as Temporary then resets it — forces an extra full copy in the streaming path",
+      "file": "/workspace/bun/src/runtime/webcore/fetch/FetchTasklet.rs",
+      "line": 714,
+      "problem": "For `res.body` streaming, `on_body_received` does `let chunk = self.scheduled_response_buffer.list.as_slice(); bytes.on_data(Self::temporary_chunk(chunk, ..))` and then the scopeguard (line 650-655) resets scheduled_response_buffer. `StreamResult::Temporary` tells ByteStream it must copy (ByteStream.rs:370-374, 387-389 `extend_from_slice`), so every streamed byte is memcpy'd a third time even though FetchTasklet owns the buffer and is about to throw it away.",
+      "evidence": "FetchTasklet.rs:714/722/740/748 all pass `temporary_chunk(chunk, ..)`; the `defer` at 650-655 unconditionally `(*scheduled_buf).reset()` on return. ByteStream.rs append() for Temporary variants does `Vec::with_capacity + extend_from_slice` (line 370-374) or `b.extend_from_slice` (387-389); for Owned it does `move_to_list_managed()` (365-367) — zero-copy.",
+      "proposed_fix": "Pass ownership: `let owned = core::mem::take(&mut self.scheduled_response_buffer.list); bytes.on_data(StreamResult::Owned(owned.into()) / OwnedAndDone(..))?;` and set `buffer_reset = false`. ByteStream::append's Owned arm adopts the Vec without copying.",
+      "workload_impact": "For `for await (chunk of res.body)` / Readable.fromWeb on 100MB: removes one full-payload memcpy (≈100MB) on the JS thread plus one heap alloc per delivered chunk (~200 Vec allocations). Brings streaming copy amplification from 4× payload to 3× (and to 2× when combined with finding #1).",
+      "confidence": "medium"
+    },
+    {
+      "workload": "bun_test_throughput",
+      "title": "get_value() heap-allocates an ANSI-formatted params string that the pass path never uses",
+      "file": "/workspace/bun/src/runtime/test_runner/expect.rs",
+      "line": 378,
+      "problem": "Every matcher (toBe, toEqual, 70+ others) funnels through `Expect::get_value()`, which unconditionally calls `Output::pretty_fmt_rt(matcher_params_fmt, enable_ansi_colors_stderr())`. `pretty_fmt_rt` → `pretty_fmt_runtime` does `Vec::with_capacity(fmt.len()*4)` and a byte-by-byte `<tag>`→ANSI rewrite (src/bun_core/output.rs:2069-2137). The resulting `PrettyBuf` is passed as `matcher_params` to `process_promise()`, which only reads it in the `.resolves`/`.rejects` *failure* branches; for the common case `flags.promise() == Promise::None` it hits the `_ => Ok(value)` arm at line 478 without touching `matcher_params` at all. So for every passing synchronous assertion, a ~72-byte Vec is allocated, a ~18-char template is scanned, and the result is immediately dropped unused.",
+      "evidence": "expect.rs:378 `let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, ...)` is executed before `process_promise`, but expect.rs:402-479 shows `process_promise` short-circuits `_ => Ok(value)` when promise()==None without reading `matcher_name`/`matcher_params`. output.rs:2070 `Vec::with_capacity(fmt.len() * 4)` is the allocation. `matcher_prelude` (expect.rs:1735-1748) → `get_value` is the shared entry used by toBe.rs:15, toEqual.rs:14, run_unary_predicate (expect.rs:2017), run_string_affix_matcher (expect.rs:2068), contain_matcher (expect.rs:2197), i.e. effectively every matcher.",
+      "proposed_fix": "In `get_value`, fast-path `if self.flags.get().promise() == Promise::None { return Ok(value); }` immediately after `captured_value_get_cached`, before calling `pretty_fmt_rt`. Alternatively, move the `pretty_fmt_rt(matcher_params_fmt, ...)` call inside `process_promise`'s `Resolves|Rejects` error arms (it's only needed to render the error message). Either change removes the alloc + scan from 100% of passing non-async assertions.",
+      "workload_impact": "Removes 1 heap alloc + 1 free + ~18-byte tag-rewrite scan per matcher call × 10k assertions = ~10,000 Vec allocs (~720 KB churn) and ~180k byte-loop iterations from the hot path. This is the single largest source of per-assertion malloc traffic after the JSExpect/Expect wrapper itself.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_test_throughput",
+      "title": "Expect::call() heap-boxes a RefData per expect() whose refcount is never shared",
+      "file": "/workspace/bun/src/runtime/test_runner/expect.rs",
+      "line": 641,
+      "problem": "Every `expect()` invocation runs `bun_test::BunTest::ref_(&buntest_strong, state)` (bun_test.rs:734-743), which does `IntrusiveRc::new(RefData{...})` → `Box::new(RefData)` (ptr/ref_count.rs:842-845). The resulting `RefDataPtr` is stored as `Expect::parent` and consumed only by `increment_expect_call_counter()` (reads `buntest_weak`+`phase`) and `get_snapshot_name()` (same), then `finalize()` calls `parent.deref()` → `RefData::destroy` → `heap::take` (Box free). The intrusive refcount stays at 1 for its entire lifetime in the expect() path — it is never bumped (sharing is only needed for done-callback / promise-then paths in `run_test_callback`, bun_test.rs:1206-1246, which create their own RefData). So every assertion pays 1 Box alloc + 1 Box free for a struct that could be stored inline in the already-boxed `Expect` payload.",
+      "evidence": "expect.rs:638-654 builds `parent: Some(BunTest::ref_(...))`; bun_test.rs:738 `bun_ptr::IntrusiveRc::new(RefData { buntest_weak: Rc::downgrade(this_strong), phase, ref_count })`; ref_count.rs:844 `Box::new(init_data)`. The only reads are expect.rs:195-212 (`increment_expect_call_counter`) and expect.rs:549-606 (`get_snapshot_name`), neither of which clone/ref the pointer. expect.rs:616-618 is the paired free.",
+      "proposed_fix": "Replace `Expect::parent: Option<RefDataPtr>` with inline fields `Option<(BunTestPtrWeak, RefDataValue)>` (or `Option<InlineRefData>`), since `Expect` is already `Box`ed by `to_js()` (generated.rs:948). `increment_expect_call_counter`/`get_snapshot_name` read the two fields directly; `finalize` drops the `Weak`. No behavior change — the IntrusiveRc count is provably 1 throughout.",
+      "workload_impact": "Removes 1 Box::new(~56 B) + 1 Box::drop per `expect()` × 10k assertions = ~10,000 mimalloc alloc/free pairs. Also shaves the `RefCount::init()` store and the indirection through `*mut RefData` on every counter increment.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_test_throughput",
+      "title": "Per-assertion Rc clone→downgrade→upgrade round-trip for a BunTest that is guaranteed live",
+      "file": "/workspace/bun/src/runtime/test_runner/expect.rs",
+      "line": 194,
+      "problem": "Each assertion performs ~6 `Rc`/`Weak` refcount ops on the same `BunTestCell` that `BunTestRoot::active_file` already keeps strongly alive for the test's entire duration: `Expect::call` does `clone_active_strong()` (Rc clone, bun_test.rs:55-58/568-570), then `Rc::downgrade` inside `ref_()` (bun_test.rs:739), then drops the cloned strong at end of `call`. Later `increment_expect_call_counter()` calls `parent.bun_test()` → `Weak::upgrade()` (bun_test.rs:1517-1519) and drops the upgraded Rc, and `finalize` drops the Weak. All of this exists solely to check 'is the test file still running', which is always true while the matcher executes synchronously inside that file.",
+      "evidence": "expect.rs:638 `clone_active_strong()`; bun_test.rs:739 `Rc::downgrade(this_strong)`; expect.rs:196 `parent.bun_test()` → bun_test.rs:1518 `self.buntest_weak.upgrade()`; the strong owner is `BunTestRoot::active_file` (bun_test.rs:568-570) which is set for the entire file run.",
+      "proposed_fix": "If Finding #2 is taken, store a strong `Rc<BunTestCell>` (not `Weak`) directly in `Expect` — it is dropped in `finalize` before the file's `active_file` is cleared, so no cycle. Then `increment_expect_call_counter` becomes a direct `.get()` with no upgrade. Net: 6 refcount ops → 2 (one clone in `call`, one drop in `finalize`). Alternatively store a raw `NonNull<BunTestCell>` validated once in `call` and eliminate all refcount ops.",
+      "workload_impact": "Removes ~4 non-atomic Rc/Weak refcount ops per assertion × 10k = ~40,000 refcount writes + the `Weak::upgrade` strong==0 branch check. Small per-op (~1-2 ns) but sits on the inner loop of every matcher and touches shared cachelines; ~5-10% of the non-FFI per-assertion native overhead.",
+      "confidence": "medium"
+    },
+    {
+      "workload": "bun_run_startup",
+      "title": "bunfig.toml probed 2-3× per startup when absent",
+      "file": "/workspace/bun/src/bunfig/arguments.rs",
+      "line": 79,
+      "problem": "`load_bunfig` only sets `ctx.debug.loaded_bunfig = true` AFTER `bun_ast::to_source(config_path)` succeeds. When bunfig.toml doesn't exist (the common case), the ENOENT is swallowed by `auto_loaded` and `loaded_bunfig` stays false. Downstream, `exec_with_cfg` (run_command.rs:2394) and `boot()` (run_command.rs:930) both gate on `!ctx.debug.loaded_bunfig` and each re-issue `load_config_path(\"bunfig.toml\")`, which calls `to_source` → another failed `open()`. For `bun script.ts` (AutoCommand) the probe happens 3×: once via `arguments::parse` → `load_config` (cwd/bunfig.toml), once in `exec_with_cfg`, once in `boot`.",
+      "evidence": "Code path: arguments.rs:44-58 (to_source err → `return Ok(())` before line 79), run_command.rs:2394-2403 (`if !ctx.debug.loaded_bunfig { load_config_path(..., zstr!(\"bunfig.toml\"), ctx) }`), run_command.rs:930-937 (identical guard inside `boot`). `read_global_config()` is false for Auto/RunCommand (command_tag.rs:89-104), so these calls go straight to `load_bunfig` → `to_source` → `bun_sys::open`.",
+      "proposed_fix": "Move `ctx.debug.loaded_bunfig = true;` to the top of `load_bunfig` (before `to_source`), or rename the flag to `attempted_bunfig_load`. The two later call sites only exist to ensure bunfig is considered once; whether the file exists does not change that contract. Alternatively, drop the `exec_with_cfg`/`boot` re-probes entirely for the Auto/RunCommand path since `arguments::parse` already covered it.",
+      "workload_impact": "Removes 2 failed `openat()` syscalls per `bun script.ts` cold start (1 per `bun run script.ts`). On Linux each ENOENT open is ~1-3 µs of kernel round-trip; on a ~10-20 ms cold start that is measurable in the syscall count and avoids 2 dcache lookups.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_run_startup",
+      "title": "BundleOptions setup boxes ~120 static-literal strings per startup",
+      "file": "/workspace/bun/src/bundler/options.rs",
+      "line": 1790,
+      "problem": "`BundleOptions::from_api` (run once per VM init) materialises the default extension-order / main-fields / out-extensions tables as `Box<[Box<[u8]>]>` via `owned_string_list`, even though every element is a `&'static [u8]` literal like `b\".tsx\"`. Worse, it builds them twice: `main_fields` is allocated for `Target::Browser` at line 1790 then dropped and rebuilt for the actual target at line 1892 (always hit — `boot()` sets `target = Some(Bun)`); `extension_order` is built by `ResolveFileExtensions::default()` (4 lists × 9 strings = 40 allocs) then two lists are overwritten with the Bun 10-string versions at 1935-1936 (+22 allocs, -20 frees). `out_extensions()` at 1964 builds a 9-entry `StringHashMap` the runtime never reads (only `bundler/linker.rs:715` reads it). Then `resolver_bundle_options_subset` (transpiler.rs:1073-1161) deep-clones all of it again for the resolver's nominally-distinct options struct: 4 extension lists (~42 allocs), `main_field_extension_order` (8), `main_fields` (4), CSS (2), plus 3 `ConditionsMap` clones.",
+      "evidence": "options.rs:1084 `owned_string_list(s) { s.iter().map(|b| Box::<[u8]>::from(*b)).collect() }`; options.rs:1043-1054 `ResolveFileExtensions::default()` calls it 4× on 9-element consts (EXTENSION_ORDER/MODULE_EXTENSION_ORDER at options.rs:2029-2049); options.rs:1790+1892 double-build of `main_fields`; options.rs:1935-1936 override of two extension lists for `Target::Bun`; options.rs:319-343 `out_extensions()` inserts 9 entries, sole reader is linker.rs:715; transpiler.rs:1089-1141 clones every list back into `resolver::options::BundleOptions`.",
+      "proposed_fix": "(a) Compute `target` first and build `main_fields`/`extension_order` once for the resolved target (eliminates the Browser-then-overwrite waste). (b) Change the field types from `Box<[Box<[u8]>]>` to an enum `ListOrStatic { Static(&'static [&'static [u8]]), Owned(Box<[Box<[u8]>]>) }` (or `Cow`) so the defaults borrow rodata — only user-provided `--extension-order`/`--main-fields` need the owned variant. (c) Make `out_extensions` lazy (`OnceCell`) or skip it when `!write`. (d) Have `resolver_bundle_options_subset` share/borrow the bundler's lists (both live on the process-lifetime `vm.transpiler`) instead of deep-cloning.",
+      "workload_impact": "Removes ~120-140 mimalloc alloc/free pairs of 3-10-byte strings plus ~6 outer Box/HashMap allocs from every `bun run` cold start — the largest single cluster of heap traffic in `VirtualMachine::init` outside JSC itself.",
+      "confidence": "high"
+    },
+    {
+      "workload": "bun_run_startup",
+      "title": "Entry script file is opened, closed, then re-opened to read",
+      "file": "/workspace/bun/src/runtime/cli/run_command.rs",
+      "line": 2899,
+      "problem": "`maybe_open_with_bun_js` is the fast path for `bun ./script.ts`. It does `open(target, O_RDONLY)` → `fstat(fd)` (reject directories) → `get_fd_path(fd)` (readlink `/proc/self/fd/N` on Linux, `F_GETPATH` on macOS) → `close(fd)`, then passes only the canonical path string to `_boot_and_handle_error` → `boot`. The module loader later reaches `Transpiler::parse` → `read_file_with_allocator` (resolver/lib.rs:2497-2538) with `_file_handle: None` (no watcher on cold start; and `is_main` forces `fd = None` at jsc_hooks.rs:2262 anyway), so it `open()`s the same path again to read the bytes, then `close()`s. Net: 2 open + 2 close + 1 fstat + 1 readlink for one file.",
+      "evidence": "run_command.rs:2858-2901: `bun_sys::open(open_z, O::RDONLY, 0)` … `bun_sys::fstat(fd)` … `bun_sys::get_fd_path(fd, &mut script_name_buf)` … `let _ = bun_sys::close(fd); Self::_boot_and_handle_error(ctx, &absolute_script_path, None)`. resolver/lib.rs:2512-2538: when `_file_handle.is_none()` → `bun_sys::open_file(path, READ_ONLY)`. jsc_hooks.rs:2231-2264: `fd` comes only from the ImportWatcher (null on cold start) and is forced to `None` for `is_main`.",
+      "proposed_fix": "Keep the fd from `maybe_open_with_bun_js` alive: stash it (e.g. in a new `ctx.runtime_options.entry_fd: Option<Fd>` or a one-shot `VirtualMachine::main_fd`) instead of `close(fd)`, and thread it to the first transpile via `ParseOptions.file_descriptor` so `read_file_with_allocator` takes the `_file_handle: Some(fd)` branch (`lseek(0)` + read, no open). The existing `should_close_input_file_fd` machinery in `transpile_source_code_inner` already handles ownership/closing when `fd.is_none()` flipped to Some.",
+      "workload_impact": "Saves 1 `openat()` + 1 `close()` syscall per cold start (the entry file is opened once instead of twice). On cold page-cache this also avoids a second path-walk/dentry lookup for the same inode.",
+      "confidence": "medium"
+    },
+    {
+      "workload": "transpile_throughput",
+      "title": "Printer re-validates every `.name` with a CodepointIterator walk",
+      "file": "/workspace/bun/src/js_printer/lib.rs",
+      "line": 3687,
+      "problem": "`print_expr`'s `EDot` arm calls `lexer::is_identifier(&e.name)` for every property access printed. `is_identifier` (src/bun_core/string/identifier.rs:28) drives a full `CodepointIterator` with per-byte cursor updates (`i`, `width`, `c` stores, two bounds checks, ASCII cmp, ID-part range check ≈ 10 ops/byte). But `E::Dot::name` is filled from `p.lexer.identifier` in `parse_suffix.rs:102` — it was already accepted as `TIdentifier`/keyword, so the walk re-proves a parse-time invariant on the single hottest expression variant after `EIdentifier`.",
+      "evidence": "src/js_printer/lib.rs:3687 `if lexer::is_identifier(&e.name)`; src/bun_core/string/identifier.rs:28-43 loops `CodepointIterator::next` per byte (no ASCII-bulk fast path); src/js_parser/parse/parse_suffix.rs:96-116 sets `name = E::Str::new(p.lexer.identifier)` only after `is_identifier_or_keyword()`. Same shape repeats at lib.rs:4912 for EString object keys.",
+      "proposed_fix": "Add an all-ASCII fast path to `is_identifier` that reuses the lexer's existing `latin1_identifier_continue_length_scalar` (src/js_parser/lexer.rs:3999): `text[0] matches [a-zA-Z_$] && latin1_identifier_continue_length_scalar(&text[1..]) == text.len()-1` → return true; fall through to CodepointIterator only when a byte ≥ 0x80 is seen. Alternatively carry a 1-bit `name_is_identifier` on `E::Dot` set at parse time so the printer check is a single load.",
+      "workload_impact": "Removes ~10 ops/byte × ~8 bytes × ~100K EDot ≈ ~8M ops from the three.js print pass (plus the same per string-keyed property at :4912); ~2-3% of end-to-end transpile wall time on dot-heavy inputs.",
+      "confidence": "high"
+    },
+    {
+      "workload": "transpile_throughput",
+      "title": "`best_quote_char_for_string` does a scalar byte scan of every string literal even when not minifying",
+      "file": "/workspace/bun/src/js_printer/lib.rs",
+      "line": 815,
+      "problem": "`print_string_literal_e_string` (line 3015) and `print_string_literal_utf8` (line 3054) unconditionally call `best_quote_char_for_string`, which runs a non-SIMD byte loop over up to 1024 bytes of every string body counting `'`/`\"`/` occurrences. Choosing the escape-minimizing quote only changes output size — a minify concern — yet it is not gated on `minify_whitespace`/`minify_syntax`. The immediately-following `write_pre_quoted_string_inner` then rescans the same bytes with SIMD `index_of_needs_escape_for_java_script_string`, so the string body is walked twice, and the first walk is scalar.",
+      "evidence": "lib.rs:815-854 scalar `while i < n` loop, `n = str.len().min(1024)`; lib.rs:3014-3018 / 3053-3060 call it with no minify guard (only an `IS_JSON` short-circuit at 2593/3056); lib.rs:1049 shows the second, SIMD pass over the same bytes.",
+      "proposed_fix": "In `best_quote_char_for_e_string`/`print_string_literal_utf8`, when `!self.options.minify_whitespace && !self.options.minify_syntax` return a fixed `b'\"'` (matching JSON/default behavior) and skip the scan. Optionally SIMD-ize the counter for the minify case using the existing highway helpers so even minified builds pay one vectorized pass instead of a scalar one.",
+      "workload_impact": "Eliminates one scalar O(len) pass per string literal: ~12K literals × ~20 B ≈ 240 KB/three.js, and up to 1 KB per literal on data-heavy JS; for bundler-output / JSON-in-JS files this is the dominant print-side scan.",
+      "confidence": "high"
+    },
+    {
+      "workload": "transpile_throughput",
+      "title": "Per-EDot wyhash into `defines.dots` even when the map is empty",
+      "file": "/workspace/bun/src/js_parser/visit/visit_expr.rs",
+      "line": 1363,
+      "problem": "`e_dot` visitor calls `defines.dots.get(e_.name.slice())` on every `.property` expression. `Define::dots` is a `StringHashMap` (hashbrown + `bun_wyhash::BuildHasher`, src/js_parser/lib.rs:505); hashbrown's `get` computes `make_hash(k)` before touching the table, so an empty or 1-entry `dots` still pays a full wyhash of the property name per EDot. In `Bun.Transpiler` / `--no-bundle` with no `--define`, `dots` is empty, making 100% of these hashes dead work.",
+      "evidence": "visit_expr.rs:1363 `defines.dots.get(e_.name.slice())` with no `is_empty()` guard; lib.rs:504-505 `dots: StringHashMap<Vec<DotDefine>>`; array_hash_map.rs:1576 shows StringHashMap wraps `hashbrown::HashMap<..., bun_wyhash::BuildHasher, _>` (hash computed pre-probe).",
+      "proposed_fix": "Gate with `if !defines.dots.is_empty() { ... }` (mirrors the `size==0` early-out already present in `zig_hash_map::get_index` at src/collections/zig_hash_map.rs:312). For the non-empty-but-tiny case, precompute the set of terminal-segment lengths once and reject out-of-range names before hashing, same trick `comptime_string_map!` uses.",
+      "workload_impact": "Saves ~1 wyhash(≈8 B) per property access: ~100K EDot in three.js × ~15 cycles ≈ ~1.5M cycles removed from the visit pass when no dot-defines are configured (the common transpile-only case).",
+      "confidence": "medium"
+    }
+  ],
+  "rankings": [],
+  "critical_paths": [
+    {
+      "workload": "bun_install_cold",
+      "summary": "Cold install wall time is dominated by overlapped network I/O (~1000 manifest GETs + ~1500 tarball GETs), but the CPU-bound gaps between them are: worker-thread `PackageManifest::parse` (JSON parse + two-pass per-version scan over every published version of every package), worker-thread tarball gzip+libarchive extract, and the main-thread `enqueue_dependency_*`/`get_or_put_resolved_package` loop that fans out HTTP requests. The largest *removable* CPU sits in `PackageManifest::parse`, which linearly re-scans each version object's ~15 keys ~22 separate times and — for extended manifests — does an O(V²) timestamp lookup."
+    },
+    {
+      "workload": "bun_install_warm",
+      "summary": "Warm `bun install` iterates every hoisted dependency in `install_hoisted_packages` → `install_package_with_name_and_resolution<NEEDS_VERIFY=true>` → `verify_package_json_name_and_version`, which opens/reads each `node_modules/<pkg>/package.json` and runs a full recursive SIMD JSON parse just to compare `name`/`version`. Before that loop, `lockfile.filter()` re-hoists the whole graph with an O(deps×hoisted) linear scan. The dominant removable costs are (a) the per-package JSON parse+allocs in verify, and (b) the quadratic name-hash scan in `hoist_dependency`; syscalls (openat/read/close per package) are the unavoidable floor."
+    },
+    {
+      "workload": "bun_build_large",
+      "summary": "For `bun build` on 1000+ modules: parsing runs per-module on the worker pool (dominant but well-parallelized); the single-threaded bottlenecks are (a) `on_parse_task_complete` / `resolve_import_records` on the bundle thread, and (b) per-chunk `rename_symbols_in_chunk` + `post_process_js_chunk`, which both loop once over every file/scope/compile-result in the chunk on one thread. The largest removable costs are allocator churn in the renamer's per-scope HashMap and a dead full-output substring scan in the StringJoiner watcher."
+    },
+    {
+      "workload": "serve_helloworld",
+      "summary": "The per-request path is uWS → on_request_for → prepare_js_request_context_for (hive-claim RequestContext, hive-claim Body, **new AbortSignal**, Box<Request>, to_js) → user fetch() call → on_response (drain_microtasks, to_blob_if_possible) → render → do_render → do_render_with_body (drain_microtasks AGAIN, to_blob_if_possible AGAIN) → render_metadata + render_bytes → finalize/deinit. RequestContext and BodyValue are already pooled; the dominant removable costs are the eagerly-constructed C++ AbortSignal and redundant microtask drains/FFI round-trips that fire unconditionally on every hello-world GET."
+    },
+    {
+      "workload": "fetch_throughput",
+      "summary": "Per 512KB recv: uSockets hands bytes to HTTPClient::on_data → handle_response_body_from_multiple_packets memcpy's into body_out_str (FetchTasklet.response_buffer), then — because fetch() always wires body_receive_mode — is_streaming is unconditionally true, so progress_update→FetchTasklet::callback fires per chunk, locks the tasklet mutex, memcpy's response_buffer → scheduled_response_buffer, resets response_buffer, and enqueues a JS task. On the JS side scheduled_response_buffer is either moved into an InternalBlob (buffered) or passed as a borrowed Temporary to ByteStream which copies it a third time. Wall time is dominated by redundant body memcpy passes (≈3× the payload for .arrayBuffer(), ≈4× for res.body streaming) plus ~200 mutex/CAS round-trips per 100MB."
+    },
+    {
+      "workload": "bun_test_throughput",
+      "summary": "For each passing assertion `expect(x).toBe(y)`, Bun does two native host calls: `Expect::call()` (boxes an `Expect` payload, boxes a `RefData`, GC-allocs a `JSExpect`) and the matcher (e.g. `to_be` → `matcher_prelude` → `get_value` → `pretty_fmt_rt` alloc → `process_promise` no-op → `increment_expect_call_counter` → compare → `post_match` no-op). The actual comparison (`is_same_value`/`jest_deep_equals`) is one cheap FFI call; the dominant removable cost is the 2 extra mimalloc allocs + ~6 `Rc` refcount ops performed for bookkeeping that the pass path never reads."
+    },
+    {
+      "workload": "bun_run_startup",
+      "summary": "`bun script.ts` flows through `Cli::start` → `Command::start` → `exec_auto_or_run` → `arguments::parse` (getcwd, clap, bunfig probe) → `exec_with_cfg` → `maybe_open_with_bun_js` (open/fstat/readlink/close) → `boot` → `bun_jsc::initialize` → `VirtualMachine::init` (→ `init_runtime_state` → `Transpiler::init` → `BundleOptions::from_api` + `resolver_bundle_options_subset`) → `Zig__GlobalObject__create` → `Run::start` → `load_entry_point` → transpile → JSC eval. Wall time is dominated by JSC VM creation (C++) and the entry-file parse/print; the biggest removable Rust-side costs are redundant bunfig.toml open() syscalls, ~120+ heap allocations to box compile-time-constant extension/main-field string tables, and a discarded open() of the entry file."
+    },
+    {
+      "workload": "transpile_throughput",
+      "summary": "Transpile throughput = lexer.next() per-token → parser builds arena AST → visitor resolves every EIdentifier/EDot (find_symbol scope-walk + record_usage hash-insert) → printer walks AST emitting into a pre-sized MutableString. The lexer/writer byte paths are already hand-tuned (register-resident slices, SIMD skips, const-gated source maps); the measurable removable cost is in per-EDot/per-string-literal work: redundant O(len) scans over property names and string bodies that re-verify facts the parser already established."
+    }
+  ]
+}

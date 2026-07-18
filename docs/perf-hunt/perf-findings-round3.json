@@ -1,0 +1,291 @@
+{
+  "total": 26,
+  "findings": [
+    {
+      "area": "socket",
+      "title": "O(N²) memmove draining node:net write buffer under backpressure",
+      "file": "/workspace/bun/src/runtime/socket/socket_body.rs",
+      "line": 2970,
+      "problem": "`internal_flush` (called from every `on_writable` event) writes from the head of `buffered_data_for_node_net` and then shifts the remainder down with `b.copy_within(written.., 0); b.truncate(len)`. Under sustained TCP backpressure a buffer of N bytes drained W bytes per writable event does N/W memmoves averaging N/2 bytes each → ~N²/(2W) bytes of copying to deliver N bytes. The same shift-down pattern appears at lines 2632-2636 and 2670-2683 in `write_or_end_buffered`. No read-offset is tracked; every partial drain pays O(remaining).",
+      "evidence": "src/runtime/socket/socket_body.rs:2969-2979:\n    if written > 0 {\n        self.buffered_data_for_node_net.with_mut(|b| {\n            if b.len() as usize > written {\n                let remaining_len = b.len() as usize - written;\n                b.copy_within(written.., 0);\n                b.truncate(remaining_len);\n            } else {\n                b.clear_and_free();\n            }\n        });\n    }\nHot-path chain: uws on_writable → RawPtrHandler::on_writable (uws_handlers.rs:278) → NewSocket::on_writable (socket_body.rs:882) → internal_flush (line 918). Fires per-writable-event per-socket. The buffer type is `JsCell<Vec<u8>>` (line 278) with no cursor field.",
+      "proposed_fix": "Track a `drain_offset: Cell<usize>` alongside the Vec and write `&buf[offset..]`; only `copy_within`/shrink when `offset > buf.len()/2` (amortized O(1) per byte). Alternatively store the buffer as a `VecDeque<u8>`/ring so partial drains are pointer advances. This keeps total copy work O(N) regardless of how many writable ticks it takes to drain.",
+      "impact": "high",
+      "confidence": "high"
+    },
+    {
+      "area": "bake",
+      "title": "Per-file deep copy of source-map VLQ buffer on every bundle/reload",
+      "file": "/workspace/bun/src/runtime/bake/DevServer.rs",
+      "line": 4054,
+      "problem": "Inside the per-compiled-file loop of `finalize_bundle` (runs once per file in every initial bundle and every HMR rebuild), `compile_result.source_map_chunk()` returns `Option<&bun_sourcemap::Chunk>` and the code calls `.clone()` on it. `Chunk` derives `Clone` and contains `buffer: MutableString { list: Vec<u8> }`, so this deep-copies the entire VLQ mapping buffer (typically KB-tens of KB per file, aggregate MB for a full route bundle). The cloned `Chunk` is then passed by value into `receive_chunk`, which only ever calls `buffer.to_owned_slice()` (a `mem::take` + `into_boxed_slice`) on it — so the sole purpose of the clone is to obtain owned bytes from a borrowed `&Chunk`. The data is copied once here and then moved out; the copy could be eliminated entirely.",
+      "evidence": "DevServer.rs:4045-4109 loops `for (part_range, compile_result) in js_chunk.content.javascript().parts_in_chunk_in_order.iter().zip(js_chunk.compile_results_for_chunk.iter())` and at :4054 `Some(c) => c.clone()`. `bun_sourcemap::Chunk` at /workspace/bun/src/sourcemap/Chunk.rs:10-27 is `#[derive(Clone)]` with `buffer: MutableString` (= `Vec<u8>`, /workspace/bun/src/bun_core/string/MutableString.rs:29-32). Consumer `PackedMap::new_non_empty` at /workspace/bun/src/runtime/bake/dev_server/packed_map.rs:31-42 only reads `chunk.buffer` (via `to_owned_slice()` = `mem::take`) and two `i32` fields — it does not need an owned clone of the whole `Chunk`.",
+      "proposed_fix": "Iterate `js_chunk.compile_results_for_chunk` mutably (or add/ use a `source_map_chunk_mut()` accessor) and `core::mem::take` the `Chunk` instead of cloning it — the compile results are discarded after `finalize_bundle` so the move is safe. This removes one full `Vec<u8>` allocation + memcpy per bundled file per reload. If a mutable iterator is not feasible, change `ReceiveChunkSourceMap` to carry `&'a Chunk` and have `PackedMap::new_non_empty` take `&Chunk` and build `vlq_` with `Box::<[u8]>::from(chunk.buffer.list.as_slice())` (same single copy, no intermediate `Vec` clone).",
+      "impact": "high",
+      "confidence": "high"
+    },
+    {
+      "area": "router",
+      "title": "Route pattern re-parsed byte-by-byte on every match attempt (per-request × per-dynamic-route)",
+      "file": "/workspace/bun/src/router/lib.rs",
+      "line": 1565,
+      "problem": "In the per-request hot path `Routes::match_dynamic` (line 555-563) iterates every dynamic route and calls `Pattern::match_` for each. Inside `Pattern::match_`, the `while` loop calls `Pattern::init(match_name, offset)` (line 1565, and again at 1608) which re-tokenizes the immutable route's `match_name` byte-by-byte (`init_maybe_hash` scans for '/' and '[' at lines 1778-1907) and wyhashes each static segment via `HashedString::init` (lines 1805/1814/1910 → HashedString.rs:24 `hash(buf)`). The route patterns never change after `RouteLoader::load_all`; `Pattern::validate` already parses them once at load time (line 1677 `Pattern::init_unhashed`) but the result is discarded except for `param_count`/`kind`. Result: for N dynamic routes with S segments of length L, every `router.match()` call does O(N·S·L) redundant byte-scanning + O(N·S_static) redundant wyhash calls on data that is constant for the process lifetime.",
+      "evidence": "Call chain confirmed per-request: filesystem_router.rs:634 `match_page_with_allocator` → lib.rs:579-582 `match_` → lib.rs:555-563 `match_dynamic` loop → lib.rs:1565 `Pattern::init(match_name, offset).expect(\"unreachable\")` inside `while (offset as usize) < name.len()`. `Pattern::init` → `init_maybe_hash::<true>` (lib.rs:1766-1912) iterates bytes and builds `Value::Static(HashedString::init(...))`. `HashedString::init` (src/bun_core/string/HashedString.rs:20-26) computes `hash: hash(buf) as u32`. The `Route` struct (lib.rs:980-1007) stores only `kind`/`param_count`, not the parsed segment list — no caching one level up.",
+      "proposed_fix": "Precompute the segment list once at load time: store a `Box<[pattern::Value]>` (or a packed `[(Tag, TinyPtr, u32 hash)]`) on `Route` (it is already heap-boxed, so no extra indirection), filled from the existing `Pattern::validate` pass. Change `Pattern::match_` to iterate that precomputed slice instead of calling `Pattern::init` in the loop. This removes all per-request route-name byte-scanning and route-side wyhash calls, reducing dynamic-match cost to one URL-segment split + one compare per segment per candidate route.",
+      "impact": "high",
+      "confidence": "high"
+    },
+    {
+      "area": "cpp_bindings",
+      "title": "Per-fetch() header serialization does 2×(O(N²) lookups + sort + Vector<String> alloc) via spec iterator",
+      "file": "/workspace/bun/src/jsc/bindings/bindings.cpp",
+      "line": 1871,
+      "problem": "WebCore__FetchHeaders__copyTo (line 1871) and WebCore__FetchHeaders__count (line 1917) both call headers->createIterator() and drain it with iter.next(). FetchHeaders::Iterator is the Fetch-spec sorted iterator: on first next() it heap-allocates a Vector<String> m_keys, copies every header name into it, std::sorts it, then for every subsequent next() it calls m_headers.get(key) which is findHTTPHeaderName (gperf hash) + a linear scan over the common/uncommon vector. A full drain is therefore O(N log N) sort + O(N²) comparisons + N gperf lookups. from_fetch_headers() (src/http_jsc/headers_jsc.rs:31,83) calls count() then copy_to() back-to-back for every outgoing fetch() request (src/runtime/webcore/fetch.rs:1401,1648) and for every StaticRoute/FileRoute response, so each request pays this twice.",
+      "evidence": "bindings.cpp:1873 `auto iter = headers->createIterator(false);` + line 1876 `for (auto pair = iter.next(); pair; pair = iter.next())`; bindings.cpp:1919-1921 same pattern in __count. FetchHeaders.cpp:341-352 builds+sorts m_keys; FetchHeaders.cpp:386 `auto value = m_headers->m_headers.get(key);` inside the per-step while. HTTPHeaderMap.cpp:101-107 get(StringView) = findHTTPHeaderName + linear findIf. Caller chain: headers_jsc.rs:31 `(*h).count(...)` and :83 `(*h).copy_to(...)` inside from_fetch_headers(), invoked per fetch() at fetch.rs:1401.",
+      "proposed_fix": "copyTo/count do not need spec-sorted order — they just flatten into a byte buffer for the HTTP client. Rewrite both to iterate headers->internalHeaders().commonHeaders(), .uncommonHeaders(), and .getSetCookieHeaders() directly (each entry already carries both key and value). That is O(N) with zero heap allocation, no sort, no gperf re-lookup, and no linear scan per key. The same direct-iteration pattern is already used in writeFetchHeadersToUWSResponse (NodeHTTP.cpp:776-848) and getInternalProperties (JSFetchHeaders.cpp:673-709).",
+      "impact": "high",
+      "confidence": "high"
+    },
+    {
+      "area": "js_internal",
+      "title": "Per-query full-string toUpperCase()+trim() just to check a prefix in checkUnsafeTransaction",
+      "file": "/workspace/bun/src/js/internal/sql/shared.ts",
+      "line": 971,
+      "problem": "For every Postgres/MySQL query executed through the default pool, `checkUnsafeTransaction` allocates a full uppercase copy of the entire SQL string (via `sql.toUpperCase().trim()`) only to test whether it starts with \"BEGIN\" or \"START TRANSACTION\". For bulk inserts generated by `normalizeQuery` (e.g. 1000 rows × 10 cols of `$n` placeholders → tens of KB), this is an O(n) allocation+copy per query where an O(1) case-insensitive prefix check on the first ~17 chars after leading whitespace would suffice.",
+      "evidence": "shared.ts:968-977:\n  protected checkUnsafeTransaction(sql: string, flags: number) {\n    if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {\n      if (this.connectionInfo.max !== 1) {\n        const upperCaseSqlString = sql.toUpperCase().trim();\n        if (upperCaseSqlString.startsWith(\"BEGIN\") || upperCaseSqlString.startsWith(\"START TRANSACTION\")) {\n          throw this.unsafeTransactionError();\n        }\n      }\n    }\n  }\n\nHot-path chain: query.ts:54 `this[_adapter].createQueryHandle(sql, ...)` → postgres.ts:499 / mysql.ts:266 `this.checkUnsafeTransaction(sql, flags)`. `allowUnsafeTransaction` is only set inside `sql.begin()`/reserved (bun/sql.ts:186-208); ordinary `queryFromPool` passes no such flag (bun/sql.ts:119). Default `max` is 10 (shared.ts:2067), so the branch is taken for every normal pooled query.",
+      "proposed_fix": "Skip leading whitespace manually, then compare the first 5/17 characters case-insensitively without allocating. E.g.:\n  let i = 0; const n = sql.length;\n  while (i < n && sql.charCodeAt(i) <= 32) i++;\n  // case-insensitive startsWith against \"BEGIN\" / \"START TRANSACTION\" over sql[i..]\nor `const head = sql.substring(i, i + 17).toUpperCase();` so only ≤17 chars are uppercased instead of the whole query.",
+      "impact": "high",
+      "confidence": "high"
+    },
+    {
+      "area": "crypto",
+      "title": "Wasted ERR_clear_error/ERR_get_error on every Bun.CryptoHasher#update() call",
+      "file": "/workspace/bun/src/runtime/crypto/EVP.rs",
+      "line": 257,
+      "problem": "`EVP::update()` unconditionally calls `boringssl::ERR_clear_error()` before every `EVP_DigestUpdate`, and `CryptoHasher::update()` (src/runtime/crypto/CryptoHasher.rs:604) unconditionally calls `ERR_get_error()` afterward. BoringSSL's `EVP_DigestUpdate` always returns 1 and never pushes to the error queue (it is `ctx->digest->update(...); return 1;`), so both calls are dead work executed on every chunk fed to `Bun.CryptoHasher#update()` for the common EVP-backed algorithms (md5/sha1/sha224/sha256/sha384/sha512/sha512-256/ripemd160/blake2b). `ERR_clear_error()` is not free: it performs a TLS lookup (`CRYPTO_get_thread_local`), loops over ERR_NUM_ERRORS=16 slots calling `free(error->data)` + `memset(0, 24)` on each, then one more `free(state->to_free)`. That is 17 libc `free(NULL)` calls + ~384 bytes zeroed + two TLS lookups per `update()`, independent of chunk size. For streaming/per-chunk hashing this repeated fixed cost is pure overhead.",
+      "evidence": "EVP.rs:253-261: `pub fn update(&mut self, input: &[u8]) { unsafe { boringssl::ERR_clear_error(); let _ = boringssl::EVP_DigestUpdate(...); } }`.  CryptoHasher.rs:602-609: `inner.with_mut(|e| e.update(buffer.slice())); let err = boring_ssl::ERR_get_error(); if err != 0 { ... }`.  vendor/boringssl/crypto/fipsmodule/digest/digest.cc.inc:167-170: `int EVP_DigestUpdate(...) { ctx->digest->update(ctx, data, len); return 1; }` (cannot fail, never touches error queue).  vendor/boringssl/crypto/err/err.cc:265-280: `ERR_clear_error()` loops `for (i = 0; i < ERR_NUM_ERRORS; i++) err_clear(&state->errors[i]); free(state->to_free);` where `err_clear` = `free(error->data); OPENSSL_memset(error, 0, sizeof(struct err_error_st));` and ERR_NUM_ERRORS=16 (err.h:399). The same dead `ERR_get_error()` check applies to the Hmac arm at CryptoHasher.rs:619 since `HMAC_Update` just wraps `EVP_DigestUpdate` (vendor/boringssl/crypto/fipsmodule/hmac/hmac.cc.inc:157-159).",
+      "proposed_fix": "Drop the `ERR_clear_error()` from `EVP::update()` (EVP_DigestUpdate cannot error), and drop the `ERR_get_error()`+throw block from the `Evp` and `Hmac` arms of `CryptoHasher::update()` (CryptoHasher.rs:604-624). Error-queue clearing is already performed at the boundaries that can actually fail (`init`, `hash`, `final`, `copy`). If defensive clearing is desired, do it once at hasher construction / `reset()`, not per-chunk.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "socket",
+      "title": "Two heap allocations per UDP destination address in send()/sendMany()",
+      "file": "/workspace/bun/src/runtime/socket/udp_socket.rs",
+      "line": 1584,
+      "problem": "`parse_addr` converts the JS address string with `to_bun_string()` (WTFStringImpl alloc) and then `str.to_owned_slice_z().into_vec_with_nul()` (second heap alloc for a NUL-terminated Vec). It is called once per packet from the `send_many_impl` loop (line 1399 inside `while let Some(val) = iter.next()`) and once per `send()` (line ~1509 path). IP address strings are bounded (≤ INET6_ADDRSTRLEN+IF_NAMESIZE ≈ 62 bytes) so a fixed stack buffer suffices; the current code allocates on the heap per datagram.",
+      "evidence": "src/runtime/socket/udp_socket.rs:1581-1584:\n    let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);\n    // Owned NUL-terminated copy as a mutable Vec so we can write a NUL at\n    // the `%` position for scope-id parsing.\n    let mut address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();\nCaller loop at 1355/1399:\n    while let Some(val) = iter.next()? { ... if !this.parse_addr(global_this, port, val, &mut addrs[slice_idx])? { ... } }",
+      "proposed_fix": "Obtain the UTF-8 bytes via a borrowing slice (`to_slice`/`to_utf8`) and copy into a stack `[u8; INET6_ADDRSTRLEN + IF_NAMESIZE + 2]` with a trailing NUL; reject over-length inputs (they cannot be valid IPs). This removes both per-packet heap allocations on the `dgram` send hot path.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "bake",
+      "title": "Fresh ArrayHashMap allocated per bundled file in import diffing",
+      "file": "/workspace/bun/src/runtime/bake/dev_server/incremental_graph.rs",
+      "line": 856,
+      "problem": "`process_chunk_dependencies` is called once per file in the bundle output (DevServer.rs:4274-4303 loops over `parts_in_chunk_in_order`, HTML chunks, CSS chunks and calls it for each). The first thing it does is `let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();` and then populates it from the file's existing import edges. This allocates fresh backing storage (4 Vecs: keys/values/hashes/index) for every file, uses it for diffing, and drops it. For an initial route bundle with hundreds-thousands of modules this is hundreds-thousands of small heap alloc/free pairs per reload, all of which could share one cleared-and-reused map.",
+      "evidence": "incremental_graph.rs:856 `let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();` followed by a `while let Some(edge_index) = it { ... quick_lookup.put_no_clobber(...) }` fill, used once, then dropped at fn end. Call sites looping per-file: /workspace/bun/src/runtime/bake/DevServer.rs:4274 `for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() { ... process_chunk_dependencies(...) }`, :4288 (HTML chunks), :4296 (CSS chunks).",
+      "proposed_fix": "Hoist a reusable `quick_lookup` map into `HotUpdateContext` (or a local in `finalize_bundle`) and pass it by `&mut` into `process_chunk_dependencies`, calling `.clear_retaining_capacity()` at the top of each call instead of constructing a new map. This turns N×4 Vec allocations into at most a handful of grow-once allocations for the whole reload.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "url",
+      "title": "URL::parse scans the entire post-scheme URL for '@' and ':' on every parse (per-fetch / per-HTTP-request)",
+      "file": "/workspace/bun/src/url/lib.rs",
+      "line": 631,
+      "problem": "After stripping `scheme://`, `parse` unconditionally runs two separate `strings::index_of_char` scans over `&base[offset..]` — the *entire remainder of the URL* (host + path + query + fragment) — looking for `@` and `:`. For the overwhelmingly common case (no userinfo), the `@` scan traverses the full URL and misses; the `:` scan likewise traverses the full URL when there is no port. The bounding `/` check at line 638 only runs *after* both full scans have completed. `URL::parse` is invoked once per `fetch()` (src/runtime/webcore/fetch.rs:473, :275, :1927, :2068), once per HTTP-client redirect (src/http/lib.rs:5290/5350/5372), and once per package-manager network task (src/install/NetworkTask.rs:630/844) — all per-request hot paths.",
+      "evidence": "Lines 629-644:\n```\nif offset > 0 {\n    let first_at = strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);\n    let first_colon = strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);\n\n    if first_at > first_colon\n        && first_at < strings::index_of_char(&base[offset as usize..], b'/').unwrap_or(u32::MAX)\n    {\n```\n`&base[offset as usize..]` is everything after `scheme://`, not bounded to the authority. For `https://api.example.com/v1/resource/12345?limit=100&offset=0&sort=created_at#section`, both the `@` and `:` scans walk ~70 bytes of path+query+hash that can never contain a userinfo delimiter.",
+      "proposed_fix": "Bound the userinfo search to the authority segment: compute `authority_end = strings::index_of_any(&base[offset..], b\"/?#\")` first (SIMD-backed, src/bun_core/string/immutable.rs:483), then search for `@` and `:` only within `base[offset..offset+authority_end]`. This shrinks the two scans from O(url_len) to O(authority_len) (~10-40 bytes typical). The `authority_end` result can additionally be reused to seed `parse_host` and the path offset, eliminating the re-scan in `parse_host`'s byte loop at lines 859-874.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "url",
+      "title": "O(n²) linear name-dedup inside per-param loop in QueryStringMap::init / init_with_scanner (per-request FileSystemRouter path)",
+      "file": "/workspace/bun/src/url/lib.rs",
+      "line": 1230,
+      "problem": "Inside the `while let Some(result) = scanner.next()` loop that runs once per query-string parameter, the code calls `list.iter().position(|p| p.name_hash == name_hash)` — a linear scan over all previously-inserted params — making the whole build O(k²) in param count. The same pattern is at line 1103 in `init_with_scanner`. k is capped at MAX_QUERY_STRING_PARAMS = 2048, so adversarial input yields ~2M u64 comparisons per request. Invoked per-request from `Bun.FileSystemRouter` match results when `.query`/`.params` is accessed (src/runtime/api/filesystem_router.rs:1033/1061/1064), whenever any param contains `%` or `+` (which bypasses the no-decode fast path at line 1178).",
+      "evidence": "Lines 1228-1233 (inside the loop starting at 1210 `while let Some(result) = scanner.next()`):\n```\n} else {\n    name_hash = wyhash(result.raw_name(query_string));\n    if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {\n        name = list[index].name;\n    } else {\n```\nAnd lines 1101-1107 (inside the loop at 1083):\n```\n} else {\n    name_hash = wyhash(result.raw_name(scanner.query.query_string));\n    if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {\n        if index < route_parameter_begin { continue; }\n```",
+      "proposed_fix": "Hoist a hash-keyed lookup outside the loop: a `HashMap<u64, u32>` (name_hash → first list index) with an identity/nop hasher, since `name_hash` is already a wyhash. O(1) lookup+insert per param → O(k) total. Preserves the `index < route_parameter_begin` check in `init_with_scanner` by storing the first-seen index.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "router",
+      "title": "Static-segment compare wyhashes both sides then memcmps anyway",
+      "file": "/workspace/bun/src/router/lib.rs",
+      "line": 1572,
+      "problem": "In the same per-request × per-dynamic-route × per-segment inner loop, static segments are compared via `str_.eql_bytes(segment)` (line 1572). `str_` was just built by `Pattern::init` which wyhashed the route segment (cost #1), and `HashedString::eql_bytes` (src/bun_core/string/HashedString.rs:41-45) then wyhashes the URL segment (cost #2) before finally doing `self.str() == other` (memcmp). For typical path segments (<32 bytes) the length-guarded memcmp alone is as cheap as one wyhash, so the two hashes are pure overhead — they cannot short-circuit anything memcmp wouldn't, and when lengths match the memcmp runs regardless. Net: two wyhash computations per static segment per dynamic route per request that buy nothing.",
+      "evidence": "lib.rs:1569-1575: `Value::Static(str_) => { let segment = &path_[0..path_.iter().position(..).unwrap_or(..)]; if !str_.eql_bytes(segment) { ... } }`. HashedString.rs:41-45: `pub fn eql_bytes(&self, other: &[u8]) -> bool { (self.len as usize) == other.len() && (hash(other) as u32) == self.hash && self.str() == other }`. `self.hash` was populated at lib.rs:1805/1814/1910 via `HashedString::init` which calls `bun_wyhash::hash`.",
+      "proposed_fix": "Replace `str_.eql_bytes(segment)` with a direct length+bytes compare (`str_.len as usize == segment.len() && strings::eql(str_.str(), segment)` or simply `str_.str() == segment`), and build the static segment with `HashedString::init_no_hash` (or, if Finding 1's precompute is adopted, store the precomputed route-side hash and compare only that one hash against a URL-segment hash computed once per request rather than once per candidate route).",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "router",
+      "title": "match_dynamic linearly tests every dynamic route with no first-segment pruning",
+      "file": "/workspace/bun/src/router/lib.rs",
+      "line": 555,
+      "problem": "`match_dynamic` (per-request, after the static hash-table miss) iterates the entire sorted dynamic-route slice and runs `Pattern::match_` on each candidate until one returns true. There is no index on the first path segment, so a URL like `/blog/123` is fully pattern-matched against `/admin/[id]`, `/api/[x]/[y]`, `/shop/[slug]`, etc. — each of which fails on the very first static segment but only after the re-parse + two wyhashes described above. This is O(N_dynamic_routes) per request where a first-static-segment `StringHashMap<Vec<usize>>` (built once at load time, keyed on the lowercase first segment when it is static, with a separate small list for routes whose first segment is itself dynamic) would prune to O(candidates_with_matching_prefix). The existing sort order within each bucket preserves Next.js priority semantics.",
+      "evidence": "lib.rs:550-565: `let dynamic = &self.list.items_route()[start..end]; ... for ((case_sensitive_name, name), route) in dynamic_names.iter().zip(...).zip(...) { if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) { return Some(...); } }`. No filtering before the loop; `Route`/`Routes` store no per-first-segment index (lib.rs:405-433, 980-1007). Static routes already use a hash map (`self.static_`, line 579), but dynamic routes do not.",
+      "proposed_fix": "At `RouteLoader::load_all` time, bucket dynamic-route indices into a `StringHashMap<SmallVec<u32>>` keyed by their first static segment (lower-cased), plus one bucket for routes whose first segment is dynamic/catch-all. In `match_dynamic`, look up the URL's first segment and iterate only that bucket (in stored order) followed by the dynamic-first bucket. Reduces per-request work from O(N_dynamic) to ~O(matching_prefix_count).",
+      "impact": "high",
+      "confidence": "medium"
+    },
+    {
+      "area": "valkey",
+      "title": "Redundant Box<[u8]> allocation for every RESP3 Push kind (per pub/sub message)",
+      "file": "/workspace/bun/src/valkey/valkey_protocol.rs",
+      "line": 556,
+      "problem": "In the RESPType::Push arm of read_value_with_depth, the first element (the push kind, e.g. \"message\"/\"subscribe\") is parsed via read_value_with_depth(), which already heap-allocates a Box<[u8]> inside RESPValue::SimpleString/BulkString. The code then borrows that box as &[u8] and immediately allocates a SECOND Box<[u8]> via Box::<[u8]>::from(push_type_str), after which the first box is dropped. The comment \"Copy the push type string since the original will be freed\" is a leftover from the Zig port (where `defer push_type.deinit()` existed); in Rust the owned Box can simply be moved out of the enum. This runs once for every Push frame received — i.e. once per pub/sub message, subscribe ack, and invalidation notice — so it is on the per-message hot path.",
+      "evidence": "lines 541-573:\n    let push_type = self.read_value_with_depth(depth + 1)?;\n    let push_type_str: &[u8] = match &push_type {\n        RESPValue::SimpleString(str) => str,\n        RESPValue::BulkString(maybe_str) => { if let Some(str) = maybe_str { str } else { return Err(RedisError::InvalidPush); } }\n        _ => return Err(RedisError::InvalidPush),\n    };\n    // Copy the push type string since the original will be freed\n    let push_type_dup = Box::<[u8]>::from(push_type_str);\n\nCaller hot-path confirmation: /workspace/bun/src/runtime/valkey_jsc/valkey.rs:841 read_value() is invoked per reply inside on_data(), and RESPValue::Push is dispatched to on_valkey_message for every pub/sub delivery (valkey.rs:1103/1148).",
+      "proposed_fix": "Match by value and move the existing Box out instead of re-allocating:\n    let kind: Box<[u8]> = match self.read_value_with_depth(depth + 1)? {\n        RESPValue::SimpleString(s) | RESPValue::BulkString(Some(s)) => s,\n        _ => return Err(RedisError::InvalidPush),\n    };\n    ...\n    Ok(RESPValue::Push(Push { kind, data }))\nThis removes one heap allocation + one memcpy + one free per pub/sub message with no behavior change.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "dotenv",
+      "title": "create_null_delimited_env_map: N+2 heap allocations per subprocess spawn (could be 2)",
+      "file": "/workspace/bun/src/dotenv/env_loader.rs",
+      "line": 1359,
+      "problem": "For every subprocess spawn that inherits the parent env (Bun.spawn default path at src/runtime/api/bun/js_bun_spawn_bindings.rs:922, shell subprocess at src/runtime/shell/subproc.rs:600, install lifecycle scripts at src/install/PackageManager/PackageManagerLifecycle.rs:454), `create_null_delimited_env_map` iterates all env vars and does one `vec![0u8; klen+vlen+2].into_boxed_slice()` heap allocation per entry, plus two Vec allocations for `storage` and `envp_buf`. With a typical 50-200 process env vars this is 52-202 allocations per spawn. The total byte length is computable in one prior pass (the map is already iterated), so all `K=V\\0` strings can live in a single contiguous `Vec<u8>` with `envp_buf` pointing into it — reducing to 2 allocations regardless of env size. The per-entry buffers are also zero-initialized by `vec![0u8; n]` and then fully overwritten except for the trailing NUL, wasting a memset per entry.",
+      "evidence": "Lines 1350-1374:\n```rust\npub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {\n    let envp_count = self.map.count();\n    let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);\n    let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);\n    {\n        let mut it = self.map.iterator();\n        while let Some(pair) = it.next() {\n            let klen = pair.key_ptr.len();\n            let vlen = pair.value_ptr.value.len();\n            let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();\n            env_buf[..klen].copy_from_slice(pair.key_ptr);\n            env_buf[klen] = b'=';\n            env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);\n            envp_buf.push(env_buf.as_ptr().cast::<c_char>());\n            storage.push(env_buf);\n        }\n    }\n    envp_buf.push(core::ptr::null());\n    ...\n}\n```\nCalled per-spawn from js_bun_spawn_bindings.rs:922 (`if !override_env && env_array.is_empty()` — the default) and shell/subproc.rs:600.",
+      "proposed_fix": "First pass: sum `klen + vlen + 2` over all entries into `total_bytes`. Allocate one `Vec<u8>` with that capacity (uninitialized or via `extend_from_slice`/`push` so no pre-zeroing). Second pass: for each entry, record the current `buf.len()` offset, push key bytes, `b'='`, value bytes, `0u8`. After filling, convert offsets to pointers (`buf.as_ptr().add(off)`) into `envp_buf`. Change `NullDelimitedEnvMap._storage` from `Vec<Box<[u8]>>` to a single `Vec<u8>` (or `Box<[u8]>`). Result: 2 allocations (storage + envp_buf) instead of envp_count+2, and no redundant zero-fill.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "uws",
+      "title": "64KB stack buffer zero-initialized on every TLS data chunk in SSLWrapper::handle_traffic",
+      "file": "/workspace/bun/src/uws/lib.rs",
+      "line": 1148,
+      "problem": "`handle_traffic()` declares `let mut buffer = [0u8; BUFFER_SIZE];` (BUFFER_SIZE = 65536) on every invocation. This compiles to a 64KB `memset(0)` that LLVM cannot elide because the buffer is immediately passed as `*mut c_void` to extern-\"C\" `SSL_read`/`BIO_read`, which the optimizer must assume may read before writing. `handle_traffic()` is called once per `receive_data()` (every encrypted chunk from the network), once per `write_data()` (every plaintext write), and once per `flush()`. The zeroing is unnecessary: `handle_reading`/`handle_writing` only ever read `buffer[0..read]`, which has been fully filled by `SSL_read`/`BIO_read`.",
+      "evidence": "src/uws/lib.rs:1148 `let mut buffer = [0u8; BUFFER_SIZE];` inside `handle_traffic()`. Called per-chunk from `receive_data` (line 736) and `write_data` (lines 753/771/776/786). Hot-path trace: `/workspace/bun/src/http/lib.rs:3909` `HTTPClient::on_data` → `ProxyTunnel::receive` → `/workspace/bun/src/http/ProxyTunnel.rs:755` `wrapper.receive_data(buf)` → `handle_traffic()`. Also hit per-chunk via `UpgradedDuplex` (node:tls over Duplex, `/workspace/bun/src/runtime/socket/UpgradedDuplex.rs:228,386`) and `WindowsNamedPipe` (`/workspace/bun/src/runtime/socket/WindowsNamedPipe.rs:295,1126`). By contrast, the equivalent uSockets C path allocates the SSL read buffer once per event loop and reuses it: `/workspace/bun/packages/bun-usockets/src/crypto/openssl.c:695` `loop_ssl_data->ssl_read_output = ssl_alloc_read_output();`.",
+      "proposed_fix": "Avoid zeroing the scratch buffer on each call. Two options: (a) use `let mut buffer = MaybeUninit::<[u8; BUFFER_SIZE]>::uninit();` and pass `buffer.as_mut_ptr().cast()` / length to `SSL_read`/`BIO_read`, slicing only the written prefix for the callbacks (the FFI functions never read the destination, they only write); or (b) move the buffer to a `Box<[u8; 65536]>` field on `SSLWrapper` allocated once in `init_with_ctx` and reused across `handle_reading`/`handle_writing`/`flush_pending_events`, mirroring openssl.c's per-loop `ssl_read_output`. Option (b) also removes the 64KB stack frame the existing `// PERF:` comment flags.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "event_loop",
+      "title": "DeferredTaskQueue::run() re-hashes keys on removal though index is already known (stale TODO)",
+      "file": "/workspace/bun/src/event_loop/DeferredTaskQueue.rs",
+      "line": 78,
+      "problem": "Inside the per-microtask-drain loop, removals use `self.map.swap_remove(&key)` which calls `get_index(key)` (hash + probe) to find the slot, even though the loop already holds the slot index `i`. The in-file PERF comment (lines 66-72) says to switch to `swap_remove_at` \"when bun_collections::ArrayHashMap grows it\" — that method now exists (`ArrayHashMap::swap_remove_at(index)` at /workspace/bun/src/collections/array_hash_map.rs:984) but the code was never updated.",
+      "evidence": "DeferredTaskQueue.rs:73-94 iterates `i` over `self.map.keys()` and at lines 78 and 90 calls `self.map.swap_remove(&key)`; the comment at 66-72 reads: \"PERF: swap_remove(&K) re-hashes; restore swap_remove_at when bun_collections::ArrayHashMap grows it.\" `ArrayHashMap::swap_remove_at` is defined at /workspace/bun/src/collections/array_hash_map.rs:984. `run()` is invoked from `drain_microtasks_with_global` (/workspace/bun/src/jsc/event_loop.rs:342), whose own comment at line 319 notes it runs ~2x per HTTP request — so this is a per-tick hot path, and each removal pays an unnecessary hash + table lookup.",
+      "proposed_fix": "Replace both `self.map.swap_remove(&key)` calls with `self.map.swap_remove_at(i)` and drop the stale comment. Loop structure stays the same (re-read `self.map.len()` after removal, don't advance `i`).",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "cpp_bindings",
+      "title": "FetchHeaders::Iterator::next() does a linear HTTPHeaderMap::get() per step → O(N²) full iteration",
+      "file": "/workspace/bun/src/jsc/bindings/webcore/FetchHeaders.cpp",
+      "line": 386,
+      "problem": "Iterator::next() stores only the sorted key names in m_keys (built at line 341-352), then on each step re-resolves the value with `m_headers->m_headers.get(key)`. get(StringView) runs findHTTPHeaderName (gperf) and then a linear findIf over m_commonHeaders or m_uncommonHeaders. Iterating N headers via entries()/forEach()/keys()/values() therefore costs N gperf hashes + N linear scans = O(N²). Besides being the root cause of the copyTo/count issue above, this iterator backs the JS Headers iterator (JSDOMIterator.h:118,223) and is drained per WebSocket connect (WebSocket.cpp:273,634; JSWebSocket.cpp:317).",
+      "evidence": "FetchHeaders.cpp:373-389 `while (m_currentIndex < m_keys.size()) { auto key = m_keys[m_currentIndex]; ... auto value = m_headers->m_headers.get(key); }`. m_keys built at 341-354 by walking HTTPHeaderMapConstIterator and storing only names, discarding the value that iterator already produced (HTTPHeaderMap.h:145-162 updateKeyValue sets both key and value).",
+      "proposed_fix": "When building the snapshot at lines 341-352, capture key+value pairs (Vector<KeyValuePair<String,String>>) instead of only keys, sort by key, and have next() return the cached pair directly. This makes next() O(1), eliminates N redundant gperf lookups and the O(N²) scans, and matches the mutation-safety semantics already provided by m_updateCounter (the snapshot is rebuilt on mutation anyway).",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "js_internal",
+      "title": "Pattern.cacheKey() rebuilds the same suffix string on every directory entry in fs.glob",
+      "file": "/workspace/bun/src/js/internal/fs/glob.ts",
+      "line": 353,
+      "problem": "`cacheKey(index)` reconstructs the glob suffix by looping over `#globStrings[index..]` with `+=` every time it is called. It is invoked from `Cache.seen()` inside the per-directory-entry, per-index inner loop (line 640: two calls per (entry, index)), and from `Cache.add()` (line 289) per-visited-path × index. `#globStrings` is immutable and shared across all `child()` Patterns (line 333-335), so for a given base pattern the key for each index never changes, yet it is recomputed O(files × indexes) times with O(pattern_depth) work each — a per-file-in-tree repeated-work allocation.",
+      "evidence": "glob.ts:353-362:\n  cacheKey(index) {\n    let key = \"\";\n    for (let i = index; i < this.#globStrings.length; i++) {\n      key += this.#globStrings[i];\n      if (i !== this.#globStrings.length - 1) key += \"/\";\n    }\n    return key;\n  }\n\nHot-path callers: glob.ts:627-640 (per entry in every directory):\n  for (let i = 0; i < children.length; i++) {\n    ...\n    for (const index of pattern.indexes) {\n      if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {\nand glob.ts:288-294 where `Cache.add`/`Cache.seen` call `pattern.cacheKey(index)`.",
+      "proposed_fix": "Memoize the cache keys once per `#globStrings` array. Simplest: build `#cacheKeys` lazily in the Pattern constructor (or on first call) as `this.#globStrings.slice(i).join(\"/\")` for each i, store the array on the Pattern, and pass it through to `child()` so derived patterns reuse the same precomputed array. `cacheKey(index)` then becomes an O(1) array lookup and all per-file string building disappears.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "ini_md",
+      "title": "normalize_label allocates a fresh Vec<u8> on every reference-link lookup",
+      "file": "/workspace/bun/src/md/ref_defs.rs",
+      "line": 42,
+      "problem": "`normalize_label` (ref_defs.rs:40-84) does `let mut result: Vec<u8> = Vec::new();` and returns it by value. It is called from `lookup_ref_def` (ref_defs.rs:97) which is invoked up to 5 times per `[`/`![` bracket in the document: `try_match_bracket_link` (links.rs:623,759,775) runs during `collect_emphasis_delimiters` for every bracket, and `process_link` (links.rs:536,571) runs again during the emit phase. In any document that contains at least one reference definition (`!self.ref_defs.is_empty()` gate at ref_defs.rs:89 passes), every bracket triggers a heap allocation + free just to normalize the label for a hash lookup.",
+      "evidence": "ref_defs.rs:40-42: `pub fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> { let mut result: Vec<u8> = Vec::new(); ... }`; ref_defs.rs:97: `let normalized = self.normalize_label(raw_label);` inside `lookup_ref_def`; links.rs:623/759/775 call `lookup_ref_def` from `try_match_bracket_link`, which inlines.rs:716 calls for every `[`/`![` during `collect_emphasis_delimiters`. The Parser already recycles scratch buffers for other per-block work (`bracket_pairs`, `label_frames`, `buffer`) but not this one.",
+      "proposed_fix": "Add a `normalize_label_buf: Vec<u8>` field to `Parser` (like the existing `bracket_pairs`/`label_frames` recycled buffers) and have `normalize_label` clear-and-fill it, returning `&[u8]`. `lookup_ref_def` only needs a borrow for the `StringSet` lookup. The two definition-time callers (blocks.rs:962, ref_defs.rs:414) that need ownership can `Box::from(slice)` afterward — those run once per ref-def, not per bracket.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "ini_md",
+      "title": "is_unicode_punctuation_extended does a linear scan over ~300 sorted ranges per flanking check",
+      "file": "/workspace/bun/src/md/helpers.rs",
+      "line": 100,
+      "problem": "`is_unicode_punctuation_extended` iterates `UNICODE_PUNCTUATION_RANGES` (~300 `[lo,hi]` pairs, already sorted ascending) front-to-back with an early-out only when `codepoint < range[0]`. For high codepoints (emoji at U+1F300+, CJK symbols at U+3000+) it walks 150–300 entries. This is reached from `is_unicode_punctuation` → `is_left_flanking`/`is_right_flanking` → `can_open_emphasis`/`can_close_emphasis` (inlines.rs:743-744, 1240-1268), which run for EVERY `*`/`_`/`~` delimiter run in the document and may evaluate the before/after codepoint up to 4× each. Any markdown that mixes emphasis with non-ASCII neighbours (emoji, CJK, accented Latin) pays O(300) per check where O(log 300)≈9 suffices.",
+      "evidence": "helpers.rs:99-109: `fn is_unicode_punctuation_extended(codepoint: u32) -> bool { for range in UNICODE_PUNCTUATION_RANGES { if codepoint >= range[0] && codepoint <= range[1] { return true; } if codepoint < range[0] { return false; } } false }`. Table at helpers.rs:276-361 is sorted by `range[0]`. Call chain: inlines.rs:743-744 `can_open_emphasis`/`can_close_emphasis` per delimiter → inlines.rs:1197-1268 `is_left_flanking`/`is_right_flanking` → helpers.rs:50-56 `is_unicode_punctuation` → `is_unicode_punctuation_extended` for any codepoint ≥ 128.",
+      "proposed_fix": "Replace the linear loop with `UNICODE_PUNCTUATION_RANGES.partition_point(|r| r[1] < codepoint)` (or `binary_search_by`) and test containment on the found slot. The table is static, sorted and non-overlapping, so this is a drop-in O(log n) change with no behavioural difference.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "ini_md",
+      "title": "build_ref_def_hashtable copies every paragraph's bytes into self.buffer even when it cannot be a ref-def",
+      "file": "/workspace/bun/src/md/ref_defs.rs",
+      "line": 380,
+      "problem": "For every `BlockType::P` in the document, `build_ref_def_hashtable` unconditionally merges all of its lines into `self.buffer` (ref_defs.rs:380-399) and then calls `parse_ref_def(&merged, 0)`, which immediately returns `None` at ref_defs.rs:111 unless the very first byte is `[`. The setext path in blocks.rs:885 already guards on `self.text[lines[0].beg] == b'['` before doing the identical merge, but this pass does not — so a typical document where most paragraphs don't start with `[` memcpy's essentially the entire document text through `self.buffer` for nothing.",
+      "evidence": "ref_defs.rs:380-399 merges lines with no precondition; ref_defs.rs:408-411: `while pos < merged.len() { let Some(result) = self.parse_ref_def(&merged, pos) else { break; }; ... }`; ref_defs.rs:111: `if p >= text.len() || text[p] != b'[' { return None; }` — instant reject at pos 0. Compare blocks.rs:881-886 which gates the same merge on `self.text[self.current_block_lines[0].beg as usize] == b'['`.",
+      "proposed_fix": "Before the merge loop, read the first `VerbatimLine` at `lines_off`, and `continue` if `self.text[vline.beg as usize] != b'['` (with the same `beg>end`/`end>size` validity guard). This skips the O(paragraph_bytes) memcpy for the overwhelmingly common case and matches the guard already used in blocks.rs.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "ini_md",
+      "title": "process_inline_content clones the entire emph_delims Vec (and allocates a fresh prev_candidate Vec) per block and per link label",
+      "file": "/workspace/bun/src/md/inlines.rs",
+      "line": 218,
+      "problem": "`process_inline_content` does `let mut resolved: Vec<EmphDelim> = self.emph_delims.clone();` at line 218 and again inside `enter_label!` at line 243 for every link/image/wikilink label. `EmphDelim` is ~64 bytes, so this is a full heap allocation + memcpy of `delims.len()*64` bytes once per leaf block and once per nested label. Separately, `resolve_emphasis_delimiters` allocates `let mut prev_candidate: Vec<usize> = (0..len).map(..).collect();` (line 793) fresh on every call with no recycling. The Parser already recycles `bracket_pairs`, `label_frames` and `buffer` via `core::mem::take` for exactly this reason, but these two per-block allocations were missed.",
+      "evidence": "inlines.rs:217-218: `// Copy resolved delimiters locally (label frames reuse emph_delims)\\n let mut resolved: Vec<EmphDelim> = self.emph_delims.clone();`; inlines.rs:243 (inside enter_label! macro, run per link/image): `resolved = self.emph_delims.clone();`; inlines.rs:793: `let mut prev_candidate: Vec<usize> = (0..len).map(|i| i.wrapping_sub(1)).collect();` inside `resolve_emphasis_delimiters`, which is called at inlines.rs:215 and 242 (per block + per label).",
+      "proposed_fix": "Store a second recycled `Vec<EmphDelim>` (and a `Vec<usize>` for `prev_candidate`) on `Parser` alongside `bracket_pairs`/`label_frames`. Replace `self.emph_delims.clone()` with `core::mem::swap(&mut resolved, &mut self.emph_delims)` so both vectors keep their capacity in steady state; have `resolve_emphasis_delimiters` `clear()`+`extend` the recycled `prev_candidate` instead of `.collect()`ing a new one.",
+      "impact": "medium",
+      "confidence": "high"
+    },
+    {
+      "area": "socket",
+      "title": "Per-TLS-record JS property lookup for `write` on UpgradedDuplex",
+      "file": "/workspace/bun/src/runtime/socket/UpgradedDuplex.rs",
+      "line": 178,
+      "problem": "`call_write_or_end` is invoked from `internal_write` (the SSLWrapper `write` callback, line 203/213/335/370) for every encrypted TLS record emitted through a JS Duplex. Each call does `duplex.get(&global, name)` — a full `JSC__JSValue__getIfPropertyExistsImpl` FFI lookup with a byte-slice key — to fetch the same `duplex.write` function every time. The function is never cached, so each outbound TLS chunk pays a dynamic string-keyed prototype-chain lookup plus identifier construction.",
+      "evidence": "src/runtime/socket/UpgradedDuplex.rs:177-181:\n    let name = if msg_more { \"write\" } else { \"end\" };\n    let write_or_end = match duplex.get(&global, name) {\n        Ok(Some(f)) if f.is_callable() => f,\n        _ => return,\n    };\n`internal_write` (line 203) is registered as the SSLWrapper write sink at lines 335/370, so it fires once per encoded SSL record. `JSValue::get` routes to `JSC__JSValue__getIfPropertyExistsImpl` (src/jsc/JSValue.rs:1152).",
+      "proposed_fix": "Resolve `duplex.write` and `duplex.end` once in `UpgradedDuplex::from()` and store them as `Strong`/`StrongOptional` fields next to `origin`; `call_write_or_end` then reads the cached callable directly. This removes a JS property lookup per TLS write on the TLS-over-Duplex path (e.g. `tls.connect({ socket: someDuplex })`).",
+      "impact": "medium",
+      "confidence": "medium"
+    },
+    {
+      "area": "dns",
+      "title": "IPv4 address_to_string heap-allocates a 128-byte String via create_format per address",
+      "file": "/workspace/bun/src/dns/lib.rs",
+      "line": 373,
+      "problem": "The AF_INET branch of address_to_string builds the dotted-quad string with BunString::create_format(format_args!(\"{}.{}.{}.{}\", ...)). create_format is documented (src/bun_core/string/mod.rs:364) as a cold-path helper: it heap-allocates a std::string::String::with_capacity(128), runs the core::fmt virtual-dispatch machinery, then copies again into a WTF string. This runs once per IPv4 address in every DNS result (via options_jsc::result_to_js -> address_to_js -> address_to_string, and cares_jsc::addr_info_to_js_array). The adjacent AF_INET6 branch (lines 378-401) already does it the efficient way: writes into a 64-byte stack buffer and calls clone_latin1 once.",
+      "evidence": "src/dns/lib.rs:370-377:\n        sock::AF_INET => {\n            let v4 = address.as_in4().unwrap();\n            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();\n            Ok(BunString::create_format(format_args!(\n                \"{}.{}.{}.{}\",\n                bytes[0], bytes[1], bytes[2], bytes[3]\n            )))\n        }\n\nsrc/bun_core/string/mod.rs:362-371 (create_format body):\n        // Cold path (error messages), so a heap buffer is fine.\n        ...\n        let mut buf = std::string::String::with_capacity(128);\n        let _ = buf.write_fmt(args);\n        Self::clone_utf8(buf.as_bytes())\n\nCallers: src/runtime/dns_jsc/options_jsc.rs:250 (address_to_js), invoked per-entry in the result loop at options_jsc.rs:269-273 and cares_jsc.rs:204.",
+      "proposed_fix": "Mirror the AF_INET6 branch: write into a 16-byte stack buffer (max \"255.255.255.255\" = 15 bytes) using either bun_fmt::print_int for each octet or std::io::Write into &mut [u8], then return BunString::clone_latin1(&buf[..n]). This removes one heap allocation + the core::fmt dispatch per IPv4 address and leaves a single WTF-string copy, matching the v6 path.",
+      "impact": "low",
+      "confidence": "high"
+    },
+    {
+      "area": "event_loop",
+      "title": "EventLoopTimer::less() makes two cross-crate extern calls per compare when a local tag match suffices",
+      "file": "/workspace/bun/src/event_loop/EventLoopTimer.rs",
+      "line": 97,
+      "problem": "`less()` is the pairing-heap comparator (invoked from `meld`, i.e. once per timer insert and O(log n) per delete_min — per-setTimeout/clearTimeout work). Whenever `a.next.sec == b.next.sec` (the common case for sub-second JS timers), it unconditionally calls `a.js_timer_epoch()` and `b.js_timer_epoch()` — each a `#[no_mangle]` cross-crate `extern \"Rust\"` call into bun_runtime that does a tag match + container_of + field load. But the only thing used from the result in the non-tie-break path is `is_some()`, which is fully determined by `self.tag` (Some iff tag is TimeoutObject/ImmediateObject/AbortSignalTimeout — see /workspace/bun/src/runtime/timer/mod.rs:579-595). The actual epoch `u32` is only consumed inside the `a_ns == b_ns` tie-break at line 110-129.",
+      "evidence": "EventLoopTimer.rs:90-133: after the `sec` early-return, lines 97-98 call `a.js_timer_epoch()`/`b.js_timer_epoch()` and lines 101-106 use only `.is_some()` to decide nsec-to-ms rounding; the epoch value itself is only read at 110-128. `js_timer_epoch` → `__bun_js_timer_epoch` (extern \"Rust\" #[no_mangle] at /workspace/bun/src/runtime/dispatch.rs:1118) → `js_timer_flags_ptr` which matches on `(*t).tag`. `less` is reached via `HeapContext::less` (/workspace/bun/src/runtime/timer/mod.rs:288) from `Intrusive::meld` (/workspace/bun/src/io/heap.rs:209) on every insert/remove/delete_min. The existing PERF note at EventLoopTimer.rs:28-30 acknowledges this extern sits on the heap-compare path.",
+      "proposed_fix": "Add an `#[inline] fn is_js_timer_tag(tag: Tag) -> bool { matches!(tag, Tag::TimeoutObject | Tag::ImmediateObject | Tag::AbortSignalTimeout) }` in this crate and use it for the nsec-rounding decision (lines 101-106). Only call `a.js_timer_epoch()`/`b.js_timer_epoch()` inside the `order == Equal` tie-break block (lines 109-130). This removes both cross-crate calls (and their container_of + load) from every compare where the ms-rounded nsec values differ, without the heavier denormalize-epoch refactor suggested in the existing comment.",
+      "impact": "medium",
+      "confidence": "medium"
+    },
+    {
+      "area": "js_internal",
+      "title": "detectCommand lowercases/trims the entire accumulated query and prepends char-by-char per SQL helper",
+      "file": "/workspace/bun/src/js/internal/sql/shared.ts",
+      "line": 262,
+      "problem": "`detectCommand` (invoked per `SQLHelper` via `adapter.getHelperCommand(query)` at shared.ts:423) calls `query.toLowerCase().trim()` on the entire query-built-so-far, then scans backwards building tokens with `token = char + token` (line 307) — a fresh string allocation per character. The goal is only to find the last keyword preceding the helper, so lowering/copying the whole prefix is unnecessary, and the prepend pattern is O(token_len²) per token. `sqlite.ts:63` has the same `toUpperCase().trim()` pattern in `parseSQLQuery`.",
+      "evidence": "shared.ts:261-309:\n  function detectCommand(query: string, anyAndAllMeanIn: boolean): SQLCommand {\n    const text = query.toLowerCase().trim();\n    ...\n    for (let i = text_len - 1; i >= 0; i--) {\n      const char = text[i];\n      ...\n          token = char + token;   // per-char string prepend\n\nCalled from shared.ts:423 inside `normalizeQuery`'s per-template-part loop whenever a `SQLHelper` (sql(obj) for INSERT/UPDATE/IN) is interpolated: `const command = adapter.getHelperCommand(query);` → postgres.ts:511 / mysql.ts:278 → `getHelperCommandFromDetect` → `detectCommand`.",
+      "proposed_fix": "Scan backwards over the original `query` without lowercasing the whole string: skip trailing whitespace, record the token bounds (start/end indices) while walking back to the previous whitespace, then do a case-insensitive compare of `query.slice(start, end)` against the small fixed keyword set. This avoids the full-string toLowerCase() copy and the per-char prepend allocations. Same fix applies to `parseSQLQuery` in sqlite.ts.",
+      "impact": "medium",
+      "confidence": "medium"
+    }
+  ]
+}

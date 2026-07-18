@@ -2330,6 +2330,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 5. Register static routes & track "/*" coverage ---
         let mut needs_plugins = dev_server.is_some();
         let mut has_static_route_for_star_path = false;
+        let has_websocket_handler = websocket_ptr.is_some();
 
         for entry in &self.config.static_routes {
             if &*entry.path == b"/*" {
@@ -2375,6 +2376,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
+                        has_websocket_handler,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -2398,6 +2400,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
+                        has_websocket_handler,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -2421,6 +2424,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
+                        has_websocket_handler,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {

@@ -333,6 +333,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
+    has_websocket_handler: bool,
 ) where
     T: StaticRouteLike<SSL>,
 {
@@ -401,6 +402,12 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
             }
         }
     }
+    // A WebSocket handshake is a GET, and `ws()` routes claim a higher router priority than the
+    // registrations above, so a `ws("/*")` upgrade fallback would answer it instead of this
+    // route. Claim that tier too, so handshakes are routed like any other GET.
+    if has_websocket_handler && serves_get(&method) {
+        app.get_high_priority(path, Some(handler::<SSL, T>), user_data);
+    }
 }
 
 /// Whether a static route registered for `method` should also answer HEAD.
@@ -410,6 +417,14 @@ fn serves_head(method: &http_method::Optional) -> bool {
         http_method::Optional::Method(set) => {
             set.contains(Method::GET) || set.contains(Method::HEAD)
         }
+    }
+}
+
+/// Whether a static route registered for `method` answers GET.
+fn serves_get(method: &http_method::Optional) -> bool {
+    match method {
+        http_method::Optional::Any => true,
+        http_method::Optional::Method(set) => set.contains(Method::GET),
     }
 }
 

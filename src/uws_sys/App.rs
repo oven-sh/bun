@@ -56,12 +56,13 @@ pub struct App<const SSL: bool> {
 /// Legacy name alias.
 pub type NewApp<const SSL: bool> = App<SSL>;
 
-/// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
-/// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
-/// in capi.rs. uWS copies `pattern` internally, so the slice need only live for
-/// the call.
+/// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per route
+/// registration entrypoint. Bodies are byte-identical modulo the C symbol — see
+/// `uws_app_get` &co in capi.rs. uWS copies `pattern` internally, so the slice
+/// need only live for the call.
 macro_rules! uws_app_route_methods {
-    ($($name:ident => $cfn:ident),* $(,)?) => {$(
+    ($($(#[$meta:meta])* $name:ident => $cfn:ident),* $(,)?) => {$(
+        $(#[$meta])*
         pub fn $name(
             &mut self,
             pattern: &[u8],
@@ -199,6 +200,11 @@ impl<const SSL: bool> App<SSL> {
         connect => uws_app_connect,
         trace   => uws_app_trace,
         any     => uws_app_any,
+
+        /// `get()` in the same router priority tier as [`Self::ws`]. The router sorts
+        /// high-priority nodes ahead of everything else, so a `ws("/*")` route otherwise
+        /// shadows every exact path it overlaps for requests carrying a WebSocket handshake.
+        get_high_priority => uws_app_get_high_priority,
     }
 
     /// Alias matching uWS C++ `del()` naming (Rust `delete` is not reserved, but callers
@@ -538,6 +544,14 @@ pub mod c {
             max_header_size: u64,
         );
         pub(crate) fn uws_app_get(
+            ssl: i32,
+            app: *mut uws_app_t,
+            pattern: *const u8,
+            pattern_len: usize,
+            handler: uws_method_handler,
+            user_data: *mut c_void,
+        );
+        pub(crate) fn uws_app_get_high_priority(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,

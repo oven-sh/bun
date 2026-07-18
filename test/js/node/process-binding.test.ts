@@ -16,7 +16,7 @@ describe("process.binding", () => {
 
     expect(uv).toHaveProperty("errname");
     expect(uv).toHaveProperty("UV_EACCES");
-    // UV_EINTR is -4 on POSIX but -4048 on Windows (libuv's synthetic codes).
+    // UV_EINTR is -4 on POSIX and a libuv-synthetic code on Windows.
     expect(uv.errname(uv.UV_EINTR)).toBe("EINTR");
     // force the number to be represented as a double
     expect(uv.errname(uv.UV_EINTR - 1.9 + Number("1.9"))).toBe("EINTR");

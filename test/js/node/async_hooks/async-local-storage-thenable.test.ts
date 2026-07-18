@@ -72,6 +72,30 @@ test("Returning a thenable in an async function", async done => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/34266
+test("Returning a thenable in an async function after an await", async done => {
+  const { mustCall } = createCallCheckCtx(done);
+  const then: Function = mustCall(cb => {
+    assert.strictEqual(store.getStore(), data);
+    process.nextTick(cb);
+  }, 1);
+
+  function thenable() {
+    return {
+      get then() {
+        assert.strictEqual(store.getStore(), data);
+        return then;
+      },
+    };
+  }
+
+  await store.run(data, async () => {
+    await null;
+    assert.strictEqual(store.getStore(), data);
+    return thenable();
+  });
+});
+
 test("Resolving a thenable", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const then: Function = mustCall(cb => {

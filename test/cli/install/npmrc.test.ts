@@ -42,7 +42,7 @@ describe("npmrc", async () => {
     const out = await stdout.text();
     const err = stderrForInstall(await stderr.text());
     console.log({ out, err });
-    expect(err).toBeEmpty();
+    expect(err).toBe("");
     expect(out.endsWith("hi!")).toBeTrue();
 
     expect(await exited).toBe(0);

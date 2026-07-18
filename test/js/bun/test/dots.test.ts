@@ -7,6 +7,7 @@ test("dots 1", async () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
+    cwd: import.meta.dir,
   });
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();
@@ -21,7 +22,7 @@ test("dots 1", async () => {
       "stderr": 
     "....................
 
-    test/js/bun/test/dots.fixture.ts:
+    dots.fixture.ts:
     (fail) failing filterin
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (fail) failing filterin
@@ -54,6 +55,7 @@ test("dots 2", async () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
+    cwd: import.meta.dir,
   });
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();
@@ -67,20 +69,20 @@ test("dots 2", async () => {
       "stderr": 
     "..........
 
-    test/js/bun/test/printing/dots/dots1.fixture.ts:
+    printing/dots/dots1.fixture.ts:
     Hello, world!
     ...........
     Hello, world!
     .
 
-    test/js/bun/test/printing/dots/dots2.fixture.ts:
+    printing/dots/dots2.fixture.ts:
     Hello, world!
     ...........
     (fail) failing test
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     ....................
 
-    test/js/bun/test/printing/dots/dots3.fixture.ts:
+    printing/dots/dots3.fixture.ts:
     3 | // unhandled failure. it should print the filename
     4 | test("failure", async () => {
     5 |   const { resolve, reject, promise } = Promise.withResolvers();

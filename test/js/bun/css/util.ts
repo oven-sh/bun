@@ -47,8 +47,9 @@ export function minify_error_test_with_options(source: string, expectedError: st
   });
 }
 
-export function minify_test(source: string, expected: string) {
-  test(source, () => {
+export function minify_test(source: string, expected: string, skip?: boolean) {
+  const testf = skip ? test.skip : test;
+  testf(source, () => {
     expect(minifyTestWithOptions(source, expected)).toEqual(expected);
   });
 }

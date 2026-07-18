@@ -39,6 +39,18 @@ describe("fileURLToPathBuffer", () => {
     );
   });
 
+  test("accepts a duck-typed URL object, as node's isURL does", () => {
+    const fake = { href: "file:///tmp/x.txt", protocol: "file:", pathname: "/tmp/x.txt", hostname: "" };
+    // @ts-expect-error intentionally URL-shaped, not a URL instance
+    expect(fileURLToPathBuffer(fake, { windows: false }).toString()).toBe("/tmp/x.txt");
+  });
+
+  test("rejects legacy url.parse objects (auth/path present)", () => {
+    const legacy = require("node:url").parse("file:///tmp/x.txt");
+    // @ts-expect-error intentionally passing a legacy Url object
+    expect(() => fileURLToPathBuffer(legacy)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  });
+
   test("rejects non-URL, non-string input", () => {
     // @ts-expect-error intentional bad input
     expect(() => fileURLToPathBuffer(42)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");

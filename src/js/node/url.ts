@@ -978,11 +978,19 @@ function hexByteToNumber(byte: number): number {
   return -1;
 }
 
+// Node's isURL (lib/internal/url.js): a duck-type check rather than
+// `instanceof`, so cross-realm URLs and compatible foreign implementations
+// are accepted; `auth`/`path` must be absent to exclude legacy `url.parse`
+// objects, which carry both.
+function isURL(self: any): boolean {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
 function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Buffer {
   const windows = options?.windows;
   if (typeof path === "string") {
     path = new URL(path);
-  } else if (!(path instanceof URL)) {
+  } else if (!isURL(path)) {
     throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], path);
   }
   const url = path as URL;

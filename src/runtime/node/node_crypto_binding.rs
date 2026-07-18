@@ -10,6 +10,7 @@ use crate::{
     JsResult, StrongOptional,
 };
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::node::StringOrBuffer;
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params

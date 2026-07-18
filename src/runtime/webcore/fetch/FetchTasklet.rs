@@ -223,7 +223,11 @@ pub(crate) mod undici_diagnostics {
         if let Some((status, status_text, headers_js)) = response_head {
             jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request);
             jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
-                global, request, status, status_text, headers_js,
+                global,
+                request,
+                status,
+                status_text,
+                headers_js,
             );
         }
 

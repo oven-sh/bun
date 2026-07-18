@@ -216,9 +216,9 @@ export function getStdinStream(
   const originalRead = stream.read;
   stream.read = function (size) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() must acquire the native reader: _read() without one only
-    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    // An explicit sized read() must acquire the native reader when _read() did
+    // not (buffer already satisfied it, or hasReceivedData is false). Owning
+    // after originalRead so a throwing size never refs stdin; read(0) defers.
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }

@@ -2081,7 +2081,6 @@ impl PackageManifest {
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
@@ -2363,7 +2362,9 @@ impl PackageManifest {
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
+                if !parsed_version.valid {
+                    continue;
+                }
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
@@ -2374,9 +2375,6 @@ impl PackageManifest {
                         parsed_version.version.tag.has_build()
                             || parsed_version.version.tag.has_pre()
                     );
-                }
-                if !parsed_version.valid {
-                    continue;
                 }
 
                 let version_obj = prop.value.as_object();

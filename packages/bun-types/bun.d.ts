@@ -4551,6 +4551,16 @@ declare module "bun" {
      * @default true
      */
     shared?: boolean;
+    /**
+     * Byte offset into the file where the mapping starts.
+     * @default 0
+     */
+    offset?: number;
+    /**
+     * Maximum number of bytes to map. Clamped to the file size
+     * (minus `offset`). Defaults to mapping the rest of the file.
+     */
+    size?: number;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory

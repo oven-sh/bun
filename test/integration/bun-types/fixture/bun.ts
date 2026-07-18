@@ -79,3 +79,14 @@ tsd
     }),
   )
   .is<Promise<boolean>>();
+
+tsd
+  .expectType(
+    Bun.mmap("./data.bin", {
+      shared: true,
+      sync: false,
+      offset: 4096,
+      size: 1024,
+    }),
+  )
+  .is<Uint8Array<ArrayBuffer>>();

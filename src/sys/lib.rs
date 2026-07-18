@@ -1244,12 +1244,14 @@ pub mod O {
     pub const NOFOLLOW: i32 = 0o400000;
     #[cfg(unix)]
     pub const SYNC: i32 = libc::O_SYNC;
+    // Windows has no O_SYNC/O_DSYNC; node's stringToFlags() ORs in `undefined`
+    // (→ 0) there, so the 's' flag-string modifier is a no-op. Match that.
     #[cfg(windows)]
-    pub const SYNC: i32 = 0o4010000;
+    pub const SYNC: i32 = 0;
     #[cfg(unix)]
     pub const DSYNC: i32 = libc::O_DSYNC;
     #[cfg(windows)]
-    pub const DSYNC: i32 = 0o10000;
+    pub const DSYNC: i32 = 0;
     #[cfg(unix)]
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]

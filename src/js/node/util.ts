@@ -245,6 +245,38 @@ function getSystemErrorName(err: any) {
   return internalErrorName(err);
 }
 
+let uvBinding;
+function lazyUv() {
+  return (uvBinding ??= process.binding("uv"));
+}
+
+function getSystemErrorMap() {
+  return lazyUv().getErrorMap();
+}
+
+function getSystemErrorMessage(err: any) {
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  const uv = lazyUv();
+  const entry = (uv.errmap ??= uv.getErrorMap()).get(err);
+  return entry ? entry[1] : `Unknown system error ${err}`;
+}
+
+function transferableAbortSignal(signal: AbortSignal) {
+  if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
+    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+  }
+  // Node sets a transferable marker via markTransferMode; Bun's structured
+  // clone does not yet special-case AbortSignal, so this is a no-op mark.
+  return signal;
+}
+
+function transferableAbortController() {
+  const controller = new AbortController();
+  transferableAbortSignal(controller.signal);
+  return controller;
+}
+
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
   unregisterToken: (...args: any[]) => void;
@@ -327,9 +359,9 @@ cjs_exports = {
   formatWithOptions,
   // getCallSite,
   // getCallSites,
-  // getSystemErrorMap,
+  getSystemErrorMap,
   getSystemErrorName,
-  // getSystemErrorMessage,
+  getSystemErrorMessage,
   inherits,
   inspect,
   isDeepStrictEqual,
@@ -337,8 +369,8 @@ cjs_exports = {
   setTraceSigInt,
   stripVTControlCharacters,
   toUSVString,
-  // transferableAbortSignal,
-  // transferableAbortController,
+  transferableAbortSignal,
+  transferableAbortController,
   aborted,
   types,
   parseEnv,

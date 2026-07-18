@@ -3,6 +3,7 @@ use core::mem::size_of;
 
 use crate as jsc;
 use crate::js_value::Protected;
+use crate::jsc_ext::{JSGlobalObjectExt as _, JSValueExt as _};
 use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};

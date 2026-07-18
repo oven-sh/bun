@@ -82,7 +82,13 @@ function anyFetchSubscriber() {
   );
 }
 
-function buildConnectParams(request: DiagnosticsRequest, host: string, hostname: string, protocol: string, port: string) {
+function buildConnectParams(
+  request: DiagnosticsRequest,
+  host: string,
+  hostname: string,
+  protocol: string,
+  port: string,
+) {
   return {
     host,
     hostname,

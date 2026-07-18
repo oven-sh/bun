@@ -66,7 +66,11 @@ pub(crate) mod undici_diagnostics {
         let names = entries.items_name();
         let values = entries.items_value();
         JSValue::create_array_from_iter(global, 0..(names.len() * 2), |i| {
-            let ptr = if i & 1 == 0 { names[i >> 1] } else { values[i >> 1] };
+            let ptr = if i & 1 == 0 {
+                names[i >> 1]
+            } else {
+                values[i >> 1]
+            };
             create_utf8_for_js(global, headers.as_str(ptr))
         })
     }
@@ -168,7 +172,9 @@ pub(crate) mod undici_diagnostics {
         };
         request.ensure_still_alive();
         let (host, hostname, protocol, port) = url_parts(this, global);
-        jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request, host, hostname, protocol, port);
+        jsc::cpp::Bun__undiciDiagnosticsOnConnected(
+            global, request, host, hostname, protocol, port,
+        );
         let resp = &metadata.response;
         let status_text = js_str(global, resp.status);
         let headers_js =

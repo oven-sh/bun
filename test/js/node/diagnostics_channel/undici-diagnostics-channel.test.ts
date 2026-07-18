@@ -1,7 +1,7 @@
 // Tests that the built-in fetch() and WebSocket clients publish the
 // undici-compatible diagnostics_channel events that APM tooling (dd-trace,
 // @opentelemetry/instrumentation-undici) subscribes to.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 const fetchFixture = /* js */ `
@@ -65,11 +65,7 @@ describe("fetch()", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const out = JSON.parse(stdout);
 
@@ -123,11 +119,7 @@ describe("fetch()", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ other: 0, fired: true });
     expect(exitCode).toBe(0);
@@ -178,11 +170,7 @@ describe("WebSocket", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const out = JSON.parse(stdout);
     expect(out.open.keys).toEqual(["address", "extensions", "protocol", "websocket"]);

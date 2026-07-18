@@ -42,14 +42,10 @@ test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch 
 // unimplemented and return `[]`.
 test("ensure_total_capacity on a wrapped Dynamic buffer preserves FIFO order", () => {
   // write 12, read 10, write 12 -> head=10, count=14, buf_len=16 (wraps), then grow to 64.
-  expect(linearFifoOrderedRemoveProbe(2)).toEqual([
-    10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
-  ]);
+  expect(linearFifoOrderedRemoveProbe(2)).toEqual([10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
 });
 
 test("realign on a wrapped Static buffer preserves FIFO order", () => {
   // write 12, read 10, write 12 -> head=10, count=14, buf_len=16 (wraps), then realign.
-  expect(linearFifoOrderedRemoveProbe(3)).toEqual([
-    10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
-  ]);
+  expect(linearFifoOrderedRemoveProbe(3)).toEqual([10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
 });

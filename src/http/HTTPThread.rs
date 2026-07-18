@@ -1,10 +1,11 @@
 use core::ffi::c_void;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use bun_collections::ArrayHashMap;
-use bun_core::{self, Output};
+use bun_core::{self, Output, UnwrapOrOom};
 
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
@@ -135,7 +136,7 @@ pub struct HttpThread {
     pub has_awoken: AtomicBool,
     pub timer: Instant,
     pub lazy_libdeflater: Option<Box<LibdeflateState>>,
-    pub lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
+    pub lazy_request_body_buffer: Option<Vec<u8>>,
 
     /// Every `ThreadlocalAsyncHTTP` box currently in flight on this thread.
     /// Inserted by [`start_queued_task`] right after `heap::release`; removed
@@ -193,65 +194,38 @@ impl HttpThread {
     }
 }
 
-pub struct HeapRequestBodyBuffer {
-    pub buffer: [u8; 512 * 1024],
-    // Plain write cursor into `buffer`.
-    pub cursor: usize,
-}
-
-// SAFETY: `[u8; N]` and `usize` are both valid at the all-zero bit pattern.
-unsafe impl bun_core::Zeroable for HeapRequestBodyBuffer {}
-
-impl HeapRequestBodyBuffer {
-    pub fn init() -> Box<Self> {
-        bun_core::boxed_zeroed()
-    }
-
-    pub fn put(mut self: Box<Self>) {
-        // SAFETY: HTTP-thread-only access to the global.
-        let thread = crate::http_thread_mut();
-        if thread.lazy_request_body_buffer.is_none() {
-            self.cursor = 0; // .reset()
-            thread.lazy_request_body_buffer = Some(self);
-        } else {
-            // This case hypothetically should never happen
-            drop(self);
-        }
-    }
-}
-
-pub enum RequestBodyBuffer {
-    // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
-    Heap(Option<Box<HeapRequestBodyBuffer>>),
-    // Inline stack buffer with a heap fallback.
-    Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
+/// Pooled scratch `Vec` for assembling the HTTP/1.1 request line, headers,
+/// and body prefix before the first socket write. Returned to
+/// [`HttpThread::lazy_request_body_buffer`] on drop so the steady state is
+/// allocation-free.
+pub struct RequestBodyBuffer {
+    buffer: Option<Vec<u8>>,
+    // `Drop` touches `http_thread_mut()`; keep the guard on the HTTP thread.
+    _thread_affine: PhantomData<*mut ()>,
 }
 
 impl Drop for RequestBodyBuffer {
     fn drop(&mut self) {
-        if let Self::Heap(heap) = self {
-            if let Some(h) = heap.take() {
-                h.put();
-            }
+        let Some(mut buf) = self.buffer.take() else {
+            return;
+        };
+        // Oversized headers can grow the Vec past the large tier; don't pin
+        // that capacity on the HTTP thread for the life of the process.
+        if buf.capacity() > REQUEST_BODY_BUFFER_LARGE_SIZE {
+            return;
+        }
+        buf.clear();
+        let slot = &mut crate::http_thread_mut().lazy_request_body_buffer;
+        if slot.is_none() {
+            *slot = Some(buf);
         }
     }
 }
 
 impl RequestBodyBuffer {
-    pub(crate) fn allocated_slice(&mut self) -> &mut [u8] {
-        match self {
-            Self::Heap(heap) => &mut heap.as_mut().unwrap().buffer,
-            Self::Stack(stack) => &mut stack[..],
-        }
-    }
-
-    pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
-        // A `Vec` cannot adopt a foreign allocator+buffer, so this
-        // allocates a fresh Vec of the same capacity.
-        // Callers that can should write into allocated_slice() directly instead.
-        let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
-        arraylist.clear();
-        arraylist
+    #[inline]
+    pub(crate) fn list(&mut self) -> &mut Vec<u8> {
+        self.buffer.as_mut().expect("taken only in Drop")
     }
 }
 
@@ -301,7 +275,8 @@ impl LibdeflateState {
     }
 }
 
-pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
+const REQUEST_BODY_BUFFER_SMALL_SIZE: usize = 32 * 1024;
+const REQUEST_BODY_BUFFER_LARGE_SIZE: usize = 512 * 1024;
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
@@ -409,19 +384,20 @@ impl HttpThread {
 
     #[inline]
     pub fn get_request_body_send_buffer(&mut self, estimated_size: usize) -> RequestBodyBuffer {
-        if estimated_size >= REQUEST_BODY_SEND_STACK_BUFFER_SIZE {
-            if self.lazy_request_body_buffer.is_none() {
-                bun_core::scoped_log!(
-                    HTTPThread_log,
-                    "Allocating HeapRequestBodyBuffer due to {} bytes request body",
-                    estimated_size
-                );
-                return RequestBodyBuffer::Heap(Some(HeapRequestBodyBuffer::init()));
-            }
-
-            return RequestBodyBuffer::Heap(self.lazy_request_body_buffer.take());
+        let target = if estimated_size >= REQUEST_BODY_BUFFER_SMALL_SIZE {
+            REQUEST_BODY_BUFFER_LARGE_SIZE
+        } else {
+            REQUEST_BODY_BUFFER_SMALL_SIZE
+        };
+        let mut buf = self.lazy_request_body_buffer.take().unwrap_or_default();
+        buf.clear();
+        if buf.capacity() < target {
+            buf.try_reserve(target).unwrap_or_oom();
         }
-        RequestBodyBuffer::Stack(Box::new([0u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]))
+        RequestBodyBuffer {
+            buffer: Some(buf),
+            _thread_affine: PhantomData,
+        }
     }
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {

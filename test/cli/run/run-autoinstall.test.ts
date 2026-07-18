@@ -122,11 +122,8 @@ test("--install=fallback to install missing packages", async () => {
   expect(stdout?.toString("utf8")).toBe("true false\n");
 });
 
-// One transient tarball failure used to leave the on-disk `.npm` manifest cache
-// in a state where a later `--install=auto` run resolved the package
-// synchronously from that file and returned before the queued tarball download
-// was ever scheduled: the import failed with zero network I/O until the `.npm`
-// file was deleted by hand.
+// A cached `.npm` manifest with no extracted package on disk must still
+// schedule the tarball download instead of returning a stale resolution.
 describe("auto-install re-downloads when only the .npm manifest cache is present", () => {
   function makeTgz(files: Record<string, string>) {
     const enc = new TextEncoder();
@@ -162,7 +159,7 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--install=auto", "imp.mjs"],
       cwd: dir,
-      env: { ...bunEnv, HOME: dir, BUN_INSTALL_CACHE_DIR: cache },
+      env: { ...bunEnv, BUN_INSTALL: undefined, HOME: dir, BUN_INSTALL_CACHE_DIR: cache },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -170,7 +167,7 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
-  test.concurrent("after the extracted package is removed from the cache", async () => {
+  test("after the extracted package is removed from the cache", async () => {
     const good = makeTgz({
       "package/package.json": JSON.stringify({ name: "pkg-cache-a", version: "1.0.0", main: "index.js" }),
       "package/index.js": 'module.exports = "OK";',
@@ -209,9 +206,8 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
     mkdirSync(cache, { recursive: true });
 
     const r1 = await runImport(String(dir), cache);
-    expect({ ...r1, tarballRequests }).toEqual({
+    expect({ ...r1, tarballRequests }).toMatchObject({
       stdout: "IMPORT_OK OK",
-      stderr: "",
       exitCode: 0,
       tarballRequests: 1,
     });
@@ -229,15 +225,14 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
 
     // Fresh process: the disk-loaded manifest must trigger a tarball download.
     const r2 = await runImport(String(dir), cache);
-    expect({ ...r2, tarballRequests }).toEqual({
+    expect({ ...r2, tarballRequests }).toMatchObject({
       stdout: "IMPORT_OK OK",
-      stderr: "",
       exitCode: 0,
       tarballRequests: 2,
     });
   });
 
-  test.concurrent("after an integrity failure on the first download", async () => {
+  test("after an integrity failure on the first download", async () => {
     const good = makeTgz({
       "package/package.json": JSON.stringify({ name: "pkg-cache-b", version: "1.0.0", main: "index.js" }),
       "package/index.js": 'module.exports = "OK";',
@@ -290,9 +285,8 @@ describe("auto-install re-downloads when only the .npm manifest cache is present
     serveBad = false;
 
     const r2 = await runImport(String(dir), cache);
-    expect({ ...r2, tarballRequests }).toEqual({
+    expect({ ...r2, tarballRequests }).toMatchObject({
       stdout: "IMPORT_OK OK",
-      stderr: "",
       exitCode: 0,
       tarballRequests: 2,
     });

@@ -206,7 +206,10 @@ pub fn init_client() -> *mut boring::SSL {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
-#[unsafe(no_mangle)]
+// This file is `#[path]`-mounted into `bun_crypto` and also compiles as the
+// standalone `bun_boringssl` crate; only `bun_crypto` emits the unmangled C
+// symbols (the standalone crate default-enables `suppress_no_mangle`).
+#[cfg_attr(not(feature = "suppress_no_mangle"), unsafe(no_mangle))]
 pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
     bun_core::alloc_impl::mimalloc::mi_malloc(size)
 }
@@ -215,7 +218,7 @@ pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
 /// # Safety
 /// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
 /// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(feature = "suppress_no_mangle"), unsafe(no_mangle))]
 pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
@@ -226,7 +229,7 @@ pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(not(feature = "suppress_no_mangle"), unsafe(no_mangle))]
 pub extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     // ptr was returned by mi_malloc (or is null, which usable_size handles).
     bun_core::alloc_impl::usable_size(ptr.cast())

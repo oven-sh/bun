@@ -6,6 +6,12 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# Declared (never enabled) so the cfg gate in the #[path]-mounted
+# boringssl/lib.rs is a known cfg here; `bun_boringssl` default-enables it,
+# leaving `bun_crypto` as the sole emitter of the OPENSSL_memory_* C symbols.
+suppress_no_mangle = []
+
 [lints]
 workspace = true
 

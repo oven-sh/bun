@@ -6,6 +6,13 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# lib.rs is #[path]-mounted into `bun_crypto`; only that compilation should
+# emit the OPENSSL_memory_* #[no_mangle] hooks. Default-on here so the
+# standalone crate suppresses them and the link sees exactly one definition.
+default = ["suppress_no_mangle"]
+suppress_no_mangle = []
+
 [lints]
 workspace = true
 

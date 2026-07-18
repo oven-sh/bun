@@ -2648,12 +2648,15 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         let out: Vec<T> = {
             let to_orig_slice = &buf[0..to_orig_len];
             let mut from_segs: Vec<&[T]> = from_orig.split(|c| *c == bslash).collect();
-            if matches!(from_segs.last(), Some(s) if s.is_empty()) {
-                from_segs.pop();
-            }
             let mut to_segs: Vec<&[T]> = to_orig_slice.split(|c| *c == bslash).collect();
-            if matches!(to_segs.last(), Some(s) if s.is_empty()) {
-                to_segs.pop();
+            // Drop leading empties (UNC '\\' prefix) so different UNC roots
+            // hit the i==0 guard, and drop a trailing empty (root '\').
+            for segs in [&mut from_segs, &mut to_segs] {
+                if matches!(segs.last(), Some(s) if s.is_empty()) {
+                    segs.pop();
+                }
+                let skip = segs.iter().take_while(|s| s.is_empty()).count();
+                segs.drain(0..skip);
             }
             let from_seg_count = from_segs.len();
             let to_seg_count = to_segs.len();

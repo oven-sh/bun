@@ -66,6 +66,14 @@ describe("path.relative", () => {
           // Final_Sigma: Σ at word end lowers to ς (not σ).
           ["C:\\\u0391\u03A3", "C:\\\u03B1\u03C2", ""],
           ["C:\\\u0391\u03A3\\x", "C:\\\u03B1\u03C2\\y", "..\\y"],
+          // UNC with non-ASCII: different roots return toOrig; same root
+          // compares segments case-insensitively.
+          ["\\\\É\\bar", "\\\\baz\\qux", "\\\\baz\\qux\\"],
+          ["\\\\É\\bar", "C:\\x", "C:\\x"],
+          ["\\\\É\\bar\\a", "\\\\É\\bar\\b", "..\\b"],
+          ["\\\\É\\bar", "\\\\é\\BAR\\x", "x"],
+          ["\\\\foo\\É", "\\\\foo\\baz", "..\\baz"],
+          ["\\\\foo\\É\\a", "\\\\foo\\é\\b", "..\\b"],
         ],
       ],
       [

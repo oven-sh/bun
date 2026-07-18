@@ -77,6 +77,8 @@ describe("minimum-release-age", () => {
     return Bun.gzipSync(tarball);
   };
 
+  let manyVersionsManifest: string | undefined;
+
   beforeAll(async () => {
     // Start mock registry server
     mockRegistryServer = Bun.serve({
@@ -795,32 +797,36 @@ describe("minimum-release-age", () => {
         // in reverse order relative to versions). Exercises the publish-time
         // index built during manifest parse.
         if (url.pathname === "/many-versions-package") {
-          const N = 2000;
-          const versions: Record<string, unknown> = {};
-          const timeEntries: Array<[string, string]> = [];
-          for (let i = 0; i < N; i++) {
-            const v = `1.${i}.0`;
-            versions[v] = {
+          if (manyVersionsManifest === undefined) {
+            const N = 2000;
+            const versions: Record<string, unknown> = {};
+            const timeEntries: Array<[string, string]> = [];
+            for (let i = 0; i < N; i++) {
+              const v = `1.${i}.0`;
+              versions[v] = {
+                name: "many-versions-package",
+                version: v,
+                dist: {
+                  tarball: `${mockRegistryUrl}/many-versions-package/-/many-versions-package-${v}.tgz`,
+                  integrity: "sha512-fake==",
+                },
+              };
+              // Newest few versions are 1 day old; everything else is 30 days old.
+              timeEntries.push([v, i >= N - 3 ? daysAgo(1) : daysAgo(30)]);
+            }
+            // Reverse the time entries so the per-version lookup cannot rely on
+            // matching array positions between `versions` and `time`.
+            timeEntries.reverse();
+            timeEntries.unshift(["created", daysAgo(30)], ["modified", daysAgo(1)]);
+            manyVersionsManifest = JSON.stringify({
               name: "many-versions-package",
-              version: v,
-              dist: {
-                tarball: `${mockRegistryUrl}/many-versions-package/-/many-versions-package-${v}.tgz`,
-                integrity: "sha512-fake==",
-              },
-            };
-            // Newest few versions are 1 day old; everything else is 30 days old.
-            timeEntries.push([v, i >= N - 3 ? daysAgo(1) : daysAgo(30)]);
+              "dist-tags": { latest: `1.${N - 1}.0` },
+              versions,
+              time: Object.fromEntries(timeEntries),
+            });
           }
-          // Reverse the time entries so the per-version lookup cannot rely on
-          // matching array positions between `versions` and `time`.
-          timeEntries.reverse();
-          timeEntries.unshift(["created", daysAgo(30)], ["modified", daysAgo(1)]);
-          const time = Object.fromEntries(timeEntries);
-          return Response.json({
-            name: "many-versions-package",
-            "dist-tags": { latest: `1.${N - 1}.0` },
-            versions,
-            time,
+          return new Response(manyVersionsManifest, {
+            headers: { "content-type": "application/json" },
           });
         }
 

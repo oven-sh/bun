@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir, tempDirWithFiles } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -364,13 +364,14 @@ console.log("About manifest:", aboutHtml);
   // `input` keys must be project-relative and every path must use `/` regardless
   // of the host (no leaked build-machine absolute paths, no backslashes).
   test("html-import/manifest-paths-are-posix-relative", async () => {
-    const dir = tempDirWithFiles("html-manifest-paths", {
+    using cwd = tempDir("html-manifest-paths", {
       "server.ts": `import m from "./page/index.html"; console.log(JSON.stringify(m));`,
       "page/index.html": `<!doctype html><link rel="stylesheet" href="./s.css"><script type="module" src="./a.ts"></script>`,
       "page/a.ts": `import icon from "./icon.txt" with { type: "file" }; console.log(icon);`,
       "page/s.css": `body { color: red }`,
       "page/icon.txt": `hi`,
     });
+    const dir = String(cwd);
 
     const out = join(dir, "out");
     const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun", root: dir });

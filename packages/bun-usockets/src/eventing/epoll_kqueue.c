@@ -413,7 +413,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * Publish the entry so a cross-thread reader can add the in-progress park. */
     const uint64_t idle_start_ns = will_idle_inside_event_loop ? us_internal_monotonic_ns() : 0;
     if (will_idle_inside_event_loop)
-        __atomic_store_n(&loop->data.idle_entry_ns, idle_start_ns, __ATOMIC_RELEASE);
+        __atomic_store_n(&loop->data.idle_entry_ns, idle_start_ns, __ATOMIC_SEQ_CST);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -436,11 +436,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 
     if (will_idle_inside_event_loop) {
-        /* Zero entry BEFORE folding into idle_ns: a cross-thread reader between
-         * the two under-counts (bounded, monotonic) instead of double-counting. */
-        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_RELEASE);
+        /* Zero entry BEFORE folding into idle_ns so a cross-thread reader between
+         * the two under-counts (bounded, monotonic) instead of double-counting.
+         * seq_cst on both: a release store alone would not order the later add
+         * before it on ARM, and this path only runs on ticks that park. */
+        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_SEQ_CST);
         __atomic_add_fetch(&loop->data.idle_ns, us_internal_monotonic_ns() - idle_start_ns,
-                           __ATOMIC_RELAXED);
+                           __ATOMIC_SEQ_CST);
     }
 
     /* Before anything can allocate again. */

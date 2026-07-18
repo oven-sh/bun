@@ -125,11 +125,11 @@ uint64_t us_loop_idle_ns(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
     return uv_metrics_idle_time(loop->uv_loop);
 #else
-    uint64_t idle = __atomic_load_n(&loop->data.idle_ns, __ATOMIC_RELAXED);
+    uint64_t idle = __atomic_load_n(&loop->data.idle_ns, __ATOMIC_SEQ_CST);
     /* Parked right now? The total is only folded in when the park ends, so add
      * the in-progress interval — otherwise a mid-park reader sees a stale idle
      * and over-reports active. Same as libuv's uv_metrics_idle_time. */
-    uint64_t entry = __atomic_load_n(&loop->data.idle_entry_ns, __ATOMIC_ACQUIRE);
+    uint64_t entry = __atomic_load_n(&loop->data.idle_entry_ns, __ATOMIC_SEQ_CST);
     if (entry > 0) {
         uint64_t now = us_internal_monotonic_ns();
         if (now > entry)

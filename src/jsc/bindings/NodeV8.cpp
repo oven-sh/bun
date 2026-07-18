@@ -3,25 +3,15 @@
 #include "root.h"
 
 #include "ErrorCode.h"
+#include "NodeV8.h"
+#include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/CollectionScope.h>
-#include <JavaScriptCore/Heap.h>
-#include <JavaScriptCore/HeapObserver.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/VM.h>
-#include <wtf/HashMap.h>
-#include <wtf/MonotonicTime.h>
-#include <wtf/NeverDestroyed.h>
-#include <wtf/Vector.h>
-
-#include <algorithm>
-#include <optional>
-#include <utility>
+#include <wtf/StdLibExtras.h>
 
 namespace Bun {
 
@@ -42,127 +32,18 @@ JSC_DEFINE_HOST_FUNCTION(functionIsStringOneByteRepresentation, (JSGlobalObject 
     return JSValue::encode(jsBoolean(asString(argument)->is8Bit()));
 }
 
-namespace {
-
-// One record per garbage collection observed while at least one GCProfiler is
-// running. Only values JavaScriptCore actually measures are stored; the shape
-// node:v8 reports is assembled in src/js/node/v8.ts.
-struct GCEventRecord {
-    bool isFullCollection { false };
-    double costMicroseconds { 0 };
-    size_t usedBefore { 0 };
-    size_t capacityBefore { 0 };
-    size_t externalBefore { 0 };
-    size_t usedAfter { 0 };
-    size_t capacityAfter { 0 };
-    size_t externalAfter { 0 };
-};
-
-class GCProfilerObserver final : public JSC::HeapObserver {
-public:
-    explicit GCProfilerObserver(JSC::VM& vm)
-        : m_vm(&vm)
-    {
-    }
-
-    void willGarbageCollect() final
-    {
-        auto& heap = m_vm->heap;
-        m_collectionStart = MonotonicTime::now();
-        m_capacityBefore = heap.capacity();
-        m_externalBefore = heap.extraMemorySize();
-    }
-
-    void didGarbageCollect(JSC::CollectionScope collectionScope) final
-    {
-        // A collection already in flight when a profiler starts has no
-        // matching willGarbageCollect(), so there is no honest start time.
-        // Skip it rather than report a made-up cost, as node's profiler does.
-        auto collectionStart = std::exchange(m_collectionStart, std::nullopt);
-        if (!collectionStart || m_sessions.isEmpty())
-            return;
-
-        auto& heap = m_vm->heap;
-        GCEventRecord record;
-        record.isFullCollection = collectionScope == JSC::CollectionScope::Full;
-        record.costMicroseconds = std::max(0.0, (MonotonicTime::now() - *collectionStart).microseconds());
-        // JavaScriptCore records the live-bytes figure on both sides of the
-        // collection it just finished, so these two numbers are measured rather
-        // than sampled after the fact.
-        if (record.isFullCollection) {
-            record.usedBefore = heap.sizeBeforeLastFullCollection();
-            record.usedAfter = heap.sizeAfterLastFullCollection();
-        } else {
-            record.usedBefore = heap.sizeBeforeLastEdenCollection();
-            record.usedAfter = heap.sizeAfterLastEdenCollection();
-        }
-        record.capacityBefore = m_capacityBefore;
-        record.externalBefore = m_externalBefore;
-        record.capacityAfter = heap.capacity();
-        record.externalAfter = heap.extraMemorySize();
-
-        for (auto& entry : m_sessions)
-            entry.value.append(record);
-    }
-
-    uint32_t startSession()
-    {
-        bool wasEmpty = m_sessions.isEmpty();
-        uint32_t id = m_nextSessionID++;
-        m_sessions.add(id, Vector<GCEventRecord>());
-        if (wasEmpty) {
-            // Drop any timestamp left by a collection observed before the last
-            // detach; pairing it with this session would report its cost as all
-            // the wall time in between.
-            m_collectionStart = std::nullopt;
-            m_vm->heap.addObserver(this);
-        }
-        return id;
-    }
-
-    std::optional<Vector<GCEventRecord>> stopSession(uint32_t id)
-    {
-        auto it = m_sessions.find(id);
-        if (it == m_sessions.end())
-            return std::nullopt;
-        Vector<GCEventRecord> records = std::move(it->value);
-        m_sessions.remove(it);
-        if (m_sessions.isEmpty()) {
-            m_collectionStart = std::nullopt;
-            m_vm->heap.removeObserver(this);
-        }
-        return records;
-    }
-
-private:
-    JSC::VM* m_vm;
-    HashMap<uint32_t, Vector<GCEventRecord>, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sessions;
-    uint32_t m_nextSessionID { 1 };
-    std::optional<MonotonicTime> m_collectionStart;
-    size_t m_capacityBefore { 0 };
-    size_t m_externalBefore { 0 };
-};
-
-// The observer is per-VM, and every JS thread (main thread or worker) has its
-// own VM, so thread-local storage keeps worker threads independent without any
-// cross-thread synchronization.
-GCProfilerObserver& sharedGCProfilerObserver(JSC::VM& vm)
+static GCProfilerObserver& ensureGCProfilerObserver(JSGlobalObject* globalObject)
 {
-    static thread_local LazyNeverDestroyed<GCProfilerObserver> observer;
-    static thread_local bool constructed = false;
-    if (!constructed) {
-        observer.construct(vm);
-        constructed = true;
-    }
-    return observer.get();
+    auto* global = defaultGlobalObject(globalObject);
+    auto& slot = global->m_gcProfilerObserver;
+    if (!slot)
+        slot = makeUnique<GCProfilerObserver>(global->vm());
+    return *slot;
 }
-
-} // namespace
 
 JSC_DEFINE_HOST_FUNCTION(functionStartGCProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
-    auto& vm = JSC::getVM(globalObject);
-    return JSValue::encode(jsNumber(sharedGCProfilerObserver(vm).startSession()));
+    return JSValue::encode(jsNumber(ensureGCProfilerObserver(globalObject).startSession()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -173,7 +54,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     uint32_t id = callFrame->argument(0).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto records = sharedGCProfilerObserver(vm).stopSession(id);
+    auto records = ensureGCProfilerObserver(globalObject).stopSession(id);
     if (!records)
         return JSValue::encode(jsUndefined());
 

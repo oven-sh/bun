@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
+import { bunEnv, bunExe } from "harness";
 
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {
@@ -83,5 +84,44 @@ describe("v8.GCProfiler", () => {
     const report = profiler.stop();
     expect(report).not.toBeUndefined();
     expect(Array.isArray(report!.statistics)).toBe(true);
+  });
+
+  test("full collection does not report external memory growing", () => {
+    const profiler = new GCProfiler();
+    profiler.start();
+    Bun.gc(true);
+    const report = profiler.stop()!;
+    const full = report.statistics.find(e => e.gcType === "MarkSweepCompact");
+    expect(full).not.toBeUndefined();
+    // JSC zeroes m_extraMemorySize before notifying observers of a full
+    // collection, so a prologue sample would under-report and make external
+    // memory appear to grow. The implementation reuses the epilogue value.
+    expect(full!.beforeGC.heapStatistics.externalMemory).toBe(full!.afterGC.heapStatistics.externalMemory);
+    expect(full!.beforeGC.heapStatistics.totalHeapSize).toBe(full!.afterGC.heapStatistics.totalHeapSize);
+  });
+
+  test("worker exiting with an open session does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("node:worker_threads");
+          const w = new Worker(
+            'const { GCProfiler } = require("v8"); new GCProfiler().start();',
+            { eval: true },
+          );
+          w.on("error", e => { console.error(e); process.exit(1); });
+          w.on("exit", code => { console.log("worker exit " + code); });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("worker exit 0\n");
+    expect(exitCode).toBe(0);
   });
 });

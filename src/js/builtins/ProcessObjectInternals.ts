@@ -167,6 +167,7 @@ export function getStdinStream(
 
   let stream_destroyed = false;
   let stream_reachedEof = false;
+  let hasReceivedData = false;
   stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -252,6 +253,7 @@ export function getStdinStream(
 
     try {
       if (value) {
+        hasReceivedData = true;
         stream.push(value);
       } else {
         // EOF. Nothing is left to read, so release the native reader before
@@ -285,7 +287,14 @@ export function getStdinStream(
       needsInternalReadRefresh = true;
     }
   }
-  stream._read = triggerRead;
+  // Node's Socket._read calls readStart(): Readable asking for data re-arms the
+  // native read after pause()'s readStop(), so a queued pipe EOF is delivered
+  // via maybeReadMore() -> _read(). TTY stays disowned so a child can inherit.
+  function triggerReadOwning(size) {
+    if (!reader && hasReceivedData && !isTTY && !stream_reachedEof && !stream_destroyed) own();
+    triggerRead.$call(this, size);
+  }
+  stream._read = triggerReadOwning;
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
@@ -302,10 +311,6 @@ export function getStdinStream(
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
-        // pause() inside a 'data' listener lands here before maybeReadMore() pulls
-        // again. If that chunk carried EOF the controller is already closed and one
-        // more read() resolves {done:true}; pull now so releaseLock() can't drop it.
-        if (reader && !stream_reachedEof) internalRead(stream);
         disown();
       }
     });

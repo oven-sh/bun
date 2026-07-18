@@ -1711,6 +1711,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseSettledValue);
 JSC_DECLARE_HOST_FUNCTION(jsBunPokePromiseAsHandled);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamClosedPromise);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamControllerError);
+JSC_DECLARE_HOST_FUNCTION(jsWebStreamState);
 
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

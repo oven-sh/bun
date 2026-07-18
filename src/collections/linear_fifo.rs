@@ -990,8 +990,12 @@ mod tests {
     // observable (distinct values), unlike a buffer of repeated bytes.
     type WrapFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 
-    /// Drains the FIFO into a `Vec` without mutating it, preserving FIFO order.
-    fn fifo_to_vec(fifo: &WrapFifo) -> Vec<i32> {
+    /// Copies the readable items into a `Vec`, preserving FIFO order.
+    fn peek_all<T, B>(fifo: &LinearFifo<T, B>) -> Vec<T>
+    where
+        T: Copy,
+        B: LinearFifoBuffer<T>,
+    {
         (0..fifo.readable_length())
             .map(|i| fifo.peek_item(i))
             .collect()
@@ -1024,7 +1028,7 @@ mod tests {
         assert!(fifo.buf_len() - fifo.head < fifo.count);
         assert!(fifo.head < fifo.count);
 
-        let mut expected = fifo_to_vec(&fifo);
+        let mut expected = peek_all(&fifo);
         assert_eq!(
             expected,
             vec![
@@ -1037,7 +1041,7 @@ mod tests {
         expected.remove(6);
 
         assert_eq!(fifo.readable_length(), 13);
-        assert_eq!(fifo_to_vec(&fifo), expected);
+        assert_eq!(peek_all(&fifo), expected);
         assert_eq!(
             expected,
             vec![8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]
@@ -1065,7 +1069,7 @@ mod tests {
         assert!(fifo.buf_len() - fifo.head < fifo.count);
         assert!(fifo.head > fifo.count);
 
-        let mut expected = fifo_to_vec(&fifo);
+        let mut expected = peek_all(&fifo);
         assert_eq!(expected, vec![200, 201, 202, 203, 204, 205, 206, 207]);
 
         // offset 5 -> index = (12 + 5) & 15 = 1 < head -> wrapped-prefix sub-branch.
@@ -1073,7 +1077,7 @@ mod tests {
         expected.remove(5);
 
         assert_eq!(fifo.readable_length(), 7);
-        assert_eq!(fifo_to_vec(&fifo), expected);
+        assert_eq!(peek_all(&fifo), expected);
         assert_eq!(expected, vec![200, 201, 202, 203, 204, 206, 207]);
     }
 
@@ -1096,7 +1100,7 @@ mod tests {
             fifo
         };
 
-        let reference = fifo_to_vec(&build());
+        let reference = peek_all(&build());
         assert!(build().buf_len() - build().head < build().count);
 
         for offset in 0..reference.len() {
@@ -1112,21 +1116,11 @@ mod tests {
                 "count must drop by one for offset {offset}"
             );
             assert_eq!(
-                fifo_to_vec(&fifo),
+                peek_all(&fifo),
                 expected,
                 "contents mismatch for offset {offset}"
             );
         }
-    }
-
-    fn peek_all<T, B>(fifo: &LinearFifo<T, B>) -> Vec<T>
-    where
-        T: Copy,
-        B: LinearFifoBuffer<T>,
-    {
-        (0..fifo.readable_length())
-            .map(|i| fifo.peek_item(i))
-            .collect()
     }
 
     // Regression for the wrapped branch of `realign()`: the old stack-scratch

@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -434,5 +434,88 @@ describe("util", () => {
 describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
+  });
+});
+
+describe("util.debuglog", () => {
+  const script = `
+    const util = require("node:util");
+    const out = {};
+    const on = util.debuglog("dbgsect");
+    out.onName = on.name;
+    out.onEnabledBefore = on.enabled;
+    let cbFn = null;
+    let cbCount = 0;
+    const on2 = util.debuglog("dbgsect", fn => { cbFn = fn; cbCount++; });
+    on2("hello", 42);
+    on2("second");
+    out.cbCount = cbCount;
+    out.cbType = typeof cbFn;
+    out.cbName = cbFn && cbFn.name;
+    out.cbEnabled = cbFn && cbFn.enabled;
+    const off = util.debuglog("notenabled");
+    out.offName = off.name;
+    out.offEnabled = off.enabled;
+    let offCb = "never";
+    const off2 = util.debuglog("alsonot", fn => { offCb = { type: typeof fn, enabled: fn.enabled }; });
+    off2("x");
+    out.offCb = offCb;
+    const desc = Object.getOwnPropertyDescriptor(on, "enabled") || {};
+    out.desc = { hasGet: typeof desc.get === "function", configurable: desc.configurable, enumerable: desc.enumerable };
+    out.aliased = util.debug === util.debuglog;
+    console.log(JSON.stringify(out));
+  `;
+
+  it("exposes .enabled, .name and invokes the optional callback", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_DEBUG: "dbgsect" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stderr.split("\n").filter(l => l.startsWith("DBGSECT "));
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toMatch(/^DBGSECT \d+: hello 42$/);
+    expect(lines[1]).toMatch(/^DBGSECT \d+: second$/);
+    expect(JSON.parse(stdout)).toEqual({
+      onName: "logger",
+      onEnabledBefore: true,
+      cbCount: 1,
+      cbType: "function",
+      cbName: "debug",
+      cbEnabled: true,
+      offName: "logger",
+      offEnabled: false,
+      offCb: { type: "function", enabled: false },
+      desc: { hasGet: true, configurable: true, enumerable: true },
+      aliased: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it(".enabled is false and output is silent without NODE_DEBUG", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_DEBUG: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      onName: "logger",
+      onEnabledBefore: false,
+      cbCount: 1,
+      cbType: "function",
+      cbName: "debug",
+      cbEnabled: false,
+      offName: "logger",
+      offEnabled: false,
+      offCb: { type: "function", enabled: false },
+      desc: { hasGet: true, configurable: true, enumerable: true },
+      aliased: true,
+    });
+    expect(exitCode).toBe(0);
   });
 });

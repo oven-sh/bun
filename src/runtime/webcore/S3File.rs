@@ -7,6 +7,7 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-

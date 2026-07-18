@@ -558,22 +558,14 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
 
-// Objects live in a frame at the moment a loop triggers DFG/FTL tier-up are
-// captured into the compilation plan's m_mustHandleValues. Those were rooted
-// as RootMarkReason::JITWorkList for the life of the concurrent compile, so a
-// gc() issued while plans were queued reported fewer objects collected than the
-// program had let go of (node's test-gc-http-client* hit this). The snapshot is
-// now treated as weak; every DFG phase that reads it already handles nullopt.
+// oven-sh/WebKit#308: DFG Plan::m_mustHandleValues is weak, so objects live in
+// the OSR-triggering frame are not JITWorkList-rooted for the life of a queued
+// concurrent compile.
 it(
   "gc() does not root user objects from a concurrent DFG plan's OSR-entry snapshot",
   async () => {
-    // Reproducing this needs several independent functions to request DFG at
-    // roughly the same time so most plans are still in the worklist at gc(). The
-    // http client/server path does that reliably (emit, nextTick drain, stream
-    // flow all tier up during the first burst of responses). The fixture reports
-    // how many ClientRequest/IncomingMessage instances the debugging heap
-    // snapshot attributes directly to the JIT worklist; that count must be zero.
-    // One compiler thread so plans queue instead of draining in parallel.
+    // http client/server drives enough functions to DFG at once that plans are
+    // still queued at gc(). One compiler thread so they queue instead of drain.
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "dfg-plan-gc-fixture.js")],
       env: { ...bunEnv, BUN_JSC_numberOfDFGCompilerThreads: "1", BUN_JSC_numberOfFTLCompilerThreads: "1" },

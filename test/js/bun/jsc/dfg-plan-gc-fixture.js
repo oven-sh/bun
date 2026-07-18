@@ -1,8 +1,5 @@
-// The http client/server path drives enough independent functions to DFG at
-// once (emit, nextTick drain, stream flow) that several plans are still in the
-// concurrent JIT worklist when the first gc() runs. Previously each plan's
-// m_mustHandleValues rooted whatever request/response objects were live in the
-// frame that triggered tier-up (RootMarkReason::JITWorkList).
+// oven-sh/WebKit#308: after one gc(), no ClientRequest/IncomingMessage may be a
+// RootMarkReason::JITWorkList root while DFG plans are queued.
 "use strict";
 const http = require("http");
 const jsc = require("bun:jsc");

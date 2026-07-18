@@ -45,4 +45,6 @@ test("Bun.write() should write past 2GB boundary without corruption", async () =
     const expected = Math.floor(pos / CHUNK_SIZE) % 256;
     expect(buf[0]).toBe(expected);
   }
-});
+  // Writing >2 GiB to disk is legitimately slow I/O; the default 5s is too
+  // tight on contended CI disks (observed 4–5s+), so give it real headroom.
+}, 60_000);

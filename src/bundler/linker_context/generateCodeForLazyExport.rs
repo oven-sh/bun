@@ -18,20 +18,6 @@ use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-/// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
-/// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
-struct SliceBoxAdapter;
-impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
-    fn hash(&self, key: &[u8]) -> u32 {
-        // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
-        use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-        AutoContext.hash(key)
-    }
-    fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-        a == &**b
-    }
-}
-
 pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
@@ -172,11 +158,7 @@ pub fn generate_code_for_lazy_export(
                         &self.all_symbols[css_ref.source_index(idx) as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
-                    let loc = ast
-                        .local_scope
-                        .get_adapted(name, &SliceBoxAdapter)
-                        .unwrap()
-                        .loc;
+                    let loc = ast.local_scope.get(name).unwrap().loc;
 
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
@@ -236,9 +218,8 @@ pub fn generate_code_for_lazy_export(
                                         };
                                         for name in compose.names.slice() {
                                             let name_v = name.v();
-                                            let Some(other_name_entry) = other_file
-                                                .local_scope
-                                                .get_adapted(name_v, &SliceBoxAdapter)
+                                            let Some(other_name_entry) =
+                                                other_file.local_scope.get(name_v)
                                             else {
                                                 continue;
                                             };
@@ -280,9 +261,7 @@ pub fn generate_code_for_lazy_export(
                                     // it is from the current file
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
-                                        let Some(name_entry) =
-                                            ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                        else {
+                                        let Some(name_entry) = ast.local_scope.get(name_v) else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,

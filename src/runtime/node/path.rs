@@ -2690,9 +2690,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
                 }
                 v
             };
-            if i == 0 {
-                to_orig_slice.to_vec()
-            } else if i == length {
+            if i == length {
                 if to_seg_count > length {
                     join_tail(&to_segs[i..])
                 } else if from_seg_count > length {
@@ -2700,6 +2698,8 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
                 } else {
                     Vec::new()
                 }
+            } else if i == 0 {
+                to_orig_slice.to_vec()
             } else {
                 let mut v = dotdots(from_seg_count - i, true);
                 v.extend_from_slice(&join_tail(&to_segs[i..]));

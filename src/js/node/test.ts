@@ -839,9 +839,12 @@ class TestNode {
   finished = false;
   passed = false;
   error: unknown = null;
-  // Inline subtests are serialized through this chain. `concurrency` is
-  // validated for Node-compat error codes but subtests always run serially.
+  // Resolves when every inline subtest scheduled so far has settled. For
+  // `concurrency` <= 1 it is the serial chain itself; for > 1 it is the join
+  // of all scheduled tasks (see scheduleSubtask).
   subtestChain: Promise<void> = Promise.resolve();
+  concurrency: number = 1;
+  #subtestSlot: { active: number; queue: Array<() => void>; seed: Promise<void> } | undefined;
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
@@ -912,6 +915,33 @@ class TestNode {
   // inline subtests instead of bun:test registrations.
   isRunning(): boolean {
     return (this.started && !this.finished) || this.isExecutionPhase;
+  }
+
+  // Appends an inline-subtest thunk. Serial when `concurrency` <= 1; otherwise
+  // a counting semaphore bounds concurrently running thunks. The semaphore is
+  // seeded from the subtestChain value at first use so a gate written there
+  // (the inline-suite barrier in addSuite) still holds.
+  scheduleSubtask(run: () => Promise<void>): Promise<void> {
+    if (this.concurrency <= 1) {
+      return (this.subtestChain = this.subtestChain.then(run));
+    }
+    const slot = (this.#subtestSlot ??= { active: 0, queue: [], seed: this.subtestChain });
+    let acquired: Promise<void>;
+    if (slot.active < this.concurrency) {
+      slot.active++;
+      acquired = slot.seed;
+    } else {
+      acquired = new Promise(resolve => slot.queue.push(resolve));
+    }
+    const task = acquired.then(run);
+    const settled = task.then(kDefaultFunction, kDefaultFunction).then(() => {
+      const next = slot.queue.shift();
+      if (next !== undefined) next();
+      else slot.active--;
+    });
+    const prev = this.subtestChain;
+    this.subtestChain = settled.then(() => prev);
+    return task;
   }
 }
 
@@ -1239,15 +1269,20 @@ function validateTimeoutAndSignal(options: TestOptions | HookOptions) {
   }
 }
 
-function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
+function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined; concurrency: number } {
   const { concurrency, tags, plan } = options;
 
-  // signal and concurrency are validated for Node's error contract but not yet
-  // enforced (t.signal never aborts; subtests always run serially).
+  // signal is validated for Node's error contract but not yet enforced
+  // (t.signal never aborts).
   validateTimeoutAndSignal(options);
-  if (concurrency != null && typeof concurrency !== "boolean") {
+  // Node: default 1, `true` -> Infinity for a non-root test, `false` -> 1.
+  let resolvedConcurrency = 1;
+  if (concurrency != null) {
     if (typeof concurrency === "number") {
       validateUint32(concurrency, "options.concurrency", true);
+      resolvedConcurrency = concurrency;
+    } else if (typeof concurrency === "boolean") {
+      if (concurrency) resolvedConcurrency = Infinity;
     } else {
       throw $ERR_INVALID_ARG_TYPE("options.concurrency", ["boolean", "number"], concurrency);
     }
@@ -1261,7 +1296,7 @@ function validateTestOptions(options: TestOptions): { ownTags: string[] | undefi
     ownTags = canonicalizeTags(tags, "options.tags");
   }
 
-  return { ownTags };
+  return { ownTags, concurrency: resolvedConcurrency };
 }
 
 function parseHookArgs(arg0: unknown, arg1: unknown) {
@@ -1447,7 +1482,7 @@ function runBeforeHookOnce(hook: Hook, owner: TestNode, arg: unknown): Promise<v
 // Failures fail the owning test (Node: hook.error -> test.fail) instead of
 // poisoning the subtest chain, so they are reported even when nothing awaits.
 function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
-  node.subtestChain = node.subtestChain.then(async () => {
+  node.scheduleSubtask(async () => {
     try {
       await runBeforeHookOnce(hook, node, arg);
     } catch (err) {
@@ -1620,8 +1655,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
       parent.firstSubtestError ??= failure;
     }
   };
-  const result = (parent.subtestChain = parent.subtestChain.then(run));
-  return result.then(() => undefined);
+  return parent.scheduleSubtask(run).then(() => undefined);
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
@@ -1679,8 +1713,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
   };
-  const result = (parent.subtestChain = parent.subtestChain.then(run));
-  return result.then(() => undefined);
+  return parent.scheduleSubtask(run).then(() => undefined);
 }
 
 // -----------------------------------------------------------------------------
@@ -1749,7 +1782,7 @@ function addTest(
   mode?: "skip" | "todo",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
-  const { ownTags } = validateTestOptions(options);
+  const { ownTags, concurrency } = validateTestOptions(options);
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined) {
@@ -1765,6 +1798,7 @@ function addTest(
       }
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
+      child.concurrency = concurrency;
       if (mode === "todo") child.todoFlag = true;
       return scheduleSubtest(runningNode, child, fn);
     }
@@ -1774,6 +1808,7 @@ function addTest(
   const parent = currentCollectionParent();
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
+  node.concurrency = concurrency;
 
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
@@ -1817,7 +1852,7 @@ function addSuite(
   mode?: "skip" | "todo",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
-  const { ownTags } = validateTestOptions(options);
+  const { ownTags, concurrency } = validateTestOptions(options);
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined && runningNode.finished) {
@@ -1826,6 +1861,7 @@ function addSuite(
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
+    suite.concurrency = concurrency;
     if (mode === "skip" || options.skip) {
       return Promise.resolve(undefined);
     }

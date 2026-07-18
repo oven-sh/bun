@@ -1,0 +1,72 @@
+const { test, describe } = require("node:test");
+const assert = require("node:assert");
+
+const tick = () => new Promise(r => setImmediate(r));
+
+// Each subtest waits (bounded) for its sibling to have started. Under a pool
+// of 2 or more both observe each other; under serial execution the first gives
+// up without ever seeing the second and the assertion fails.
+function interleaved(t, tag) {
+  const started = [false, false];
+  const body = i => async () => {
+    started[i] = true;
+    for (let n = 0; n < 200 && !started[1 - i]; n++) await tick();
+    assert.ok(started[1 - i], `${tag}: sibling never started (subtests ran serially)`);
+  };
+  return Promise.all([t.test(`${tag}-a`, body(0)), t.test(`${tag}-b`, body(1))]);
+}
+
+test("parent with concurrency: 2 interleaves subtests", { concurrency: 2 }, async t => {
+  await interleaved(t, "num");
+});
+
+test("parent with concurrency: true interleaves subtests", { concurrency: true }, async t => {
+  await interleaved(t, "true");
+});
+
+test("concurrency caps the number of subtests running at once", { concurrency: 2 }, async t => {
+  let active = 0;
+  let max = 0;
+  const body = async () => {
+    active++;
+    if (active > max) max = active;
+    await tick();
+    await tick();
+    active--;
+  };
+  await Promise.all([t.test("a", body), t.test("b", body), t.test("c", body), t.test("d", body), t.test("e", body)]);
+  assert.strictEqual(max, 2);
+});
+
+// Default (no concurrency option): strictly serial, so the first subtest has
+// fully finished before the second body starts.
+test("default concurrency is serial", async t => {
+  let aDone = false;
+  const a = t.test("a", async () => {
+    await tick();
+    aDone = true;
+  });
+  const b = t.test("b", () => assert.strictEqual(aDone, true));
+  await Promise.all([a, b]);
+});
+
+// An inline describe() inside a running test honors its own concurrency option.
+test("inline suite with concurrency interleaves its children", async t => {
+  const started = [false, false];
+  describe("inner", { concurrency: 2 }, () => {
+    const body = i => async () => {
+      started[i] = true;
+      for (let n = 0; n < 200 && !started[1 - i]; n++) await tick();
+      assert.ok(started[1 - i], "inline suite child ran serially");
+    };
+    test("x", body(0));
+    test("y", body(1));
+  });
+  t.after(() => assert.deepStrictEqual(started, [true, true]));
+});
+
+// Bad values keep throwing Node's error codes.
+test("concurrency validation", () => {
+  assert.throws(() => test("bad", { concurrency: "x" }, () => {}), { code: "ERR_INVALID_ARG_TYPE" });
+  assert.throws(() => test("bad", { concurrency: -1 }, () => {}), { code: "ERR_OUT_OF_RANGE" });
+});

@@ -249,6 +249,16 @@ describe("node:test", () => {
     });
   });
 
+  test("should honor the concurrency option on a parent test's inline subtests", async () => {
+    const { exitCode, stderr } = await runTests(["25-subtest-concurrency.js"]);
+    expect(stderr).not.toContain("timed out");
+    expect(stderr).toContain("6 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
   test("should resolve the promise of a test that a name pattern filters out", async () => {
     const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
     expect(stderr).not.toContain("timed out");

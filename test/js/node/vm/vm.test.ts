@@ -1188,8 +1188,10 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration; Script#runInNewContext and
+    // vm.runInNewContext take contextCodeGeneration (vm.runInNewContext remaps
+    // it to codeGeneration before calling createContext, like Node, so a
+    // nested codeGeneration.* getter is never read there).
     // A dotted key puts the throwing getter on the nested object.
     const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
     const contextKeys = (...codeGenerationKeyNames: string[]) => [
@@ -1201,7 +1203,7 @@ describe("context options with throwing getters", () => {
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: contextKeys("contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1338,6 +1340,17 @@ describe("DONT_CONTEXTIFY", () => {
     expect(script.runInContext(ctx)).toBe(42);
     expect(runInContext("sv", ctx)).toBe(42);
     expect(ctx.sv).toBe(42);
+  });
+
+  test("vm.runInNewContext honors contextCodeGeneration with DONT_CONTEXTIFY", () => {
+    let thrown: unknown;
+    try {
+      runInNewContext("eval('1')", constants.DONT_CONTEXTIFY, { contextCodeGeneration: { strings: false } });
+    } catch (e) {
+      thrown = e;
+    }
+    // The EvalError comes from the context's own realm, so compare by name.
+    expect((thrown as Error)?.name).toBe("EvalError");
   });
 
   test("var/function declarations work via runInNewContext", () => {

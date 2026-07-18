@@ -14,6 +14,16 @@ export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "h
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+export const asyncSQLiteTaskForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteTaskForTesting",
+  2,
+);
+export const asyncSQLiteTaskStatsForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteTaskStatsForTesting",
+  0,
+);
 
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.

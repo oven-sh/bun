@@ -73,6 +73,9 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcore/JSMessageEventCustom.cpp",
   "src/jsc/bindings/sqlite/JSSQLStatement.cpp",
   "src/jsc/bindings/sqlite/NodeSqlite.cpp",
+  // Uses JSDOM promise conversion and private builtin-name lookup that rely on
+  // ordinary lookup remaining isolated from neighboring SQLite bindings.
+  "src/jsc/bindings/sqlite/AsyncSQLiteDatabase.cpp",
 
   // WebKit-derived crypto algorithm impls share file-static helper names
   // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream

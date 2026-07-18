@@ -34,6 +34,7 @@ typedef sqlite3_int64 (*lazy_sqlite3_changes64_type)(sqlite3*);
 typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_close_v2_type)(sqlite3*);
 typedef int (*lazy_sqlite3_close_type)(sqlite3*);
+typedef void (*lazy_sqlite3_interrupt_type)(sqlite3*);
 typedef int (*lazy_sqlite3_file_control_type)(sqlite3*, const char* zDbName, int op, void* pArg);
 typedef int (*lazy_sqlite3_extended_result_codes_type)(sqlite3*, int onoff);
 typedef const void* (*lazy_sqlite3_column_blob_type)(sqlite3_stmt*, int iCol);
@@ -64,6 +65,7 @@ typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
 typedef int (*lazy_sqlite3_total_changes_type)(sqlite3*);
 typedef int (*lazy_sqlite3_config_type)(int, ...);
 typedef int (*lazy_sqlite3_open_v2_type)(const char* filename, sqlite3** ppDb, int flags, const char* zVfs);
+typedef int (*lazy_sqlite3_threadsafe_type)();
 typedef int (*lazy_sqlite3_prepare_v2_type)(sqlite3* db, const char* zSql, int nByte, sqlite3_stmt** ppStmt, const char** pzTail);
 typedef int (*lazy_sqlite3_prepare_v3_type)(sqlite3* db, const char* zSql, int nByte, unsigned int prepFlags, sqlite3_stmt** ppStmt, const char** pzTail);
 typedef int (*lazy_sqlite3_prepare16_v3_type)(sqlite3* db, const void* zSql, int nByte, unsigned int prepFlags, sqlite3_stmt** ppStmt, const void** pzTail);
@@ -142,6 +144,7 @@ inline lazy_sqlite3_changes64_type lazy_sqlite3_changes64;
 inline lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings;
 inline lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
 inline lazy_sqlite3_close_type lazy_sqlite3_close;
+inline lazy_sqlite3_interrupt_type lazy_sqlite3_interrupt;
 inline lazy_sqlite3_busy_timeout_type lazy_sqlite3_busy_timeout;
 inline lazy_sqlite3_wal_checkpoint_v2_type lazy_sqlite3_wal_checkpoint_v2;
 inline lazy_sqlite3_file_control_type lazy_sqlite3_file_control;
@@ -168,6 +171,7 @@ inline lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
 inline lazy_sqlite3_free_type lazy_sqlite3_free;
 inline lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit;
 inline lazy_sqlite3_open_v2_type lazy_sqlite3_open_v2;
+inline lazy_sqlite3_threadsafe_type lazy_sqlite3_threadsafe;
 inline lazy_sqlite3_prepare_v2_type lazy_sqlite3_prepare_v2;
 inline lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3;
 inline lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3;
@@ -241,6 +245,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_clear_bindings lazy_sqlite3_clear_bindings
 #define sqlite3_close_v2 lazy_sqlite3_close_v2
 #define sqlite3_close lazy_sqlite3_close
+#define sqlite3_interrupt lazy_sqlite3_interrupt
 #define sqlite3_busy_timeout lazy_sqlite3_busy_timeout
 #define sqlite3_wal_checkpoint_v2 lazy_sqlite3_wal_checkpoint_v2
 #define sqlite3_file_control lazy_sqlite3_file_control
@@ -265,6 +270,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_free lazy_sqlite3_free
 #define sqlite3_get_autocommit lazy_sqlite3_get_autocommit
 #define sqlite3_open_v2 lazy_sqlite3_open_v2
+#define sqlite3_threadsafe lazy_sqlite3_threadsafe
 #define sqlite3_prepare_v2 lazy_sqlite3_prepare_v2
 #define sqlite3_prepare_v3 lazy_sqlite3_prepare_v3
 #define sqlite3_prepare16_v3 lazy_sqlite3_prepare16_v3
@@ -364,6 +370,10 @@ inline int lazyLoadSQLite()
     }
     lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
     if (!lazy_sqlite3_open_v2) return -1;
+    lazy_sqlite3_interrupt = (lazy_sqlite3_interrupt_type)dlsym(sqlite3_handle, "sqlite3_interrupt");
+    if (!lazy_sqlite3_interrupt) return -1;
+    lazy_sqlite3_threadsafe = (lazy_sqlite3_threadsafe_type)dlsym(sqlite3_handle, "sqlite3_threadsafe");
+    if (!lazy_sqlite3_threadsafe) return -1;
     lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
     lazy_sqlite3_bind_blob64 = (lazy_sqlite3_bind_blob64_type)dlsym(sqlite3_handle, "sqlite3_bind_blob64");
     lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");

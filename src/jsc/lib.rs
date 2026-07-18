@@ -59,6 +59,8 @@ pub const CONV: &str = "C";
 // ──────────────────────────────────────────────────────────────────────────
 pub mod error;
 pub use error::{Error as CrateError, Result as CrateResult};
+#[path = "AsyncSQLiteTask.rs"]
+pub mod async_sqlite_task;
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]

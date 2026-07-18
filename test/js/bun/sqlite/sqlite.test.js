@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2134,4 +2134,264 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     signalCode: null,
     exitCode: 0,
   });
+});
+
+async function waitForAsyncSQLiteStats(stats, predicate, description) {
+  const maxYields = 10_000;
+  for (let i = 0; i < maxYields; i++) {
+    const current = stats();
+    if (predicate(current)) return;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  throw new Error(`${description}: ${JSON.stringify(stats())}`);
+}
+
+describe("async SQLite task substrate (Gate A private)", () => {
+  it("runs an async SQLite task off-thread, remains responsive, and cleans up GC roots", async () => {
+    const { asyncSQLiteTaskForTesting, asyncSQLiteTaskStatsForTesting } = await import("bun:internal-for-testing");
+    expect(typeof asyncSQLiteTaskForTesting).toBe("function");
+    expect(typeof asyncSQLiteTaskStatsForTesting).toBe("function");
+
+    const dir = tempDirWithFiles("sqlite-async-gate-a", { "empty.txt": "" });
+    const file = path.join(dir, "gate.db");
+    const blocker = new Database(file);
+    const controller = new AbortController();
+
+    try {
+      blocker.exec("CREATE TABLE gate (value INTEGER)");
+      blocker.exec("BEGIN IMMEDIATE");
+
+      const baseline = asyncSQLiteTaskStatsForTesting();
+      const task = asyncSQLiteTaskForTesting(file, controller.signal);
+      task.result.catch(() => {});
+
+      const started = await task.started;
+      expect(started.offThread).toBe(true);
+
+      Bun.gc(true);
+      blocker.exec("COMMIT");
+
+      expect(await task.result).toBe(1);
+      expect(blocker.query("SELECT value FROM gate").all()).toEqual([{ value: 1 }]);
+
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteTaskStatsForTesting,
+        current => {
+          return (
+            current.liveJobs === baseline.liveJobs &&
+            current.liveResults === baseline.liveResults &&
+            current.liveRequests === baseline.liveRequests &&
+            current.liveAbortAlgorithms === baseline.liveAbortAlgorithms
+          );
+        },
+        "async SQLite task counters did not return to baseline",
+      );
+
+      const final = asyncSQLiteTaskStatsForTesting();
+      expect(final.liveJobs).toBe(baseline.liveJobs);
+      expect(final.liveResults).toBe(baseline.liveResults);
+      expect(final.liveRequests).toBe(baseline.liveRequests);
+      expect(final.liveAbortAlgorithms).toBe(baseline.liveAbortAlgorithms);
+      expect(final.completionsRun).toBe(baseline.completionsRun + 1);
+      expect(final.postFailures).toBe(baseline.postFailures);
+      expect(final.completionsDropped).toBe(baseline.completionsDropped);
+    } finally {
+      blocker.close();
+    }
+  });
+
+  it("tears down running and queued async SQLite tasks after Worker termination", async () => {
+    const rounds = isASAN || isDebug ? 2 : 6;
+    const dir = tempDirWithFiles("sqlite-async-gate-a-workers", {
+      "main.js": `
+        import { Database } from "bun:sqlite";
+        import { Worker } from "node:worker_threads";
+
+        const { asyncSQLiteTaskStatsForTesting } = await import("bun:internal-for-testing");
+        const ROUND_COUNT = ${rounds};
+        const workerURL = new URL("./worker.js", import.meta.url);
+
+        const waitForCondition = async (predicate, describeCurrent) => {
+          const maxYields = 10_000;
+          for (let i = 0; i < maxYields; i++) {
+            if (predicate()) return;
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          throw new Error(describeCurrent());
+        };
+
+        const failIf = (condition, message) => {
+          if (condition) throw new Error(message);
+        };
+
+        const runRound = async (db, dbPath, round) => {
+          const baseline = asyncSQLiteTaskStatsForTesting();
+          const workers = Array.from({ length: 3 }, () => new Worker(workerURL, {
+            type: "module",
+            workerData: dbPath,
+          }));
+          let allWorkersTerminated = false;
+          let scheduledCount = 0;
+          let startedCount = 0;
+          let resolveScheduled;
+          let rejectScheduled;
+          let resolveStarted;
+          let rejectStarted;
+          const allScheduled = new Promise((resolve, reject) => {
+            resolveScheduled = resolve;
+            rejectScheduled = reject;
+          });
+          const twoStarted = new Promise((resolve, reject) => {
+            resolveStarted = resolve;
+            rejectStarted = reject;
+          });
+          let failed = false;
+          const failHandshake = error => {
+            if (failed) return;
+            failed = true;
+            rejectScheduled(error);
+            rejectStarted(error);
+          };
+
+          for (const worker of workers) {
+            worker.on("message", message => {
+              if (message.type === "scheduled") {
+                scheduledCount++;
+                if (scheduledCount === workers.length) resolveScheduled();
+              } else if (message.type === "started") {
+                if (message.offThread !== true) {
+                  failHandshake(new Error("async SQLite task did not start off-thread"));
+                  return;
+                }
+                startedCount++;
+                if (startedCount === 2) resolveStarted();
+              } else if (message.type === "error") {
+                failHandshake(new Error(message.message));
+              }
+            });
+            worker.on("error", failHandshake);
+          }
+
+          try {
+            await allScheduled;
+            await twoStarted;
+            failIf(scheduledCount !== 3, "not all async SQLite tasks were scheduled");
+            failIf(startedCount !== 2, "expected exactly two running async SQLite tasks");
+
+            const workersTerminated = workers.map(worker => {
+              const exited = new Promise(resolve => worker.once("exit", resolve));
+              const terminated = worker.terminate();
+              return Promise.all([terminated, exited]);
+            });
+            await Promise.all(workersTerminated);
+            allWorkersTerminated = true;
+
+            const afterTermination = asyncSQLiteTaskStatsForTesting();
+            failIf(
+              afterTermination.liveRequests !== baseline.liveRequests,
+              "Worker teardown left native async SQLite requests alive",
+            );
+            failIf(
+              afterTermination.liveAbortAlgorithms !== baseline.liveAbortAlgorithms,
+              "Worker teardown left native AbortSignal algorithms alive",
+            );
+
+            db.exec("COMMIT");
+            await waitForCondition(
+              () => {
+                const current = asyncSQLiteTaskStatsForTesting();
+                return (
+                  current.liveJobs === baseline.liveJobs &&
+                  current.liveResults === baseline.liveResults &&
+                  current.liveRequests === baseline.liveRequests &&
+                  current.liveAbortAlgorithms === baseline.liveAbortAlgorithms
+                );
+              },
+              () => "terminated async SQLite counters did not return to baseline: " +
+                JSON.stringify(asyncSQLiteTaskStatsForTesting()),
+            );
+
+            const final = asyncSQLiteTaskStatsForTesting();
+            failIf(final.postFailures !== baseline.postFailures + 3, "expected three failed completion posts");
+            failIf(final.completionsRun !== baseline.completionsRun, "terminated tasks must not run completions");
+            failIf(final.completionsDropped !== baseline.completionsDropped + 3, "expected three dropped completions");
+            failIf(final.liveJobs !== baseline.liveJobs, "native async SQLite jobs leaked");
+            failIf(final.liveResults !== baseline.liveResults, "native async SQLite results leaked");
+            failIf(final.liveRequests !== baseline.liveRequests, "native async SQLite requests leaked");
+            failIf(final.liveAbortAlgorithms !== baseline.liveAbortAlgorithms, "native AbortSignal algorithms leaked");
+
+            return {
+              round,
+              scheduled: scheduledCount,
+              started: startedCount,
+              postFailures: final.postFailures - baseline.postFailures,
+              completionsRun: final.completionsRun - baseline.completionsRun,
+              completionsDropped: final.completionsDropped - baseline.completionsDropped,
+            };
+          } finally {
+            if (!allWorkersTerminated) {
+              await Promise.all(workers.map(worker => worker.terminate()));
+            }
+          }
+        };
+
+        const dbPath = "gate.db";
+        const db = new Database(dbPath);
+        db.exec("CREATE TABLE gate (value INTEGER)");
+        const summaries = [];
+        try {
+          for (let round = 0; round < ROUND_COUNT; round++) {
+            db.exec("BEGIN IMMEDIATE");
+            summaries.push(await runRound(db, dbPath, round));
+          }
+        } finally {
+          db.close();
+        }
+
+        console.log(JSON.stringify({ rounds: summaries }));
+      `,
+      "worker.js": `
+        import { parentPort, workerData } from "node:worker_threads";
+
+        const { asyncSQLiteTaskForTesting } = await import("bun:internal-for-testing");
+        const controller = new AbortController();
+        const task = asyncSQLiteTaskForTesting(workerData, controller.signal);
+
+        parentPort.postMessage({ type: "scheduled" });
+        Bun.gc(true);
+        task.result.catch(() => {});
+        task.started.then(
+          ({ offThread }) => parentPort.postMessage({ type: "started", offThread }),
+          error => parentPort.postMessage({ type: "error", message: error?.message ?? String(error) }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: {
+        ...bunEnv,
+        UV_THREADPOOL_SIZE: "2",
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        rounds: Array.from({ length: rounds }, (_, round) => ({
+          round,
+          scheduled: 3,
+          started: 2,
+          postFailures: 3,
+          completionsRun: 0,
+          completionsDropped: 3,
+        })),
+      }),
+    );
+    expect(exitCode).toBe(0);
+  }, 30000);
 });

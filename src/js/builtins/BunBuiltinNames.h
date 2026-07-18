@@ -49,6 +49,7 @@ using namespace JSC;
     macro(addAbortAlgorithmToSignal) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
+    macro(asyncSQLitePendingRegistry) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \

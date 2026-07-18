@@ -31,6 +31,7 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
     };
   }
   return {
+    __proto__: null,
     [Symbol.dispose]() {
       removeEventListener?.();
     },

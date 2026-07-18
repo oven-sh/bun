@@ -1,0 +1,26 @@
+import { expect, test } from "bun:test";
+import { parseArgs } from "node:util";
+
+// Node.js emits option tokens with keys in the order {kind, name, rawName, index, value, inlineValue}.
+// Property insertion order is observable via Object.keys / JSON.stringify, so snapshot tests depend on it.
+test("parseArgs tokens: property insertion order matches Node.js", () => {
+  const args = ["--x=v", "-ab", "--flag", "--", "pos"];
+  const options = {
+    x: { type: "string" },
+    a: { type: "boolean" },
+    b: { type: "boolean" },
+    flag: { type: "boolean" },
+  } as const;
+  const { tokens } = parseArgs({ args, options, allowPositionals: true, tokens: true });
+  expect(tokens.map(t => Object.keys(t).join(","))).toEqual([
+    "kind,name,rawName,index,value,inlineValue",
+    "kind,name,rawName,index,value,inlineValue",
+    "kind,name,rawName,index,value,inlineValue",
+    "kind,name,rawName,index,value,inlineValue",
+    "kind,index",
+    "kind,index,value",
+  ]);
+  expect(JSON.stringify(tokens[0])).toBe(
+    '{"kind":"option","name":"x","rawName":"--x","index":0,"value":"v","inlineValue":true}',
+  );
+});

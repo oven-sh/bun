@@ -1527,6 +1527,31 @@ describe("serialize() / deserialize()", () => {
     dst.close();
     Bun.gc(true);
   });
+
+  test("succeeds while an iterate() cursor is open (resets outstanding statements like Node)", () => {
+    // Node calls FinalizeStatements() before sqlite3_deserialize(), so an
+    // un-reset cursor never holds a read transaction through the swap. Bun
+    // can't finalize (wrappers own the stmt*) but must reset, otherwise the
+    // internal ATTACH returns SQLITE_BUSY and the generation bump leaves
+    // every statement dead against the OLD database content.
+    const donor = new DatabaseSync(":memory:");
+    donor.exec("CREATE TABLE q(z); INSERT INTO q VALUES (9)");
+    const img = donor.serialize();
+    donor.close();
+
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1),(2)");
+    const idle = db.prepare("SELECT a FROM t");
+    const it = db.prepare("SELECT a FROM t").iterate();
+    expect(it.next().value).toEqual({ a: 1 }); // cursor now mid-iteration: open read txn
+
+    db.deserialize(img);
+
+    expect(() => idle.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    expect(db.prepare("SELECT z FROM q").get()).toEqual({ z: 9 });
+    expect(() => db.prepare("SELECT count(*) c FROM t").get()).toThrow(/no such table: t/);
+    db.close();
+  });
 });
 
 describe("createTagStore()", () => {

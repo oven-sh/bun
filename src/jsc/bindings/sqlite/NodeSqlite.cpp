@@ -2080,17 +2080,21 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     memcpy(owned, span.data(), span.size());
 
     // Invalidate every existing statement first — after the schema
-    // swap they reference tables that no longer exist. Bumping the
-    // open-generation makes every live JSStatementSync report
-    // isFinalized() without us having to track them explicitly (same
-    // mechanism close()+open() relies on), and Node finalizes its
-    // statements before deserializing too, so the bump stays ahead of
-    // the fallible call. We leave the underlying sqlite3_stmt* alone:
-    // the JS wrappers still own those handles and will
-    // sqlite3_finalize() them on GC, so finalizing here would make the
-    // wrapper double-free a dangling pointer. sqlite3_deserialize
-    // tolerates the outstanding stmts — they simply fail if stepped,
-    // which the generation check prevents.
+    // swap they reference tables that no longer exist. Node
+    // sqlite3_finalize()s its tracked statements here; we can't
+    // (the JS wrappers still own those handles and finalize on GC, so
+    // a pre-emptive finalize would double-free), but an un-reset
+    // iterate() cursor holds a read transaction that makes
+    // sqlite3_deserialize()'s internal ATTACH return SQLITE_BUSY.
+    // Reset every outstanding stmt on the connection so the swap
+    // succeeds, then bump the open-generation so every JSStatementSync
+    // reports isFinalized() (same mechanism close()+open() uses). The
+    // bump stays ahead of the fallible call to match Node, which
+    // finalizes unconditionally before deserializing.
+    for (sqlite3_stmt* s = sqlite3_next_stmt(self->connection(), nullptr); s;
+        s = sqlite3_next_stmt(self->connection(), s)) {
+        sqlite3_reset(s);
+    }
     self->bumpOpenGeneration();
 
     int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,

@@ -270,13 +270,7 @@ pub(super) fn write_sourcemap_to_disk(
     let source_map_index = file.source_map_index;
     debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
-    let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-        || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-    {
-        &file.dest_path[2..]
-    } else {
-        &file.dest_path[..]
-    };
+    let without_prefix = strings::remove_leading_dot_slash(&file.dest_path);
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
@@ -754,13 +748,7 @@ pub(super) fn build_with_vm(
 
                     match file.output_kind {
                         OutputKind::EntryPoint | OutputKind::Chunk => {
-                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                            {
-                                &file.dest_path[2..]
-                            } else {
-                                &file.dest_path[..]
-                            };
+                            let without_prefix = strings::remove_leading_dot_slash(&file.dest_path);
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {

@@ -43,7 +43,7 @@ use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{platform, platform_to_posix_buf, platform_to_posix_in_place};
+use bun_paths::resolve_path::{platform, platform_to_posix_in_place};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -199,7 +199,6 @@ pub fn write<W: Write + ?Sized>(
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
     let mut input_buf = path_buffer_pool::get();
-    let mut dest_buf = path_buffer_pool::get();
 
     for ch in chunks.iter() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
@@ -325,17 +324,15 @@ pub fn write<W: Write + ?Sized>(
                 platform_to_posix_in_place::<u8>(&mut input_buf[..len]);
                 let path_for_key = strings::remove_leading_dot_slash(&input_buf[..len]);
 
-                // `dest_path` comes from `PathTemplate::print` (native separators);
-                // rewrite to `/` so it matches the posix `final_rel_path`s above.
-                let dest_path =
-                    platform_to_posix_buf::<u8>(&output_file.dest_path, &mut **dest_buf);
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);
-                    temp_buffer.extend_from_slice(strings::remove_leading_dot_slash(dest_path));
+                    temp_buffer.extend_from_slice(strings::remove_leading_dot_slash(
+                        &output_file.dest_path,
+                    ));
                     &temp_buffer[..]
                 } else {
-                    dest_path
+                    &output_file.dest_path[..]
                 };
 
                 write_entry_item(

@@ -161,7 +161,9 @@ pub(crate) mod undici_diagnostics {
     /// Called after `mutex.unlock()` from `on_progress_update`'s cleanup.
     /// Publishes whatever is pending: response-head events (connected /
     /// sendHeaders / bodySent / headers) and/or the terminal event
-    /// (error / trailers).
+    /// (error / trailers). All tasklet state is extracted into locals before
+    /// the first JS call so a subscriber that re-enters via the body
+    /// callbacks never observes an aliased `&mut FetchTasklet`.
     pub(crate) fn publish_pending(this: &mut FetchTasklet, global: &JSGlobalObject, is_done: bool) {
         let Some(request) = this.diagnostics_request.get() else {
             this.diagnostics_error_value.deinit();
@@ -169,46 +171,60 @@ pub(crate) mod undici_diagnostics {
         };
         request.ensure_still_alive();
 
-        if core::mem::take(&mut this.diagnostics_headers_ready) {
-            if let Some(metadata) = this.metadata.as_ref() {
-                let resp = &metadata.response;
-                let status_text = js_str(global, resp.status);
-                let headers_js = response_headers_to_js_array(global, resp.headers.list)
-                    .unwrap_or(JSValue::UNDEFINED);
-                jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request);
-                jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
-                    global,
-                    request,
-                    resp.status_code as i32,
-                    status_text,
-                    headers_js,
-                );
-            }
-        }
+        let response_head = if core::mem::take(&mut this.diagnostics_headers_ready) {
+            this.metadata.as_ref().map(|m| {
+                let r = &m.response;
+                (
+                    r.status_code as i32,
+                    js_str(global, r.status),
+                    response_headers_to_js_array(global, r.headers.list)
+                        .unwrap_or(JSValue::UNDEFINED),
+                )
+            })
+        } else {
+            None
+        };
 
-        if let Some(err) = this.diagnostics_error_value.get() {
-            err.ensure_still_alive();
-            this.diagnostics_error_value.deinit();
-            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, err);
-            this.diagnostics_request.deinit();
-            return;
-        }
-
-        if !is_done {
-            return;
-        }
+        let mut err_strong =
+            core::mem::replace(&mut this.diagnostics_error_value, StrongOptional::empty());
+        let stashed_err = err_strong.get();
 
         let aborted = this
             .signal_store
             .aborted
             .load(core::sync::atomic::Ordering::Relaxed);
-        if this.result.fail.is_some() || this.abort_reason.has() || aborted {
-            let err = this.abort_reason.get().unwrap_or(JSValue::UNDEFINED);
-            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, err);
+        let failed = this.result.fail.is_some() || this.abort_reason.has() || aborted;
+        let fallback_err = this.abort_reason.get().unwrap_or(JSValue::UNDEFINED);
+
+        let terminal = stashed_err.is_some() || is_done;
+        let mut request_strong = if terminal {
+            core::mem::replace(&mut this.diagnostics_request, StrongOptional::empty())
         } else {
-            jsc::cpp::Bun__undiciDiagnosticsOnComplete(global, request);
+            StrongOptional::empty()
+        };
+
+        // ─── `this` must not be touched below: subscribers run user JS. ───
+
+        if let Some((status, status_text, headers_js)) = response_head {
+            jsc::cpp::Bun__undiciDiagnosticsOnConnected(global, request);
+            jsc::cpp::Bun__undiciDiagnosticsOnHeaders(
+                global, request, status, status_text, headers_js,
+            );
         }
-        this.diagnostics_request.deinit();
+
+        if let Some(e) = stashed_err {
+            e.ensure_still_alive();
+            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, e);
+        } else if is_done {
+            if failed {
+                jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, fallback_err);
+            } else {
+                jsc::cpp::Bun__undiciDiagnosticsOnComplete(global, request);
+            }
+        }
+
+        err_strong.deinit();
+        request_strong.deinit();
     }
 }
 

@@ -14,6 +14,8 @@ using namespace JSC;
 
 JSC_DEFINE_HOST_FUNCTION(jsNotifyUndiciSubscribed, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* global = defaultGlobalObject(globalObject);
     global->hasUndiciDiagnosticsSubscriber = true;
     // Eagerly load the helper module while the just-subscribed Channel is
@@ -22,6 +24,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNotifyUndiciSubscribed, (JSC::JSGlobalObject * global
     // counter without GC effect, so without this the Channel could otherwise
     // be collected before the first fetch() resolves it.
     global->m_undiciDiagnosticsModule.getInitializedOnMainThread(global);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

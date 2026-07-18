@@ -28,12 +28,12 @@ impl JSSink<ArrayBufferSink> {
 
 pub use crate::webcore::file_sink::FileSink;
 
-/// A `Sink` is a hand-rolled vtable-based writable stream sink.
+/// A `Sink` is an enum-dispatched writable stream sink.
 pub struct Sink<'a> {
     // LIFETIMES.tsv: BORROW_PARAM — init_with_type stores the handler borrow;
     // no deinit, end() only dispatches
     pub ptr: &'a mut (),
-    pub vtable: VTable,
+    pub kind: SinkKind,
     pub status: Status,
     pub used: bool,
 }
@@ -46,18 +46,13 @@ impl<'a> Sink<'a> {
         // SAFETY: `()` is zero-sized, so `NonNull::dangling()` (non-null,
         // aligned) is valid to reborrow as `&mut ()`; nothing is ever read or
         // written through it. status == Closed gates all dispatch so neither
-        // `ptr` nor `vtable` is used before being overwritten by init_with_type.
-        //
-        // Both `zeroed()` and
-        // `MaybeUninit::uninit().assume_init()` are immediate UB for a struct of
-        // non-nullable `fn` pointers (niche-bearing). Instead we install a *valid*
-        // sentinel vtable whose entries unconditionally panic — this keeps the value
-        // well-formed at all times and turns any accidental dispatch
+        // `ptr` nor `kind` is used before being overwritten by init_with_type.
+        // `SinkKind::Pending` traps on dispatch, turning any accidental use
         // into a loud, deterministic crash.
         unsafe {
             Sink {
                 ptr: &mut *core::ptr::NonNull::<()>::dangling().as_ptr(),
-                vtable: VTable::PENDING,
+                kind: SinkKind::Pending,
                 status: Status::Closed,
                 used: false,
             }
@@ -78,8 +73,9 @@ pub enum Data {
     Bytes(streams::Result),
 }
 
-/// Trait capturing the duck-typed methods `VTable::wrap` expects on `Wrapped`.
+/// Trait capturing the duck-typed methods `SinkKind` dispatch expects on `Wrapped`.
 pub trait SinkHandler {
+    const KIND: SinkKind;
     fn write(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -101,14 +97,15 @@ macro_rules! impl_sink_handler {
     // `[...]` arm FIRST: a leading `[` would otherwise feed into the `:ty`
     // arm's fragment parser (which commits and hard-errors on e.g.
     // `[const SSL: bool, …]` instead of backtracking).
-    ([$($g:tt)*] $Ty:ty) => {
-        $crate::impl_sink_handler!(@emit [$($g)*] $Ty);
+    ([$($g:tt)*] $Ty:ty = $kind:expr) => {
+        $crate::impl_sink_handler!(@emit [$($g)*] $Ty = $kind);
     };
-    ($Ty:ty) => {
-        $crate::impl_sink_handler!(@emit [] $Ty);
+    ($Ty:ty = $kind:expr) => {
+        $crate::impl_sink_handler!(@emit [] $Ty = $kind);
     };
-    (@emit [$($g:tt)*] $Ty:ty) => {
+    (@emit [$($g:tt)*] $Ty:ty = $kind:expr) => {
         impl<$($g)*> $crate::webcore::sink::SinkHandler for $Ty {
+            const KIND: $crate::webcore::sink::SinkKind = $kind;
             #[inline]
             fn write(
                 &mut self,
@@ -151,9 +148,9 @@ macro_rules! impl_sink_handler {
 
 pub fn init_with_type<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
     Sink {
-        // SAFETY: type-erased borrow; recovered as *mut T in vtable thunks below.
+        // SAFETY: type-erased borrow; recovered as *mut T in SinkKind dispatch below.
         ptr: unsafe { &mut *std::ptr::from_mut::<T>(handler).cast::<()>() },
-        vtable: VTable::wrap::<T>(),
+        kind: T::KIND,
         status: Status::Ready,
         used: false,
     }
@@ -292,90 +289,79 @@ impl UTF8Fallback {
     }
 }
 
-pub type WriteUtf16Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
-pub type WriteUtf8Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
-pub type WriteLatin1Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
-pub type EndFn = fn(*mut (), Option<SysError>) -> sys::Result<()>;
-pub type ConnectFn = fn(*mut (), Signal) -> sys::Result<()>;
-
-#[derive(Clone, Copy)]
-pub struct VTable {
-    pub connect: ConnectFn,
-    pub write: WriteUtf8Fn,
-    pub write_latin1: WriteLatin1Fn,
-    pub write_utf16: WriteUtf16Fn,
-    pub end: EndFn,
+/// Closed-set tag of every concrete `SinkHandler` monomorphization. Replaces
+/// the former hand-rolled fn-ptr `VTable`: dispatch is a `match` on this
+/// discriminant that casts the erased `ptr` back to the matching type.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SinkKind {
+    /// Sentinel for `Sink::pending()`. `status == Closed` gates all dispatch,
+    /// so reaching this arm is a logic bug; it traps deterministically.
+    Pending,
+    FileSink,
+    ArrayBufferSink,
+    NetworkSink,
+    HTTPResponseSink,
+    HTTPSResponseSink,
+    H3ResponseSink,
 }
 
-impl VTable {
-    /// Sentinel vtable used for `Sink::pending()`.
-    ///
-    /// VTable's fields are bare `fn(...)` pointers — a niche-bearing non-nullable type — so
-    /// producing one via `MaybeUninit::uninit().assume_init()` or `mem::zeroed()` is
-    /// library-documented immediate UB regardless of whether the value is later read.
-    /// Instead we materialize a fully valid value whose every slot is a trap that panics on
-    /// call. `status == Closed` gates all dispatch, so these are unreachable in correct code;
-    /// if that invariant is ever violated we get a deterministic panic instead of a wild jump.
-    pub const PENDING: VTable = {
-        #[cold]
-        fn trap_write(_: *mut (), _: &streams::Result) -> streams::result::Writable {
-            unreachable!("Sink vtable called while pending (status == Closed)")
+/// Dispatch helper: match on `$kind`, recover the concrete `&mut T` from the
+/// erased `$ptr`, and invoke `SinkHandler::$method`.
+macro_rules! sink_dispatch {
+    ($kind:expr, $ptr:expr, $method:ident($($arg:expr),*)) => {{
+        use crate::webcore::streams::{HTTPResponseSink, HTTPSResponseSink, H3ResponseSink, NetworkSink};
+        let ptr: *mut () = $ptr;
+        match $kind {
+            SinkKind::Pending => {
+                unreachable!("Sink dispatched while pending (status == Closed)")
+            }
+            // SAFETY: `ptr` was erased from `&mut <variant type>` in
+            // `init_with_type`; `$kind` was set to `<variant type>::KIND` at
+            // the same site, so the tag ↔ type pairing is invariant.
+            SinkKind::FileSink => {
+                SinkHandler::$method(unsafe { &mut *ptr.cast::<FileSink>() }, $($arg),*)
+            }
+            SinkKind::ArrayBufferSink => {
+                SinkHandler::$method(unsafe { &mut *ptr.cast::<ArrayBufferSink>() }, $($arg),*)
+            }
+            SinkKind::NetworkSink => {
+                SinkHandler::$method(unsafe { &mut *ptr.cast::<NetworkSink>() }, $($arg),*)
+            }
+            SinkKind::HTTPResponseSink => {
+                SinkHandler::$method(unsafe { &mut *ptr.cast::<HTTPResponseSink>() }, $($arg),*)
+            }
+            SinkKind::HTTPSResponseSink => {
+                SinkHandler::$method(unsafe { &mut *ptr.cast::<HTTPSResponseSink>() }, $($arg),*)
+            }
+            SinkKind::H3ResponseSink => {
+                SinkHandler::$method(unsafe { &mut *ptr.cast::<H3ResponseSink>() }, $($arg),*)
+            }
         }
-        #[cold]
-        fn trap_end(_: *mut (), _: Option<SysError>) -> sys::Result<()> {
-            unreachable!("Sink vtable called while pending (status == Closed)")
-        }
-        #[cold]
-        fn trap_connect(_: *mut (), _: Signal) -> sys::Result<()> {
-            unreachable!("Sink vtable called while pending (status == Closed)")
-        }
-        VTable {
-            connect: trap_connect,
-            write: trap_write,
-            write_latin1: trap_write,
-            write_utf16: trap_write,
-            end: trap_end,
-        }
-    };
+    }};
+}
 
-    pub fn wrap<Wrapped: SinkHandler>() -> VTable {
-        fn on_write<W: SinkHandler>(
-            this: *mut (),
-            data: &streams::Result,
-        ) -> streams::result::Writable {
-            // SAFETY: `this` was erased from `&mut W` in init_with_type.
-            unsafe { &mut *this.cast::<W>() }.write(data)
-        }
-        fn on_connect<W: SinkHandler>(this: *mut (), signal: Signal) -> sys::Result<()> {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.connect(signal)
-        }
-        fn on_write_latin1<W: SinkHandler>(
-            this: *mut (),
-            data: &streams::Result,
-        ) -> streams::result::Writable {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_latin1(data)
-        }
-        fn on_write_utf16<W: SinkHandler>(
-            this: *mut (),
-            data: &streams::Result,
-        ) -> streams::result::Writable {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_utf16(data)
-        }
-        fn on_end<W: SinkHandler>(this: *mut (), err: Option<SysError>) -> sys::Result<()> {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.end(err)
-        }
-
-        VTable {
-            write: on_write::<Wrapped>,
-            write_latin1: on_write_latin1::<Wrapped>,
-            write_utf16: on_write_utf16::<Wrapped>,
-            end: on_end::<Wrapped>,
-            connect: on_connect::<Wrapped>,
-        }
+impl SinkKind {
+    #[inline]
+    fn write(self, ptr: *mut (), data: &streams::Result) -> streams::result::Writable {
+        sink_dispatch!(self, ptr, write(data))
+    }
+    #[inline]
+    fn write_latin1(self, ptr: *mut (), data: &streams::Result) -> streams::result::Writable {
+        sink_dispatch!(self, ptr, write_latin1(data))
+    }
+    #[inline]
+    fn write_utf16(self, ptr: *mut (), data: &streams::Result) -> streams::result::Writable {
+        sink_dispatch!(self, ptr, write_utf16(data))
+    }
+    #[inline]
+    fn end(self, ptr: *mut (), err: Option<SysError>) -> sys::Result<()> {
+        sink_dispatch!(self, ptr, end(err))
+    }
+    #[inline]
+    #[allow(dead_code)]
+    fn connect(self, ptr: *mut (), signal: Signal) -> sys::Result<()> {
+        sink_dispatch!(self, ptr, connect(signal))
     }
 }
 
@@ -386,7 +372,7 @@ impl<'a> Sink<'a> {
         }
 
         self.status = Status::Closed;
-        (self.vtable.end)(std::ptr::from_mut::<()>(self.ptr), err)
+        self.kind.end(std::ptr::from_mut::<()>(self.ptr), err)
     }
 
     pub fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
@@ -394,7 +380,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write_latin1)(std::ptr::from_mut::<()>(self.ptr), data);
+        let res = self.kind.write_latin1(std::ptr::from_mut::<()>(self.ptr), data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -409,7 +395,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write)(std::ptr::from_mut::<()>(self.ptr), data);
+        let res = self.kind.write(std::ptr::from_mut::<()>(self.ptr), data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -424,7 +410,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write_utf16)(std::ptr::from_mut::<()>(self.ptr), data);
+        let res = self.kind.write_utf16(std::ptr::from_mut::<()>(self.ptr), data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {

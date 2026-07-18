@@ -2052,7 +2052,15 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 }
 
-crate::impl_sink_handler!([const SSL: bool, const HTTP3: bool] HTTPServerWritable<SSL, HTTP3>);
+crate::impl_sink_handler!(
+    [const SSL: bool, const HTTP3: bool] HTTPServerWritable<SSL, HTTP3> = if HTTP3 {
+        crate::webcore::sink::SinkKind::H3ResponseSink
+    } else if SSL {
+        crate::webcore::sink::SinkKind::HTTPSResponseSink
+    } else {
+        crate::webcore::sink::SinkKind::HTTPResponseSink
+    }
+);
 
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
@@ -2420,7 +2428,7 @@ impl NetworkSink {
     pub const NAME: &'static str = "NetworkSink";
 }
 
-crate::impl_sink_handler!(NetworkSink);
+crate::impl_sink_handler!(NetworkSink = crate::webcore::sink::SinkKind::NetworkSink);
 crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {

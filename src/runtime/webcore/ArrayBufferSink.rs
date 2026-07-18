@@ -309,4 +309,4 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     }
 }
 
-crate::impl_sink_handler!(ArrayBufferSink);
+crate::impl_sink_handler!(ArrayBufferSink = crate::webcore::sink::SinkKind::ArrayBufferSink);

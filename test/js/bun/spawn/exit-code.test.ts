@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 it("process.exit(1) works", () => {
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/exit-code-1.js"]);
@@ -24,5 +24,32 @@ it("handled promise rejection reports exit code 0", () => {
 
 it("process.exit(0) works", () => {
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/exit-code-0.js"]);
+  expect(exitCode).toBe(0);
+});
+
+it("uncaught exception during top-level await is immediately fatal", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/exit-code-uncaught-during-tla-fixture.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Module evaluation must not resume after the default-fatal throw.
+  expect(stdout).toBe("");
+  expect(stderr).toContain("boom-during-tla");
+  expect(exitCode).toBe(1);
+});
+
+it("uncaught exception during top-level await is survivable with a listener", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/exit-code-uncaught-during-tla-handled-fixture.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("caught:boom-during-tla\nmodule-end\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -2481,7 +2481,22 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Bail on `unhandled_error_counter` so a default-fatal uncaught
+            // exception while the entry module is suspended in top-level await
+            // stops evaluation, matching the main drain loop in `Run::start`.
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending
+                && self.unhandled_error_counter == 0
+            {
+                if self.jsc_vm().execution_forbidden() {
+                    break;
+                }
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending
+                    && self.unhandled_error_counter == 0
+                {
+                    self.auto_tick();
+                }
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

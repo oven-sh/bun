@@ -27,8 +27,10 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
-  // windows doesn't set this, but we do to match posix compatibility
-  PWD: (process.env.PWD || process.cwd()).replaceAll("\\", "/"),
+  // The shell overwrites PWD with its own cwd (set to process.cwd() below), so
+  // the comparison env must use process.cwd() too — not an inherited $PWD that
+  // may point at a different directory than the runner was spawned in.
+  PWD: process.cwd().replaceAll("\\", "/"),
 };
 
 $.env(bunEnv);
@@ -1368,7 +1370,10 @@ describe("deno_task", () => {
 
     if (isPosix) {
       TestBuilder.command`ls . | echo hi`.exitCode(0).stdout("hi\n").runAsTest("broken pipe builtin");
-      TestBuilder.command`grep hi src/js_parser/parser.rs | echo hi`
+      // Any large readable file works here — we just need grep to write enough
+      // that the pipe breaks after `echo` exits. Use this test file itself so
+      // the path resolves regardless of the runner's cwd.
+      TestBuilder.command`grep hi ${import.meta.path} | echo hi`
         .exitCode(0)
         .stdout("hi\n")
         .stderr("")

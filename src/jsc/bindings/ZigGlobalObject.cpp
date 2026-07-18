@@ -1710,6 +1710,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseStatus);
 JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseSettledValue);
 JSC_DECLARE_HOST_FUNCTION(jsBunPokePromiseAsHandled);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamClosedPromise);
+JSC_DECLARE_HOST_FUNCTION(jsWebStreamControllerError);
 
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1838,6 +1839,27 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamClosedPromise, (JSGlobalObject * globalObjec
         return JSValue::encode(Bun::WebStreams::webStreamClosedPromise(globalObject, writable));
 
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return JSValue::encode(throwTypeError(globalObject, scope, "Expected a ReadableStream or WritableStream"_s));
+}
+
+// node:stream's addAbortSignal() errors a WHATWG stream when the signal fires. Its isWebStream()
+// gate also admits TransformStream, which has no controller to error — node throws there too (it
+// never sets kControllerErrorFunction on one), so the throw below is reachable, not dead code.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamControllerError, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue streamValue = callFrame->argument(0);
+    JSValue error = callFrame->argument(1);
+    if (auto* readable = dynamicDowncast<WebCore::JSReadableStream>(streamValue)) {
+        Bun::WebStreams::webStreamControllerError(globalObject, readable, error);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+    if (auto* writable = dynamicDowncast<WebCore::JSWritableStream>(streamValue)) {
+        Bun::WebStreams::webStreamControllerError(globalObject, writable, error);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
     return JSValue::encode(throwTypeError(globalObject, scope, "Expected a ReadableStream or WritableStream"_s));
 }
 
@@ -3035,6 +3057,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.peekPromiseSettledValuePrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPeekPromiseSettledValue, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.pokePromiseAsHandledPrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPokePromiseAsHandled, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.webStreamClosedPromisePrivateName(), JSFunction::create(vm, this, 1, String(), jsWebStreamClosedPromise, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.webStreamControllerErrorPrivateName(), JSFunction::create(vm, this, 2, String(), jsWebStreamControllerError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.esmNamespaceForCjsPrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmNamespaceForCjs, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.esmRegistryDeletePrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmRegistryDelete, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),

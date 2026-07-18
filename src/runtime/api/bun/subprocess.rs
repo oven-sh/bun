@@ -790,6 +790,16 @@ impl Subprocess<'_> {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Called from `FileSink` when ReadableStream stdin is rejected/finalized.
+    /// `signal` cannot notify the Subprocess in that mode (JSSink owns it).
+    ///
+    /// # Safety
+    /// `subprocess` must point at a live `Subprocess` on the JS thread.
+    pub unsafe fn detach_stdin_file_sink(subprocess: *mut Subprocess<'_>) {
+        // SAFETY: caller contract.
+        Writable::on_close(unsafe { &*subprocess }, None);
+    }
+
     pub fn on_stdin_destroyed(&self) {
         let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
         self.update_flags(|f| {

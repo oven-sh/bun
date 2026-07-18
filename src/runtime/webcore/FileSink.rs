@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
@@ -64,6 +65,13 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub js_sink_ref: JsCell<bun_jsc::strong::Optional>,
+
+    /// Owning `Bun.spawn` Subprocess when this sink is that child's ReadableStream
+    /// stdin. `signal` cannot carry the Subprocess back-pointer in that mode
+    /// (it holds the JSSink controller JSValue), so reject/finalize must detach
+    /// stdin through this owner instead — otherwise `weak_file_sink_stdin_ptr`
+    /// / `Writable::Pipe` dangle and `on_process_exit` UAF (#31887).
+    pub spawn_stdin_subprocess: Cell<Option<NonNull<c_void>>>,
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -315,6 +323,7 @@ impl FileSink {
             let _guard = FileSinkRef::new_ref(this);
 
             (*this).done.set(true);
+            (*this).detach_spawn_stdin_owner();
             let mut readable_stream = (*this)
                 .readable_stream
                 .replace(readable_stream::Strong::default());
@@ -935,6 +944,7 @@ impl FileSink {
         self.readable_stream.set(readable_stream::Strong::default());
         self.pending.set(streams::WritablePending::default());
         self.js_sink_ref.with_mut(|r| r.deinit());
+        self.detach_spawn_stdin_owner();
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.
         unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
@@ -1336,6 +1346,7 @@ impl FileSink {
             run_pending_later: FlushPendingTask::default(),
             readable_stream: JsCell::new(readable_stream::Strong::default()),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
+            spawn_stdin_subprocess: Cell::new(None),
         }
     }
 }
@@ -1378,8 +1389,23 @@ impl FileSink {
             stream.done(global_this);
         }
 
+        self.detach_spawn_stdin_owner();
+
         if !self.done.get() {
             self.writer.with_mut(|w| w.close());
+        }
+    }
+
+    /// Detach `Bun.spawn` stdin ownership before the FileSink can be freed.
+    /// Idempotent (`take`).
+    fn detach_spawn_stdin_owner(&self) {
+        let Some(owner) = self.spawn_stdin_subprocess.take() else {
+            return;
+        };
+        // SAFETY: set only from `Writable::init` to a live Subprocess that outlives
+        // this sink for the detach call; single JS thread.
+        unsafe {
+            crate::api::bun_subprocess::Subprocess::detach_stdin_file_sink(owner.as_ptr().cast());
         }
     }
 
@@ -1389,6 +1415,10 @@ impl FileSink {
             stream.abort(global_this);
             self.readable_stream.set(readable_stream::Strong::default());
         }
+
+        // Clear Subprocess stdin / weak pointer before close/GC can free `self`
+        // while `Writable::Pipe` still aliases it (#31887).
+        self.detach_spawn_stdin_owner();
 
         if !self.done.get() {
             self.writer.with_mut(|w| w.close());

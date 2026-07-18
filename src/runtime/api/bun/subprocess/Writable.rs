@@ -159,6 +159,7 @@ impl<'a> Writable<'a> {
                 buffer.deref();
             }
             Writable::Pipe(pipe) => {
+                Self::pipe_sink(pipe).spawn_stdin_subprocess.set(None);
                 Self::pipe_release(pipe);
             }
             _ => {}
@@ -239,6 +240,9 @@ impl<'a> Writable<'a> {
                                 return Err(crate::Error::JSError);
                             }
                             *promise_for_stream = assign_result;
+                            pipe.spawn_stdin_subprocess.set(NonNull::new(
+                                std::ptr::from_mut::<Subprocess<'a>>(subprocess).cast::<c_void>(),
+                            ));
                         }
 
                         return Ok(Writable::Pipe(pipe_nn));
@@ -345,6 +349,12 @@ impl<'a> Writable<'a> {
                         return Err(crate::Error::JSError);
                     }
                     *promise_for_stream = assign_result;
+                    // `assign_to_stream` parks the JSSink controller in `signal`, so
+                    // the Subprocess close signal cannot be wired. Keep a reverse
+                    // owner pointer for reject/finalize detach (#31887).
+                    pipe.spawn_stdin_subprocess.set(NonNull::new(
+                        std::ptr::from_mut::<Subprocess<'a>>(subprocess).cast::<c_void>(),
+                    ));
                 }
 
                 Ok(Writable::Pipe(pipe_nn))

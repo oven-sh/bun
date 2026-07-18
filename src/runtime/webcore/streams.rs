@@ -1362,7 +1362,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return None;
         }
         let len = bytes.len();
+        // Same gate as the existing `write()` fast path (`len >= highWaterMark`
+        // with an empty buffer) so this only changes how that path sends, not
+        // which path is taken.
         if len <= PINNED_WRITE_THRESHOLD
+            || (len as BlobSizeType) < self.high_water_mark
             || !self.buffer.is_empty()
             || self.requested_end
             || !input_value.is_cell()

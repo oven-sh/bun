@@ -260,17 +260,29 @@ impl JSPropertyIteratorImpl {
         own_properties_only: bool,
         only_non_index_properties: bool,
     ) -> JsResult<Option<NonNull<JSPropertyIteratorImpl>>> {
-        // may return null without an exception
-        let raw = from_js_host_call_generic(global_object, || {
-            Bun__JSPropertyIterator__create(
+        // Own the returned allocation before the post-call trap check: a
+        // termination request set between the FFI's RETURN_IF_EXCEPTION and
+        // ours would otherwise drop the raw pointer (no-op) and leak it.
+        let mut raw: *mut JSPropertyIteratorImpl = core::ptr::null_mut();
+        let check = from_js_host_call_generic(global_object, || {
+            raw = Bun__JSPropertyIterator__create(
                 global_object,
                 JSValue::from_cell(object),
                 count,
                 own_properties_only,
                 only_non_index_properties,
-            )
-        })?;
-        Ok(NonNull::new(raw))
+            );
+        });
+        let impl_ = NonNull::new(raw);
+        if let Err(e) = check {
+            if let Some(p) = impl_ {
+                // SAFETY: `p` came from Bun__JSPropertyIterator__create above
+                // and has not been freed.
+                unsafe { Bun__JSPropertyIterator__deinit(p.as_ptr()) };
+            }
+            return Err(e);
+        }
+        Ok(impl_)
     }
 
     pub fn get_name_and_value(

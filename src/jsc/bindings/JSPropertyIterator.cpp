@@ -26,7 +26,9 @@ public:
     }
 
     RefPtr<JSC::PropertyNameArray> properties;
-    Ref<JSC::VM> vm;
+    // Raw reference: the Rust `JSPropertyIterator` owner is stack-scoped with a
+    // lifetime tied to its `&JSGlobalObject`, so the VM always outlives this.
+    JSC::VM& vm;
     bool isSpecialProxy = false;
     static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArray> data)
     {
@@ -163,7 +165,7 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
         RELEASE_AND_RETURN(scope, getOwnProxyObject(iter, object, prop, propertyName));
     }
 
-    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);
     RETURN_IF_EXCEPTION(scope, {});
     if (!has) {

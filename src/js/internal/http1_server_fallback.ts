@@ -170,6 +170,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     writeContinue() {
       socket.write("HTTP/1.1 100 Continue\r\n\r\n");
     },
+    writeInformational(chunk, encoding) {
+      // _writeRaw hands the fully-rendered 1xx block here (writeEarlyHints /
+      // writeProcessing / writeInformation all route through it).
+      socket.write(chunk, encoding);
+    },
     writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;
       statusCode |= 0;

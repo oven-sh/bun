@@ -3476,7 +3476,15 @@ pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
 
     let len = resolved_len;
-    if len <= 2 {
+    // Node's guard compares `resolvedPath.length` (UTF-16 code units). For the
+    // UTF-8 `T = u8` instantiation, translate byte length to code-unit length;
+    // 2 code units occupy at most 6 UTF-8 bytes, so longer buffers skip it.
+    let code_unit_len = if !T::IS_U16 && len > 2 && len <= 6 {
+        strings::element_length_utf8_into_utf16(bytemuck::cast_slice::<T, u8>(&buf[0..len]))
+    } else {
+        len
+    };
+    if code_unit_len <= 2 {
         buf[0..path.len()].copy_from_slice(path);
         buf[path.len()] = T::default();
         return Ok(&buf[0..path.len()]);

@@ -70,6 +70,23 @@ describe("path.toNamespacedPath", () => {
     assert.strictEqual(path.win32.toNamespacedPath(emptyObj), emptyObj);
   });
 
+  // On Windows, win32.resolve("/Å") prepends the current drive, so the
+  // resolved length is never ≤ 2; the short-path guard is only observable
+  // from a non-Windows host.
+  test.skipIf(isWindows)("win32 returns short non-ASCII paths unchanged", () => {
+    // resolvedPath.length is measured in UTF-16 code units, not UTF-8 bytes.
+    assert.strictEqual(path.win32.toNamespacedPath("/Å"), "/Å");
+    assert.strictEqual(path.win32.toNamespacedPath("///Å"), "///Å");
+    assert.strictEqual(path.win32.toNamespacedPath("/é"), "/é");
+    assert.strictEqual(path.win32.toNamespacedPath("/\u00ff"), "/\u00ff");
+    assert.strictEqual(path.win32.toNamespacedPath("/\u5555"), "/\u5555");
+    assert.strictEqual(path.win32.toNamespacedPath("/./é"), "/./é");
+    // Controls: ASCII 2-unit path and >2-unit paths are unaffected.
+    assert.strictEqual(path.win32.toNamespacedPath("/a"), "/a");
+    assert.strictEqual(path.win32.toNamespacedPath("/ÅÅ"), "\\ÅÅ");
+    assert.strictEqual(path.win32.toNamespacedPath("/😀"), "\\😀");
+  });
+
   test("posix", () => {
     assert.strictEqual(path.posix.toNamespacedPath("/foo/bar"), "/foo/bar");
     assert.strictEqual(path.posix.toNamespacedPath("foo/bar"), "foo/bar");

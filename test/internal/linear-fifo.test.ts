@@ -18,6 +18,7 @@
  */
 import { linearFifoOrderedRemoveProbe } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 test("ordered_remove_item preserves FIFO order in the wrapped tail sub-branch (head < count)", () => {
@@ -40,11 +41,15 @@ test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch 
 // runtime-observable effect, so the discriminator is `cargo miri test` itself.
 // `bun run rust:miri` pins Tree Borrows (which accepts the old shape); this
 // test clears MIRIFLAGS to use miri's default Stacked Borrows model. Skipped
-// where miri is not installed (most Buildkite test lanes).
+// where miri is not installed, or where the cargo workspace is not resolvable
+// (test-only lanes run a prebuilt binary and lack vendor/lolhtml; see
+// scripts/rust-miri.ts for the same prerequisite check).
 const cargoBin = Bun.which("cargo");
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const workspaceResolvable = existsSync(path.join(repoRoot, "vendor", "lolhtml", "Cargo.toml"));
 const miriAvailable =
   !!cargoBin &&
+  workspaceResolvable &&
   Bun.spawnSync({
     cmd: [cargoBin, "miri", "--version"],
     cwd: repoRoot,

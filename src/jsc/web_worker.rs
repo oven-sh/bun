@@ -218,8 +218,6 @@ unsafe extern "C" {
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
     // safe: no args; frees this thread's lazily-allocated HPACK scratch buffer.
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
-    // safe: no args; reclaims any H2FrameParser the worker's VM failed to finalize.
-    safe fn Bun__H2FrameParser__onThreadExit();
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -1398,10 +1396,6 @@ impl WebWorker {
         // guaranteed to run before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.
         Bun__freeSharedHeaderBufferForThreadExit();
-        // ~VM's lastChanceToFinalize does not always reach every JSH2FrameParser cell when the
-        // worker was terminated mid-dispatch; reclaim any stragglers' native allocations now
-        // that the VM is down.
-        Bun__H2FrameParser__onThreadExit();
         // Free this thread's lazily-created uWS loop and its 512 KiB recv
         // buffer. The C++ thread_local `~LoopCleaner` does not fire here:
         // we return normally and

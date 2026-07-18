@@ -258,7 +258,7 @@ function getSystemErrorMessage(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
   if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
   const uv = lazyUv();
-  const entry = (uv.errmap ??= uv.getErrorMap()).get(err);
+  const entry = (uv.errmap ??= uv.getErrorMap()).$get(err);
   return entry ? entry[1] : `Unknown system error ${err}`;
 }
 

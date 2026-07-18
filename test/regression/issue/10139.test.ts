@@ -25,6 +25,8 @@ describe("https://github.com/oven-sh/bun/issues/10139", async () => {
   });
 
   afterAll(async () => {
+    // Reset global shell cwd so later test files that use Bun.$ don't inherit a deleted tempdir.
+    $.cwd(process.cwd());
     rm(temp, { recursive: true, force: true });
   });
 

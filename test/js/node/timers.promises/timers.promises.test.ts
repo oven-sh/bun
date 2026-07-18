@@ -51,13 +51,16 @@ describe("setTimeout", () => {
 describe("setInterval async iterator", () => {
   it("settles every concurrent next() call", async () => {
     const it = setInterval(10, "tick");
-    const first = it.next();
-    const second = it.next();
-    const third = it.next();
-    expect(await bound(first, 500)).toEqual(["settled", { done: false, value: "tick" }]);
-    expect(await bound(second, 500)).toEqual(["settled", { done: false, value: "tick" }]);
-    expect(await bound(third, 500)).toEqual(["settled", { done: false, value: "tick" }]);
-    await it.return();
+    try {
+      const first = it.next();
+      const second = it.next();
+      const third = it.next();
+      expect(await bound(first, 500)).toEqual(["settled", { done: false, value: "tick" }]);
+      expect(await bound(second, 500)).toEqual(["settled", { done: false, value: "tick" }]);
+      expect(await bound(third, 500)).toEqual(["settled", { done: false, value: "tick" }]);
+    } finally {
+      await it.return();
+    }
   });
 
   it("return(value) resolves { value, done: true }", async () => {
@@ -75,7 +78,8 @@ describe("setInterval async iterator", () => {
   });
 
   it("next() after return() does not yield buffered ticks", async () => {
-    const it = setInterval(10, "buf");
+    const it = setInterval(1, "buf");
+    await it.next();
     await it.next();
     await setTimeout(50);
     await it.return();

@@ -575,13 +575,8 @@ it(
     // snapshot attributes directly to the JIT worklist; that count must be zero.
     // One compiler thread so plans queue instead of draining in parallel.
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "--jsc-numberOfDFGCompilerThreads=1",
-        "--jsc-numberOfFTLCompilerThreads=1",
-        path.join(import.meta.dir, "dfg-plan-gc-fixture.js"),
-      ],
-      env: bunEnv,
+      cmd: [bunExe(), path.join(import.meta.dir, "dfg-plan-gc-fixture.js")],
+      env: { ...bunEnv, BUN_JSC_numberOfDFGCompilerThreads: "1", BUN_JSC_numberOfFTLCompilerThreads: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });

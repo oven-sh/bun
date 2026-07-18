@@ -270,7 +270,9 @@ impl UpgradedDuplex {
         // into a process abort. Re-check `wrapper` each round: BoringSSL can
         // re-enter and tear the engine down partway through.
         for chunk in staged.chunks(64 * 1024) {
-            let Some(wrapper) = &mut self.wrapper else { break };
+            let Some(wrapper) = &mut self.wrapper else {
+                break;
+            };
             wrapper.receive_data(chunk);
         }
     }

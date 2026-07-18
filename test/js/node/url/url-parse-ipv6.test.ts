@@ -6,12 +6,17 @@ import url from "node:url";
 process.emitWarning = () => {};
 
 describe("Invalid IPv6 addresses", () => {
-  it.each(["https://[::1", "https://[:::1]", "https://[\n::1]", "http://[::banana]"])(
+  it.each(["https://[::1", "https://[:::1]", "http://[::banana]"])(
     "Invalid hostnames - parsing '%s' fails",
     input => {
       expect(() => url.parse(input)).toThrowError(TypeError);
     },
   );
+
+  // Node.js strips \t \n \r from the authority before parsing, so this is valid.
+  it("'https://[\\n::1]' parses (control chars are stripped)", () => {
+    expect(url.parse("https://[\n::1]")).toMatchObject({ host: "[::1]", hostname: "::1" });
+  });
 
   it.each(["https://[::1]::", "https://[::1]:foo"])("Invalid ports - parsing '%s' fails", input => {
     expect(() => url.parse(input)).toThrowError(TypeError);

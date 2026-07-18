@@ -354,7 +354,7 @@ impl JSValue {
     pub fn is_function(self) -> bool {
         self.is_cell() && self.js_type().is_function()
     }
-    /// `JSValue.isAnyError()` — Error, Exception, or has `[Symbol.error]`.
+    /// `JSValue.isAnyError()` — Error, Exception, or DOMException.
     #[inline]
     pub fn is_any_error(self) -> bool {
         if !self.is_cell() {

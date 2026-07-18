@@ -1215,7 +1215,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn end(&mut self, err: Option<sys::Error>) -> sys::Result<()> {
         Self::end(self, err)
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue> {
+    fn end_from_js(&mut self, global: &JSGlobalObject, _err: JSValue) -> sys::Result<JSValue> {
         Self::end_from_js(self, global)
     }
     fn flush(&mut self) -> sys::Result<()> {

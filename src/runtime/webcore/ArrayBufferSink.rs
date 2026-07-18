@@ -284,7 +284,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
         Self::end(self, err)
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    fn end_from_js(&mut self, global: &JSGlobalObject, _err: JSValue) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, global) {
             bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(global) {
                 Ok(v) => v,

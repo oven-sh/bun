@@ -657,6 +657,23 @@ impl MultiPartUpload {
         }
     }
 
+    /// Extract and validate `<UploadId>` from an InitiateMultipartUpload body.
+    fn parse_upload_id(body: &[u8]) -> Option<Box<[u8]>> {
+        let start = strings::index_of(body, b"<UploadId>")? + b"<UploadId>".len();
+        let end = strings::index_of(body, b"</UploadId>")?;
+        if end < start {
+            return None;
+        }
+        let id = &body[start..end];
+        if id.is_empty()
+            || id.len() > Self::MAX_UPLOAD_ID_LEN
+            || id.iter().any(|b| !b.is_ascii() || b.is_ascii_control())
+        {
+            return None;
+        }
+        Some(Box::from(id))
+    }
+
     /// Result of the Multipart request, after this we can start draining the parts
     pub fn start_multi_part_request_result(
         result: S3DownloadResult,
@@ -669,6 +686,16 @@ impl MultiPartUpload {
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
+            // Already failed while the init request was in flight. If the
+            // server created an upload, roll it back instead of orphaning it.
+            if let S3DownloadResult::Success(response) = result {
+                if let Some(id) = Self::parse_upload_id(response.body.list.as_slice()) {
+                    this.upload_id = id;
+                    // rollback consumes one ref via its completion callback
+                    this.ref_();
+                    return this.rollback_multi_part_request();
+                }
+            }
             return Ok(());
         }
         match result {
@@ -684,24 +711,9 @@ impl MultiPartUpload {
             }
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
-                let slice = response.body.list.as_slice();
-                // PERF: upload_id is duped out of the body instead of slicing into it
-                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
-                    let value_start = start + b"<UploadId>".len();
-                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
-                        if end >= value_start {
-                            this.upload_id = Box::<[u8]>::from(&slice[value_start..end]);
-                        }
-                    }
-                }
+                let upload_id = Self::parse_upload_id(response.body.list.as_slice());
                 this.uploadid_buffer = response.body;
-                if this.upload_id.is_empty()
-                    || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN
-                    || this
-                        .upload_id
-                        .iter()
-                        .any(|b| !b.is_ascii() || b.is_ascii_control())
-                {
+                let Some(upload_id) = upload_id else {
                     // Unknown type of response error from AWS
                     scoped_log!(
                         S3MultiPartUpload,
@@ -713,7 +725,8 @@ impl MultiPartUpload {
                         message: b"Failed to initiate multipart upload",
                     })?;
                     return Ok(());
-                }
+                };
+                this.upload_id = upload_id;
                 scoped_log!(
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} success id: {}",

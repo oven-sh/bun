@@ -753,7 +753,7 @@ pub trait JsSinkType: Sized {
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
+    fn end_from_js(&mut self, global: &JSGlobalObject, err: JSValue) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
     fn start(&mut self, config: streams::Start) -> sys::Result<()>;
 
@@ -1010,7 +1010,10 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        let result = match this.sink.end_from_js(global) {
+        let err_arg = frame.argument(0);
+        err_arg.ensure_still_alive();
+
+        let result = match this.sink.end_from_js(global, err_arg) {
             sys::Result::Ok(value) => Ok(value),
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         };
@@ -1102,7 +1105,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         // TODO: properly propagate exception upwards
-        match this.end_from_js(global) {
+        match this.end_from_js(global, crate::webcore::jsc::JSValue::UNDEFINED) {
             sys::Result::Ok(value) => value,
             sys::Result::Err(err) => match err.to_js(global) {
                 Ok(v) => {

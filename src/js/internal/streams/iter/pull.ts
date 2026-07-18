@@ -954,7 +954,7 @@ async function pipeTo(source, ...args) {
 
     if (!options?.preventClose) {
       if (!hasEndSync || writer.endSync() < 0) {
-        await writer.end?.(signal ? { __proto__: null, signal } : undefined);
+        await writer.end?.();
       }
     }
   } catch (error) {

@@ -115,6 +115,7 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
+#include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
@@ -3584,11 +3585,17 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     JSC::JSCell* cell = value.asCell();
     JSC::JSType type = cell->type();
 
+    if (type == JSC::ErrorInstanceType) {
+        return true;
+    }
+
     if (type == JSC::CellType) {
         return cell->inherits<JSC::Exception>();
     }
 
-    return type == JSC::ErrorInstanceType;
+    // DOMException uses JSC::ObjectType but chains its prototype through
+    // Error.prototype, so `instanceof Error` is true.
+    return cell->inherits<WebCore::JSDOMException>();
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::reject

@@ -19,6 +19,7 @@ use bun_sys::dns::{
 };
 use bun_loop::{self as Async, FilePoll, KeepAlive};
 use crate::vm::virtual_machine::VirtualMachine;
+use crate::jsc_ext::{JSGlobalObjectExt as _, JSPromiseStrongExt as _};
 use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
@@ -5714,7 +5715,7 @@ impl Resolver {
             return Ok(c_ares::AF::INET6);
         }
 
-        Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+        Err(jsc::ErrorCode::INVALID_IP_ADDRESS.throw(
             global_this,
             format_args!(
                 "Invalid IP address: \"{}\"",
@@ -5735,7 +5736,7 @@ impl Resolver {
         {
             return Err(global_this
                 .err(
-                    jsc::Error::DNS_SET_SERVERS_FAILED,
+                    jsc::ErrorCode::DNS_SET_SERVERS_FAILED,
                     format_args!("Failed to set servers: there are pending queries"),
                 )
                 .throw());
@@ -5820,7 +5821,7 @@ impl Resolver {
                 c_ares::ares_inet_pton(af, address_buffer.as_ptr().cast::<c_char>(), addr_dst)
             } != 1
             {
-                return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
+                return Err(jsc::ErrorCode::INVALID_IP_ADDRESS.throw(
                     global_this,
                     format_args!(
                         "Invalid IP address: \"{}\"",

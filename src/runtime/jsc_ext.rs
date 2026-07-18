@@ -148,6 +148,39 @@ impl JSPromiseExt for JSPromise {
     }
 }
 
+// ─── JSPromiseStrongExt ─────────────────────────────────────────────────────
+pub trait JSPromiseStrongExt {
+    fn reject_task(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JSValue,
+    ) -> Result<(), crate::JsTerminated>;
+    fn resolve_task(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JSValue,
+    ) -> Result<(), crate::JsTerminated>;
+}
+
+impl JSPromiseStrongExt for crate::JSPromiseStrong {
+    fn reject_task(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JSValue,
+    ) -> Result<(), crate::JsTerminated> {
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
+        self.reject(global, Ok(val))
+    }
+    fn resolve_task(
+        &mut self,
+        global: &JSGlobalObject,
+        val: JSValue,
+    ) -> Result<(), crate::JsTerminated> {
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
+        self.resolve(global, val)
+    }
+}
+
 // ─── FetchHeadersExt ────────────────────────────────────────────────────────
 unsafe extern "C" {
     fn WebCore__FetchHeaders__toUWSResponse(

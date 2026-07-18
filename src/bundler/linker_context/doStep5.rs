@@ -314,16 +314,8 @@ impl LinkerContext<'_> {
             // form re-loaded `keys.len()` and bounds-checked each access).
             let part_index_u32 = part_index as u32;
             let dependencies = &mut part.dependencies;
-            for &ref_ in part.symbol_uses.keys() {
-                debug_assert!({
-                    let j = part
-                        .symbol_uses
-                        .keys()
-                        .iter()
-                        .position(|k| *k == ref_)
-                        .unwrap();
-                    part.symbol_uses.values()[j].count_estimate > 0
-                });
+            for (j, &ref_) in part.symbol_uses.keys().iter().enumerate() {
+                debug_assert!(part.symbol_uses.values()[j].count_estimate > 0);
 
                 // Inlined `c.top_level_symbols_to_parts(id, ref_)` against the
                 // hoisted per-file maps so the column pointer math (and the

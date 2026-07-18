@@ -1650,6 +1650,11 @@ pub mod __gated_printer {
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
+        /// Lazy reverse index of `options.commonjs_named_exports`:
+        /// `values()[i].loc_ref.ref_` → `i`. Built on the first
+        /// `ECommonjsExportIdentifier` so the per-reference lookup is O(1).
+        commonjs_export_ref_to_index: bun_collections::HashMap<Ref, u32>,
+
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
         pub bump: &'a bun_alloc::Arena,
@@ -3383,12 +3388,18 @@ pub mod __gated_printer {
                     // then drop the immutable iter borrow before printing.
                     let mut found: Option<usize> = None;
                     if let Some(exports) = self.options.commonjs_named_exports {
-                        for (idx, value) in exports.values().iter().enumerate() {
-                            if value.loc_ref.ref_.eql(id.ref_) {
-                                found = Some(idx);
-                                break;
+                        let values = exports.values();
+                        if self.commonjs_export_ref_to_index.is_empty() && !values.is_empty() {
+                            self.commonjs_export_ref_to_index.reserve(values.len());
+                            for (idx, value) in values.iter().enumerate() {
+                                self.commonjs_export_ref_to_index
+                                    .insert(value.loc_ref.ref_, idx as u32);
                             }
                         }
+                        found = self
+                            .commonjs_export_ref_to_index
+                            .get(&id.ref_)
+                            .map(|&i| i as usize);
                     }
                     if let Some(idx) = found {
                         let exports = self.options.commonjs_named_exports.unwrap();
@@ -7040,6 +7051,7 @@ pub mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
+                commonjs_export_ref_to_index: bun_collections::HashMap::default(),
             };
             // The `Builder` field is `&'static [u32]` pending lifetime threading,
             // so instead of caching a self-borrow here,

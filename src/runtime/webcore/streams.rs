@@ -1526,10 +1526,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             res.end(buf, false);
             self.has_backpressure = false;
             self.handle_wrote(buf.len());
-        } else if buf.len() > core::ffi::c_uint::MAX as usize {
-            // tryWriteBody emits the chunk-size line via writeUnsignedHex
-            // ((unsigned int)len); fall back to res.write() which splits
-            // >4 GiB into correctly-framed sub-chunks.
+        } else if HTTP3 || buf.len() > core::ffi::c_uint::MAX as usize {
+            // The H3 `try_write_body` shim discards write()'s backpressure
+            // result, and tryWriteBody emits the chunk-size line via
+            // writeUnsignedHex((unsigned int)len); fall back to res.write()
+            // (which reports backpressure for H3 and splits >4 GiB into
+            // correctly-framed sub-chunks for H1).
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
             self.handle_wrote(buf.len());
         } else {
@@ -1625,7 +1627,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             res.end(&self.buffer[base..], false);
             self.has_backpressure = false;
             self.handle_wrote(buf_len);
-        } else if buf_len > core::ffi::c_uint::MAX as usize {
+        } else if HTTP3 || buf_len > core::ffi::c_uint::MAX as usize {
             self.has_backpressure = matches!(
                 res.write(&self.buffer[base..]),
                 uws::WriteResult::Backpressure(_)

@@ -3354,6 +3354,9 @@ pub mod formatter {
         }
         for _ in 0..64 {
             let proto = pointer.get_prototype(global);
+            if global.has_exception() {
+                return Err(jsc::JsError::Thrown);
+            }
             if proto.is_empty_or_undefined_or_null() || !proto.is_object() {
                 return Ok(false);
             }

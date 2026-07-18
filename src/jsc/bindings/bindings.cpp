@@ -5058,17 +5058,19 @@ JSC::EncodedJSValue JSC__JSValue__fastGet(JSC::EncodedJSValue JSValue0, JSC::JSG
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__fastGetOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, unsigned char arg2)
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
     PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
-    const Identifier name = builtinNameMap(globalObject->vm(), arg2);
+    const Identifier name = builtinNameMap(vm, arg2);
     auto* object = value.getObject();
 
-    if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
-        return JSValue::encode(slot.getValue(globalObject, name));
-    }
-
-    return {};
+    bool hasSlot = object->getOwnPropertySlot(object, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasSlot) return {};
+    RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, name)));
 }
 
 __attribute__((__always_inline__)) bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)

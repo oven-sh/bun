@@ -53,6 +53,9 @@ private:
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
 
+    /* Storage for normalized request targets; segments handed to handlers point into it */
+    std::string normalizedUrlBuffer = {};
+
     /* The matching tree */
     struct Node {
         std::string name = {};
@@ -127,6 +130,104 @@ private:
         /* We expect to stand on a slash */
         currentUrl = url;
         urlSegmentTop = -1;
+    }
+
+    /* True if the three bytes at "at" spell a percent-encoded dot ("%2e" or "%2E") */
+    static bool isEncodedDotAt(std::string_view url, size_t at) {
+        return url.length() >= at + 3 && url[at] == '%' && url[at + 1] == '2' && (url[at + 2] | 32) == 'e';
+    }
+
+    /* Single-dot path segment per the WHATWG URL parser: "." or "%2e" */
+    static bool isSingleDotSegment(std::string_view segment) {
+        switch (segment.length()) {
+            case 1: return segment[0] == '.';
+            case 3: return isEncodedDotAt(segment, 0);
+            default: return false;
+        }
+    }
+
+    /* Double-dot path segment per the WHATWG URL parser: "..", ".%2e", "%2e.", "%2e%2e" */
+    static bool isDoubleDotSegment(std::string_view segment) {
+        switch (segment.length()) {
+            case 2: return segment[0] == '.' && segment[1] == '.';
+            case 4: return (segment[0] == '.' && isEncodedDotAt(segment, 1)) || (isEncodedDotAt(segment, 0) && segment[3] == '.');
+            case 6: return isEncodedDotAt(segment, 0) && isEncodedDotAt(segment, 3);
+            default: return false;
+        }
+    }
+
+    /* Whether normalizeUrl(url) would return something different from url */
+    static bool urlNeedsNormalization(std::string_view url) {
+        for (size_t i = 0; i < url.length(); i++) {
+            char c = url[i];
+            if (c == '\\' || c == '#') {
+                return true;
+            }
+            /* Dot-segments can only start right after a '/'; dotfile segments (".well-known") are not dot-segments */
+            if (c == '/' && i + 1 < url.length() && (url[i + 1] == '.' || isEncodedDotAt(url, i + 1))) {
+                size_t segmentEnd = i + 1;
+                while (segmentEnd < url.length() && url[segmentEnd] != '/' && url[segmentEnd] != '\\' && url[segmentEnd] != '#') {
+                    segmentEnd++;
+                }
+                std::string_view segment = url.substr(i + 1, segmentEnd - i - 1);
+                if (isSingleDotSegment(segment) || isDoubleDotSegment(segment)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /* Handlers observe the URL-parser-normalized path (dot-segments and their "%2e" spellings
+     * resolved, "\" treated as "/", "#" ending the path), so routes must match that path, not the
+     * raw spelling. Callers pass the target cut at the first "?". No percent-decoding is applied. */
+    std::string_view normalizeUrl(std::string_view url) {
+        /* Only origin-form targets are paths; "*" and CONNECT authority-forms match as-is */
+        if (url.length() < 2 || url[0] != '/' || !urlNeedsNormalization(url)) {
+            return url;
+        }
+
+        normalizedUrlBuffer.clear();
+        normalizedUrlBuffer.reserve(url.length());
+
+        for (size_t segmentStart = 1, i = 1;; i++) {
+            bool atEnd = i >= url.length();
+            bool isSeparator = !atEnd && (url[i] == '/' || url[i] == '\\');
+            bool endsPath = atEnd || url[i] == '#';
+            if (!isSeparator && !endsPath) {
+                continue;
+            }
+
+            std::string_view segment = url.substr(segmentStart, i - segmentStart);
+            if (isDoubleDotSegment(segment)) {
+                /* Pop the previous segment, never above the root */
+                size_t lastSlash = normalizedUrlBuffer.length();
+                while (lastSlash > 0 && normalizedUrlBuffer[lastSlash - 1] != '/') {
+                    lastSlash--;
+                }
+                if (lastSlash > 0) {
+                    normalizedUrlBuffer.resize(lastSlash - 1);
+                }
+                if (endsPath) {
+                    normalizedUrlBuffer += '/';
+                }
+            } else if (isSingleDotSegment(segment)) {
+                if (endsPath) {
+                    normalizedUrlBuffer += '/';
+                }
+            } else {
+                /* Every segment, including empty ones, contributes exactly one '/'; the ".." pop relies on that */
+                normalizedUrlBuffer += '/';
+                normalizedUrlBuffer.append(segment);
+            }
+
+            if (endsPath) {
+                break;
+            }
+            segmentStart = i + 1;
+        }
+
+        return normalizedUrlBuffer;
     }
 
     /* Lazily parse or read from cache */
@@ -255,7 +356,7 @@ public:
     /* Fast path */
     bool route(std::string_view method, std::string_view url) {
         /* Reset url parsing cache */
-        setUrl(url);
+        setUrl(normalizeUrl(url));
         routeParameters.reset();
 
         /* Begin by finding the method node */

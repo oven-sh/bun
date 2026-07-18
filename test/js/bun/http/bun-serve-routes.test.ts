@@ -992,3 +992,121 @@ it("routes absolute-form request targets by path and derives request.url from th
     expect(rawUrl.search).toBe(new URL(target).search);
   }
 });
+
+describe("request-target normalization before route matching", () => {
+  // Routing must use the same path the handler observes via request.url (which the URL parser
+  // normalizes), otherwise "GET /w/../admin/x" is dispatched by its raw spelling (wildcard or
+  // fallback) while every handler and log downstream sees "/admin/x".
+  let server: Server;
+  const seen: { route: string; url: string; param?: string }[] = [];
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        "/admin/x": req => {
+          seen.push({ route: "/admin/x", url: req.url });
+          return new Response("admin");
+        },
+        "/w/*": req => {
+          seen.push({ route: "/w/*", url: req.url });
+          return new Response("wildcard");
+        },
+        "/p/:v": req => {
+          seen.push({ route: "/p/:v", url: req.url, param: req.params.v });
+          return new Response("param");
+        },
+      },
+      fetch(req) {
+        seen.push({ route: "fallback", url: req.url });
+        return new Response("fallback");
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  // fetch() resolves dot-segments client-side, so the raw request-target has to be written
+  // over a plain socket.
+  function rawRequest(target: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let received = "";
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(`GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nConnection: close\r\n\r\n`);
+          },
+          data(socket, chunk) {
+            received += chunk.toString();
+          },
+          close() {
+            resolve(received);
+          },
+          error(socket, err) {
+            reject(err);
+          },
+        },
+      }).catch(reject);
+    });
+  }
+
+  const cases: { target: string; route: string; pathname: string; param?: string }[] = [
+    { target: "/admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // dot-segments must not skip the exact route (and its guards) in favor of the fallback
+    { target: "/admin/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/./admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // dot-segments must not hand a path outside the wildcard's prefix to the wildcard handler
+    { target: "/w/../admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // percent-encoded dot-segment spellings the URL parser resolves ("%2e" == ".")
+    { target: "/w/%2e%2e/admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/w/.%2E/admin/x", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/w/%2E./admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // the URL parser treats "\" as "/" for http(s) URLs
+    { target: "/w\\..\\admin/x", route: "/admin/x", pathname: "/admin/x" },
+    // the path ends at the fragment
+    { target: "/admin/x#frag", route: "/admin/x", pathname: "/admin/x" },
+    // the HTTP parser strips the query before routing, so dot-segments after "?" never matter
+    { target: "/admin/x?query=1", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/admin/x?next=/w/../admin", route: "/admin/x", pathname: "/admin/x" },
+    // normalization inside a subtree stays inside it
+    { target: "/w/sub/../x", route: "/w/*", pathname: "/w/x" },
+    { target: "/w/%2e/x", route: "/w/*", pathname: "/w/x" },
+    { target: "/p/x/../y", route: "/p/:v", pathname: "/p/y", param: "y" },
+    // empty segments are preserved, and ".." pops the empty segment, not the one before it
+    { target: "/w//../admin/x", route: "/w/*", pathname: "/w/admin/x" },
+    { target: "//a/../b", route: "fallback", pathname: "//b" },
+    { target: "/w\\\\x", route: "/w/*", pathname: "/w//x" },
+    // normalization never escapes the root
+    { target: "/w/..", route: "fallback", pathname: "/" },
+    { target: "/..", route: "fallback", pathname: "/" },
+    // a trailing dot-segment keeps the trailing slash, which is a different path
+    { target: "/admin/x/y/..", route: "fallback", pathname: "/admin/x/" },
+    { target: "/p/a/..", route: "fallback", pathname: "/p/" },
+    // dotfile segments are not dot-segments
+    { target: "/.well-known/x", route: "fallback", pathname: "/.well-known/x" },
+    { target: "/w/.hidden", route: "/w/*", pathname: "/w/.hidden" },
+    // an encoded "/" is not a path separator and does not split the parameter
+    { target: "/p/..%2fadmin", route: "/p/:v", pathname: "/p/..%2fadmin", param: "../admin" },
+    // matching stays percent-encoded: no decoding is applied to the path
+    { target: "/admin/%78", route: "fallback", pathname: "/admin/%78" },
+  ];
+
+  it("dispatches raw request-target spellings to the route request.url implies", async () => {
+    const results: typeof cases = [];
+    for (const { target } of cases) {
+      seen.length = 0;
+      const response = await rawRequest(target);
+      expect(response).toContain("HTTP/1.1 200");
+      expect(seen).toHaveLength(1);
+      const { route, url, param } = seen[0];
+      results.push({ target, route, pathname: new URL(url).pathname, ...(param !== undefined ? { param } : {}) });
+    }
+    expect(results).toEqual(cases);
+  });
+});

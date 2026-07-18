@@ -546,7 +546,7 @@ class Utf8Stream extends EventEmitter {
       // we do it here to avoid the overhead of calculating the buffer size
       // in releaseWritingBuf.
       this.#writingBuf = Buffer.from(this.#writingBuf);
-      this.#fs.write(this.#fd, this.#writingBuf, (...args) => this.#release(...(args as [any, any])));
+      this.#fsWrite();
     }
   }
 
@@ -562,7 +562,7 @@ class Utf8Stream extends EventEmitter {
         this.#release(err);
       }
     } else {
-      this.#fs.write(this.#fd, this.#writingBuf, "utf8", (...args) => this.#release(...(args as [any, any])));
+      this.#fsWrite();
     }
   }
 

@@ -870,7 +870,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Accepts `string | { directory?: string, portable?: boolean } | undefined`.
+    // When a directory is provided explicitly it must be a string.
+    JSC::JSValue optionsValue = callFrame->argument(0);
+    JSC::JSValue directoryValue = optionsValue;
+    // Matches `typeof options === "object"`, so a callable is not an options bag.
+    if (optionsValue.isObject() && !optionsValue.isCallable()) {
+        directoryValue = optionsValue.getObject()->getIfPropertyExists(
+            globalObject, JSC::Identifier::fromString(vm, "directory"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (directoryValue.isEmpty()) directoryValue = JSC::jsUndefined();
+    }
+
+    if (!directoryValue.isUndefined() && !directoryValue.isString()) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "cacheDir should be a string"_s);
+        return {};
+    }
+
+    // There is no on-disk module compile cache, so report failure instead of
+    // silently claiming the cache was enabled.
+    auto* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s),
+        JSC::jsNumber(0)); // constants.compileCacheStatus.FAILED
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s),
+        JSC::jsString(vm, String("the on-disk module compile cache is not supported"_s)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,

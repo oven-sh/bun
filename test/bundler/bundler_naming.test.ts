@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { ESBUILD, itBundled } from "./expectBundled";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 describe("bundler", () => {

@@ -2407,24 +2407,22 @@ function renderNativeHeaders(res) {
 }
 
 const kMustCloseConnection = Symbol("kMustCloseConnection");
+// Tri-state: `true` = the deferred end is scheduled; the symbol value itself =
+// it has run (the current read is fully parsed), so end once the pipeline
+// drains. Two states so a 503's own "finish" during per-request
+// drainMicrotasks() does not close the socket before the next pipelined
+// request is dispatched.
 const kEndAfterDroppedRequests = Symbol("kEndAfterDroppedRequests");
 
-// Runs once the current read has been fully parsed, so every request that was
-// already pipelined behind the dropped one has been answered with its own 503.
+// Runs once the current read has been fully parsed. With nothing left in flight
+// or queued, every pipelined request has been answered: end the connection.
+// Otherwise onResponseFinishHandleSocket ends it once the pipeline drains.
 function endSocketAfterDroppedRequests(socket) {
   if (!socket || socket.destroyed || socket.writableEnded) return;
-  // An earlier response on this connection has not finished yet: its queued
-  // 503s are still waiting to be written, so close after the last one instead.
-  const queue = socket[kPipelinedResponses];
-  if (queue?.length) {
-    queue[queue.length - 1][kMustCloseConnection] = true;
-    return;
-  }
+  socket[kEndAfterDroppedRequests] = kEndAfterDroppedRequests;
+  if (socket[kPipelinedResponses]?.length) return;
   const inFlight = socket._httpMessage;
-  if (inFlight && !inFlight.finished) {
-    inFlight[kMustCloseConnection] = true;
-    return;
-  }
+  if (inFlight && !inFlight.finished) return;
   socket.end();
 }
 
@@ -2489,6 +2487,13 @@ function onResponseFinishHandleSocket(server, socket, res) {
   // Pipelined responses are still queued behind this one: the connection is
   // not idle, so do not arm the keep-alive idle timeout yet.
   if (socket[kPipelinedResponses]?.length) {
+    return;
+  }
+  // A request past maxRequestsPerSocket was dropped on this connection, the
+  // current read has been fully parsed, and the response pipeline has now
+  // drained: end it, deferred so every queued 503 could be written first.
+  if (socket[kEndAfterDroppedRequests] === kEndAfterDroppedRequests) {
+    socket.end();
     return;
   }
   const rawKeepAliveTimeout = server.keepAliveTimeout;

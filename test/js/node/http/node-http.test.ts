@@ -3805,13 +3805,13 @@ it.concurrent("the connection is ended only after the pipelined requests have be
 });
 
 it.concurrent("over-limit 503s queued behind an async response are written before the connection ends", async () => {
-  // When the first response finishes asynchronously, the over-limit 503s are
-  // buffered in the response pipeline; closing before the last one flushes
-  // would drop it.
+  // The first response finishes two check phases out, so the deferred end runs
+  // while the over-limit 503s are still queued behind it; closing then (or on
+  // the still-in-flight response's "finish") would drop them.
   const drops: string[] = [];
   const server = createServer((req, res) => {
     req.resume();
-    setImmediate(() => res.end("ok"));
+    setImmediate(() => setImmediate(() => res.end("ok")));
   });
   server.maxRequestsPerSocket = 1;
   server.on("dropRequest", req => drops.push(req.url));
@@ -3823,6 +3823,53 @@ it.concurrent("over-limit 503s queued behind an async response are written befor
     const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "serverClose");
 
     expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops).toEqual(["/b", "/c"]);
+  } finally {
+    server.close();
+  }
+});
+
+it.concurrent("an over-limit request arriving in a later read is answered before the connection ends", async () => {
+  // The deferred end must not pin the close to a response that was the
+  // queue tail at the time: a later read can grow the queue before the
+  // in-flight response finishes.
+  const drops: string[] = [];
+  const { promise: firstResponseBarrier, resolve: unblockFirstResponse } = Promise.withResolvers<void>();
+  const { promise: sawFirstDrop, resolve: onFirstDrop } = Promise.withResolvers<void>();
+  const server = createServer(async (req, res) => {
+    req.resume();
+    await firstResponseBarrier;
+    res.end("ok");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => {
+    drops.push(req.url);
+    onFirstDrop();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise: raw, resolve: gotRaw } = Promise.withResolvers<string>();
+    const socket = connect(port, "127.0.0.1");
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("close", () => gotRaw(data));
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    // Read #1: /a is handled, /b is over the limit and queued behind it.
+    socket.write(rawGet("/a") + rawGet("/b"));
+    await sawFirstDrop;
+    // Let the server's deferred-end callback (same event loop) run first.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Read #2: /c is over the limit too, queued behind /b.
+    socket.write(rawGet("/c"));
+    await once(server, "dropRequest");
+    unblockFirstResponse();
+
+    const out = await raw;
+    expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
     expect(drops).toEqual(["/b", "/c"]);
   } finally {
     server.close();

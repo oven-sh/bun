@@ -803,6 +803,27 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  test("Reflect.construct on a mock returns an object and records the instance", () => {
+    const fn = jest.fn();
+    const instance = Reflect.construct(fn, [1, 2]);
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBeNull();
+    expect(fn.mock.instances).toEqual([instance]);
+    expect(fn.mock.contexts).toEqual([instance]);
+    expect(fn.mock.calls).toEqual([[1, 2]]);
+
+    const fn2 = jest.fn(() => ({ tag: "impl" }));
+    const result2 = Reflect.construct(fn2, []);
+    expect(result2).toEqual({ tag: "impl" });
+    expect(fn2.mock.instances).toHaveLength(1);
+    expect(fn2.mock.instances[0]).not.toBe(result2);
+
+    const fn3 = jest.fn(() => 42);
+    const result3 = new fn3();
+    expect(typeof result3).toBe("object");
+    expect(fn3.mock.instances).toEqual([result3]);
+  });
 });
 
 describe("resetAllMocks", () => {

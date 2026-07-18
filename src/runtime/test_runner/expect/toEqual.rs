@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
+use super::throw;
 use super::DiffFormatter;
 use super::Expect;
 
@@ -42,10 +43,10 @@ impl Expect {
 
         if not {
             let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", true);
-            return this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter));
+            return throw!(this, global, signature, "\n\n{}\n", diff_formatter);
         }
 
         let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", false);
-        this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
+        throw!(this, global, signature, "\n\n{}\n", diff_formatter)
     }
 }

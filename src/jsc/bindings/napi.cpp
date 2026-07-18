@@ -57,6 +57,7 @@
 #include "napi.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/BigIntObject.h>
+#include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
 
@@ -2076,20 +2077,34 @@ extern "C" napi_status napi_get_all_property_names(
         JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
+            auto propKey = key.toPropertyKey(globalObject);
             PropertyDescriptor desc;
 
+            JSObject* owner = object;
             if (key_mode == napi_key_include_prototypes) {
                 // Climb up the prototype chain to find inherited properties
-                JSObject* current_object = object;
-                while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
-                    JSObject* proto = current_object->getPrototype(globalObject).getObject();
+                while (!owner->getOwnPropertyDescriptor(globalObject, propKey, desc)) {
+                    JSObject* proto = owner->getPrototype(globalObject).getObject();
                     if (!proto) {
                         break;
                     }
-                    current_object = proto;
+                    owner = proto;
                 }
             } else {
-                object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc);
+                owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
+            }
+
+            // V8 never applies ONLY_WRITABLE/ONLY_CONFIGURABLE to Proxy keys
+            // (FilterProxyKeys checks enumerable only) or to a String wrapper's
+            // character indices (StringWrapperElementsAccessor adds them unfiltered).
+            bool exempt_attr_filter = false;
+            JSC::JSType owner_type = owner->type();
+            if (owner_type == JSC::ProxyObjectType) {
+                exempt_attr_filter = true;
+            } else if (owner_type == JSC::StringObjectType || owner_type == JSC::DerivedStringObjectType) {
+                if (auto index = parseIndex(propKey)) {
+                    exempt_attr_filter = *index < uncheckedDowncast<StringObject>(owner)->internalValue()->length();
+                }
             }
 
             bool include = true;
@@ -2099,10 +2114,10 @@ extern "C" napi_status napi_get_all_property_names(
             if (key_filter & napi_key_writable) {
                 // V8's ONLY_WRITABLE filters on the ReadOnly attribute; accessor
                 // descriptors never carry it, so they always pass.
-                include = include && (desc.isAccessorDescriptor() || desc.writable());
+                include = include && (exempt_attr_filter || desc.isAccessorDescriptor() || desc.writable());
             }
             if (key_filter & napi_key_configurable) {
-                include = include && desc.configurable();
+                include = include && (exempt_attr_filter || desc.configurable());
             }
 
             if (include) {

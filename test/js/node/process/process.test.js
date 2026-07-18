@@ -165,9 +165,7 @@ it.skipIf(!isLinux)("--title writes through to /proc/self/cmdline", async () => 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("fromflag");
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "fromflag", stderr: "", exitCode: 0 });
 });
 
 it("process.chdir() on root dir", () => {

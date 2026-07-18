@@ -112,20 +112,16 @@ describe("css tests", () => {
     // Non-minified output is unchanged.
     cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
 
-    // Leading / trailing whitespace around a custom property value is trimmed
-    // in-place during parsing; these cover each combination so the trim path
-    // stays correct independent of how it's implemented.
+    // Leading/trailing whitespace around a custom-property value is dropped.
     minify_test(":root{--a: x}", ":root{--a:x}");
     minify_test(":root{--a:x }", ":root{--a:x}");
     minify_test(":root{--a: x }", ":root{--a:x}");
     minify_test(":root{--a:x y}", ":root{--a:x y}");
     minify_test(":root{--a: x y }", ":root{--a:x y}");
-    // A value that is only whitespace must survive as a single whitespace
-    // token (len < 2 so trimming is skipped).
+    // A value that is only whitespace is preserved as a single space.
     minify_test(":root{--a: }", ":root{--a: }");
     minify_test(":root{--a:  }", ":root{--a: }");
-    // Nested function arguments typically have no surrounding whitespace and
-    // hit the no-trim fast path.
+    // Same trimming applies inside function arguments.
     minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
     minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
   });

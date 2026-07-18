@@ -455,7 +455,7 @@ impl TokenList {
     }
 
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
-        let mut tokens: Vec<TokenOrValue> = Vec::new(); // PERF: deinit on error
+        let mut tokens: Vec<TokenOrValue> = Vec::new();
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
         // Slice off leading and trailing whitespace if there are at least two tokens.

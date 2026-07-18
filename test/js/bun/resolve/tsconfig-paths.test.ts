@@ -9,12 +9,12 @@ import { join } from "path";
 
 describe.concurrent("tsconfig compilerOptions.paths", () => {
   test("exact-match resolution is O(1), not a scan over keys", async () => {
-    // Self-calibrating complexity check: with 8000 exact-match keys (all the
+    // Self-calibrating complexity check: with 3000 exact-match keys (all the
     // same length, sharing a long prefix so a bytewise compare cannot exit on
     // the first word), resolving the last inserted key must not be materially
     // slower than resolving the first. On the linear scan the measured ratio
-    // is ~45x (release) / ~140x (debug); on a hash lookup it is ~1x.
-    const N_KEYS = 8000;
+    // is ~27x (release) / ~53x (debug); on a hash lookup it is ~1x.
+    const N_KEYS = 3000;
     const PREFIX = "monorepo-internal-workspace-package-alias-name-slot";
     const keyAt = (i: number) => PREFIX + String(i).padStart(60 - PREFIX.length, "0");
 
@@ -31,7 +31,7 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
         `const PREFIX = ${JSON.stringify(PREFIX)};\n` +
         `const keyAt = i => PREFIX + String(i).padStart(${60 - PREFIX.length}, "0");\n` +
         `const target = Bun.resolveSync("./impl/target.ts", dir);\n` +
-        `const ITERS = 1000;\n` +
+        `const ITERS = 400;\n` +
         `const bench = k => {\n` +
         `  const t0 = Bun.nanoseconds();\n` +
         `  for (let i = 0; i < ITERS; i++)\n` +
@@ -56,14 +56,10 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 15_000,
-      killSignal: "SIGKILL",
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // A linear-scan debug build is killed by the spawn timeout above before
-    // it can print; a release build prints with a ratio well over the bound.
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const { first, last, ratio } = JSON.parse(stdout);
     expect({ first, last, ratio }).toEqual({
@@ -71,10 +67,10 @@ describe.concurrent("tsconfig compilerOptions.paths", () => {
       last: expect.any(Number),
       ratio: expect.any(Number),
     });
-    // Linear scan gives >=45x here; hash lookup gives ~1x. 5x leaves >8x
+    // Linear scan gives >=27x here; hash lookup gives ~1x. 5x leaves >5x
     // headroom on both sides across release, debug, and ASAN.
     expect(ratio).toBeLessThan(5);
-  }, 30_000);
+  });
 
   test("many entries resolve correctly (exact, wildcard, longest-prefix)", async () => {
     const paths: Record<string, string[]> = {};

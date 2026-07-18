@@ -1553,6 +1553,14 @@ impl NodeHTTPResponse {
         // Re-arm the poll before marking SOCKET_CLOSED (resume_socket is a no-op
         // once that flag is set) so a paused socket's deferred EOF can fire.
         self.resume_socket();
+        // Drop the zero-copy GC root while the wrapper is still reachable via
+        // the socket; once SOCKET_CLOSED is set get_this_value() returns ZERO.
+        if self.pending_pinned_write.get().is_some() {
+            let this_value = self.get_this_value();
+            if !this_value.is_empty() {
+                js::pending_write_buffer_set_cached(this_value, _global, JSValue::ZERO);
+            }
+        }
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
         if let Some(raw_response) = self.raw_response.get() {
             let state = raw_response.state();

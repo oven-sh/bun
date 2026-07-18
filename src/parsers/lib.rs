@@ -22,5 +22,8 @@ pub mod json5;
 #[path = "toml.rs"]
 pub mod toml;
 
+#[path = "xml.rs"]
+pub mod xml;
+
 #[path = "yaml.rs"]
 pub mod yaml;

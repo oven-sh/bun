@@ -297,6 +297,7 @@ pub mod features {
         56 => (webview_chrome, "webview_chrome"),
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
+        58 => (xml_parse, "xml_parse", core = XML_PARSE),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

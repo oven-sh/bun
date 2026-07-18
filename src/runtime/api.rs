@@ -81,6 +81,8 @@ pub mod standalone_graph_jsc;
 pub mod toml_object;
 #[path = "api/UnsafeObject.rs"]
 pub mod unsafe_object;
+#[path = "api/XMLObject.rs"]
+pub mod xml_object;
 #[path = "api/YAMLObject.rs"]
 pub mod yaml_object;
 
@@ -194,6 +196,7 @@ pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
+pub use crate::api::xml_object as XMLObject;
 pub use crate::api::yaml_object as YAMLObject;
 // `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
 // the full `dns.rs` body is mounted privately as `dns_body` inside it.

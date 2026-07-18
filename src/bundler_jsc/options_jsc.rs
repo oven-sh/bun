@@ -41,7 +41,7 @@ pub fn loader_from_js(
 
     let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
         return Err(global.throw_invalid_arguments(format_args!(
-            "invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md"
+            "invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, xml, wasm, bunsh, json, or md"
         )));
     };
     Ok(Some(v))

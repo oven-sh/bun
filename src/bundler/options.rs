@@ -376,6 +376,7 @@ pub trait LoaderExt: Copy {
         map[Loader::Json] = b"input.json";
         map[Loader::Toml] = b"input.toml";
         map[Loader::Yaml] = b"input.yaml";
+        map[Loader::Xml] = b"input.xml";
         map[Loader::Json5] = b"input.json5";
         map[Loader::Wasm] = b"input.wasm";
         map[Loader::Napi] = b"input.node";
@@ -410,9 +411,12 @@ impl LoaderExt for Loader {
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
             Loader::Css => MimeType::CSS,
-            Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
-                MimeType::JSON
-            }
+            Loader::Toml
+            | Loader::Yaml
+            | Loader::Xml
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5 => MimeType::JSON,
             Loader::Wasm => MimeType::WASM,
             Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
@@ -644,6 +648,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".toml", Loader::Toml),
     (b".yaml", Loader::Yaml),
     (b".yml", Loader::Yaml),
+    (b".xml", Loader::Xml),
     (b".wasm", Loader::Wasm),
     (b".node", Loader::Napi),
     (b".txt", Loader::Text),
@@ -702,6 +707,7 @@ impl DefaultLoaders {
                 b".cts" => Some(&Loader::Ts),
                 b".css" => Some(&Loader::Css),
                 b".yml" => Some(&Loader::Yaml),
+                b".xml" => Some(&Loader::Xml),
                 b".txt" => Some(&Loader::Text),
                 _ => None,
             },
@@ -1028,7 +1034,7 @@ const DEFAULT_LOADER_EXT: &[&[u8]] = &[
     b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
     b".ts", b".tsx", b".mts", b".cts", b".toml", b".yaml", b".yml", b".wasm", b".txt", b".text",
-    b".jsonc", b".json5",
+    b".jsonc", b".json5", b".xml",
 ];
 
 // Only set it for browsers by default.

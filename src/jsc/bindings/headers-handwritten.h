@@ -268,6 +268,7 @@ inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
 inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
 inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
 inline constexpr BunLoaderType BunLoaderTypeMD = 20;
+inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 
 #pragma mark - Stream
 

@@ -631,9 +631,9 @@ pub(crate) fn js_node_test_report_late_failure(
     let mut line = Vec::<u8>::new();
     let display = bstr::BStr::new(name_slice.slice());
     if Output::enable_ansi_colors_stderr() {
-        let _ = write!(&mut line, "{} {}\n", Output::pretty_fmt::<true>("<r><red>✗<r>"), display);
+        let _ = writeln!(&mut line, "{} {}", Output::pretty_fmt::<true>("<r><red>✗<r>"), display);
     } else {
-        let _ = write!(&mut line, "{} {}\n", Output::pretty_fmt::<false>("<r><red>(fail)<r>"), display);
+        let _ = writeln!(&mut line, "{} {}", Output::pretty_fmt::<false>("<r><red>(fail)<r>"), display);
     }
     if let Some(idx) = worker_idx {
         crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);

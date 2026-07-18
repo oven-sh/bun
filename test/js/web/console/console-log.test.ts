@@ -169,6 +169,11 @@ it("console.log %s uses Node's format semantics, not engine ToString", async () 
     console.log("%s", new X());
     class P { a = 1 }
     console.log("%s", new P());
+    class M { [Symbol.toPrimitive]() { return "$12.34"; } }
+    console.log("%s", new M());
+    console.log("%s", { [Symbol.toPrimitive]() { return "prim"; } });
+    console.log("%s", { toString() { return "own"; }, constructor: Object });
+    console.log("%s", RegExp.prototype);
   `;
   await using proc = spawn({
     cmd: [bunExe(), "-e", src],
@@ -202,6 +207,10 @@ it("console.log %s uses Node's format semantics, not engine ToString", async () 
     "custom",
     "X!",
     "P { a: 1 }",
+    "$12.34",
+    "prim",
+    "own",
+    "/(?:)/",
     "",
   ].join("\n");
   expect({ out: out.replaceAll("\r\n", "\n"), err, exitCode }).toEqual({ out: expected, err: "", exitCode: 0 });

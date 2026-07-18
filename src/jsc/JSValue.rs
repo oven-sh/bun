@@ -1122,6 +1122,25 @@ impl JSValue {
         }
     }
 
+    /// `JSValue.fastGetOwn(global, BuiltinName)` — own-property lookup
+    /// (no prototype walk) using a preallocated `JSC::Identifier`.
+    /// `self` must be known to be an object.
+    pub fn fast_get_own(
+        self,
+        global: &JSGlobalObject,
+        builtin_name: BuiltinName,
+    ) -> JsResult<Option<JSValue>> {
+        debug_assert!(self.is_object());
+        let v = host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__fastGetOwn(self, global, builtin_name as u8)
+        })?;
+        if v.is_empty() || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+
     /// Safe to use on any JSValue.
     /// Returns true iff the value is an object whose `toString` property is a callable cell.
     pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
@@ -2040,6 +2059,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
+    safe fn JSC__JSValue__fastGetOwn(this: JSValue, global: &JSGlobalObject, builtin: u8)
+    -> JSValue;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,

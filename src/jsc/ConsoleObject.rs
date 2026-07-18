@@ -3329,37 +3329,48 @@ pub mod formatter {
     /// it as user-provided unless that object's own `constructor` names a core
     /// ECMAScript built-in.
     fn percent_s_has_user_to_string(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        if !value.is_cell() || !value.is_object() {
+            return Ok(false);
+        }
         let mut pointer = value;
-        for _ in 0..64 {
-            if !pointer.is_cell() || !pointer.is_object() {
+        while pointer.js_type() == jsc::JSType::ProxyObject {
+            let target = pointer.get_proxy_internal_field(jsc::ProxyField::Target);
+            if !target.is_cell() || !target.is_object() {
                 return Ok(false);
             }
-            if pointer.js_type() == jsc::JSType::ProxyObject {
-                let target = pointer.get_proxy_internal_field(jsc::ProxyField::Target);
-                if target.is_empty_or_undefined_or_null() {
-                    return Ok(false);
-                }
-                pointer = target;
-                continue;
-            }
-            if let Some(to_string) = pointer.get_own_truthy(global, "toString")? {
-                if !to_string.is_callable() {
-                    return Ok(false);
-                }
-                let Some(ctor) = pointer.get_own_truthy(global, "constructor")? else {
-                    return Ok(true);
-                };
-                if !ctor.is_callable() {
-                    return Ok(true);
-                }
-                let name = OwnedString::new(ctor.get_name(global)?);
-                return Ok(!percent_s_is_builtin_ctor_name(&*name));
-            }
+            pointer = target;
+        }
+        let owns_callable = |obj: JSValue, key: jsc::BuiltinName| -> JsResult<bool> {
+            Ok(obj
+                .fast_get_own(global, key)?
+                .is_some_and(|v| v.is_callable()))
+        };
+        // Own `toString` / `Symbol.toPrimitive` on the value itself is always
+        // user-provided.
+        if owns_callable(pointer, jsc::BuiltinName::toString)?
+            || owns_callable(pointer, jsc::BuiltinName::toPrimitive)?
+        {
+            return Ok(true);
+        }
+        for _ in 0..64 {
             let proto = pointer.get_prototype(global);
-            if proto.is_empty_or_undefined_or_null() {
+            if proto.is_empty_or_undefined_or_null() || !proto.is_object() {
                 return Ok(false);
             }
             pointer = proto;
+            if !owns_callable(pointer, jsc::BuiltinName::toString)?
+                && !owns_callable(pointer, jsc::BuiltinName::toPrimitive)?
+            {
+                continue;
+            }
+            let Some(ctor) = pointer.get_own_truthy(global, "constructor")? else {
+                return Ok(true);
+            };
+            if !ctor.is_callable() {
+                return Ok(true);
+            }
+            let name = OwnedString::new(ctor.get_name(global)?);
+            return Ok(!percent_s_is_builtin_ctor_name(&*name));
         }
         Ok(false)
     }

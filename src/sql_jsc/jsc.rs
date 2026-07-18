@@ -588,21 +588,20 @@ pub mod webcore {
             )
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            Blob__getConstructor(global)
+            Blob__getConstructor(global.as_mut_ptr())
         }
     }
 
-    // C++ codegen symbols (generate-classes.ts) — NOT Rust→Rust shims.
-    // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
-    // opaque `UnsafeCell`-backed handle, so `&JSGlobalObject` is ABI-identical
-    // to a non-null `JSGlobalObject*` with write provenance.
-    // C++ declares these `extern JSC_CALLCONV` (= SysV ABI on win-x64), so
-    // import via `jsc_abi_extern!` — plain `extern "C"` is the Win64 ABI on
-    // Windows and would pass args in the wrong registers.
+    // C++ codegen symbols (generate-classes.ts). Signatures mirror
+    // `crate::generated_classes::js_Blob` exactly so the two extern blocks
+    // (same crate post-mount) unify under `clashing_extern_declarations`.
     bun_jsc::jsc_abi_extern! {
-        safe fn Blob__fromJS(value: JSValue) -> *mut c_void;
-        safe fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        safe fn Blob__getConstructor(global: &JSGlobalObject) -> JSValue;
+        #[allow(improper_ctypes)]
+        {
+            safe fn Blob__fromJS(value: JSValue) -> *mut ::bun_jsc::webcore_types::Blob;
+            safe fn Blob__fromJSDirect(value: JSValue) -> *mut ::bun_jsc::webcore_types::Blob;
+            safe fn Blob__getConstructor(global: *mut JSGlobalObject) -> JSValue;
+        }
     }
 }
 

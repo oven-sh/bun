@@ -2,7 +2,19 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, finished, isDisturbed, isErrored, isReadable, isWritable, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import {
+  Duplex,
+  finished,
+  isDisturbed,
+  isErrored,
+  isReadable,
+  isWritable,
+  PassThrough,
+  Readable,
+  Stream,
+  Transform,
+  Writable,
+} from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1614,29 +1626,52 @@ describe("isReadable/isWritable/isErrored/isDisturbed on WHATWG web streams", ()
   });
 
   it("ReadableStream: readable", () => {
-    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("x");
+      },
+    });
     expect(probe(rs)).toEqual({ isReadable: true, isWritable: null, isErrored: false, isDisturbed: false });
   });
 
   it("ReadableStream: closed", () => {
-    const rs = new ReadableStream({ start(c) { c.close(); } });
+    const rs = new ReadableStream({
+      start(c) {
+        c.close();
+      },
+    });
     expect(probe(rs)).toEqual({ isReadable: false, isWritable: null, isErrored: false, isDisturbed: false });
   });
 
   it("ReadableStream: errored + disturbed after read()", async () => {
-    const rs = new ReadableStream({ start(c) { c.error(new Error("boom")); } });
-    await rs.getReader().read().catch(() => {});
+    const rs = new ReadableStream({
+      start(c) {
+        c.error(new Error("boom"));
+      },
+    });
+    await rs
+      .getReader()
+      .read()
+      .catch(() => {});
     expect(probe(rs)).toEqual({ isReadable: false, isWritable: null, isErrored: true, isDisturbed: true });
   });
 
   it("ReadableStream: disturbed after cancel()", async () => {
-    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("x");
+      },
+    });
     await rs.cancel();
     expect(probe(rs)).toEqual({ isReadable: false, isWritable: null, isErrored: false, isDisturbed: true });
   });
 
   it("ReadableStream: disturbed after successful read(), still readable", async () => {
-    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("x");
+      },
+    });
     const reader = rs.getReader();
     await reader.read();
     reader.releaseLock();
@@ -1657,7 +1692,11 @@ describe("isReadable/isWritable/isErrored/isDisturbed on WHATWG web streams", ()
   });
 
   it("WritableStream: errored", async () => {
-    const ws = new WritableStream({ start(c) { c.error(new Error("boom")); } });
+    const ws = new WritableStream({
+      start(c) {
+        c.error(new Error("boom"));
+      },
+    });
     await ws.getWriter().closed.catch(() => {});
     expect(probe(ws)).toEqual({ isReadable: null, isWritable: false, isErrored: true, isDisturbed: false });
   });
@@ -1668,7 +1707,11 @@ describe("isReadable/isWritable/isErrored/isDisturbed on WHATWG web streams", ()
   });
 
   it("Symbol.for('nodejs.stream.*') overrides still take precedence", () => {
-    const rs = new ReadableStream({ start(c) { c.enqueue("x"); } });
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("x");
+      },
+    });
     Object.defineProperty(rs, Symbol.for("nodejs.stream.readable"), { value: false });
     expect(isReadable(rs)).toBe(false);
   });
@@ -1680,7 +1723,11 @@ describe("isReadable/isWritable/isErrored/isDisturbed on WHATWG web streams", ()
     expect(isDisturbed(r)).toBe(false);
     r.destroy();
 
-    const w = new Writable({ write(chunk, enc, cb) { cb(); } });
+    const w = new Writable({
+      write(chunk, enc, cb) {
+        cb();
+      },
+    });
     expect(isWritable(w)).toBe(true);
     expect(isErrored(w)).toBe(false);
     w.destroy();

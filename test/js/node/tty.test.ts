@@ -333,7 +333,13 @@ describe("FORCE_COLOR piped console", () => {
         }) + "\\n");
         console.log("x", { a: 1 });`,
       ],
-      env: { ...bunEnv, PATH: process.env.PATH, NO_COLOR: undefined, NODE_DISABLE_COLORS: undefined, FORCE_COLOR: value },
+      env: {
+        ...bunEnv,
+        PATH: process.env.PATH,
+        NO_COLOR: undefined,
+        NODE_DISABLE_COLORS: undefined,
+        FORCE_COLOR: value,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

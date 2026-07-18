@@ -195,7 +195,7 @@ export function parseHandle(target, serialized, fd) {
         require("node:fs").closeSync(fd);
         throw new Error(`failed to open received dgram handle: ${err}`);
       }
-      emit(target, serialized.message, wrap);
+      emit(target, serialized.msg, wrap);
       return;
     }
     case "dgram.Socket": {

@@ -838,6 +838,11 @@ impl FetchTasklet {
             // `to_error_instance`.
             let mut err = scopeguard::guard(self.on_reject(), |mut e| e.reset());
             let mut js_err = JSValue::ZERO;
+            if self.diagnostics_request.has() {
+                js_err = err.to_js(&global_this);
+                js_err.ensure_still_alive();
+                undici_diagnostics::on_error(self, &global_this, js_err);
+            }
             // if we are streaming update with error
             if let Some(readable) = self.readable_stream_ref.get(&global_this) {
                 if let Some(bytes) = readable.ptr.bytes() {

@@ -22,8 +22,6 @@ const wsSocketErrorChannel = dc.channel("undici:websocket:socket_error");
 const wsPingChannel = dc.channel("undici:websocket:ping");
 const wsPongChannel = dc.channel("undici:websocket:pong");
 
-const ArrayIsArray = Array.isArray;
-
 // Bun has no exposed undici Connector; the field exists so consumers that probe
 // `typeof connectParams.connector` see a function.
 function connector() {}
@@ -101,15 +99,15 @@ function buildConnectParams(
 
 function onCreate(origin, method, path, host, hostname, protocol, port, headers) {
   if (!anyFetchSubscriber()) return null;
-  const request = new DiagnosticsRequest(origin, method, path, ArrayIsArray(headers) ? headers : []);
+  const request = new DiagnosticsRequest(origin, method, path, $isJSArray(headers) ? headers : []);
+  if (requestCreateChannel.hasSubscribers) {
+    requestCreateChannel.publish({ request });
+  }
   if (clientBeforeConnectChannel.hasSubscribers) {
     clientBeforeConnectChannel.publish({
       connectParams: buildConnectParams(request, host, hostname, protocol, port),
       connector,
     });
-  }
-  if (requestCreateChannel.hasSubscribers) {
-    requestCreateChannel.publish({ request });
   }
   return request;
 }
@@ -126,7 +124,7 @@ function onConnected(request, host, hostname, protocol, port) {
   if (clientSendHeadersChannel.hasSubscribers) {
     const h = request.headers;
     let header = `${request.method} ${request.path} HTTP/1.1\r\n`;
-    if (ArrayIsArray(h)) {
+    if ($isJSArray(h)) {
       for (let i = 0; i + 1 < h.length; i += 2) header += `${h[i]}: ${h[i + 1]}\r\n`;
     }
     clientSendHeadersChannel.publish({ request, headers: header, socket: null });
@@ -141,7 +139,7 @@ function onHeaders(request, statusCode, statusText, headers) {
   if (requestHeadersChannel.hasSubscribers) {
     requestHeadersChannel.publish({
       request,
-      response: { statusCode, statusText, headers: ArrayIsArray(headers) ? headers : [] },
+      response: { statusCode, statusText, headers: $isJSArray(headers) ? headers : [] },
     });
   }
 }

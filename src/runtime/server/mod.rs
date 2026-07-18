@@ -916,10 +916,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
-        // Same is-Strong gate as the network trampolines. Unreachable today —
-        // the saved request's `pending_requests` increment blocks the
-        // downgrade — but explicit so a future accounting bug 503s instead of
-        // dispatching with a stale wrapper.
+        // Same Finalized-only gate as the network trampolines. Unreachable
+        // today — the saved request's `pending_requests` increment keeps the
+        // wrapper `Strong`, so `finalize()` cannot run — but explicit so a
+        // future accounting bug 503s instead of dispatching with a stale
+        // handler shadow.
         // SAFETY: `this` is the live server backref for this request.
         let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));

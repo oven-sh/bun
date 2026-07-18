@@ -26,6 +26,7 @@ use bun_http::lshpack;
 use crate::vm::AbortSignal;
 use crate::ErrorCode as JscErrorCode;
 use crate::StringJsc as _;
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::abort_signal::AbortListener;
 use crate::array_buffer::BinaryType;
 use crate::vm::virtual_machine::VirtualMachine;

@@ -2480,12 +2480,13 @@ pub enum PlaceholderField {
     Target,
 }
 
-/// `[dir]` placeholder value: canonicalize `source_dir` via `get_fd_path`
-/// (so Windows 8.3 short names / symlinked prefixes match a canonical
-/// `root_dir`), fall back to string normalization, then relativize.
+/// `[dir]` placeholder value: when `on_disk`, canonicalize `source_dir` via
+/// `get_fd_path` (so Windows 8.3 short names / symlinked prefixes match a
+/// canonical `root_dir`); otherwise string-normalize. Then relativize.
 pub(crate) fn source_dir_relative_to_root(
     source_dir: &[u8],
     root_dir: &[u8],
+    on_disk: bool,
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     let source_dir: &[u8] = if source_dir.is_empty() {
         b"."
@@ -2494,22 +2495,19 @@ pub(crate) fn source_dir_relative_to_root(
     };
     let mut buf = bun_paths::path_buffer_pool::get();
     let dir: &[u8] = 'dir: {
-        let Ok(f) = bun_sys::File::openat(
-            bun_sys::Fd::cwd(),
-            source_dir,
-            bun_sys::O::PATH | bun_sys::O::DIRECTORY,
-            0,
-        ) else {
-            break 'dir &*bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Auto>(
-                source_dir, &mut buf.0,
-            );
-        };
-        match f.get_path(&mut buf) {
-            Ok(p) => p,
-            Err(_) => &*bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Auto>(
-                source_dir, &mut buf.0,
-            ),
+        if on_disk {
+            if let Ok(f) = bun_sys::File::openat(
+                bun_sys::Fd::cwd(),
+                source_dir,
+                bun_sys::O::PATH | bun_sys::O::DIRECTORY,
+                0,
+            ) {
+                if let Ok(p) = f.get_path(&mut buf) {
+                    break 'dir p;
+                }
+            }
         }
+        &*bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Auto>(source_dir, &mut buf.0)
     };
     bun_paths::resolve_path::relative_alloc(root_dir, dir)
 }

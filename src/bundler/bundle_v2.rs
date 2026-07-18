@@ -4135,6 +4135,7 @@ pub mod bv2_impl {
                                 template.placeholder.dir = options::source_dir_relative_to_root(
                                     pathname.dir,
                                     &self.transpiler.options.root_dir,
+                                    source.path.is_file(),
                                 )?;
                             }
 

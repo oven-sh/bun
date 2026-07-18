@@ -249,6 +249,53 @@ describe("bundler", () => {
     });
     expect(out).not.toContain("_.._");
   });
+  // The on-disk canonicalization above must not apply to a plugin asset whose
+  // virtual path happens to collide with a real cwd subdirectory: `[dir]` for
+  // a non-file namespace stays a pure string computation.
+  test("naming/AssetNamingDirVirtualNamespace", async () => {
+    using base = tempDir("asset-naming-dir-virt", {
+      "src/.keep": "",
+      "unrelated-target/.keep": "",
+    });
+    symlinkSync(join(String(base), "unrelated-target"), join(String(base), "assets"), isWindows ? "junction" : "dir");
+
+    const entry = join(String(base), "src/entry.js").replaceAll("\\", "/");
+    const script = `
+      const result = await Bun.build({
+        entrypoints: [${JSON.stringify(entry)}],
+        files: { ${JSON.stringify(entry)}: 'import f from "virt:assets/icon.bin"; console.log(f);' },
+        root: ${JSON.stringify(join(String(base), "src"))},
+        naming: { entry: "hello.[ext]", asset: "[dir]/[name].[ext]" },
+        plugins: [{
+          name: "virt",
+          setup(b) {
+            b.onResolve({ filter: /^virt:/ }, a => ({ path: a.path.slice(5), namespace: "virt" }));
+            b.onLoad({ filter: /.*/, namespace: "virt" }, () => ({ contents: "hi", loader: "file" }));
+          },
+        }],
+      });
+      if (!result.success) { for (const m of result.logs) console.error(String(m)); process.exit(1); }
+      for (const out of result.outputs) console.log(out.kind + " " + out.path);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(base),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const out = stdout.replaceAll("\\", "/");
+    const assetLine = out.split("\n").find(l => l.startsWith("asset "));
+    expect({ assetLine, stderr, exitCode }).toEqual({
+      assetLine: "asset ./_.._/assets/icon.bin",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(out).not.toContain("unrelated-target");
+  });
   itBundled("naming/AssetNoOverwrite", {
     todo: true,
     files: {

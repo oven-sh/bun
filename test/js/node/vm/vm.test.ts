@@ -578,6 +578,17 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     }
     expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
 
+    // Negative lineOffset: Node renders a signed line, still with source + caret.
+    // JSC clamps a negative provider start line to zero, so the offset is
+    // re-applied to the physical line when building the header.
+    err = undefined;
+    try {
+      new Script("1;\n%%", { lineOffset: -5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:-3", "%%", "^", ""]);
+
     // columnOffset on line 1 is subtracted from the caret; on later lines it
     // is not (Node applies it only to the first physical line).
     err = undefined;
@@ -622,6 +633,7 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       "^",
       "",
     ]);
+    expect(header(() => compileFunction("1;\n%%", [], { lineOffset: -5 }))).toEqual([":-3", "%%", "^", ""]);
 
     // An explicitly empty filename is not the same as an absent one.
     expect(header(() => new Script("%%", { filename: "" }))).toEqual([":1", "%%", "^", ""]);

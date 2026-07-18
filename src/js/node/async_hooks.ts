@@ -192,7 +192,7 @@ class AsyncLocalStorage {
     // so a match here would skip installing store_value and let the callback
     // read the unmasked frame value instead.
     if (!this.#disabled && sameValue(this.getStore(), store_value)) {
-      return callback(...args);
+      return callback.$apply(undefined, args);
     }
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;

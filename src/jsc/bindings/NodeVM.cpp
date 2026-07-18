@@ -513,7 +513,7 @@ static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLin
     return lineView.toString();
 }
 
-static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const String& url, unsigned reportedLine, const String& sourceLineText, unsigned caretColumn1Based, const String& stack)
+static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const String& url, int reportedLine, const String& sourceLineText, unsigned caretColumn1Based, const String& stack)
 {
     String prepend;
     if (!sourceLineText.isNull() && caretColumn1Based >= 1 && caretColumn1Based <= sourceLineText.length() + 1) {
@@ -586,7 +586,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
             }
         }
 
-        writeArrowHeaderStack(vm, errorInstance, source_url, line_and_column.line, sourceLineText, caretColumn, stack);
+        writeArrowHeaderStack(vm, errorInstance, source_url, static_cast<int>(line_and_column.line), sourceLineText, caretColumn, stack);
 
         JSC::throwException(globalObject, throwScope, exception.get());
         return true;
@@ -620,10 +620,13 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     // compileFunction has no such default. An explicit "" renders as ":<line>".
 
     // parseError.line() is already lineOffset-adjusted (JSC parses against a
-    // SourceCode whose start position carries the offset). Undo it to index
-    // the raw source string.
-    int reportedLine = parseError.line();
-    int64_t physicalLine = static_cast<int64_t>(reportedLine) - lineOffset.zeroBasedInt();
+    // SourceCode whose start position carries the offset), but JSC clamps a
+    // negative provider start line to zero, so a negative offset comes back as
+    // the physical line. Undo/re-apply so Node's signed header still renders.
+    int lineOff = lineOffset.zeroBasedInt();
+    int jscLine = parseError.line();
+    int64_t physicalLine = lineOff < 0 ? static_cast<int64_t>(jscLine) : static_cast<int64_t>(jscLine) - lineOff;
+    int reportedLine = static_cast<int>(physicalLine) + lineOff;
 
     // JSTextPosition::column() = offset - lineStartOffset — physical 0-based
     // column into sourceString, so columnOffset needs no adjustment.
@@ -634,7 +637,7 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
         caretColumn = col0 >= 0 ? static_cast<unsigned>(col0) + 1 : 1;
     }
 
-    writeArrowHeaderStack(vm, errorInstance, url, static_cast<unsigned>(reportedLine), sourceLineText, caretColumn, stack);
+    writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
 }
 
 // Returns an encoded exception if the options are invalid.

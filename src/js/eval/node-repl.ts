@@ -47,7 +47,14 @@ if (ext) {
 // require/module/exports/__dirname/__filename resolve.
 function evalWithNodeBindings(code: string) {
   const Module = require("node:module");
-  const cwd = process.cwd();
+  // process.cwd() throws when the working directory has been deleted; node's
+  // evalScript uses tryGetCwd() here, falling back to the executable's dir.
+  let cwd: string;
+  try {
+    cwd = process.cwd();
+  } catch {
+    cwd = require("node:path").dirname(process.execPath);
+  }
   const name = "[eval]";
 
   const mod = new Module(name);

@@ -671,6 +671,27 @@ describe.concurrent(() => {
       expect(exitCode).toBe(0);
     });
 
+    it("a throw from an exit listener after a fatal throw still stops subsequent exit listeners", async () => {
+      // Skipping the beforeExit dispatch also skips the call that arms
+      // exit_on_uncaught_exception; on_before_exit() arms it itself so a throw
+      // from 'exit' still short-circuits the remaining listeners like Node.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", c => { console.log("first", c); throw new Error("b"); });
+           process.on("exit", c => console.log("second", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("first 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
     it("exits 1, not 7, when an exit listener also throws and nothing handles it", async () => {
       await using proc = Bun.spawn({
         cmd: [

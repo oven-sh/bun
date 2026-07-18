@@ -2518,7 +2518,7 @@ function generateRust(
             : ""
         }
         safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
-        safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
+        fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
 ${cachedExterns}
     }
     #[inline] pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${typeName}>> {
@@ -2543,7 +2543,7 @@ ${cachedExterns}
         : ""
     }
     #[inline] pub fn detach_ptr(value: JSValue) {
-        let ok = ${symbolName(typeName, "dangerouslySetPtr")}(value, core::ptr::null_mut());
+        let ok = unsafe { ${symbolName(typeName, "dangerouslySetPtr")}(value, core::ptr::null_mut()) };
         debug_assert!(ok);
     }
 ${gcAccessors}

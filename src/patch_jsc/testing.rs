@@ -1,6 +1,7 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
 use bun_core::{OwnedString, String as BunString};
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
 };

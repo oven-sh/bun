@@ -1069,8 +1069,12 @@ impl QuicSession {
                 SessionEvent::GoawayReceived => {
                     // lsquic doesn't surface the GOAWAY stream-id; Node
                     // reports -1n when the id is unavailable.
-                    let Ok(last_stream_id) = JSValue::from_int64_no_truncate(global, -1) else {
-                        continue;
+                    let last_stream_id = match JSValue::from_int64_no_truncate(global, -1) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            global.report_uncaught_exception_from_error(e);
+                            continue;
+                        }
                     };
                     if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
                         let vm = global.bun_vm().as_mut();
@@ -1186,8 +1190,12 @@ impl QuicSession {
                     if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
                         continue;
                     }
-                    let Ok(id_js) = JSValue::from_uint64_no_truncate(global, id) else {
-                        continue;
+                    let id_js = match JSValue::from_uint64_no_truncate(global, id) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            global.report_uncaught_exception_from_error(e);
+                            continue;
+                        }
                     };
                     let Ok(status_js) = bun_core::String::static_(b"abandoned").to_js(global)
                     else {
@@ -1238,8 +1246,12 @@ impl QuicSession {
                         if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
                             continue;
                         }
-                        let Ok(id_js) = JSValue::from_uint64_no_truncate(global, id) else {
-                            continue;
+                        let id_js = match JSValue::from_uint64_no_truncate(global, id) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                global.report_uncaught_exception_from_error(e);
+                                continue;
+                            }
                         };
                         let Ok(status_js) = bun_core::String::static_(status).to_js(global) else {
                             continue;
@@ -1681,8 +1693,12 @@ impl QuicSession {
                 map_conn_status(status, msg, self.handshake_reported.get())
             }
         };
-        let Ok(code_js) = JSValue::from_uint64_no_truncate(global, code) else {
-            return;
+        let code_js = match JSValue::from_uint64_no_truncate(global, code) {
+            Ok(v) => v,
+            Err(e) => {
+                global.report_uncaught_exception_from_error(e);
+                return;
+            }
         };
         let reason_js = reason
             .filter(|r| !r.is_empty())
@@ -2045,8 +2061,12 @@ impl QuicSession {
         if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
             return;
         }
-        let Ok(id_js) = JSValue::from_uint64_no_truncate(global, id) else {
-            return;
+        let id_js = match JSValue::from_uint64_no_truncate(global, id) {
+            Ok(v) => v,
+            Err(e) => {
+                global.report_uncaught_exception_from_error(e);
+                return;
+            }
         };
         let Ok(status_js) = bun_core::String::static_(b"abandoned").to_js(global) else {
             return;

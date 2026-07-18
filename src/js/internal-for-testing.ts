@@ -233,6 +233,13 @@ export const exposedInternals = {
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/dgram": require("internal/dgram"),
+  "internal/fs/utils": {
+    // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
+    // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
+    // the production behavior through these.
+    stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
+    validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+  },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };

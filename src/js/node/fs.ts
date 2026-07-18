@@ -539,6 +539,12 @@ var access = function access(path, mode, callback) {
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = function rmSync(path, options) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       let stats;
@@ -1379,6 +1385,16 @@ var exports = {
   },
   set FileReadStream(value) {
     Object.defineProperty(exports, "FileReadStream", {
+      value,
+      writable: true,
+      configurable: true,
+    });
+  },
+  get Utf8Stream() {
+    return (exports.Utf8Stream = require("internal/streams/fast-utf8-stream"));
+  },
+  set Utf8Stream(value) {
+    Object.defineProperty(exports, "Utf8Stream", {
       value,
       writable: true,
       configurable: true,

@@ -321,6 +321,12 @@ const exports = {
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
   rm: async function rm(path, options) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       // (same check as rmSync)
@@ -1532,6 +1538,13 @@ function asyncWrap(fn: any, name: string) {
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {
+  if (fd === undefined) {
+    // A FileHandle method invoked with a foreign receiver (fn.call({})); node's
+    // fsCall asserts on the missing internal slot before touching the fd.
+    throw $ERR_INTERNAL_ASSERTION(
+      "handle must be an instance of FileHandle" + require("internal/shared").kInternalAssertionSuffix,
+    );
+  }
   if (fd === -1) {
     const err: any = new Error("Bad file descriptor");
     err.code = "EBADF";

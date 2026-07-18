@@ -421,6 +421,47 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     Binding::to_js_boxed(module, global)
 }
 
+/// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
+/// exact argument parser `fs.rm` uses and return the parsed options, so node's
+/// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production
+/// validation (including its rejection of own-but-`undefined` booleans).
+#[bun_jsc::host_fn]
+pub(crate) fn rm_options_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: `bun_vm()` returns the live VM; borrowed only while parsing on
+    // the JS thread (same contract as `run_sync` above).
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let parsed = args::Rm::from_js(global, &mut slice)?;
+    let obj = JSValue::create_empty_object(global, 4);
+    obj.put(global, b"retryDelay", JSValue::js_number(parsed.retry_delay as f64));
+    obj.put(global, b"maxRetries", JSValue::js_number(parsed.max_retries as f64));
+    obj.put(global, b"recursive", JSValue::js_boolean(parsed.recursive));
+    obj.put(global, b"force", JSValue::js_boolean(parsed.force));
+    Ok(obj)
+}
+
+/// Test-only (`bun:internal-for-testing`): run a flags value through the same
+/// parser `fs.open` uses and return the numeric O_* mask, so node's
+/// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
+#[bun_jsc::host_fn]
+pub(crate) fn string_to_flags_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    use crate::node::types::FileSystemFlags;
+    let arguments = frame.arguments_old::<1>();
+    let val = if arguments.len < 1 {
+        JSValue::UNDEFINED
+    } else {
+        arguments.ptr[0]
+    };
+    let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
+    Ok(JSValue::js_number_from_int32(flags.as_int()))
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn create_memfd_for_testing(
     global: &JSGlobalObject,

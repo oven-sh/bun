@@ -79,7 +79,7 @@ let uvErrorMap;
 // "ENOENT: no such file or directory, watch '/path'".
 function makeWatchUVException(status, filename) {
   uvErrorMap ??= process.binding("uv").getErrorMap();
-  const entry = uvErrorMap.get(status);
+  const entry = uvErrorMap.$get(status);
   const code = entry ? entry[0] : "UNKNOWN";
   const description = entry ? entry[1] : "unknown error";
   const err: any = new Error(`${code}: ${description}, watch '${filename}'`);
@@ -126,9 +126,7 @@ class FSEvent {
 function assertFSEventHandle(handle) {
   if (!(handle instanceof FSEvent)) {
     throw $ERR_INTERNAL_ASSERTION(
-      "handle must be a FSEvent\n" +
-        "This is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
-        "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n",
+      "handle must be a FSEvent" + require("internal/shared").kInternalAssertionSuffix,
     );
   }
 }

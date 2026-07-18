@@ -35,6 +35,30 @@ describe("path.relative", () => {
           ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
           ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
           ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
+          // Case-insensitive comparison must fold non-ASCII letters too
+          // (Node lowercases the whole resolved path with toLowerCase).
+          ["C:\\é", "C:\\É", ""],
+          ["C:\\É", "C:\\é", ""],
+          ["C:\\aéb", "C:\\AÉB", ""],
+          ["C:\\é\\x", "C:\\É\\y", "..\\y"],
+          ["C:\\É\\x", "C:\\é\\y", "..\\y"],
+          ["C:\\a\\Å\\b", "C:\\A\\å\\c", "..\\c"],
+          ["C:\\Ф", "C:\\ф", ""],
+          ["C:\\ф\\x", "C:\\Ф\\y", "..\\y"],
+          ["C:\\É", "C:\\É\\sub", "sub"],
+          ["C:\\É\\sub", "C:\\é", ".."],
+          // toLowerCase is not full case-folding: ß stays ß, so ß ≠ SS.
+          ["C:\\ß", "C:\\SS", "..\\SS"],
+          // Length-changing toLowerCase (İ → i̇, Ⱥ → ⱥ) takes the
+          // per-segment comparison path.
+          ["C:\\\u0130\\x", "C:\\\u0130\\y", "..\\y"],
+          ["C:\\\u0130\\x", "C:\\i\u0307\\y", "..\\y"],
+          ["C:\\\u0130", "C:\\\u0130\\sub", "sub"],
+          ["C:\\\u0130\\sub", "C:\\\u0130", ".."],
+          ["C:\\a\\\u0130\\b\\c", "C:\\a\\\u0130\\x", "..\\..\\x"],
+          ["C:\\\u023A\\x", "C:\\\u2C65\\y", "..\\y"],
+          ["C:\\\u023A", "C:\\\u2C65", ""],
+          ["C:\\\u0130", "D:\\x", "D:\\x"],
         ],
       ],
       [

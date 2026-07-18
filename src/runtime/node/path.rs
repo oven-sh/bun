@@ -161,6 +161,54 @@ fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
     }
 }
 
+/// Unicode-lowercase a Windows path for case-insensitive comparison, matching
+/// JS `String.prototype.toLowerCase` as used by Node's `path.win32.relative`.
+/// ASCII bytes are folded per-byte; multi-byte WTF-8 is decoded and re-encoded.
+fn lowercase_windows_path_t<T: PathCharCwd>(src: &[T]) -> Vec<T> {
+    let mut out: Vec<T> = Vec::with_capacity(src.len());
+    if T::IS_U16 {
+        // The u16 instantiation is unreachable at runtime (all JS entry
+        // points convert to UTF-8 and use T = u8); fold ASCII so the
+        // generic body type-checks and behaves soundly if ever exercised.
+        out.extend(src.iter().map(|c| to_lower_t(*c)));
+        return out;
+    }
+    let bytes: &[u8] = bytemuck::cast_slice::<T, u8>(src);
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            out.push(T::from_u8(b.to_ascii_lowercase()));
+            i += 1;
+            continue;
+        }
+        let seq_len = strings::wtf8_byte_sequence_length(b) as usize;
+        let avail = (bytes.len() - i).min(4);
+        let mut quad = [0u8; 4];
+        quad[..avail].copy_from_slice(&bytes[i..i + avail]);
+        let cp = strings::decode_wtf8_rune_t::<u32>(quad, seq_len as u8, 0);
+        let consumed = seq_len.min(avail).max(1);
+        match char::from_u32(cp).filter(|_| cp != 0) {
+            Some(ch) => {
+                let mut enc = [0u8; 4];
+                for lc in ch.to_lowercase() {
+                    let n = strings::encode_wtf8_rune(&mut enc, lc as u32);
+                    for &eb in &enc[..n] {
+                        out.push(T::from_u8(eb));
+                    }
+                }
+            }
+            None => {
+                for &rb in &bytes[i..i + consumed] {
+                    out.push(T::from_u8(rb));
+                }
+            }
+        }
+        i += consumed;
+    }
+    out
+}
+
 // `jsc.Node.Maybe([]T, Syscall.Error)` → bun_sys::Result<&mut [T]>
 type MaybeBuf<'a, T> = bun_sys::Result<&'a mut [T]>;
 // `jsc.Node.Maybe([:0]const T, Syscall.Error)` → bun_sys::Result<&[T]>
@@ -2553,7 +2601,6 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
 
     // Backed by expandable buf2 because fromOrig may be long.
     let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
-    let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
     // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
@@ -2571,19 +2618,102 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         len
     };
 
-    if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
+    if from_orig == &buf[0..to_orig_len] {
         return Ok(&[]);
+    }
+
+    // Node lowercases the resolved paths with StringPrototypeToLowerCase and
+    // performs all comparison/index math on the lowered copies; only the
+    // output tail is sliced from the original toOrig.
+    let from_lower_vec = lowercase_windows_path_t(from_orig);
+    let to_lower_vec = lowercase_windows_path_t(&buf[0..to_orig_len]);
+    let from_lower = from_lower_vec.as_slice();
+    let to_lower = to_lower_vec.as_slice();
+    let from_lower_len = from_lower.len();
+    let to_lower_len = to_lower.len();
+
+    if from_lower == to_lower {
+        return Ok(&[]);
+    }
+
+    if from_lower_len != from_orig.len() || to_lower_len != to_orig_len {
+        // toLowerCase changed the byte length (e.g. İ → i̇); the index-based
+        // comparison below would misalign against toOrig. Fall back to
+        // per-segment comparison, matching Node's handling of this case.
+        let bslash = T::from_u8(CHAR_BACKWARD_SLASH);
+        let out: Vec<T> = {
+            let to_orig_slice = &buf[0..to_orig_len];
+            let mut from_segs: Vec<&[T]> = from_orig.split(|c| *c == bslash).collect();
+            if matches!(from_segs.last(), Some(s) if s.is_empty()) {
+                from_segs.pop();
+            }
+            let mut to_segs: Vec<&[T]> = to_orig_slice.split(|c| *c == bslash).collect();
+            if matches!(to_segs.last(), Some(s) if s.is_empty()) {
+                to_segs.pop();
+            }
+            let from_seg_count = from_segs.len();
+            let to_seg_count = to_segs.len();
+            let length = from_seg_count.min(to_seg_count);
+            let mut i = 0usize;
+            while i < length {
+                if lowercase_windows_path_t(from_segs[i]) != lowercase_windows_path_t(to_segs[i]) {
+                    break;
+                }
+                i += 1;
+            }
+            let dot = T::from_u8(CHAR_DOT);
+            let dotdots = |n: usize, trailing_sep: bool| -> Vec<T> {
+                let mut v = Vec::with_capacity(n * 3);
+                for k in 0..n {
+                    v.push(dot);
+                    v.push(dot);
+                    if trailing_sep || k + 1 < n {
+                        v.push(bslash);
+                    }
+                }
+                v
+            };
+            let join_tail = |segs: &[&[T]]| -> Vec<T> {
+                let mut v = Vec::new();
+                for (k, seg) in segs.iter().enumerate() {
+                    if k > 0 {
+                        v.push(bslash);
+                    }
+                    v.extend_from_slice(seg);
+                }
+                v
+            };
+            if i == 0 {
+                to_orig_slice.to_vec()
+            } else if i == length {
+                if to_seg_count > length {
+                    join_tail(&to_segs[i..])
+                } else if from_seg_count > length {
+                    dotdots(from_seg_count - i, false)
+                } else {
+                    Vec::new()
+                }
+            } else {
+                let mut v = dotdots(from_seg_count - i, true);
+                v.extend_from_slice(&join_tail(&to_segs[i..]));
+                v
+            }
+        };
+        let n = out.len();
+        buf[0..n].copy_from_slice(&out);
+        buf[n] = T::default();
+        return Ok(&buf[0..n]);
     }
 
     // Trim leading backslashes
     let mut from_start: usize = 0;
-    while from_start < from_orig_len && from_orig[from_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    while from_start < from_lower_len && from_lower[from_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         from_start += 1;
     }
 
     // Trim trailing backslashes (applicable to UNC paths only)
-    let mut from_end = from_orig_len;
-    while from_end - 1 > from_start && from_orig[from_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    let mut from_end = from_lower_len;
+    while from_end - 1 > from_start && from_lower[from_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
         from_end -= 1;
     }
 
@@ -2591,13 +2721,13 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
 
     // Trim leading backslashes
     let mut to_start: usize = 0;
-    while to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    while to_start < to_lower_len && to_lower[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
 
     // Trim trailing backslashes (applicable to UNC paths only)
-    let mut to_end = to_orig_len;
-    while to_end - 1 > to_start && buf[to_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    let mut to_end = to_lower_len;
+    while to_end - 1 > to_start && to_lower[to_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_end -= 1;
     }
 
@@ -2613,8 +2743,8 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
     {
         let mut i: usize = 0;
         while i < smallest_length {
-            let from_byte = from_orig[from_start + i];
-            if to_lower_t(from_byte) != to_lower_t(buf[to_start + i]) {
+            let from_byte = from_lower[from_start + i];
+            if from_byte != to_lower[to_start + i] {
                 break;
             } else if from_byte == T::from_u8(CHAR_BACKWARD_SLASH) {
                 last_common_sep = Some(i);
@@ -2632,7 +2762,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         }
     } else {
         if to_len > smallest_length {
-            if buf[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            if to_lower[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
                 return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
@@ -2644,7 +2774,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
             }
         }
         if from_len > smallest_length {
-            if from_orig[from_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            if from_lower[from_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `to` is the exact base path for `from`.
                 // For example: from='C:\foo\bar'; to='C:\foo'
                 last_common_sep = Some(smallest_length);
@@ -2670,7 +2800,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         // and `from`.
         let mut i: usize = from_start + last_common_sep.map_or(0, |v| v + 1);
         while i <= from_end {
-            if i == from_end || from_orig[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            if i == from_end || from_lower[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // Translated from the following JS code:
                 //   out += out.length === 0 ? '..' : '\\..';
                 if out_len > 0 {

@@ -49,8 +49,8 @@ describe("path.relative", () => {
           ["C:\\É\\sub", "C:\\é", ".."],
           // toLowerCase is not full case-folding: ß stays ß, so ß ≠ SS.
           ["C:\\ß", "C:\\SS", "..\\SS"],
-          // Length-changing toLowerCase (İ → i̇, Ⱥ → ⱥ) takes the
-          // per-segment comparison path.
+          // Length-changing toLowerCase (İ → i̇, Ⱥ → ⱥ) must not
+          // misalign indices into the original toOrig.
           ["C:\\\u0130\\x", "C:\\\u0130\\y", "..\\y"],
           ["C:\\\u0130\\x", "C:\\i\u0307\\y", "..\\y"],
           ["C:\\\u0130", "C:\\\u0130\\sub", "sub"],
@@ -59,6 +59,13 @@ describe("path.relative", () => {
           ["C:\\\u023A\\x", "C:\\\u2C65\\y", "..\\y"],
           ["C:\\\u023A", "C:\\\u2C65", ""],
           ["C:\\\u0130", "D:\\x", "D:\\x"],
+          // Shrinking + growing mappings that cancel in total byte length
+          // (ẞ→ß 3→2, Ⱥ→ⱥ 2→3) must not slice mid-codepoint.
+          ["C:\\\u1E9E\\\u023A", "C:\\\u1E9E\\\u023Ax", "..\\\u023Ax"],
+          ["C:\\\u1E9E\\\u023A\\a", "C:\\\u00DF\\\u2C65\\b", "..\\b"],
+          // Final_Sigma: Σ at word end lowers to ς (not σ).
+          ["C:\\\u0391\u03A3", "C:\\\u03B1\u03C2", ""],
+          ["C:\\\u0391\u03A3\\x", "C:\\\u03B1\u03C2\\y", "..\\y"],
         ],
       ],
       [

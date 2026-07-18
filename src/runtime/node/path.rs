@@ -161,19 +161,32 @@ fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
     }
 }
 
-/// Unicode-lowercase a Windows path for case-insensitive comparison, matching
-/// JS `String.prototype.toLowerCase` as used by Node's `path.win32.relative`.
-/// ASCII bytes are folded per-byte; multi-byte WTF-8 is decoded and re-encoded.
+/// True iff every code unit is ASCII.
+#[inline]
+fn is_all_ascii_t<T: PathCharCwd>(s: &[T]) -> bool {
+    if T::IS_U16 {
+        return s.iter().all(|c| c.as_u32() < 0x80);
+    }
+    strings::is_all_ascii(bytemuck::cast_slice::<T, u8>(s))
+}
+
+/// Unicode-lowercase a path segment for case-insensitive comparison, matching
+/// JS `String.prototype.toLowerCase` (including the Final_Sigma Σ→ς rule) as
+/// used by Node's `path.win32.relative`.
 fn lowercase_windows_path_t<T: PathCharCwd>(src: &[T]) -> Vec<T> {
-    let mut out: Vec<T> = Vec::with_capacity(src.len());
     if T::IS_U16 {
         // The u16 instantiation is unreachable at runtime (all JS entry
         // points convert to UTF-8 and use T = u8); fold ASCII so the
         // generic body type-checks and behaves soundly if ever exercised.
-        out.extend(src.iter().map(|c| to_lower_t(*c)));
-        return out;
+        return src.iter().map(|c| to_lower_t(*c)).collect();
     }
     let bytes: &[u8] = bytemuck::cast_slice::<T, u8>(src);
+    // Valid UTF-8: str::to_lowercase implements Final_Sigma like JS.
+    if let Some(s) = strings::str_utf8(bytes) {
+        return s.to_lowercase().into_bytes().into_iter().map(T::from_u8).collect();
+    }
+    // WTF-8 with an unpaired surrogate: fall back to per-codepoint fold.
+    let mut out: Vec<T> = Vec::with_capacity(bytes.len());
     let mut i = 0usize;
     while i < bytes.len() {
         let b = bytes[i];
@@ -2622,24 +2635,10 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         return Ok(&[]);
     }
 
-    // Node lowercases the resolved paths with StringPrototypeToLowerCase and
-    // performs all comparison/index math on the lowered copies; only the
-    // output tail is sliced from the original toOrig.
-    let from_lower_vec = lowercase_windows_path_t(from_orig);
-    let to_lower_vec = lowercase_windows_path_t(&buf[0..to_orig_len]);
-    let from_lower = from_lower_vec.as_slice();
-    let to_lower = to_lower_vec.as_slice();
-    let from_lower_len = from_lower.len();
-    let to_lower_len = to_lower.len();
-
-    if from_lower == to_lower {
-        return Ok(&[]);
-    }
-
-    if from_lower_len != from_orig.len() || to_lower_len != to_orig_len {
-        // toLowerCase changed the byte length (e.g. İ → i̇); the index-based
-        // comparison below would misalign against toOrig. Fall back to
-        // per-segment comparison, matching Node's handling of this case.
+    // Node lowercases the resolved paths with StringPrototypeToLowerCase before
+    // comparing. For non-ASCII input that fold can shift '\' byte offsets, so
+    // route any non-ASCII path through per-segment comparison (as Node does).
+    if !is_all_ascii_t(from_orig) || !is_all_ascii_t(&buf[0..to_orig_len]) {
         let bslash = T::from_u8(CHAR_BACKWARD_SLASH);
         let out: Vec<T> = {
             let to_orig_slice = &buf[0..to_orig_len];
@@ -2705,15 +2704,21 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         return Ok(&buf[0..n]);
     }
 
+    // Both paths are all-ASCII: the per-byte ASCII fold below is exact.
+    if eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
+        return Ok(&[]);
+    }
+    let from_orig_len = from_orig.len();
+
     // Trim leading backslashes
     let mut from_start: usize = 0;
-    while from_start < from_lower_len && from_lower[from_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    while from_start < from_orig_len && from_orig[from_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         from_start += 1;
     }
 
     // Trim trailing backslashes (applicable to UNC paths only)
-    let mut from_end = from_lower_len;
-    while from_end - 1 > from_start && from_lower[from_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    let mut from_end = from_orig_len;
+    while from_end - 1 > from_start && from_orig[from_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
         from_end -= 1;
     }
 
@@ -2721,13 +2726,13 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
 
     // Trim leading backslashes
     let mut to_start: usize = 0;
-    while to_start < to_lower_len && to_lower[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    while to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
 
     // Trim trailing backslashes (applicable to UNC paths only)
-    let mut to_end = to_lower_len;
-    while to_end - 1 > to_start && to_lower[to_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    let mut to_end = to_orig_len;
+    while to_end - 1 > to_start && buf[to_end - 1] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_end -= 1;
     }
 
@@ -2743,8 +2748,8 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
     {
         let mut i: usize = 0;
         while i < smallest_length {
-            let from_byte = from_lower[from_start + i];
-            if from_byte != to_lower[to_start + i] {
+            let from_byte = from_orig[from_start + i];
+            if to_lower_t(from_byte) != to_lower_t(buf[to_start + i]) {
                 break;
             } else if from_byte == T::from_u8(CHAR_BACKWARD_SLASH) {
                 last_common_sep = Some(i);
@@ -2762,7 +2767,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         }
     } else {
         if to_len > smallest_length {
-            if to_lower[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            if buf[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
                 return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
@@ -2774,7 +2779,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
             }
         }
         if from_len > smallest_length {
-            if from_lower[from_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            if from_orig[from_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `to` is the exact base path for `from`.
                 // For example: from='C:\foo\bar'; to='C:\foo'
                 last_common_sep = Some(smallest_length);
@@ -2800,7 +2805,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         // and `from`.
         let mut i: usize = from_start + last_common_sep.map_or(0, |v| v + 1);
         while i <= from_end {
-            if i == from_end || from_lower[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            if i == from_end || from_orig[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // Translated from the following JS code:
                 //   out += out.length === 0 ? '..' : '\\..';
                 if out_len > 0 {

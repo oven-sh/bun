@@ -1,6 +1,15 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, isWindows } from "harness";
+
+// heapStats().objectTypeCounts is process-global. When the full suite runs in
+// one process, other test files' Listener/TCPSocket wrappers are still on the
+// heap when this file loads. Capture a baseline so the end-of-file leak check
+// asserts *this file's* wrappers were collected, not an absolute count.
+const baseline = heapStats().objectTypeCounts;
+const listenerBaseline = baseline.Listener ?? 0;
+const tcpSocketBaseline = baseline.TCPSocket ?? 0;
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -299,9 +308,10 @@ describe("tcp socket binaryType", () => {
 });
 
 it("should not leak memory", async () => {
-  // assert we don't leak the sockets
-  // we expect 1 or 2 because that's the prototype / structure
-  await expectMaxObjectTypeCount(expect, "Listener", 2);
+  // Assert this file's sockets were collected. The bound is the module-load
+  // baseline (wrappers left by prior test files in the same process) plus 2
+  // for the prototype/structure that first use may have materialized.
+  await expectMaxObjectTypeCount(expect, "Listener", listenerBaseline + 2);
   // JSC's native `using` implementation keeps the disposed value in a
   // bytecode register for the lifetime of the enclosing function frame
   // (emitUsingBodyScope does not clear `slot.value` after calling dispose),
@@ -311,5 +321,5 @@ it("should not leak memory", async () => {
   // happens correctly; this is purely a GC-observable register-lifetime
   // difference. The JSC-side fix (clearing the value register after dispose)
   // requires a WebKit rebuild and is tracked separately.
-  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 4 : 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", tcpSocketBaseline + (isWindows ? 4 : 2));
 });

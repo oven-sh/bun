@@ -24,6 +24,15 @@ test("doesn't throw", () => {
   expect(() => performance.markResourceTiming()).not.toThrow();
 });
 
+// Node coerces the name via `${name}` for mark/clearMarks/clearMeasures, so a
+// Symbol hits V8's ToString message. Verified against Node v26.3.0.
+test("Symbol name argument throws V8 wording", () => {
+  const msg = "Cannot convert a Symbol value to a string";
+  expect(() => performance.mark(Symbol())).toThrow(new TypeError(msg));
+  expect(() => performance.clearMarks(Symbol())).toThrow(new TypeError(msg));
+  expect(() => performance.clearMeasures(Symbol())).toThrow(new TypeError(msg));
+});
+
 test("timerify entry shape", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));

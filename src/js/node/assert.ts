@@ -32,6 +32,7 @@ const {
   isWeakSet,
   isWeakMap,
   isAnyArrayBuffer,
+  isSharedArrayBuffer,
 } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction } = require("internal/validators");
@@ -55,14 +56,9 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const SymbolIterator = Symbol.iterator;
-const SymbolToStringTag = Symbol.toStringTag;
 const TypedArrayPrototypeGetSymbolToStringTag = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype),
-  SymbolToStringTag,
-)!.get!;
-const TypedArrayPrototypeGetByteLength = Object.getOwnPropertyDescriptor(
-  Object.getPrototypeOf(Uint8Array.prototype),
-  "byteLength",
+  Symbol.toStringTag,
 )!.get!;
 const Uint8ArrayFromBuffer = (view: ArrayBufferView) => new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
 
@@ -432,7 +428,7 @@ function compareBranch(actual, expected, comparedObjects?) {
     if (
       !isAnyArrayBuffer(actual) ||
       !isAnyArrayBuffer(expected) ||
-      actual[SymbolToStringTag] !== expected[SymbolToStringTag]
+      isSharedArrayBuffer(actual) !== isSharedArrayBuffer(expected)
     ) {
       return false;
     }
@@ -504,8 +500,8 @@ function compareBranchMap(actual, expected, comparedObjects) {
 }
 
 function isPartialUint8Array(a, b) {
-  const lenA = TypedArrayPrototypeGetByteLength.$call(a);
-  const lenB = TypedArrayPrototypeGetByteLength.$call(b);
+  const lenA = a.byteLength;
+  const lenB = b.byteLength;
   if (lenA < lenB) return false;
   let offsetA = 0;
   for (let offsetB = 0; offsetB < lenB; offsetB++) {

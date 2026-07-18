@@ -420,9 +420,9 @@ pub fn scan_imports_and_exports(
                         // SAFETY: `named_imports` is a raw column ptr;
                         // pass the element by raw `*const` so no `&mut`
                         // protector spans the `&mut this` call (the callee
-                        // re-reads this same column via `self.graph.ast`).
+                        // re-reads this same column via `self.graph.ast`,
+                        // and writes `meta.imports_to_bind` via `self`).
                         unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
-                        &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
                     );
 
@@ -709,12 +709,23 @@ pub fn scan_imports_and_exports(
             }
 
             {
-                let imports_to_bind = &col_ref!(imports_to_bind_list)[id];
-                debug_assert_eq!(imports_to_bind.keys().len(), imports_to_bind.values().len());
+                // Iterate the file's named imports in the same sorted order
+                // the import matcher used, looking each up in
+                // `imports_to_bind`. Walks bind imports in other files as
+                // they resolve (see `match_import_with_export`), so the map's
+                // insertion order no longer matches resolution order — but
+                // every binding for a *named import* is present by now with
+                // identical content, and entries written outside matching
+                // (`ImportBindKind::Other`) never belong to named imports, so
+                // this visits the same entries in the order the pre-binding
+                // change preserved: ascending `inner_index`.
+                let ni_keys: &[Ref] = col_ref!(named_imports)[id].keys();
+                let mut ni_order: Vec<usize> = (0..ni_keys.len()).collect();
+                ni_order.sort_by(|&a, &b| ni_keys[a].inner_index().cmp(&ni_keys[b].inner_index()));
                 // Iterate by index so we can
                 // re-borrow `parts` after each `top_level_symbol_to_parts` call.
-                for itb_i in 0..imports_to_bind.keys().len() {
-                    let r#ref: Ref = col_ref!(imports_to_bind_list)[id].keys()[itb_i];
+                for &ni_i in &ni_order {
+                    let r#ref: Ref = col_ref!(named_imports)[id].keys()[ni_i];
                     let import_source_index;
                     let import_ref;
                     // `BackRef<[Dependency]>` — points into the `imports_to_bind`
@@ -723,14 +734,20 @@ pub fn scan_imports_and_exports(
                     // lets the inner-loop reads go through safe `Deref`.
                     let re_exports_ptr: bun_ptr::BackRef<[Dependency]>;
                     {
-                        let import: &ImportData =
-                            &col_ref!(imports_to_bind_list)[id].values()[itb_i];
+                        let Some(import): Option<&ImportData> =
+                            col_ref!(imports_to_bind_list)[id].get(&r#ref)
+                        else {
+                            continue;
+                        };
                         import_source_index = import.data.source_index.get();
                         import_ref = import.data.import_ref;
                         re_exports_ptr = bun_ptr::BackRef::new(import.re_exports.slice());
                     }
 
-                    if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
+                    {
+                        // The key came from this map's own `keys()`, so read
+                        // the value by the same index instead of re-hashing.
+                        let named_import = &col_ref!(named_imports)[id].values()[ni_i];
                         // `local_parts_with_uses` and the `top_level_symbol_to_parts`
                         // result are both arena-backed AstVec slices that this loop
                         // body never resizes; capture them as BackRefs (same

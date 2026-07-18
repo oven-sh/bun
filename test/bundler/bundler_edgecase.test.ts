@@ -2771,6 +2771,75 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // The import cycle detector switches from a linear scan to a hash set once
+  // a re-export chain outgrows CYCLE_SCAN_THRESHOLD (32 at the time of
+  // writing). These tests use chains twice that deep so they keep exercising
+  // the hash-set path even if the threshold is retuned (the shallow path is
+  // covered by default/ExportInfiniteCycle1 in esbuild/default.test.ts).
+  itBundled("edgecase/DeepExportInfiniteCycle", {
+    files: {
+      "/entry.js": Array.from({ length: 64 }, (_, i) => `export {v${i} as v${(i + 1) % 64}} from './entry'`).join("\n"),
+    },
+    bundleErrors: {
+      "/entry.js": Array.from({ length: 64 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
+    },
+  });
+  itBundled("edgecase/DeepReExportChainNoCycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './f0.js';
+        console.log(x);
+      `,
+      ...Object.fromEntries(
+        Array.from({ length: 64 }, (_, i) => [
+          `/f${i}.js`,
+          i === 63 ? `export const x = 42;` : `export { x } from './f${i + 1}.js';`,
+        ]),
+      ),
+    },
+    run: {
+      stdout: "42",
+    },
+  });
+  // Many imports resolving through the same re-export chain from different
+  // entry distances: later resolutions reuse the bindings written while the
+  // first import's chain was walked, including the re-export dependency list.
+  itBundled("edgecase/SharedReExportChainManyImporters", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './f0.js';
+        import { a as midA } from './f20.js';
+        import { b as midB } from './f35.js';
+        console.log(a + b + midA + midB);
+      `,
+      ...Object.fromEntries(
+        Array.from({ length: 64 }, (_, i) => [
+          `/f${i}.js`,
+          i === 63 ? `export const a = 1; export const b = 2;` : `export { a, b } from './f${i + 1}.js';`,
+        ]),
+      ),
+    },
+    run: {
+      stdout: "6",
+    },
+  });
+  // An import chain that feeds into (but is not part of) an export cycle must
+  // still be reported as a cycle, including when the cycle was already
+  // detected while resolving an earlier import.
+  itBundled("edgecase/ReExportChainIntoCycle", {
+    files: {
+      "/entry.js": [
+        ...Array.from({ length: 64 }, (_, i) => `export {v${i} as v${(i + 1) % 64}} from './entry'`),
+        `export {v0 as leadIn} from './entry'`,
+      ].join("\n"),
+    },
+    bundleErrors: {
+      "/entry.js": [
+        ...Array.from({ length: 64 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
+        `Detected cycle while resolving import "v0"`,
+      ],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

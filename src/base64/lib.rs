@@ -591,11 +591,11 @@ pub mod zig_base64 {
             let mut result = source_len / 4 * 3;
             let leftover = source_len % 4;
             if self.pad_char.is_some() {
-                if !leftover.is_multiple_of(4) {
+                if leftover != 0 {
                     return Err(Error::InvalidPadding);
                 }
             } else {
-                if leftover % 4 == 1 {
+                if leftover == 1 {
                     return Err(Error::InvalidPadding);
                 }
                 result += leftover * 3 / 4;

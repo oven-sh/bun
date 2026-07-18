@@ -2625,91 +2625,96 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distance: u32,
     ) {
-        if !self.graph.files_live.is_set(source_index as usize) {
-            return;
-        }
+        // Breadth-first worklist instead of the recursive depth-first walk
+        // the Zig spec (and esbuild) use. The DFS re-traversed a node's
+        // entire subtree every time a shorter path to it was found, which is
+        // quadratic-and-worse on graphs with dense cross-file dependency
+        // lists (deep re-export chains), and could overflow the stack on
+        // very deep import graphs. Expanding in level order reaches every
+        // node at its minimal depth first, so each node is expanded at most
+        // once per entry point, while producing the identical final state:
+        // the entry bit set on every live reachable file, and `distances`
+        // holding the minimum distance from any entry point processed so
+        // far.
+        let mut queue: std::collections::VecDeque<(crate::IndexInt, u32)> =
+            std::collections::VecDeque::new();
 
-        let cur_dist = ctx.distances[source_index as usize];
-        let traverse_again = distance < cur_dist;
-        if traverse_again {
-            ctx.distances[source_index as usize] = distance;
-        }
-        let out_dist = distance + 1;
-
-        let bits = &mut ctx.file_entry_bits[source_index as usize];
-
-        // Don't mark this file more than once
-        if bits.is_set(entry_points_count) && !traverse_again {
-            return;
-        }
-
-        bits.set(entry_points_count);
-
-        #[cfg(feature = "debug_logs")]
         {
-            let parse_graph = self.parse_graph();
-            debug_tree_shake!(
-                "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
-                entry_points_count,
-                bstr::BStr::new(
-                    &parse_graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .pretty
-                ),
-                <&'static str>::from(
-                    parse_graph.ast.items_target()[source_index as usize].bake_graph()
-                ),
-                out_dist,
-            );
-        }
-
-        if ctx.css_reprs[source_index as usize].is_some() {
-            for ri in 0..ctx.import_records[source_index as usize].len() {
-                let record = &ctx.import_records[source_index as usize][ri];
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                {
-                    let other = record.source_index.get();
-                    self.mark_file_reachable_for_code_splitting(
-                        ctx,
-                        other,
-                        entry_points_count,
-                        out_dist,
-                    );
-                }
+            if !self.graph.files_live.is_set(source_index as usize) {
+                return;
             }
-            return;
+            let cur_dist = ctx.distances[source_index as usize];
+            let improved = distance < cur_dist;
+            if improved {
+                ctx.distances[source_index as usize] = distance;
+            }
+            let bits = &mut ctx.file_entry_bits[source_index as usize];
+            if bits.is_set(entry_points_count) && !improved {
+                return;
+            }
+            bits.set(entry_points_count);
+            queue.push_back((source_index, distance));
         }
 
-        for ri in 0..ctx.import_records[source_index as usize].len() {
-            let record = &ctx.import_records[source_index as usize][ri];
-            if record.source_index.is_valid()
-                && !self.is_external_dynamic_import(record, source_index)
+        while let Some((si, dist)) = queue.pop_front() {
+            let out_dist = dist + 1;
+
+            #[cfg(feature = "debug_logs")]
             {
-                let other = record.source_index.get();
-                self.mark_file_reachable_for_code_splitting(
-                    ctx,
-                    other,
+                let parse_graph = self.parse_graph();
+                debug_tree_shake!(
+                    "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
                     entry_points_count,
+                    bstr::BStr::new(
+                        &parse_graph.input_files.items_source()[si as usize]
+                            .path
+                            .pretty
+                    ),
+                    <&'static str>::from(parse_graph.ast.items_target()[si as usize].bake_graph()),
                     out_dist,
                 );
             }
-        }
 
-        let part_count = ctx.parts[source_index as usize].len();
-        for pi in 0..part_count {
-            let deps_len = ctx.parts[source_index as usize].as_slice()[pi]
-                .dependencies
-                .len();
-            for di in 0..deps_len {
-                let dependency = ctx.parts[source_index as usize].as_slice()[pi].dependencies[di];
-                if dependency.source_index.get() != source_index {
-                    self.mark_file_reachable_for_code_splitting(
-                        ctx,
-                        dependency.source_index.get(),
-                        entry_points_count,
-                        out_dist,
-                    );
+            // The enqueue gate mirrors the recursion gate above: follow an
+            // edge when it improves the distance or first marks the file.
+            macro_rules! visit {
+                ($other:expr) => {{
+                    let other: crate::IndexInt = $other;
+                    if self.graph.files_live.is_set(other as usize) {
+                        let cur_dist = ctx.distances[other as usize];
+                        let improved = out_dist < cur_dist;
+                        if improved {
+                            ctx.distances[other as usize] = out_dist;
+                        }
+                        let bits = &mut ctx.file_entry_bits[other as usize];
+                        if !bits.is_set(entry_points_count) || improved {
+                            bits.set(entry_points_count);
+                            queue.push_back((other, out_dist));
+                        }
+                    }
+                }};
+            }
+
+            for ri in 0..ctx.import_records[si as usize].len() {
+                let record = &ctx.import_records[si as usize][ri];
+                if record.source_index.is_valid() && !self.is_external_dynamic_import(record, si) {
+                    visit!(record.source_index.get());
+                }
+            }
+
+            // CSS files follow only their import records.
+            if ctx.css_reprs[si as usize].is_some() {
+                continue;
+            }
+
+            let part_count = ctx.parts[si as usize].len();
+            for pi in 0..part_count {
+                let deps_len = ctx.parts[si as usize].as_slice()[pi].dependencies.len();
+                for di in 0..deps_len {
+                    let dependency = ctx.parts[si as usize].as_slice()[pi].dependencies[di];
+                    if dependency.source_index.get() != si {
+                        visit!(dependency.source_index.get());
+                    }
                 }
             }
         }
@@ -2964,14 +2969,6 @@ use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 // unqualified uses in `advance_import_tracker` / `match_import_with_export`
 // below resolve unchanged.
 pub use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
-
-/// Field-wise eq for `ImportTracker`.
-#[inline]
-fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
-    a.source_index.get() == b.source_index.get()
-        && a.import_ref == b.import_ref
-        && a.name_loc.start == b.name_loc.start
-}
 
 impl<'a> LinkerContext<'a> {
     /// Looks up the symbol `Ref` for a named export of the runtime module.
@@ -3502,6 +3499,32 @@ impl<'a> LinkerContext<'a> {
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
         let mut result: MatchImport = MatchImport::default();
 
+        // The vast majority of import chains have one or two elements, so a
+        // linear scan is the fastest way to check for cycles. Deep re-export
+        // chains would make repeated scans quadratic, so once the chain
+        // reaches this size the scan is replaced with a hash-set lookup.
+        // Below it, scanning an array of small Copy structs is cheaper than
+        // hashing, so the threshold only needs to be small enough to keep the
+        // quadratic term negligible.
+        const CYCLE_SCAN_THRESHOLD: usize = 32;
+        let mut cycle_set: HashMap<ImportTracker, ()> = HashMap::new();
+
+        // Trackers visited by this walk beyond the first, with the length of
+        // `re_exports` on arrival — each one's binding is `result` plus the
+        // dependencies appended from that point on. Single-step walks (the
+        // overwhelmingly common case) never allocate this.
+        let mut visited: Vec<(ImportTracker, usize)> = Vec::new();
+        // Whether the imports this walk passed through may be bound early
+        // (written into their files' `imports_to_bind`): set only when the
+        // walk ends at a diagnostic-free unambiguous `Found` terminal. Every
+        // other terminal either logs, mutates symbol state, or produces a
+        // result that depends on how the walk arrived, so pre-binding it for
+        // a different importer would not be equivalent to re-walking.
+        let mut bindable = false;
+        // Walks that pass through `export * from` ambiguity recurse and
+        // compare the results afterwards; those never bind early.
+        let mut saw_ambiguity = false;
+
         'loop_: loop {
             // Make sure we avoid infinite loops trying to resolve cycles:
             //
@@ -3510,16 +3533,24 @@ impl<'a> LinkerContext<'a> {
             //   export {b as c} from './foo.js'
             //   export {c as a} from './foo.js'
             //
-            // This uses a O(n^2) array scan instead of a O(n) map because the vast
-            // majority of cases have one or two elements
-            for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
-                if import_tracker_eq(&tracker, prev_tracker) {
-                    result = MatchImport {
-                        kind: MatchImportKind::Cycle,
-                        ..Default::default()
-                    };
-                    break 'loop_;
+            let cycle_slice = &self.cycle_detector[cycle_detector_top..];
+            let found_cycle = if cycle_slice.len() < CYCLE_SCAN_THRESHOLD {
+                cycle_slice.contains(&tracker)
+            } else {
+                if cycle_set.is_empty() {
+                    cycle_set.reserve(cycle_slice.len() + 1);
+                    for prev_tracker in cycle_slice {
+                        cycle_set.insert(*prev_tracker, ());
+                    }
                 }
+                cycle_set.contains(&tracker)
+            };
+            if found_cycle {
+                result = MatchImport {
+                    kind: MatchImportKind::Cycle,
+                    ..Default::default()
+                };
+                break 'loop_;
             }
 
             if tracker.source_index.is_invalid() {
@@ -3527,8 +3558,41 @@ impl<'a> LinkerContext<'a> {
                 break;
             }
 
+            // Mid-walk (never on the first iteration, so plain imports never
+            // pay this lookup), the tracker is a named import that may already
+            // be bound — by its own file's matching pass, or early by another
+            // walk that passed through it (see the binding loop below). Its
+            // stored target and `re_exports` suffix are exactly what the
+            // remaining iterations would compute, because import chains have
+            // a single successor per tracker. Only `Normal` bindings are used:
+            // other kinds either carry namespace state that depends on how the
+            // walk arrived or were written outside import matching.
+            if cycle_detector_top != self.cycle_detector.len()
+                && let Some(entry) = self.graph.meta.items_imports_to_bind()
+                    [tracker.source_index.get() as usize]
+                    .get(&tracker.import_ref)
+                && entry.kind == crate::ImportBindKind::Normal
+            {
+                re_exports.extend_from_slice(entry.re_exports.slice());
+                result = MatchImport {
+                    kind: MatchImportKind::Normal,
+                    source_index: entry.data.source_index.get(),
+                    r#ref: entry.data.import_ref,
+                    name_loc: entry.data.name_loc,
+                    ..Default::default()
+                };
+                bindable = true;
+                break 'loop_;
+            }
+
             let prev_source_index = tracker.source_index.get();
+            if cycle_detector_top != self.cycle_detector.len() {
+                visited.push((tracker, re_exports.len()));
+            }
             self.cycle_detector.push(tracker);
+            if !cycle_set.is_empty() {
+                cycle_set.insert(tracker, ());
+            }
 
             // Resolve the import by one step
             let advanced = self.advance_import_tracker(&tracker);
@@ -3537,9 +3601,14 @@ impl<'a> LinkerContext<'a> {
             // `advanced.import_data` borrows
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only
-            // `cycle_detector`, `log`, and `graph.symbols` are mutated below).
+            // `cycle_detector`, `log`, `graph.symbols`, and — via the
+            // recursive call below — `meta.imports_to_bind` are mutated;
+            // `imports_to_bind` is a separate SoA column from
+            // `resolved_exports`, and putting into its per-file map never
+            // reallocates the column array the borrow points through).
             let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
                 advanced.import_data.get();
+            saw_ambiguity |= !potentially_ambiguous_export_star_refs.is_empty();
 
             match status {
                 ImportTrackerStatus::Cjs
@@ -3795,6 +3864,8 @@ impl<'a> LinkerContext<'a> {
                         tracker = next_tracker;
                         continue 'loop_;
                     }
+
+                    bindable = true;
                 }
             }
 
@@ -3804,6 +3875,38 @@ impl<'a> LinkerContext<'a> {
         // Spec `defer`: restore cycle_detector to its entry length now that the
         // loop is done. All remaining exit paths are below this point.
         self.cycle_detector.truncate(cycle_detector_top);
+
+        // Bind every intermediate tracker this walk passed through. Each is a
+        // named import whose own resolution would repeat the identical tail —
+        // they were all continued past in the `Found` arm, which overwrites
+        // `result` unconditionally, so the final `result` does not depend on
+        // where the walk started. Writing the binding now (the same entry,
+        // with the same dependency list, that
+        // `match_imports_with_exports_for_file` would store later — it skips
+        // imports that are already bound) means each import chain is walked
+        // once per link instead of once per import resolving through it.
+        if bindable && !saw_ambiguity && !visited.is_empty() {
+            debug_assert!(result.kind == MatchImportKind::Normal);
+            for &(visited_tracker, deps_start) in &visited {
+                self.graph.meta.items_imports_to_bind_mut()
+                    [visited_tracker.source_index.get() as usize]
+                    .put(
+                        visited_tracker.import_ref,
+                        crate::ImportData {
+                            kind: crate::ImportBindKind::Normal,
+                            re_exports: bun_alloc::AstAlloc::vec_from_slice(
+                                &re_exports.slice()[deps_start..],
+                            ),
+                            data: ImportTracker {
+                                source_index: crate::Index::init(result.source_index),
+                                import_ref: result.r#ref,
+                                name_loc: result.name_loc,
+                            },
+                        },
+                    )
+                    .expect("unreachable");
+            }
+        }
 
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {
@@ -3838,7 +3941,6 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
-        imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
     ) {
         // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
@@ -3855,9 +3957,9 @@ impl<'a> LinkerContext<'a> {
         //
         // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
         // SoA column, which is never reallocated during linking; the loop body
-        // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
-        // `meta.probably_typescript_type`), so the backing `keys`/`values`
-        // slices stay valid for the whole loop.
+        // never mutates that column (only `meta.imports_to_bind`/`log`/
+        // `symbols`/`meta.probably_typescript_type`), so the backing
+        // `keys`/`values` slices stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
@@ -3870,6 +3972,17 @@ impl<'a> LinkerContext<'a> {
         for &i in &order {
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
             let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
+
+            // Already bound early by a walk that passed through this import
+            // (see `match_import_with_export`); the stored entry is identical
+            // to what re-resolving would produce, and `Normal` bindings have
+            // no other side effects to apply.
+            if let Some(entry) =
+                self.graph.meta.items_imports_to_bind()[source_index as usize].get(&import_ref)
+                && entry.kind != crate::ImportBindKind::Other
+            {
+                continue;
+            }
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
@@ -3886,15 +3999,16 @@ impl<'a> LinkerContext<'a> {
 
             match result.kind {
                 MatchImportKind::Normal => {
-                    imports_to_bind
+                    self.graph.meta.items_imports_to_bind_mut()[source_index as usize]
                         .put(
                             import_ref,
                             crate::ImportData {
+                                kind: crate::ImportBindKind::Normal,
                                 re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,
-                                    ..Default::default()
+                                    name_loc: result.name_loc,
                                 },
                             },
                         )
@@ -3911,15 +4025,16 @@ impl<'a> LinkerContext<'a> {
                         }));
                 }
                 MatchImportKind::NormalAndNamespace => {
-                    imports_to_bind
+                    self.graph.meta.items_imports_to_bind_mut()[source_index as usize]
                         .put(
                             import_ref,
                             crate::ImportData {
+                                kind: crate::ImportBindKind::NormalAndNamespace,
                                 re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,
-                                    ..Default::default()
+                                    name_loc: result.name_loc,
                                 },
                             },
                         )

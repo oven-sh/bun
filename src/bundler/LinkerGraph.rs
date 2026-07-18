@@ -82,15 +82,32 @@ pub mod js_meta {
 
     use crate::{ImportTracker, Index, WrapKind};
 
+    /// How an `imports_to_bind` entry was produced. `Normal` and
+    /// `NormalAndNamespace` entries are finished import resolutions written
+    /// by import matching — either by the importing file's own pass or bound
+    /// early by a walk passing through it (see `match_import_with_export`).
+    /// Everything written outside import matching (export-star bookkeeping,
+    /// generated symbol uses) is `Other` and is never treated as a resolved
+    /// walk result.
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum ImportBindKind {
+        #[default]
+        Other,
+        Normal,
+        NormalAndNamespace,
+    }
+
     pub struct ImportData {
         pub re_exports: AstVec<Dependency>,
         pub data: ImportTracker,
+        pub kind: ImportBindKind,
     }
     impl Default for ImportData {
         fn default() -> Self {
             Self {
                 re_exports: AstAlloc::vec(),
                 data: ImportTracker::default(),
+                kind: ImportBindKind::Other,
             }
         }
     }
@@ -182,7 +199,8 @@ pub mod js_meta {
 
 pub use entry_point::EntryPoint;
 pub use js_meta::{
-    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
+    ExportData, ImportBindKind, ImportData, JSMeta, RefImportData, ResolvedExports,
+    TopLevelSymbolToParts,
 };
 
 pub struct LinkerGraph<'a> {

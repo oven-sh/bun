@@ -55,8 +55,8 @@ pub use chunk::{
     cross_chunk_import,
 };
 pub use linker_graph::{
-    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
-    entry_point, js_meta,
+    ExportData, ImportBindKind, ImportData, JSMeta, RefImportData, ResolvedExports,
+    TopLevelSymbolToParts, entry_point, js_meta,
 };
 
 /// `MultiArrayList` SoA column-accessor traits, gathered so a single

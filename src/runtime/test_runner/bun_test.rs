@@ -6,6 +6,7 @@ use std::rc::{Rc, Weak};
 use bun_core::collections::LinearFifo;
 use bun_core::{Output, Timespec};
 use crate::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::virtual_machine::VirtualMachine;
 use crate::js_promise::Status as PromiseStatus;
 use super::jest::{Jest, FileId, FileColumns as _};

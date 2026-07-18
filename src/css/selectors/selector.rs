@@ -845,7 +845,8 @@ pub mod serialize {
                     // buffer; the quoted-string length is counted in a null
                     // sink, so picking the shorter form allocates nothing.
                     dest.scratchbuf.clear();
-                    let _ = css::serializer::serialize_identifier(value_bytes, &mut dest.scratchbuf);
+                    let _ =
+                        css::serializer::serialize_identifier(value_bytes, &mut dest.scratchbuf);
                     let id_len = dest.scratchbuf.len();
 
                     let mut counter = bun_io::DiscardingWriter::new();

@@ -129,22 +129,34 @@ impl JSValueExt for JSValue {
 
 // ─── JSPromiseExt ───────────────────────────────────────────────────────────
 pub trait JSPromiseExt {
-    fn reject_task(&self, global: &JSGlobalObject, value: JSValue);
-    fn resolve_task(&self, global: &JSGlobalObject, value: JSValue);
+    fn reject_task(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Result<(), crate::JsTerminated>;
+    fn resolve_task(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Result<(), crate::JsTerminated>;
 }
 
 impl JSPromiseExt for JSPromise {
-    fn reject_task(&self, global: &JSGlobalObject, value: JSValue) {
-        let vm = global.bun_vm();
-        let scope = vm.event_loop().enter();
-        self.reject(global, value);
-        drop(scope);
+    fn reject_task(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Result<(), crate::JsTerminated> {
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
+        self.reject(global, Ok(value))
     }
-    fn resolve_task(&self, global: &JSGlobalObject, value: JSValue) {
-        let vm = global.bun_vm();
-        let scope = vm.event_loop().enter();
-        self.resolve(global, value);
-        drop(scope);
+    fn resolve_task(
+        &mut self,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> Result<(), crate::JsTerminated> {
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
+        self.resolve(global, value)
     }
 }
 
@@ -184,19 +196,19 @@ impl JSPromiseStrongExt for crate::JSPromiseStrong {
 // ─── FetchHeadersExt ────────────────────────────────────────────────────────
 unsafe extern "C" {
     fn WebCore__FetchHeaders__toUWSResponse(
-        this: *const FetchHeaders,
-        is_ssl: bool,
+        this: *mut FetchHeaders,
+        kind: bun_uws::ResponseKind,
         response: *mut c_void,
     );
 }
 
 pub trait FetchHeadersExt {
-    fn to_uws_response(&self, kind: bun_uws::ResponseKind, response: *mut c_void);
+    fn to_uws_response(&mut self, kind: bun_uws::ResponseKind, response: *mut c_void);
 }
 
 impl FetchHeadersExt for FetchHeaders {
-    fn to_uws_response(&self, kind: bun_uws::ResponseKind, response: *mut c_void) {
-        unsafe { WebCore__FetchHeaders__toUWSResponse(self, kind.is_ssl(), response) }
+    fn to_uws_response(&mut self, kind: bun_uws::ResponseKind, response: *mut c_void) {
+        unsafe { WebCore__FetchHeaders__toUWSResponse(self, kind, response) }
     }
 }
 

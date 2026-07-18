@@ -50,6 +50,25 @@ interface SecurityScannerTestOptions {
 
 const DO_TEST_DEBUG = process.env.SCANNER_TEST_DEBUG === "true";
 
+// openpty() can transiently fail (EAGAIN/ENFILE) when many parallel test
+// processes are allocating PTYs; retry a few times before giving up so this
+// 720-cell matrix isn't at the mercy of whatever Terminal-heavy suite is
+// scheduled alongside it.
+async function openTerminalWithRetry(options: ConstructorParameters<typeof Bun.Terminal>[0]): Promise<Bun.Terminal> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      return new Bun.Terminal(options);
+    } catch (err) {
+      lastErr = err;
+      if (!(err instanceof Error) || !err.message.includes("Failed to open PTY")) throw err;
+      Bun.gc(true);
+      await Bun.sleep(25 * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
 async function globEverything(dir: string) {
   return await Array.fromAsync(
     new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
@@ -240,10 +259,10 @@ scanner = "${scannerPath}"`,
   if (hasTTY) {
     let responseSent = false;
 
-    await using terminal = new Bun.Terminal({
+    await using terminal = await openTerminalWithRetry({
       cols: 80,
       rows: 24,
-      data(_term, data) {
+      data(term, data) {
         const text = new TextDecoder().decode(data);
         errAndOut += text;
 
@@ -260,7 +279,7 @@ scanner = "${scannerPath}"`,
         // When we see the prompt, send the configured response
         if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
           responseSent = true;
-          terminal.write(ttyResponse + "\n");
+          term.write(ttyResponse + "\n");
         }
       },
     });

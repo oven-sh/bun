@@ -19,14 +19,11 @@ mod _impl {
         CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
     };
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
+    use crate::node::node_zlib_binding::{
+        CompressionStream, CountedKeepAlive, unset_task_callback, validate_mode,
+        validate_write_result_array,
+    };
     use crate::node::util::validators;
-
-    /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs).
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
-    fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
     // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
@@ -65,29 +62,9 @@ mod _impl {
         pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_undef::<4>();
 
-            let mode = arguments.ptr[0];
-            if !mode.is_number() {
-                return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 1 || mode_int > 7 {
-                return Err(global.throw_range_error(
-                    mode_int,
-                    bun_jsc::RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 1,
-                        max: 7,
-                        msg: b"",
-                    },
-                ));
-            }
-
+            let mode = validate_mode(global, arguments.ptr[0], 1, 7)?;
             let stream = Context {
-                mode: c::NodeMode::from_int(mode_int as u8),
+                mode,
                 ..Default::default()
             };
             Ok(Box::new(Self {
@@ -103,7 +80,7 @@ mod _impl {
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
-                    callback: noop_task_callback,
+                    callback: unset_task_callback,
                 }),
             }))
         }
@@ -141,32 +118,8 @@ mod _impl {
                 validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
             let strategy =
                 validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
-            // `flush_write_result` writes two u32s into this array, so the
-            // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[4];
-            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
-                    "writeResult",
-                    "Uint32Array",
-                    write_result_value,
-                ));
-            };
-            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
-                    "writeResult",
-                    "Uint32Array",
-                    write_result_value,
-                ));
-            }
-            let write_result_slice = write_result_buf.as_u32();
-            if write_result_slice.len() < 2 {
-                return Err(global
-                    .err(
-                        bun_jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!("writeResult must be a Uint32Array with at least 2 elements"),
-                    )
-                    .throw());
-            }
+            validate_write_result_array(global, write_result_value, "writeResult")?;
             let write_callback =
                 validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives

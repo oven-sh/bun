@@ -156,186 +156,9 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
     crc as u32
 }
 
-// `W: bun_io::Write` bound is applied on `read_all` (the only method that touches `context`).
-pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
-    pub context: W,
-    pub input: &'a [u8],
-    pub buf: [u8; BUFFER_SIZE],
-    pub zlib: zStream_struct,
-    // allocator field dropped (global mimalloc)
-    pub state: ZlibReaderState,
-}
-
 pub use bun_core::compress::State;
-pub type ZlibReaderState = State;
 pub type ZlibReaderArrayListState = State;
 pub type ZlibCompressorArrayListState = State;
-
-impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
-    pub fn end(&mut self) {
-        if self.state == ZlibReaderState::Inflating {
-            // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(&raw mut self.zlib) };
-            self.state = ZlibReaderState::End;
-        }
-    }
-
-    pub fn init(writer: W, input: &'a [u8]) -> Result<Box<Self>, ZlibError> {
-        let mut zlib_reader = Box::new(Self {
-            context: writer,
-            input,
-            buf: [0u8; BUFFER_SIZE],
-            zlib: bun_core::ffi::zeroed(),
-            state: ZlibReaderState::Uninitialized,
-        });
-
-        zlib_reader.zlib = zStream_struct {
-            next_in: input.as_ptr(),
-            avail_in: u32::try_from(input.len()).expect("int cast"),
-            total_in: u32::try_from(input.len()).expect("int cast") as _,
-
-            next_out: zlib_reader.buf.as_mut_ptr(),
-            avail_out: BUFFER_SIZE as uInt,
-            total_out: BUFFER_SIZE as _,
-
-            err_msg: core::ptr::null(),
-            alloc_func: Some(zlib_mi_malloc),
-            free_func: Some(zlib_mi_free),
-
-            internal_state: core::ptr::null_mut(),
-            user_data: (&raw mut *zlib_reader).cast::<c_void>(),
-
-            data_type: DataType::Unknown,
-            adler: 0,
-            reserved: 0,
-        };
-
-        // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
-            inflateInit2_(
-                &raw mut zlib_reader.zlib,
-                15 + 32,
-                zlibVersion().cast::<u8>(),
-                size_of::<zStream_struct>() as c_int,
-            )
-        } {
-            ReturnCode::Ok => Ok(zlib_reader),
-            ReturnCode::MemError => {
-                drop(zlib_reader);
-                Err(ZlibError::OutOfMemory)
-            }
-            ReturnCode::StreamError => {
-                drop(zlib_reader);
-                Err(ZlibError::InvalidArgument)
-            }
-            ReturnCode::VersionError => {
-                drop(zlib_reader);
-                Err(ZlibError::InvalidArgument)
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn error_message(&self) -> Option<&[u8]> {
-        if !self.zlib.err_msg.is_null() {
-            // SAFETY: err_msg is a NUL-terminated C string from zlib (static or stream-owned).
-            return Some(
-                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
-            );
-        }
-        None
-    }
-
-    pub fn read_all(&mut self, is_done: bool) -> crate::Result<()>
-    where
-        W: bun_io::Write,
-    {
-        while self.state == ZlibReaderState::Uninitialized
-            || self.state == ZlibReaderState::Inflating
-        {
-            // Before the call of inflate(), the application should ensure
-            // that at least one of the actions is possible, by providing
-            // more input and/or consuming more output, and updating the
-            // next_* and avail_* values accordingly. If the caller of
-            // inflate() does not provide both available input and available
-            // output space, it is possible that there will be no progress
-            // made. The application can consume the uncompressed output
-            // when it wants, for example when the output buffer is full
-            // (avail_out == 0), or after each call of inflate(). If inflate
-            // returns Z_OK and with zero avail_out, it must be called again
-            // after making room in the output buffer because there might be
-            // more output pending.
-
-            // - Decompress more input starting at next_in and update
-            //   next_in and avail_in accordingly. If not all input can be
-            //   processed (because there is not enough room in the output
-            //   buffer), then next_in and avail_in are updated accordingly,
-            //   and processing will resume at this point for the next call
-            //   of inflate().
-
-            // - Generate more output starting at next_out and update
-            //   next_out and avail_out accordingly. inflate() provides as
-            //   much output as possible, until there is no more input data
-            //   or no more space in the output buffer (see below about the
-            //   flush parameter).
-
-            if self.zlib.avail_out == 0 {
-                self.context.write_all(&self.buf)?;
-                self.zlib.avail_out = BUFFER_SIZE as uInt;
-                self.zlib.next_out = self.buf.as_mut_ptr();
-            }
-
-            // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
-            // SAFETY: self.zlib was initialized via inflateInit2_.
-            let rc = unsafe { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
-            self.state = ZlibReaderState::Inflating;
-
-            match rc {
-                ReturnCode::StreamEnd => {
-                    self.state = ZlibReaderState::End;
-                    let remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
-                    self.context.write_all(remainder)?;
-                    self.end();
-                    return Ok(());
-                }
-                ReturnCode::MemError => {
-                    self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                }
-                ReturnCode::BufError => {
-                    // BufError with avail_in == 0 means we need more input data
-                    if self.zlib.avail_in == 0 {
-                        if is_done {
-                            // Stream is truncated - we're at EOF but decoder needs more data
-                            self.state = ZlibReaderState::Error;
-                            return Err(crate::Error::ZlibError);
-                        }
-                        // Not at EOF - we can retry with more data
-                        return Err(crate::Error::ShortRead);
-                    }
-                    self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::ZlibError);
-                }
-                ReturnCode::StreamError
-                | ReturnCode::DataError
-                | ReturnCode::NeedDict
-                | ReturnCode::VersionError
-                | ReturnCode::ErrNo => {
-                    self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::ZlibError);
-                }
-                ReturnCode::Ok => {}
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<'a, W, const BUFFER_SIZE: usize> Drop for ZlibReader<'a, W, BUFFER_SIZE> {
-    fn drop(&mut self) {
-        self.end();
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
@@ -347,7 +170,26 @@ pub enum ZlibError {
 
 bun_core::impl_tag_error!(ZlibError);
 
-// zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
+/// Map an `inflateInit2_`/`deflateInit2_` return code to a `ZlibError`.
+fn map_init_return_code(rc: ReturnCode) -> Result<(), ZlibError> {
+    match rc {
+        ReturnCode::Ok => Ok(()),
+        ReturnCode::MemError => Err(ZlibError::OutOfMemory),
+        ReturnCode::StreamError | ReturnCode::VersionError => Err(ZlibError::InvalidArgument),
+        _ => unreachable!(),
+    }
+}
+
+/// Point the stream's output at freshly reserved tail capacity of `list`,
+/// capping `avail_out` at `budget` bytes (`usize::MAX` = unbounded).
+fn regrow_output_tail(zlib: &mut zStream_struct, list: &mut Vec<u8>, budget: usize) {
+    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
+    let (next_out, avail_out) = unsafe { list.reserve_expand_tail(budget.min(4096)) };
+    zlib.next_out = next_out;
+    zlib.avail_out = avail_out.min(budget) as uInt;
+}
+
+// zlib `alloc_func`/`free_func` thunks → mimalloc, used by
 // `ZlibCompressorArrayList`. Intentionally
 // `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
 // heap-breakdown variant used by `ZlibReaderArrayList`).
@@ -412,6 +254,12 @@ impl<'a> ZlibReaderArrayList<'a> {
         list: &'a mut Vec<u8>,
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
+        // zlib streams express byte counts as 32-bit (`uInt`); reject an input
+        // that would truncate `avail_in` and silently decode only a prefix.
+        let Ok(avail_in) = uInt::try_from(input.len()) else {
+            return Err(ZlibError::InvalidArgument);
+        };
+
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
@@ -423,8 +271,8 @@ impl<'a> ZlibReaderArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
-            total_in: input.len() as _,
+            avail_in,
+            total_in: avail_in as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
             avail_out: list_len as uInt,
@@ -443,29 +291,15 @@ impl<'a> ZlibReaderArrayList<'a> {
         };
 
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
+        map_init_return_code(unsafe {
             inflateInit2_(
                 &raw mut zlib_reader.zlib,
                 options.window_bits,
                 zlibVersion().cast::<u8>(),
                 size_of::<zStream_struct>() as c_int,
             )
-        } {
-            ReturnCode::Ok => Ok(zlib_reader),
-            ReturnCode::MemError => {
-                drop(zlib_reader);
-                Err(ZlibError::OutOfMemory)
-            }
-            ReturnCode::StreamError => {
-                drop(zlib_reader);
-                Err(ZlibError::InvalidArgument)
-            }
-            ReturnCode::VersionError => {
-                drop(zlib_reader);
-                Err(ZlibError::InvalidArgument)
-            }
-            _ => unreachable!(),
-        }
+        })?;
+        Ok(zlib_reader)
     }
 
     pub fn error_message(&self) -> Option<&[u8]> {
@@ -519,14 +353,8 @@ impl<'a> ZlibReaderArrayList<'a> {
                         self.state = ZlibReaderArrayListState::Error;
                         return Err(ZlibError::ZlibError);
                     }
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe {
-                        self.list_ptr
-                            .reserve_expand_tail(remaining_budget.min(4096))
-                    };
-                    self.zlib.next_out = next_out;
                     // Clamp so a single inflate call cannot write past `max_output_size`.
-                    self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
+                    regrow_output_tail(&mut self.zlib, self.list_ptr, remaining_budget);
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
@@ -912,6 +740,14 @@ impl<'a> ZlibCompressorArrayList<'a> {
         list: &'a mut Vec<u8>,
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
+        // zlib streams express byte counts as 32-bit (`uInt`, and `uLong` is
+        // also 32-bit on Windows); reject an input that would truncate
+        // `avail_in` and silently compress only a prefix, or panic on the
+        // `deflateBound` cast below.
+        let Ok(avail_in) = uInt::try_from(input.len()) else {
+            return Err(ZlibError::InvalidArgument);
+        };
+
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
@@ -922,8 +758,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
-            total_in: input.len() as _,
+            avail_in,
+            total_in: avail_in as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
             avail_out: list_len as uInt,
@@ -942,7 +778,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         };
 
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
+        map_init_return_code(unsafe {
             deflateInit2_(
                 &raw mut zlib_reader.zlib,
                 options.level,
@@ -957,37 +793,17 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 zlibVersion().cast::<u8>(),
                 size_of::<zStream_struct>() as c_int,
             )
-        } {
-            ReturnCode::Ok => {
-                // SAFETY: zlib initialized; deflateBound returns upper bound on output.
-                let bound = unsafe {
-                    deflateBound(
-                        &raw mut zlib_reader.zlib,
-                        uLong::try_from(input.len()).expect("int cast"),
-                    )
-                };
-                // ensureTotalCapacityPrecise → reserve_exact
-                let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
-                zlib_reader.list_ptr.reserve_exact(need);
-                zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
-                zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
+        })?;
 
-                Ok(zlib_reader)
-            }
-            ReturnCode::MemError => {
-                drop(zlib_reader);
-                Err(ZlibError::OutOfMemory)
-            }
-            ReturnCode::StreamError => {
-                drop(zlib_reader);
-                Err(ZlibError::InvalidArgument)
-            }
-            ReturnCode::VersionError => {
-                drop(zlib_reader);
-                Err(ZlibError::InvalidArgument)
-            }
-            _ => unreachable!(),
-        }
+        // SAFETY: zlib initialized; deflateBound returns upper bound on output.
+        let bound = unsafe { deflateBound(&raw mut zlib_reader.zlib, uLong::from(avail_in)) };
+        // ensureTotalCapacityPrecise → reserve_exact
+        let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
+        zlib_reader.list_ptr.reserve_exact(need);
+        zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
+        zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
+
+        Ok(zlib_reader)
     }
 
     pub fn error_message(&self) -> Option<&[u8]> {
@@ -1032,10 +848,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
-                    self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
+                    regrow_output_tail(&mut self.zlib, self.list_ptr, usize::MAX);
                 }
 
                 if self.zlib.avail_out == 0 {
@@ -1398,14 +1211,8 @@ fn step(
     (consumed, rc)
 }
 
-// Re-export from bun_zlib_sys, platform-selected.
+// Re-export from bun_zlib_sys.
 mod internal {
-    #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
-    #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
-    #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
-    #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
+    pub(super) use bun_zlib_sys::shared::{DataType, zStream_struct};
+    pub use bun_zlib_sys::shared::{FlushValue, ReturnCode, z_stream, z_streamp};
 }

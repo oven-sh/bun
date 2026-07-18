@@ -2295,7 +2295,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_io",
  "bun_zlib_sys",
  "const_format",
  "enum-map",

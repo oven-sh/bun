@@ -11,7 +11,10 @@ mod _impl {
     };
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionStream, CountedKeepAlive, Error, unset_task_callback, validate_mode,
+        validate_uint32_array, validate_write_result_array,
+    };
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
@@ -20,14 +23,6 @@ mod _impl {
     // by `__impl_compression_stream!` below — wraps the
     // `NativeZstdPrototype__${prop}{Get,Set}CachedValue` C++ symbols emitted by
     // `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
-
-    /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
-    /// before the task is ever scheduled.
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
-    fn unset_task_callback(_: *mut WorkPoolTask) {
-        unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
-    }
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
@@ -75,28 +70,7 @@ mod _impl {
         pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_as_array::<1>();
 
-            let mode = arguments[0];
-            if !mode.is_number() {
-                return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 10 || mode_int > 11 {
-                return Err(global.throw_range_error(
-                    mode_int,
-                    jsc::RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 10,
-                        max: 11,
-                        msg: b"",
-                    },
-                ));
-            }
-
-            let mode = NodeMode::from_int(mode_int as u8);
+            let mode = validate_mode(global, arguments[0], 10, 11)?;
             let stream = Context {
                 mode,
                 ..Default::default()
@@ -161,31 +135,7 @@ mod _impl {
             let write_state_value = arguments[2];
             let process_callback_value = arguments[3];
 
-            let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
-                    "writeState",
-                    "Uint32Array",
-                    write_state_value,
-                ));
-            };
-            if write_state.typed_array_type != jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
-                    "writeState",
-                    "Uint32Array",
-                    write_state_value,
-                ));
-            }
-            // `flush_write_result` writes two u32s into this array, so the
-            // caller-supplied array must hold at least 2 elements.
-            let write_state_slice = write_state.as_u32();
-            if write_state_slice.len() < 2 {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!("writeState must be a Uint32Array with at least 2 elements"),
-                    )
-                    .throw());
-            }
+            validate_write_result_array(global, write_state_value, "writeState")?;
             js::write_result_set_cached(this_value, global, write_state_value);
 
             let write_js_callback =
@@ -207,26 +157,17 @@ mod _impl {
                 )?);
             }
 
+            // Validate before `s.init()` allocates the ZSTD context so a type
+            // error cannot leave a half-initialized handle behind.
+            let mut params_ =
+                validate_uint32_array(global, init_params_array_value, "initParamsArray")?;
+
             let err = self.stream.with_mut(|s| s.init(pledged_src_size));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global, this_value, err);
                 return Ok(JSValue::FALSE);
             }
 
-            let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
-                    "initParamsArray",
-                    "Uint32Array",
-                    init_params_array_value,
-                ));
-            };
-            if params_.typed_array_type != jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
-                    "initParamsArray",
-                    "Uint32Array",
-                    init_params_array_value,
-                ));
-            }
             for (i, &x) in params_.as_u32().iter().enumerate() {
                 if x == u32::MAX {
                     continue;

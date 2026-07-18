@@ -68,7 +68,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         if !Self::IS_TYPESCRIPT_ENABLED {
             p.lexer.unexpected()?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
         p.parse_typescript_enum_stmt(loc, opts)
     }
@@ -125,7 +125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // notimpl();
 
         p.lexer.unexpected()?;
-        Err(crate::Error::SyntaxError)
+        Err(crate::js_parser::Error::SyntaxError)
     }
 
     #[inline(never)]
@@ -357,7 +357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.range(),
                             b"Multiple default clauses are not allowed",
                         );
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
 
                     found_default = true;
@@ -627,7 +627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         r,
                         b"\"let\" must be wrapped in parentheses to be used as an expression here",
                     );
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 if let Some(r) = bad_async_range {
@@ -640,7 +640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         full,
                         b"For loop initializers cannot start with \"async of\"",
                     );
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 if is_for_await && !p.lexer.is_contextual_keyword(b"of") {
@@ -648,7 +648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.expected_string(b"\"of\"")?;
                     } else {
                         p.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                 }
 
@@ -778,7 +778,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 b"Unexpected newline after \"throw\"",
             );
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
         let expr = p.parse_expr(Level::Lowest)?;
         p.lexer.expect_or_insert_semicolon()?;
@@ -832,7 +832,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.esm_export_keyword = p.lexer.range();
         } else if !opts.is_namespace_scope {
             p.lexer.unexpected()?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
         p.lexer.next()?;
 
@@ -867,13 +867,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.unexpected()?;
-                Err(crate::Error::SyntaxError)
+                Err(crate::js_parser::Error::SyntaxError)
             }
 
             T::TEnum => {
                 if !Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 opts.is_export = true;
@@ -928,7 +928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         type_range.end(),
                                         format_args!("Unexpected newline after \"type\""),
                                     );
-                                    return Err(crate::Error::SyntaxError);
+                                    return Err(crate::js_parser::Error::SyntaxError);
                                 }
                                 let mut skipper = ParseStatementOptions {
                                     is_module_scope: opts.is_module_scope,
@@ -960,7 +960,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.unexpected()?;
-                Err(crate::Error::SyntaxError)
+                Err(crate::js_parser::Error::SyntaxError)
             }
 
             T::TDefault => {
@@ -968,7 +968,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 let default_loc = p.lexer.loc();
@@ -1092,7 +1092,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         bstr::BStr::new(p.source.text_for_range(r))
                                     ),
                                 );
-                                return Err(crate::Error::SyntaxError);
+                                return Err(crate::js_parser::Error::SyntaxError);
                             }
                         }
 
@@ -1178,7 +1178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let r = js_lexer::range_of_identifier(p.source, expr.loc);
                         p.log()
                             .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                     p.lexer.expected(T::TClass)?;
                 }
@@ -1201,7 +1201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 p.lexer.next()?;
@@ -1283,7 +1283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 let export_clause = p.parse_export_clause()?;
@@ -1385,11 +1385,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(p.s(S::ExportEquals { value }, loc));
                 }
                 p.lexer.unexpected()?;
-                Err(crate::Error::SyntaxError)
+                Err(crate::js_parser::Error::SyntaxError)
             }
             _ => {
                 p.lexer.unexpected()?;
-                Err(crate::Error::SyntaxError)
+                Err(crate::js_parser::Error::SyntaxError)
             }
         }
     }
@@ -1439,7 +1439,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
                 was_originally_bare_import = true;
             }
@@ -1449,7 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 p.lexer.next()?;
@@ -1469,7 +1469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
                 let import_clause = p.parse_import_clause()?;
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -1497,7 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "import foo = bar"
                 if !opts.is_module_scope && !opts.is_namespace_scope {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 let mut default_name = p.lexer.identifier;
@@ -1536,7 +1536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                     {
                         p.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
@@ -1645,7 +1645,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         _ => {
                             p.lexer.unexpected()?;
-                            return Err(crate::Error::SyntaxError);
+                            return Err(crate::js_parser::Error::SyntaxError);
                         }
                     }
                 }
@@ -1654,7 +1654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
         }
 
@@ -1822,7 +1822,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let r = js_lexer::range_of_identifier(p.source, loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"interface\"");
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
@@ -1835,7 +1835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let r = js_lexer::range_of_identifier(p.source, loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
@@ -1856,7 +1856,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let r = js_lexer::range_of_identifier(p.source, loc);
                         p.log()
                             .add_range_error(Some(p.source), r, b"Unexpected \"declare\"");
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                     return Ok(None);
                 }
@@ -1905,7 +1905,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             bun_core::fmt::quote(p.source.text_for_range(after_declare_range))
                         ),
                     );
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
@@ -1977,7 +1977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.stack_check.is_safe_to_recurse() {
             // Sentinel error; mapped to a "Maximum call stack size exceeded"
             // syntax error at the catch site in parse_entry.rs.
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
 
         let loc = self.lexer.loc();

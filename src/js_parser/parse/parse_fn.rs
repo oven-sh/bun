@@ -12,7 +12,7 @@ use bun_ast as js_ast;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
-type Error = crate::Error;
+type Error = crate::js_parser::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// This assumes the "function" token has already been parsed
@@ -536,7 +536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.range(),
                 b"Unexpected newline before \"=>\"",
             );
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         p.lexer.expect(T::TEqualsGreaterThan)?;

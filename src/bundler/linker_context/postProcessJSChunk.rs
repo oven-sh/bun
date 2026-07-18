@@ -1353,9 +1353,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<
-            LinkerContext,
-        >(c),
+        require_or_import_meta_for_source_callback: Some((&mut *c).into()),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,

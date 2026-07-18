@@ -40,7 +40,7 @@ impl<'a> ImportScanner<'a> {
         // Const generics can't gate a param type on a const, so use Option and
         // debug-assert presence matches the const.
         mut hot_module_reloading_context: Option<&mut ConvertESMExportsForHmr>,
-    ) -> Result<ImportScanner<'a>, crate::Error> {
+    ) -> Result<ImportScanner<'a>, crate::js_parser::Error> {
         debug_assert_eq!(
             HOT_MODULE_RELOADING_TRANSFORMATIONS,
             hot_module_reloading_context.is_some()

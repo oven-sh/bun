@@ -30,8 +30,7 @@ members = [
   "src/http_types",
   "src/ini",
   "src/install_types",
-  "src/js_parser",
-  "src/js_printer",
+  "src/js",
   "src/libdeflate_sys",
   "src/libuv_sys",
   "src/ast",
@@ -350,8 +349,9 @@ bun_highway = { path = "src/highway" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
 bun_install_types = { path = "src/install_types" }
-bun_js_parser = { path = "src/js_parser" }
-bun_js_printer = { path = "src/js_printer" }
+bun_js = { path = "src/js" }
+bun_js_parser = { path = "src/js", package = "bun_js" }
+bun_js_printer = { path = "src/js", package = "bun_js" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }

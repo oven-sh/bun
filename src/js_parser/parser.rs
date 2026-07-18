@@ -176,7 +176,7 @@ pub mod options {
     }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
-pub use crate::renamer;
+pub use crate::js_parser::renamer;
 pub use crate::scan::scan_side_effects::SideEffects;
 pub use bun_core::paths::is_package_path;
 
@@ -1024,7 +1024,7 @@ impl<'a> JSXTag<'a> {
                     },
                     b"Unexpected \"-\"",
                 );
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
 
             let new_name: &'a mut [u8] = p
@@ -2096,7 +2096,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
 
     let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
     match result {
-        crate::Result::Ast(mut ast) => {
+        crate::js_parser::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }

@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use bun_core::collections::VecExt;
 
-use crate::Error;
+use crate::js_parser::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder};
@@ -88,7 +88,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Must start with an identifier
         if p.lexer.token != T::TIdentifier {
             p.lexer.expect(T::TIdentifier)?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         let loc = p.lexer.loc();
@@ -112,7 +112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     if !Self::IS_TYPESCRIPT_ENABLED {
                         p.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                     p.lexer.next()?;
                 }
@@ -145,7 +145,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         if !p.lexer.is_identifier_or_keyword() {
                             p.lexer.expect(T::TIdentifier)?;
-                            return Err(crate::Error::SyntaxError);
+                            return Err(crate::js_parser::Error::SyntaxError);
                         }
                         let name = E::Str::new(p.lexer.identifier);
                         let name_loc = p.lexer.loc();
@@ -255,7 +255,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..ParseStatementOptions::default()
             };
             if !p.stack_check.is_safe_to_recurse() {
-                return Err(crate::Error::StackOverflow);
+                return Err(crate::js_parser::Error::StackOverflow);
             }
             stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
         } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
@@ -649,7 +649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 p.lexer.expect(T::TIdentifier)?;
                 // error early, name is still `undefined`
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
             p.lexer.next()?;
 

@@ -10,6 +10,8 @@
 
 extern crate alloc;
 extern crate self as bun_runtime;
+extern crate bun_js as bun_js_parser;
+extern crate bun_js as bun_js_printer;
 // Self-aliases so mounted `*_jsc` sources' sibling extern refs resolve to this
 // crate root until Step 7.14's sed rewrites them to `crate::<mount>::`.
 pub extern crate self as bun_sql_jsc;
@@ -247,6 +249,15 @@ pub mod shell;
 pub mod api;
 pub mod dispatch;
 pub mod hw_exports;
+
+/// Process-init registration for cross-crate `OnceLock` hooks. Called from
+/// `bun_bin::main` before CLI dispatch so the `bun install` / `MiniEventLoop`
+/// paths find every slot set. Amended per-step as new hooks are introduced.
+pub fn register_dispatch_tables() {
+    bun_js::MACRO_GC_HOOK
+        .set(crate::vm::collect_macro_vm_garbage)
+        .ok();
+}
 pub mod ipc_host;
 pub mod jsc_hooks;
 pub mod linear_fifo_testing;

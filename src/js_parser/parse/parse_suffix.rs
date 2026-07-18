@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use crate::Error;
+use crate::js_parser::Error;
 
 use crate::lexer::T;
 use crate::p::P;
@@ -186,7 +186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "a?.<T>()"
                 if !Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.expected(T::TIdentifier)?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 let _ = p.skip_type_script_type_arguments::<false, false>()?;
@@ -420,7 +420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             let Some(errors) = errors else {
                 p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             };
             errors.invalid_expr_after_question = Some(p.lexer.range());
             return Ok(Continuation::Done);
@@ -479,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !Self::IS_TYPESCRIPT_ENABLED {
             p.lexer.unexpected()?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         p.lexer.next()?;
@@ -1131,7 +1131,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Prevent "||" inside "??" from the right
         if level.eql(Level::NullishCoalescing) {
             p.lexer.unexpected()?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         p.lexer.next()?;
@@ -1152,7 +1152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TQuestionQuestion {
                 p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
         }
         Ok(Continuation::Next)
@@ -1190,7 +1190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Prevent "&&" inside "??" from the right
         if level.eql(Level::NullishCoalescing) {
             p.lexer.unexpected()?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         p.lexer.next()?;
@@ -1212,7 +1212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TQuestionQuestion {
                 p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
         }
         Ok(Continuation::Next)

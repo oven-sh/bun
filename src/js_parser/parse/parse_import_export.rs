@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::js_parser::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
@@ -454,7 +454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bstr::BStr::new(p.source.text_for_range(r))
                 ),
             )?;
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         Ok(ExportClauseResult {

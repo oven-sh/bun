@@ -248,7 +248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
         let mut kind = kind_;
         let mut errors = errors_;
@@ -324,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TAsterisk => {
                     if kind != PropertyKind::Normal || opts.is_generator {
                         p.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
 
                     p.lexer.next()?;
@@ -541,7 +541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             name_range,
                             format_args!("Unexpected {}", bun_core::fmt::quote(name)),
                         );
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
 
                     key = p.new_expr(E::EString::init(name), name_range.loc);
@@ -756,7 +756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_range,
                     b"auto-accessor properties cannot have a method body",
                 );
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
 
             // Parse a method expression

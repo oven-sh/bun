@@ -218,19 +218,15 @@ impl SavedSourceMap {
 // zig_hash_map uses an 80% max load factor.
 pub type HashTable = HashMap<u64, *mut c_void, IdentityContext<u64>>;
 
-impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
+impl bun_js::SourceMapSink for SavedSourceMap {
     fn on_source_map_chunk(
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> bun_js_printer::Result<()> {
+    ) -> bun_js::js_printer::Result<()> {
         self.put_mappings(source, chunk.buffer)
     }
 }
-
-/// `SourceMapHandler::for_::<SavedSourceMap>` is
-/// monomorphized over the `OnSourceMapChunk` impl above.
-pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {
     fn drop(&mut self) {

@@ -6,9 +6,6 @@
 //! `print` / `print_with_writer{,_and_platform}` / `print_common_js` /
 //! `print_json` / `get_source_map_builder` driver fns live at crate root.
 
-#![warn(unused_must_use)]
-#![feature(adt_const_params)]
-
 pub mod error;
 pub use error::{Error, Result};
 
@@ -961,7 +958,7 @@ pub fn write_pre_quoted_string<
 >(
     text_in: &[u8],
     writer: &mut W,
-) -> crate::Result<()>
+) -> crate::js_printer::Result<()>
 where
     W: Write + ?Sized,
 {
@@ -980,7 +977,7 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     quote_char: u8,
     ascii_only: bool,
     json: bool,
-) -> crate::Result<()>
+) -> crate::js_printer::Result<()>
 where
     W: Write + ?Sized,
 {
@@ -1171,7 +1168,7 @@ pub fn quote_for_json(
     text: &[u8],
     bytes: &mut MutableString,
     ascii_only: bool,
-) -> crate::Result<()> {
+) -> crate::js_printer::Result<()> {
     // `ascii_only` is threaded at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
     //
@@ -1192,7 +1189,7 @@ pub fn quote_for_json(
 pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     input: &[u8],
     writer: &mut W,
-) -> crate::Result<()> {
+) -> crate::js_printer::Result<()> {
     writer.write_all(b"\"")?;
     write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, true)?;
     writer.write_all(b"\"")?;
@@ -1200,53 +1197,48 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
+// SourceMapSink / Options — gated on bun_sourcemap::Chunk::Builder and the
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
-pub struct SourceMapHandler<'a> {
-    pub ctx: NonNull<()>,
-    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
-    _marker: core::marker::PhantomData<&'a mut ()>,
-}
 
-/// PORTING.md §Dispatch — manual vtable. Rust cannot bake a *runtime* fn pointer
-/// into a captureless `fn(*mut (), ..)` thunk, so the handler is a trait method
-/// and the thunk is monomorphized over `T: OnSourceMapChunk`.
-pub trait OnSourceMapChunk {
+/// Trait-object sink invoked at the printer tail with the generated source-map
+/// chunk. Stored as `Option<SourceMapHandler<'a>>` in [`Options`].
+pub trait SourceMapSink {
     fn on_source_map_chunk(
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> crate::Result<()>;
+    ) -> crate::js_printer::Result<()>;
 }
 
+/// Thin `&'a mut dyn SourceMapSink` wrapper that stays covariant in `'a`
+/// (a bare `&'a mut (dyn … + 'a)` would make `Options<'a>` invariant and break
+/// `print_ast`'s local-renamer lifetime coercion).
+pub struct SourceMapHandler<'a> {
+    ctx: NonNull<dyn SourceMapSink + 'a>,
+    _marker: core::marker::PhantomData<&'a ()>,
+}
 impl<'a> SourceMapHandler<'a> {
+    #[inline]
+    pub fn new(sink: &'a mut (dyn SourceMapSink + 'a)) -> Self {
+        Self { ctx: NonNull::from(sink), _marker: core::marker::PhantomData }
+    }
+    #[inline]
     pub fn on_source_map_chunk(
-        &self,
+        &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> crate::Result<()> {
-        (self.callback)(self.ctx.as_ptr(), chunk, source)
+    ) -> crate::js_printer::Result<()> {
+        // SAFETY: `ctx` was constructed from a `&'a mut dyn SourceMapSink` in
+        // `new`; the `'a` borrow is carried by `PhantomData` above so the
+        // referent is live and exclusively borrowed for as long as `self` is.
+        unsafe { self.ctx.as_mut() }.on_source_map_chunk(chunk, source)
     }
-
-    pub fn for_<T: OnSourceMapChunk>(ctx: &'a mut T) -> SourceMapHandler<'a> {
-        // Monomorphized erased thunk: cast `*mut ()` back to `*mut T` and forward to the trait.
-        fn thunk<T: OnSourceMapChunk>(
-            p: *mut (),
-            chunk: SourceMap::Chunk,
-            source: &bun_ast::Source,
-        ) -> crate::Result<()> {
-            // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
-            // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
-            // valid, exclusive `*mut T` for as long as the handler exists.
-            unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
-        }
-        SourceMapHandler {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: NonNull::from(ctx).cast::<()>(),
-            callback: thunk::<T>,
-            _marker: core::marker::PhantomData,
-        }
+}
+impl<'a, T: SourceMapSink> From<&'a mut T> for SourceMapHandler<'a> {
+    #[inline]
+    fn from(sink: &'a mut T) -> Self {
+        Self::new(sink)
     }
 }
 
@@ -1295,7 +1287,7 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    pub require_or_import_meta_for_source_callback: Option<RequireOrImportMetaCallback<'a>>,
 
     /// The module type of the importing file (after linking), used to determine interop helper behavior.
     /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
@@ -1321,19 +1313,14 @@ pub struct Options<'a> {
 
 impl<'a> Options<'a> {
     pub fn require_or_import_meta_for_source(
-        &self,
+        &mut self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        if self
-            .require_or_import_meta_for_source_callback
-            .ctx
-            .is_none()
-        {
-            return RequireOrImportMeta::default();
+        match self.require_or_import_meta_for_source_callback.as_mut() {
+            Some(cb) => cb.call(id, was_unwrapped_require),
+            None => RequireOrImportMeta::default(),
         }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
     }
 }
 
@@ -1370,7 +1357,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_for_source_callback: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1409,29 +1396,9 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
-#[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
-    pub ctx: Option<NonNull<()>>,
-    pub callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
-}
-
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
-        }
-    }
-}
-
-/// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
-/// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
-pub trait RequireOrImportMetaSource {
+/// Trait-object resolver queried for wrapper/exports refs at print time.
+/// Stored as `Option<RequireOrImportMetaCallback<'a>>` in [`Options`].
+pub trait RequireMetaResolver {
     fn require_or_import_meta_for_source(
         &mut self,
         id: u32,
@@ -1439,27 +1406,27 @@ pub trait RequireOrImportMetaSource {
     ) -> RequireOrImportMeta;
 }
 
-impl RequireOrImportMetaCallback {
-    pub fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+/// Thin `&'a mut dyn RequireMetaResolver` wrapper; see [`SourceMapHandler`]
+/// for the variance rationale.
+pub struct RequireOrImportMetaCallback<'a> {
+    ctx: NonNull<dyn RequireMetaResolver + 'a>,
+    _marker: core::marker::PhantomData<&'a ()>,
+}
+impl<'a> RequireOrImportMetaCallback<'a> {
+    #[inline]
+    pub fn new(r: &'a mut (dyn RequireMetaResolver + 'a)) -> Self {
+        Self { ctx: NonNull::from(r), _marker: core::marker::PhantomData }
     }
-
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
-        fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
-            id: u32,
-            was_unwrapped_require: bool,
-        ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
-        }
-        Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
-            callback: thunk::<T>,
-        }
+    #[inline]
+    pub fn call(&mut self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+        // SAFETY: see `SourceMapHandler::on_source_map_chunk`.
+        unsafe { self.ctx.as_mut() }.require_or_import_meta_for_source(id, was_unwrapped_require)
+    }
+}
+impl<'a, T: RequireMetaResolver> From<&'a mut T> for RequireOrImportMetaCallback<'a> {
+    #[inline]
+    fn from(r: &'a mut T) -> Self {
+        Self::new(r)
     }
 }
 
@@ -1474,7 +1441,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 
 pub enum PrintResult {
     Result(PrintResultSuccess),
-    Err(crate::Error),
+    Err(crate::js_printer::Error),
 }
 
 pub struct PrintResultSuccess {
@@ -1851,12 +1818,12 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<()> {
+        pub fn write_all(&mut self, bytes: &[u8]) -> crate::js_printer::Result<()> {
             self.print(bytes);
             Ok(())
         }
 
-        pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
+        pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::js_printer::Result<()> {
             let bytes = [byte; 256];
             let mut remaining = n;
             while remaining > 0 {
@@ -1867,21 +1834,21 @@ pub mod __gated_printer {
             Ok(())
         }
 
-        pub fn write_bytes_n_times(&mut self, bytes: &[u8], n: usize) -> crate::Result<()> {
+        pub fn write_bytes_n_times(&mut self, bytes: &[u8], n: usize) -> crate::js_printer::Result<()> {
             for _ in 0..n {
                 self.write_all(bytes)?;
             }
             Ok(())
         }
 
-        fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
+        fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::js_printer::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
             // reserved space instead — same zero-heap property without
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
-                err: Option<crate::Error>,
+                err: Option<crate::js_printer::Error>,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -1899,7 +1866,7 @@ pub mod __gated_printer {
                 err: None,
             };
             if core::fmt::write(&mut adapter, args).is_err() {
-                return Err(adapter.err.unwrap_or(crate::Error::WriteFailed));
+                return Err(adapter.err.unwrap_or(crate::js_printer::Error::WriteFailed));
             }
             Ok(())
         }
@@ -3184,9 +3151,9 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn check_stack_overflow(&self) -> crate::Result<()> {
+        pub fn check_stack_overflow(&self) -> crate::js_printer::Result<()> {
             if self.stack_overflowed {
-                return Err(crate::Error::StackOverflow);
+                return Err(crate::js_printer::Error::StackOverflow);
             }
             Ok(())
         }
@@ -5285,7 +5252,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> crate::Result<()> {
+        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> crate::js_printer::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -6881,7 +6848,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> crate::Result<()> {
+        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> crate::js_printer::Result<()> {
             let n = name.len();
             let mut i: usize = 0;
 
@@ -7289,20 +7256,20 @@ pub struct WriteResult {
 
 /// Backend operations a `Writer` context provides.
 pub trait WriterContext {
-    fn write_byte(&mut self, char: u8) -> crate::Result<usize>;
-    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize>;
+    fn write_byte(&mut self, char: u8) -> crate::js_printer::Result<usize>;
+    fn write_all(&mut self, buf: &[u8]) -> crate::js_printer::Result<usize>;
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8>;
+    fn reserve_next(&mut self, count: u64) -> crate::js_printer::Result<*mut u8>;
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn get_mutable_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
     fn get_written(&self) -> &[u8];
-    fn flush(&mut self) -> crate::Result<()> {
+    fn flush(&mut self) -> crate::js_printer::Result<()> {
         Ok(())
     }
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) -> crate::js_printer::Result<()> {
         Ok(())
     }
 }
@@ -7314,12 +7281,12 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8>;
+    fn reserve(&mut self, count: u64) -> crate::js_printer::Result<*mut u8>;
     fn advance(&mut self, count: u64);
     /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
     /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
     #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) -> crate::Result<()> {
+    fn write_reserved(&mut self, bytes: &[u8]) -> crate::js_printer::Result<()> {
         let ptr = self.reserve(bytes.len() as u64)?;
         // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
         // writer's internal buffer, which is disjoint from caller-provided `bytes`.
@@ -7328,8 +7295,8 @@ pub trait WriterTrait {
         Ok(())
     }
     fn slice(&self) -> &[u8];
-    fn get_error(&self) -> crate::Result<()>;
-    fn done(&mut self) -> crate::Result<()>;
+    fn get_error(&self) -> crate::js_printer::Result<()>;
+    fn done(&mut self) -> crate::js_printer::Result<()>;
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
     where
         Self: Sized,
@@ -7355,8 +7322,8 @@ pub struct Writer<C: WriterContext> {
     // Used by the printer
     pub prev_char: u8,
     pub prev_prev_char: u8,
-    pub err: Option<crate::Error>,
-    pub orig_err: Option<crate::Error>,
+    pub err: Option<crate::js_printer::Error>,
+    pub orig_err: Option<crate::js_printer::Error>,
 }
 
 impl<C: WriterContext> Writer<C> {
@@ -7386,7 +7353,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.slice()
     }
 
-    pub fn get_error(&self) -> crate::Result<()> {
+    pub fn get_error(&self) -> crate::js_printer::Result<()> {
         if let Some(e) = self.orig_err {
             return Err(e);
         }
@@ -7405,7 +7372,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    pub fn reserve(&mut self, count: u64) -> crate::js_printer::Result<*mut u8> {
         self.ctx.reserve_next(count)
     }
 
@@ -7418,7 +7385,7 @@ impl<C: WriterContext> Writer<C> {
         self.written = self.written.wrapping_add(count as i32);
     }
 
-    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
+    pub fn write_all(&mut self, bytes: &[u8]) -> crate::js_printer::Result<usize> {
         let written = self.written.max(0);
         self.print_slice(bytes);
         debug_assert!(self.written >= 0);
@@ -7431,12 +7398,12 @@ impl<C: WriterContext> Writer<C> {
             Ok(n) => {
                 self.written = self.written.wrapping_add(n as i32);
                 if n == 0 {
-                    self.err = Some(crate::Error::WriteFailed);
+                    self.err = Some(crate::js_printer::Error::WriteFailed);
                 }
             }
             Err(err) => {
                 self.orig_err = Some(err);
-                self.err = Some(crate::Error::WriteFailed);
+                self.err = Some(crate::js_printer::Error::WriteFailed);
             }
         }
     }
@@ -7448,23 +7415,23 @@ impl<C: WriterContext> Writer<C> {
                 self.written = self.written.wrapping_add(n as i32);
                 if n < s.len() {
                     self.err = Some(if n == 0 {
-                        crate::Error::WriteFailed
+                        crate::js_printer::Error::WriteFailed
                     } else {
-                        crate::Error::PartialWrite
+                        crate::js_printer::Error::PartialWrite
                     });
                 }
             }
             Err(err) => {
                 self.orig_err = Some(err);
-                self.err = Some(crate::Error::WriteFailed);
+                self.err = Some(crate::js_printer::Error::WriteFailed);
             }
         }
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
+    pub fn flush(&mut self) -> crate::js_printer::Result<()> {
         self.ctx.flush()
     }
-    pub fn done(&mut self) -> crate::Result<()> {
+    pub fn done(&mut self) -> crate::js_printer::Result<()> {
         self.ctx.done()
     }
 }
@@ -7491,7 +7458,7 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    fn reserve(&mut self, count: u64) -> crate::js_printer::Result<*mut u8> {
         self.reserve(count)
     }
     #[inline]
@@ -7503,11 +7470,11 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.slice()
     }
     #[inline]
-    fn get_error(&self) -> crate::Result<()> {
+    fn get_error(&self) -> crate::js_printer::Result<()> {
         self.get_error()
     }
     #[inline]
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) -> crate::js_printer::Result<()> {
         self.done()
     }
     #[inline]
@@ -7539,7 +7506,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    fn reserve(&mut self, count: u64) -> crate::js_printer::Result<*mut u8> {
         (**self).reserve(count)
     }
     #[inline]
@@ -7551,11 +7518,11 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).slice()
     }
     #[inline]
-    fn get_error(&self) -> crate::Result<()> {
+    fn get_error(&self) -> crate::js_printer::Result<()> {
         (**self).get_error()
     }
     #[inline]
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) -> crate::js_printer::Result<()> {
         (**self).done()
     }
     #[inline]
@@ -7573,10 +7540,10 @@ pub struct DirectWriter {
 }
 
 impl DirectWriter {
-    pub fn write(&mut self, buf: &[u8]) -> crate::Result<usize> {
-        bun_sys::write(self.handle, buf).map_err(|_| crate::Error::WriteFailed)
+    pub fn write(&mut self, buf: &[u8]) -> crate::js_printer::Result<usize> {
+        bun_sys::write(self.handle, buf).map_err(|_| crate::js_printer::Error::WriteFailed)
     }
-    pub fn write_all(&mut self, buf: &[u8]) -> crate::Result<()> {
+    pub fn write_all(&mut self, buf: &[u8]) -> crate::js_printer::Result<()> {
         let _ = self.write(buf)?;
         Ok(())
     }
@@ -7635,30 +7602,30 @@ impl BufferWriter {
         }
     }
 
-    pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
+    pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::js_printer::Result<()> {
         Ok(Write::write_fmt(
             &mut self.buffer.list,
             format_args!("{}", args),
         )?)
     }
 
-    pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
+    pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::js_printer::Result<()> {
         self.buffer.append_char_n_times(byte, n)?;
         Ok(())
     }
     // alias
-    pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::Result<()> {
+    pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::js_printer::Result<()> {
         self.write_byte_n_times(byte, n)
     }
 
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) -> crate::Result<usize> {
+    pub fn write_byte(&mut self, byte: u8) -> crate::js_printer::Result<usize> {
         self.buffer.append_char(byte)?;
         Ok(1)
     }
 
     #[inline]
-    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
+    pub fn write_all(&mut self, bytes: &[u8]) -> crate::js_printer::Result<usize> {
         self.buffer.append(bytes)?;
         Ok(bytes.len())
     }
@@ -7684,7 +7651,7 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
+    pub fn reserve_next(&mut self, count: u64) -> crate::js_printer::Result<*mut u8> {
         let n = usize::try_from(count).expect("int cast");
         // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
         Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
@@ -7709,7 +7676,7 @@ impl BufferWriter {
         written
     }
 
-    pub fn done(&mut self) -> crate::Result<()> {
+    pub fn done(&mut self) -> crate::js_printer::Result<()> {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.append_char(b'\n')?;
@@ -7729,18 +7696,18 @@ impl BufferWriter {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
+    pub fn flush(&mut self) -> crate::js_printer::Result<()> {
         Ok(())
     }
 }
 
 impl WriterContext for BufferWriter {
     #[inline]
-    fn write_byte(&mut self, c: u8) -> crate::Result<usize> {
+    fn write_byte(&mut self, c: u8) -> crate::js_printer::Result<usize> {
         self.write_byte(c)
     }
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize> {
+    fn write_all(&mut self, buf: &[u8]) -> crate::js_printer::Result<usize> {
         self.write_all(buf)
     }
     #[inline]
@@ -7752,7 +7719,7 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
+    fn reserve_next(&mut self, count: u64) -> crate::js_printer::Result<*mut u8> {
         self.reserve_next(count)
     }
     #[inline]
@@ -7776,11 +7743,11 @@ impl WriterContext for BufferWriter {
         self.get_written()
     }
     #[inline]
-    fn flush(&mut self) -> crate::Result<()> {
+    fn flush(&mut self) -> crate::js_printer::Result<()> {
         self.flush()
     }
     #[inline]
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) -> crate::js_printer::Result<()> {
         self.done()
     }
 }
@@ -7911,7 +7878,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
-) -> crate::Result<usize> {
+) -> crate::js_printer::Result<usize> {
     let _restore =
         bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Print(source.path.text));
 
@@ -8097,7 +8064,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             .as_mut()
             .unwrap()
             .finalize()
-            .map_err(|()| crate::Error::Alloc(bun_core::alloc_impl::AllocError))?;
+            .map_err(|()| crate::js_printer::Error::Alloc(bun_core::alloc_impl::AllocError))?;
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8125,7 +8092,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .unwrap()
                 .as_deserialized()
                 .serialize(&mut srlz_res)
-                .map_err(|_| crate::Error::WriteFailed)?;
+                .map_err(|_| crate::js_printer::Error::WriteFailed)?;
         }
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(
@@ -8139,7 +8106,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
 
     if GENERATE_SOURCE_MAP {
-        if let Some(handler) = &printer.options.source_map_handler {
+        if let Some(handler) = printer.options.source_map_handler.as_mut() {
             handler.on_source_map_chunk(source_maps_chunk.take().unwrap(), source)?;
         }
     }
@@ -8154,7 +8121,7 @@ pub fn print_json<W: WriterTrait>(
     expr: js_ast::Expr,
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
-) -> crate::Result<usize> {
+) -> crate::js_printer::Result<usize> {
     // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
     type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
     let writer = _writer;
@@ -8373,7 +8340,7 @@ pub fn print_common_js<
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
-) -> crate::Result<usize> {
+) -> crate::js_printer::Result<usize> {
     let _restore =
         bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Print(source.path.text));
 
@@ -8415,11 +8382,16 @@ pub fn print_common_js<
     printer.writer.print_slice(b"\n\n");
 
     if GENERATE_SOURCE_MAP {
-        if let Some(handler) = &printer.options.source_map_handler {
+        if printer.options.source_map_handler.is_some() {
             let chunk = printer
                 .source_map_builder
                 .generate_chunk(printer.writer.slice());
-            handler.on_source_map_chunk(chunk, source)?;
+            printer
+                .options
+                .source_map_handler
+                .as_mut()
+                .unwrap()
+                .on_source_map_chunk(chunk, source)?;
         }
     }
 

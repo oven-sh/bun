@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-use crate::Error;
+use crate::js_parser::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
@@ -57,7 +57,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Nested destructuring patterns in skipped type positions recurse through
         // this function; bound it like `parse_binding` does.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
         match self.lexer.token {
             T::TIdentifier | T::TThis => {
@@ -143,7 +143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 // try p.lexer.unexpected();
-                return Err(crate::Error::Backtrack);
+                return Err(crate::js_parser::Error::Backtrack);
             }
         }
         Ok(())
@@ -239,7 +239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // function, so bound it the same way `parse_expr_common` bounds expression
         // recursion instead of overflowing the stack.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
 
         loop {
@@ -1110,7 +1110,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     if !found_key {
                         self.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                 }
             }
@@ -1122,7 +1122,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     if !self.lexer.has_newline_before {
                         self.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
                 }
             }
@@ -1496,7 +1496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result =
             self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         if self.lexer.token != T::TOpenParen {
-            return Err(crate::Error::Backtrack);
+            return Err(crate::js_parser::Error::Backtrack);
         }
 
         Ok(result)
@@ -1516,7 +1516,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !flags.contains(SkipTypeOptions::DisallowConditionalTypes)
             && self.lexer.token == T::TQuestion
         {
-            return Err(crate::Error::Backtrack);
+            return Err(crate::js_parser::Error::Backtrack);
         }
 
         Ok(true)
@@ -1525,7 +1525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
         self.skip_typescript_fn_args()?;
         if self.lexer.expect(T::TEqualsGreaterThan).is_err() {
-            return Err(crate::Error::Backtrack);
+            return Err(crate::js_parser::Error::Backtrack);
         }
 
         Ok(true)
@@ -1535,7 +1535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.skip_type_script_type_arguments::<false, true>()? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
-                return Err(crate::Error::Backtrack);
+                return Err(crate::js_parser::Error::Backtrack);
             }
         }
 
@@ -1548,7 +1548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.skip_typescript_return_type()?;
         // Check the token after this and backtrack if it's the wrong one
         if self.lexer.token != T::TEqualsGreaterThan {
-            return Err(crate::Error::Backtrack);
+            return Err(crate::js_parser::Error::Backtrack);
         }
         Ok(())
     }

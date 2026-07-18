@@ -809,7 +809,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
+    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::js_parser::Error> {
         let p = self;
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
@@ -835,7 +835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
+    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::js_parser::Error> {
         let p = self;
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p

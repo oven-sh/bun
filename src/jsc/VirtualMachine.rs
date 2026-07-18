@@ -2690,7 +2690,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// printer is mid-write would alias. Callers must only dereference this
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
-    pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
+    pub fn get(&mut self) -> Option<&mut dyn bun_js::SourceMapSink> {
         // Take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
         // (VSCode-extension) clients fall through to the `source_mappings`
@@ -2703,13 +2703,13 @@ impl<'a> SourceMapHandlerGetter<'a> {
             // `source_mappings` is a value field on the VM, exclusively
             // borrowed for the returned handler's lifetime (bounded by
             // `&mut self`).
-            return bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
+            return Some(self.vm_source_mappings_mut());
         }
-        bun_js_printer::SourceMapHandler::for_(self)
+        Some(self)
     }
 }
 
-impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
+impl<'a> bun_js::SourceMapSink for SourceMapHandlerGetter<'a> {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in `source_mappings` like normal.
     /// This is hideously expensive memory-wise...

@@ -14,7 +14,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Nested child elements (`<a><b><c>...`) recurse back into this function,
         // so guard the stack the same way the other recursive parse entry points do.
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
         if SCAN_ONLY {
             p.needs_jsx_import = true;
@@ -173,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         expr.loc,
                                         b"Invalid JSX prop shorthand, must be identifier, dot or string",
                                     );
-                                    return Err(crate::Error::SyntaxError);
+                                    return Err(crate::js_parser::Error::SyntaxError);
                                 };
 
                                 props.push(G::Property {
@@ -257,7 +257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 r,
                 b"Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead",
             );
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         // A slash here is a self-closing element
@@ -354,7 +354,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             format_args!("Opening tag here:"),
                             tag.range,
                         );
-                        return Err(crate::Error::SyntaxError);
+                        return Err(crate::js_parser::Error::SyntaxError);
                     }
 
                     if p.lexer.token != T::TGreaterThan {
@@ -376,7 +376,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 _ => {
                     p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
             }
         }

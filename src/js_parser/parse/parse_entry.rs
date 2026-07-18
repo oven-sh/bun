@@ -3,7 +3,7 @@ use bun_core::collections::VecExt;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
-use crate::Error;
+use crate::js_parser::Error;
 use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_core;
 use bun_core::strings;
@@ -355,7 +355,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
+    pub fn parse(mut self) -> Result<crate::js_parser::Result<'a>, Error> {
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
@@ -450,7 +450,7 @@ impl<'a> Parser<'a> {
         match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(_) => {}
             Err(e) => {
-                if e == crate::Error::StackOverflow {
+                if e == crate::js_parser::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -538,7 +538,7 @@ impl<'a> Parser<'a> {
         expr: Expr,
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
-    ) -> Result<crate::Result<'a>, Error> {
+    ) -> Result<crate::js_parser::Result<'a>, Error> {
         // Move lexer/options out and leave inert
         // placeholders so `self` may drop without double-free.
         //
@@ -617,7 +617,7 @@ impl<'a> Parser<'a> {
             }
             js_ast::ExportsKind::None
         };
-        Ok(crate::Result::Ast(p.to_ast(
+        Ok(crate::js_parser::Result::Ast(p.to_ast(
             &mut parts,
             exports_kind,
             WrapMode::None,
@@ -700,7 +700,7 @@ impl<'a> Parser<'a> {
                     let _ = m.write_format(Output::writer(), true);
                 }
             }
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
@@ -717,7 +717,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::js_parser::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Parse(
@@ -780,7 +780,7 @@ impl<'a> Parser<'a> {
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
             if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
-                return Ok(crate::Result::AlreadyBundled(pragma));
+                return Ok(crate::js_parser::Result::AlreadyBundled(pragma));
             }
         }
 
@@ -805,7 +805,7 @@ impl<'a> Parser<'a> {
                     core::ptr::NonNull::from(&p.options).cast::<()>(),
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
-                    return Ok(crate::Result::Cached);
+                    return Ok(crate::js_parser::Result::Cached);
                 }
             }
         }
@@ -825,7 +825,7 @@ impl<'a> Parser<'a> {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
-                if e == crate::Error::StackOverflow {
+                if e == crate::js_parser::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -834,7 +834,7 @@ impl<'a> Parser<'a> {
                     );
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
-                    return Err(crate::Error::SyntaxError);
+                    return Err(crate::js_parser::Error::SyntaxError);
                 }
 
                 return Err(e);
@@ -849,7 +849,7 @@ impl<'a> Parser<'a> {
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if p.log().errors > orig_error_count {
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         // A second guard dropped at end of `_parse` restores the previous action.
@@ -1111,7 +1111,7 @@ impl<'a> Parser<'a> {
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
@@ -1417,7 +1417,7 @@ impl<'a> Parser<'a> {
                                 };
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
-                                    return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
+                                    return Ok(crate::js_parser::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
@@ -1594,7 +1594,7 @@ impl<'a> Parser<'a> {
                     };
 
                     if let Some(star) = export_star_redirect {
-                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
+                        return Ok(crate::js_parser::Result::Ast(Box::new(js_ast::Ast {
                             import_records: p.import_records.move_to_baby_list(p.arena),
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
@@ -2292,7 +2292,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(crate::Result::Ast(p.to_ast(
+        Ok(crate::js_parser::Result::Ast(p.to_ast(
             &mut parts,
             exports_kind,
             wrap_mode,

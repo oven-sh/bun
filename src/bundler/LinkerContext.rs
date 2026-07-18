@@ -2244,7 +2244,7 @@ impl<'a> LinkerContext<'a> {
                 _ => runtime_require_ref,
             },
             require_or_import_meta_for_source_callback:
-                js_printer::RequireOrImportMetaCallback::init(self),
+                Some((&mut *self).into()),
             line_offset_tables: Some(line_offset_table),
             target: self.options.target,
 
@@ -2575,9 +2575,9 @@ impl<'a> LinkerContext<'a> {
     }
 } // end — split: tree-shaking trio below
 
-/// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
-/// can call back into `LinkerContext::require_or_import_meta_for_source`.
-impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
+/// `bun_js::RequireMetaResolver` — trait-object shim so the printer can call
+/// back into `LinkerContext::require_or_import_meta_for_source`.
+impl<'a> bun_js::RequireMetaResolver for LinkerContext<'a> {
     #[inline]
     fn require_or_import_meta_for_source(
         &mut self,

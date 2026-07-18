@@ -40,7 +40,6 @@ bun_http_types.workspace = true
 # TODO(b1): bun_http_jsc has a forward-dep on bun_jsc; cannot depend on it here (cycle). Gate usages.
 bun_install.workspace = true
 bun_js_parser.workspace = true
-bun_js_printer.workspace = true
 bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_ptr.workspace = true

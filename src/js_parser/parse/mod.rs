@@ -14,7 +14,7 @@ use bun_core::collections::VecExt;
 
 use bun_core::alloc_impl::{ArenaVec as BumpVec, ArenaVecExt as _};
 
-use crate::Error;
+use crate::js_parser::Error;
 use bun_core::strings;
 
 use bun_ast::LexerLog as _;
@@ -69,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: &mut Expr,
     ) -> Result<(), Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
 
         let had_pure_comment_before =
@@ -107,7 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_star {
             if p.lexer.has_newline_before {
                 p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
             p.lexer.next()?;
         }
@@ -507,7 +507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
                 p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
 
             let mut invalid_log = LocList::new_in(p.arena);
@@ -590,7 +590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if type_colon_range.len > 0 {
             p.log()
                 .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
-            return Err(crate::Error::SyntaxError);
+            return Err(crate::js_parser::Error::SyntaxError);
         }
 
         // Are these arguments for a call to a function named "async"?
@@ -620,7 +620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if spread_range.len > 0 {
                 p.log()
                     .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
 
             let mut value = Expr::join_all_with_comma(items);
@@ -630,7 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Indicate that we expected an arrow function
         p.lexer.expected(T::TEqualsGreaterThan)?;
-        Err(crate::Error::SyntaxError)
+        Err(crate::js_parser::Error::SyntaxError)
     }
 
     pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
@@ -677,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // example:
             // export class {}
             if !is_identifier {
-                return Err(crate::Error::SyntaxError);
+                return Err(crate::js_parser::Error::SyntaxError);
             }
 
             if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
@@ -972,7 +972,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(crate::Error::StackOverflow);
+            return Err(crate::js_parser::Error::StackOverflow);
         }
         let loc = p.lexer.loc();
 
@@ -1047,7 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.lexer.range(),
                                     b"Unexpected \",\" after rest pattern",
                                 );
-                                return Err(crate::Error::SyntaxError);
+                                return Err(crate::js_parser::Error::SyntaxError);
                             }
                         }
 
@@ -1104,7 +1104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.range(),
                                 b"Unexpected \",\" after rest pattern",
                             );
-                            return Err(crate::Error::SyntaxError);
+                            return Err(crate::js_parser::Error::SyntaxError);
                         }
 
                         if p.lexer.token != T::TComma {

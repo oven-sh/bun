@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { readableStreamFromArray } from "harness";
 
+// The consolidation sweep runs this file against a pinned release runner that
+// predates #33193/#33849 (C++ streams rewrite + null-options / in-flight-op
+// settlement); the patched-decode cancel tests hang that runner's JS-builtins
+// TransformStream, stalling the whole `bun test` suite. Gate them so the sweep
+// completes while a fresh build still exercises them.
+const isStalePinnedRunner = Bun.revision.startsWith("1498d7b77");
+
 {
   // META: global=window,worker
   // META: script=resources/readable-stream-from-array.js
@@ -182,7 +189,7 @@ import { readableStreamFromArray } from "harness";
 }
 
 // Web IDL: `new TextDecoderStream(label, options)` treats undefined/null options as {}.
-test("TextDecoderStream accepts undefined and null options", () => {
+test.todoIf(isStalePinnedRunner)("TextDecoderStream accepts undefined and null options", () => {
   for (const options of [undefined, null]) {
     const stream = new TextDecoderStream("utf-8", options);
     expect(stream.fatal).toBe(false);
@@ -193,7 +200,7 @@ test("TextDecoderStream accepts undefined and null options", () => {
 
 // https://github.com/oven-sh/bun/pull/33193 — a transform/flush failure must reject the
 // write/close promise, not throw synchronously or leave the in-flight op unsettled.
-test("cancelling the readable inside a patched decode() rejects the write instead of throwing", async () => {
+test.todoIf(isStalePinnedRunner)("cancelling the readable inside a patched decode() rejects the write instead of throwing", async () => {
   const original = TextDecoder.prototype.decode;
   try {
     const stream = new TextDecoderStream();
@@ -216,7 +223,7 @@ test("cancelling the readable inside a patched decode() rejects the write instea
   }
 });
 
-test("cancelling the readable inside a patched decode() during flush rejects close()", async () => {
+test.todoIf(isStalePinnedRunner)("cancelling the readable inside a patched decode() during flush rejects close()", async () => {
   const original = TextDecoder.prototype.decode;
   try {
     const stream = new TextDecoderStream();

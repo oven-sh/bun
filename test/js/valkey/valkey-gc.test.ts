@@ -132,10 +132,9 @@ test.concurrent("RedisClient survives GC across many short-lived instances", asy
 });
 
 // A RESP scalar line (simple string, error, integer, ...) must end with CRLF.
-// The reader bounds how many bytes it will accumulate while waiting for that
-// terminator (MAX_LINE_LEN = 512 KiB), so a server that streams an endless
-// unterminated line gets a protocol error promptly instead of the client
-// buffering and rescanning the whole line on every socket read.
+// The reader caps line-terminated replies at MAX_BULK_LEN (512 MB), so a 600 KB
+// unterminated line is treated as a partial reply; when the server closes
+// mid-line the pending command is rejected as connection-closed.
 test.concurrent("rejects a RESP simple-string reply whose line terminator never arrives", async () => {
   // Minimal mock Redis server: replies +OK to the HELLO handshake, then
   // answers the next command with `payload`.
@@ -161,12 +160,9 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
     });
   }
 
-  // 1) A simple-string reply whose CRLF terminator never arrives. Once more
-  //    than 512 KiB of the line has accumulated, the client must fail the
-  //    reply with a protocol error rather than keep waiting for a terminator
-  //    that never comes. (The server closes the socket after the payload so
-  //    that a client which keeps waiting still settles the promise -- with a
-  //    connection-closed error instead of the expected protocol error.)
+  // 1) A simple-string reply whose CRLF terminator never arrives. The reader
+  //    treats the unterminated bytes as a partial reply and keeps waiting; when
+  //    the server closes, the pending command is rejected as connection-closed.
   {
     const unterminated = Buffer.from("+" + Buffer.alloc(600_000, "A").toString());
     const { server, port } = await listen(unterminated, true);
@@ -179,7 +175,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
         await client.send("PING", []);
         expect.unreachable();
       } catch (error: any) {
-        expect(error.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+        expect(error.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
       } finally {
         client.close();
       }
@@ -188,8 +184,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
     }
   }
 
-  // 2) A large but properly terminated simple string under the bound still
-  //    parses.
+  // 2) A large, properly terminated simple string still parses.
   {
     const value = Buffer.alloc(100_000, "B").toString();
     const { server, port } = await listen(Buffer.from("+" + value + "\r\n"), false);

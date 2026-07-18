@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::Expect;
+use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -73,19 +73,18 @@ impl Expect {
                 "<green>start<r><d>, <r><green>end<r>",
                 true,
             );
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!(
-                        "\n\n",
-                        "Expected: not between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
-                        "Received: <red>{}<r>\n",
-                    ),
-                    start_fmt,
-                    end_fmt,
-                    received_fmt,
+                concat!(
+                    "\n\n",
+                    "Expected: not between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
+                    "Received: <red>{}<r>\n",
                 ),
+                start_fmt,
+                end_fmt,
+                received_fmt,
             );
         }
 
@@ -94,19 +93,18 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
             false,
         );
-        this.throw(
+        throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected: between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
-                    "Received: <red>{}<r>\n",
-                ),
-                start_fmt,
-                end_fmt,
-                received_fmt,
+            concat!(
+                "\n\n",
+                "Expected: between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
+                "Received: <red>{}<r>\n",
             ),
+            start_fmt,
+            end_fmt,
+            received_fmt,
         )
     }
 }

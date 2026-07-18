@@ -3,13 +3,6 @@ import { once } from "node:events";
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 
-// `options.signal` aborting an in-flight `http.request` must emit 'error'
-// with an AbortError matching Node.js (`name: 'AbortError'`, `code:
-// 'ABORT_ERR'`, `cause: signal.reason`). Without this, callers awaiting
-// `req.on('error', reject)` hang until the underlying socket times out.
-//
-// Regression for #31167 (fixed on main by the net/tls + llhttp client rewrite
-// in #31587; this file locks the behavior in so it does not regress).
 describe("http.request options.signal", () => {
   it("emits 'error' with AbortError when the signal fires mid-request", async () => {
     const server = createServer(() => {
@@ -201,7 +194,7 @@ describe("http.request options.signal", () => {
 
   it("emits 'error' with AbortError when AbortSignal.timeout fires during connect to an unreachable host", async () => {
     // Original #31167 repro: connect hangs (blackhole / no SYN-ACK) and the
-    // signal must still settle `req.on('error')` promptly. Without this,
+    // signal must still settle `req.on('error')` promptly. If no timeout is set,
     // callers hang until the OS TCP timeout.
     const signal = AbortSignal.timeout(150);
     const t0 = Date.now();

@@ -987,6 +987,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 file_entry_bits,
                 css_reprs,
+                worklist: Vec::new(),
             };
 
             // Code splitting: Determine which entry points can reach which files. This
@@ -2625,6 +2626,7 @@ pub struct CodeSplitCtx<'a, 'r> {
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub file_entry_bits: &'r mut [AutoBitSet],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub worklist: Vec<(crate::IndexInt, u32)>,
 }
 
 impl<'a> LinkerContext<'a> {
@@ -2635,91 +2637,74 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distance: u32,
     ) {
-        if !self.graph.files_live.is_set(source_index as usize) {
-            return;
-        }
-
-        let cur_dist = ctx.distances[source_index as usize];
-        let traverse_again = distance < cur_dist;
-        if traverse_again {
-            ctx.distances[source_index as usize] = distance;
-        }
-        let out_dist = distance + 1;
-
-        let bits = &mut ctx.file_entry_bits[source_index as usize];
-
-        // Don't mark this file more than once
-        if bits.is_set(entry_points_count) && !traverse_again {
-            return;
-        }
-
-        bits.set(entry_points_count);
-
-        #[cfg(feature = "debug_logs")]
-        {
-            let parse_graph = self.parse_graph();
-            debug_tree_shake!(
-                "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
-                entry_points_count,
-                bstr::BStr::new(
-                    &parse_graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .pretty
-                ),
-                <&'static str>::from(
-                    parse_graph.ast.items_target()[source_index as usize].bake_graph()
-                ),
-                out_dist,
-            );
-        }
-
-        if ctx.css_reprs[source_index as usize].is_some() {
-            for ri in 0..ctx.import_records[source_index as usize].len() {
-                let record = &ctx.import_records[source_index as usize][ri];
-                if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
-                {
-                    let other = record.source_index.get();
-                    self.mark_file_reachable_for_code_splitting(
-                        ctx,
-                        other,
-                        entry_points_count,
-                        out_dist,
-                    );
-                }
+        debug_assert!(ctx.worklist.is_empty());
+        ctx.worklist.push((source_index, distance));
+        while let Some((source_index, distance)) = ctx.worklist.pop() {
+            if !self.graph.files_live.is_set(source_index as usize) {
+                continue;
             }
-            return;
-        }
 
-        for ri in 0..ctx.import_records[source_index as usize].len() {
-            let record = &ctx.import_records[source_index as usize][ri];
-            if record.source_index.is_valid()
-                && !self.is_external_dynamic_import(record, source_index)
+            let cur_dist = ctx.distances[source_index as usize];
+            let traverse_again = distance < cur_dist;
+            if traverse_again {
+                ctx.distances[source_index as usize] = distance;
+            }
+            let out_dist = distance + 1;
+
+            let bits = &mut ctx.file_entry_bits[source_index as usize];
+
+            // Don't mark this file more than once
+            if bits.is_set(entry_points_count) && !traverse_again {
+                continue;
+            }
+
+            bits.set(entry_points_count);
+
+            #[cfg(feature = "debug_logs")]
             {
-                let other = record.source_index.get();
-                self.mark_file_reachable_for_code_splitting(
-                    ctx,
-                    other,
+                let parse_graph = self.parse_graph();
+                debug_tree_shake!(
+                    "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
                     entry_points_count,
+                    bstr::BStr::new(
+                        &parse_graph.input_files.items_source()[source_index as usize]
+                            .path
+                            .pretty
+                    ),
+                    <&'static str>::from(
+                        parse_graph.ast.items_target()[source_index as usize].bake_graph()
+                    ),
                     out_dist,
                 );
             }
-        }
 
-        let part_count = ctx.parts[source_index as usize].len();
-        for pi in 0..part_count {
-            let deps_len = ctx.parts[source_index as usize].as_slice()[pi]
-                .dependencies
-                .len();
-            for di in 0..deps_len {
-                let dependency = ctx.parts[source_index as usize].as_slice()[pi].dependencies[di];
-                if dependency.source_index.get() != source_index {
-                    self.mark_file_reachable_for_code_splitting(
-                        ctx,
-                        dependency.source_index.get(),
-                        entry_points_count,
-                        out_dist,
-                    );
+            // Successors pushed onto a LIFO worklist. The only per-node state is
+            // the entry-point bit (monotone) and the min distance (relaxed on
+            // every shorter revisit), so the fixpoint is order-independent.
+            if ctx.css_reprs[source_index as usize].is_some() {
+                for record in ctx.import_records[source_index as usize].iter() {
+                    if record.source_index.is_valid()
+                        && !self.is_external_dynamic_import(record, source_index)
+                    {
+                        ctx.worklist.push((record.source_index.get(), out_dist));
+                    }
+                }
+                continue;
+            }
+
+            for record in ctx.import_records[source_index as usize].iter() {
+                if record.source_index.is_valid()
+                    && !self.is_external_dynamic_import(record, source_index)
+                {
+                    ctx.worklist.push((record.source_index.get(), out_dist));
+                }
+            }
+
+            for part in ctx.parts[source_index as usize].as_slice() {
+                for dependency in part.dependencies.iter() {
+                    if dependency.source_index.get() != source_index {
+                        ctx.worklist.push((dependency.source_index.get(), out_dist));
+                    }
                 }
             }
         }

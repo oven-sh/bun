@@ -3440,7 +3440,7 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    let get_boolean_option = |name: &'static str| -> JsResult<Option<JSValue>> {
+                    let get_option = |name: &'static str| -> JsResult<Option<JSValue>> {
                         if strict_booleans {
                             let key = bun_core::String::borrow_utf8(name.as_bytes());
                             val.get_own(ctx, &key)
@@ -3448,7 +3448,7 @@ pub mod args {
                             val.get(ctx, name)
                         }
                     };
-                    if let Some(boolean) = get_boolean_option("recursive")? {
+                    if let Some(boolean) = get_option("recursive")? {
                         if boolean.is_boolean() {
                             recursive = boolean.to_boolean();
                         } else {
@@ -3457,7 +3457,7 @@ pub mod args {
                             )));
                         }
                     }
-                    if let Some(boolean) = get_boolean_option("force")? {
+                    if let Some(boolean) = get_option("force")? {
                         if boolean.is_boolean() {
                             force = boolean.to_boolean();
                         } else {
@@ -3466,15 +3466,7 @@ pub mod args {
                             )));
                         }
                     }
-                    let get_integer_option = |name: &'static str| -> JsResult<Option<JSValue>> {
-                        if strict_booleans {
-                            let key = bun_core::String::borrow_utf8(name.as_bytes());
-                            val.get_own(ctx, &key)
-                        } else {
-                            val.get(ctx, name)
-                        }
-                    };
-                    if let Some(delay) = get_integer_option("retryDelay")? {
+                    if let Some(delay) = get_option("retryDelay")? {
                         retry_delay = c_uint::try_from(validators::validate_integer(
                             ctx,
                             delay,
@@ -3484,7 +3476,7 @@ pub mod args {
                         )?)
                         .expect("infallible: validated range");
                     }
-                    if let Some(retries) = get_integer_option("maxRetries")? {
+                    if let Some(retries) = get_option("maxRetries")? {
                         max_retries = u32::try_from(validators::validate_integer(
                             ctx,
                             retries,

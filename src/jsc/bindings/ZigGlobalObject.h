@@ -434,6 +434,9 @@ public:
     bool asyncHooksNeedsCleanup = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
+    // Monotonic: set by diagnostics_channel on this VM's first `undici:*`
+    // subscribe so native fetch()/WebSocket can skip the JS bridge otherwise.
+    bool hasUndiciDiagnosticsSubscriber = false;
 
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;

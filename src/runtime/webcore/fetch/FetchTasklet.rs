@@ -53,8 +53,8 @@ pub(crate) mod undici_diagnostics {
     use bun_jsc::{self as jsc, ArrayBuffer, JsResult, StrongOptional};
 
     #[inline]
-    pub(crate) fn has_subscriber() -> bool {
-        jsc::cpp::Bun__undiciDiagnosticsHasSubscriber()
+    pub(crate) fn has_subscriber(global: &JSGlobalObject) -> bool {
+        jsc::cpp::Bun__undiciDiagnosticsHasSubscriber(global)
     }
 
     fn js_str(global: &JSGlobalObject, s: &[u8]) -> JSValue {
@@ -128,38 +128,17 @@ pub(crate) mod undici_diagnostics {
         method: bun_http::Method,
         headers: &mut Headers,
     ) -> StrongOptional {
-        if !has_subscriber() {
+        if !has_subscriber(global) {
             return StrongOptional::empty();
         }
         match publish_create(global, url, method, headers) {
             Ok(Some(req)) => StrongOptional::create(req, global),
             Ok(None) => StrongOptional::empty(),
-            Err(_) => {
-                let _ = global.try_take_exception();
+            Err(err) => {
+                global.report_uncaught_exception_from_error(err);
                 StrongOptional::empty()
             }
         }
-    }
-
-    fn url_parts(
-        this: &FetchTasklet,
-        global: &JSGlobalObject,
-    ) -> (JSValue, JSValue, JSValue, JSValue) {
-        if let Some(http_) = this.http.as_ref() {
-            let url = &http_.url;
-            return (
-                js_str(global, url.host),
-                js_str(global, url.hostname),
-                js_str(global, url.protocol),
-                js_str(global, url.port),
-            );
-        }
-        (
-            JSValue::UNDEFINED,
-            JSValue::UNDEFINED,
-            JSValue::UNDEFINED,
-            JSValue::UNDEFINED,
-        )
     }
 
     pub(crate) fn on_resolve(
@@ -171,7 +150,22 @@ pub(crate) mod undici_diagnostics {
             return;
         };
         request.ensure_still_alive();
-        let (host, hostname, protocol, port) = url_parts(this, global);
+        let (host, hostname, protocol, port) = if let Some(http_) = this.http.as_ref() {
+            let url = &http_.url;
+            (
+                js_str(global, url.host),
+                js_str(global, url.hostname),
+                js_str(global, url.protocol),
+                js_str(global, url.port),
+            )
+        } else {
+            (
+                JSValue::UNDEFINED,
+                JSValue::UNDEFINED,
+                JSValue::UNDEFINED,
+                JSValue::UNDEFINED,
+            )
+        };
         jsc::cpp::Bun__undiciDiagnosticsOnConnected(
             global, request, host, hostname, protocol, port,
         );
@@ -188,24 +182,28 @@ pub(crate) mod undici_diagnostics {
         );
     }
 
-    pub(crate) fn on_complete(this: &mut FetchTasklet, global: &JSGlobalObject) {
-        let Some(request) = this.diagnostics_request.get() else {
-            return;
-        };
-        request.ensure_still_alive();
-        jsc::cpp::Bun__undiciDiagnosticsOnComplete(global, request);
-        this.diagnostics_request.deinit();
-    }
-
     pub(crate) fn on_error(this: &mut FetchTasklet, global: &JSGlobalObject, error: JSValue) {
         let Some(request) = this.diagnostics_request.get() else {
             return;
         };
         request.ensure_still_alive();
-        let (host, hostname, protocol, port) = url_parts(this, global);
-        jsc::cpp::Bun__undiciDiagnosticsOnError(
-            global, request, error, host, hostname, protocol, port,
-        );
+        jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, error);
+        this.diagnostics_request.deinit();
+    }
+
+    /// Terminal dispatch: publish `trailers` on a clean finish, `error` on any
+    /// failure (including post-headers body errors and aborts), matching
+    /// undici's `Request#onComplete`/`Request#onError` split.
+    pub(crate) fn on_done(this: &mut FetchTasklet, global: &JSGlobalObject) {
+        let Some(request) = this.diagnostics_request.get() else {
+            return;
+        };
+        request.ensure_still_alive();
+        if this.result.fail.is_some() || this.abort_reason.has() {
+            jsc::cpp::Bun__undiciDiagnosticsOnError(global, request, JSValue::UNDEFINED);
+        } else {
+            jsc::cpp::Bun__undiciDiagnosticsOnComplete(global, request);
+        }
         this.diagnostics_request.deinit();
     }
 }
@@ -1007,7 +1005,7 @@ impl FetchTasklet {
             // if we are not done we wait until the next call
             if is_done {
                 if this.diagnostics_request.has() {
-                    undici_diagnostics::on_complete(this, &global_this);
+                    undici_diagnostics::on_done(this, &global_this);
                 }
                 // Same GC hint Bun.serve fires per request, for the outbound direction: an
                 // agent loop only makes fetches, so nothing else nudges the heuristic.
@@ -2027,7 +2025,7 @@ impl FetchTasklet {
             }
             if !self.result.has_more {
                 let global_this = self.global_this;
-                undici_diagnostics::on_complete(self, &global_this);
+                undici_diagnostics::on_done(self, &global_this);
             }
         }
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));

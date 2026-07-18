@@ -7,25 +7,22 @@
 #include "webcore/JSWebSocket.h"
 #include "JSBuffer.h"
 #include <JavaScriptCore/Error.h>
-#include <atomic>
 
 namespace Bun {
 
 using namespace JSC;
 
-static std::atomic<bool> s_hasUndiciSubscriber { false };
-
 JSC_DEFINE_HOST_FUNCTION(jsNotifyUndiciSubscribed, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    s_hasUndiciSubscriber.store(true, std::memory_order_relaxed);
+    defaultGlobalObject(globalObject)->hasUndiciDiagnosticsSubscriber = true;
     return JSValue::encode(jsUndefined());
 }
 
 namespace UndiciDiagnostics {
 
-bool hasSubscriber()
+bool hasSubscriber(Zig::GlobalObject* globalObject)
 {
-    return s_hasUndiciSubscriber.load(std::memory_order_relaxed);
+    return globalObject->hasUndiciDiagnosticsSubscriber;
 }
 
 static JSFunction* getHelper(Zig::GlobalObject* globalObject, const ASCIILiteral& name)
@@ -73,9 +70,9 @@ static JSValue callHelperNoThrow(Zig::GlobalObject* globalObject, const ASCIILit
 
 void publishWebSocketOpen(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::WebSocket& ws, const WTF::String& protocol, const WTF::String& extensions)
 {
-    if (!hasSubscriber())
-        return;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!hasSubscriber(globalObject))
+        return;
     auto& vm = globalObject->vm();
     MarkedArgumentBuffer args;
     args.append(WebCore::toJS(globalObject, reinterpret_cast<WebCore::JSDOMGlobalObject*>(globalObject), ws));
@@ -86,9 +83,9 @@ void publishWebSocketOpen(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::Web
 
 void publishWebSocketClose(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::WebSocket& ws, unsigned short code, const WTF::String& reason)
 {
-    if (!hasSubscriber())
-        return;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!hasSubscriber(globalObject))
+        return;
     auto& vm = globalObject->vm();
     MarkedArgumentBuffer args;
     args.append(WebCore::toJS(globalObject, reinterpret_cast<WebCore::JSDOMGlobalObject*>(globalObject), ws));
@@ -99,9 +96,9 @@ void publishWebSocketClose(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::We
 
 void publishWebSocketError(JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& message)
 {
-    if (!hasSubscriber())
-        return;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!hasSubscriber(globalObject))
+        return;
     MarkedArgumentBuffer args;
     args.append(createError(globalObject, message));
     callHelperNoThrow(globalObject, "wsError"_s, args);
@@ -109,9 +106,9 @@ void publishWebSocketError(JSC::JSGlobalObject* lexicalGlobalObject, const WTF::
 
 void publishWebSocketPingPong(JSC::JSGlobalObject* lexicalGlobalObject, bool isPong, std::span<const uint8_t> payload)
 {
-    if (!hasSubscriber())
-        return;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!hasSubscriber(globalObject))
+        return;
     MarkedArgumentBuffer args;
     if (payload.empty()) {
         args.append(jsUndefined());
@@ -126,9 +123,9 @@ void publishWebSocketPingPong(JSC::JSGlobalObject* lexicalGlobalObject, bool isP
 
 using namespace JSC;
 
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__undiciDiagnosticsHasSubscriber()
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__undiciDiagnosticsHasSubscriber(Zig::GlobalObject* globalObject)
 {
-    return Bun::UndiciDiagnostics::hasSubscriber();
+    return Bun::UndiciDiagnostics::hasSubscriber(globalObject);
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__undiciDiagnosticsOnCreate(Zig::GlobalObject* globalObject, EncodedJSValue origin, EncodedJSValue method, EncodedJSValue path, EncodedJSValue host, EncodedJSValue hostname, EncodedJSValue protocol, EncodedJSValue port, EncodedJSValue headers)
@@ -193,14 +190,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__undiciDiagnosticsOnComplete(Zig::Gl
     Bun::UndiciDiagnostics::callHelperNoThrow(globalObject, "onComplete"_s, args);
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__undiciDiagnosticsOnError(Zig::GlobalObject* globalObject, EncodedJSValue request, EncodedJSValue error, EncodedJSValue host, EncodedJSValue hostname, EncodedJSValue protocol, EncodedJSValue port)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__undiciDiagnosticsOnError(Zig::GlobalObject* globalObject, EncodedJSValue request, EncodedJSValue error)
 {
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(request));
     args.append(JSValue::decode(error));
-    args.append(JSValue::decode(host));
-    args.append(JSValue::decode(hostname));
-    args.append(JSValue::decode(protocol));
-    args.append(JSValue::decode(port));
     Bun::UndiciDiagnostics::callHelperNoThrow(globalObject, "onError"_s, args);
 }

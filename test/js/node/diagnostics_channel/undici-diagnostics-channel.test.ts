@@ -10,7 +10,7 @@ const names = [
   "undici:request:create", "undici:request:bodySent", "undici:request:headers",
   "undici:request:trailers", "undici:request:error",
   "undici:client:beforeConnect", "undici:client:connected",
-  "undici:client:sendHeaders", "undici:client:connectError",
+  "undici:client:sendHeaders",
 ];
 const fired = Object.create(null);
 for (const n of names) dc.subscribe(n, m => (fired[n] ??= []).push(m));
@@ -27,8 +27,9 @@ await using srv = Bun.serve({
 });
 const res = await fetch("http://127.0.0.1:" + srv.port + "/p?q=1", { headers: { "x-custom": "1" } });
 await res.text();
+const trailersCountOk = (fired["undici:request:trailers"] ?? []).length;
 
-// error path
+// error path: trailers must NOT fire, only error
 let errRequest;
 dc.subscribe("undici:request:error", ({ request }) => { errRequest = request; });
 try { await fetch("http://127.0.0.1:1/", { signal: AbortSignal.timeout(2000) }); } catch {}
@@ -54,7 +55,7 @@ process.stdout.write(JSON.stringify({
   sendHeaders: { keys: Object.keys(sendHeaders).sort(), hasRequestLine: sendHeaders.headers.startsWith("GET /p?q=1 HTTP/1.1") },
   bodySent: !!fired["undici:request:bodySent"],
   errorFired: fired["undici:request:error"]?.length > 0 && errRequest?.completed === true,
-  connectErrorFired: fired["undici:client:connectError"]?.length > 0,
+  trailersOnErrorPath: (fired["undici:request:trailers"] ?? []).length - trailersCountOk,
 }));
 `;
 
@@ -91,7 +92,7 @@ describe("fetch()", () => {
     expect(out.sendHeaders.hasRequestLine).toBe(true);
     expect(out.bodySent).toBe(true);
     expect(out.errorFired).toBe(true);
-    expect(out.connectErrorFired).toBe(true);
+    expect(out.trailersOnErrorPath).toBe(0);
 
     expect(exitCode).toBe(0);
   });

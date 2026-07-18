@@ -11,6 +11,7 @@ const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const SymbolHasInstance = Symbol.hasInstance;
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
@@ -67,7 +68,7 @@ function markActive(channel) {
   channel._stores = new SafeMap();
   // Let native fetch()/WebSocket know it should start publishing. Monotonic:
   // once flipped the native side keeps the cheap hasSubscribers check in JS.
-  if (!notifiedUndici && typeof channel.name === "string" && channel.name.startsWith("undici:")) {
+  if (!notifiedUndici && typeof channel.name === "string" && StringPrototypeStartsWith.$call(channel.name, "undici:")) {
     notifiedUndici = true;
     notifyNativeUndiciSubscribed();
   }

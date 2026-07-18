@@ -16,7 +16,6 @@ const requestErrorChannel = dc.channel("undici:request:error");
 const clientSendHeadersChannel = dc.channel("undici:client:sendHeaders");
 const clientBeforeConnectChannel = dc.channel("undici:client:beforeConnect");
 const clientConnectedChannel = dc.channel("undici:client:connected");
-const clientConnectErrorChannel = dc.channel("undici:client:connectError");
 const wsOpenChannel = dc.channel("undici:websocket:open");
 const wsCloseChannel = dc.channel("undici:websocket:close");
 const wsSocketErrorChannel = dc.channel("undici:websocket:socket_error");
@@ -77,8 +76,7 @@ function anyFetchSubscriber() {
     requestErrorChannel.hasSubscribers ||
     clientSendHeadersChannel.hasSubscribers ||
     clientBeforeConnectChannel.hasSubscribers ||
-    clientConnectedChannel.hasSubscribers ||
-    clientConnectErrorChannel.hasSubscribers
+    clientConnectedChannel.hasSubscribers
   );
 }
 
@@ -156,16 +154,9 @@ function onComplete(request) {
   }
 }
 
-function onError(request, error, host, hostname, protocol, port) {
+function onError(request, error) {
   if (!request) return;
   request.completed = true;
-  if (clientConnectErrorChannel.hasSubscribers) {
-    clientConnectErrorChannel.publish({
-      connectParams: buildConnectParams(request, host, hostname, protocol, port),
-      connector,
-      error,
-    });
-  }
   if (requestErrorChannel.hasSubscribers) {
     requestErrorChannel.publish({ request, error });
   }

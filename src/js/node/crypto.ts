@@ -1,6 +1,7 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -164,9 +165,11 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 
   const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
+    // Guarded so a throw inside the callback is an uncaughtException, as in node.
+    const cb = guardCallback(callback);
     promise.then(
-      result => callback(null, result),
-      err => callback(err),
+      result => cb(null, result),
+      err => cb(err),
     );
     return;
   }

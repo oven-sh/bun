@@ -572,9 +572,8 @@ describe("bundler metafile", () => {
 
     const metafile = result.metafile as Metafile;
     const entryKey = Object.keys(metafile.inputs).find(k => k.endsWith("entry.js"))!;
-    for (const imp of metafile.inputs[entryKey].imports) {
-      expect(imp.path).not.toBe("runtime");
-    }
+    const importPaths = metafile.inputs[entryKey].imports.map(i => i.path);
+    expect(importPaths).toEqual(["bun:wrap"]);
     expect("runtime" in metafile.inputs).toBe(false);
   });
 

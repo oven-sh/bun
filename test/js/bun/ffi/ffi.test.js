@@ -1090,8 +1090,9 @@ it.skipIf(isFFIUnavailable)("FFI functions are not constructors", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "42\nTypeError\nTypeError\n[Function: fn]\n",
+    stderr: "",
     exitCode: 0,
   });
 });

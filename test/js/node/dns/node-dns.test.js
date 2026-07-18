@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -570,5 +572,58 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("resolver errors from a local DNS server", () => {
+  // The server answers every query by echoing the question section back with
+  // an RCODE chosen by the queried name, so the c-ares status -> error code
+  // mapping is exercised without any external network traffic. Node maps
+  // NXDOMAIN (RCODE 3) to ENOTFOUND and SERVFAIL (RCODE 2) to ESERVFAIL.
+  it("resolve4 surfaces ENOTFOUND for NXDOMAIN and ESERVFAIL for SERVFAIL", async () => {
+    const server = dgram.createSocket("udp4");
+    try {
+      server.on("message", (msg, rinfo) => {
+        // Walk labels from offset 12 until the zero-length root label, then
+        // QTYPE(2) + QCLASS(2).
+        const labels = [];
+        let off = 12;
+        while (off < msg.length && msg[off] !== 0) {
+          labels.push(msg.subarray(off + 1, off + 1 + msg[off]).toString("latin1"));
+          off += msg[off] + 1;
+        }
+        off += 1 + 2 + 2;
+        const question = msg.subarray(12, off);
+
+        const rcode = labels[0] === "servfail" ? 2 : 3;
+        const header = Buffer.alloc(12);
+        header[0] = msg[0]; // ID
+        header[1] = msg[1];
+        header[2] = 0x81; // QR=1 Opcode=0 AA=0 TC=0 RD=1
+        header[3] = 0x80 | rcode; // RA=1 Z=0 RCODE
+        header[5] = 1; // QDCOUNT
+        server.send(Buffer.concat([header, question]), rinfo.port, rinfo.address);
+      });
+      server.bind(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
+      resolver.setServers([`127.0.0.1:${server.address().port}`]);
+
+      const results = await Promise.all(
+        ["nxdomain.example", "servfail.example"].map(hostname =>
+          resolver.resolve4(hostname).then(
+            addresses => ({ addresses }),
+            err => ({ code: err.code, syscall: err.syscall, hostname: err.hostname }),
+          ),
+        ),
+      );
+      expect(results).toEqual([
+        { code: "ENOTFOUND", syscall: "queryA", hostname: "nxdomain.example" },
+        { code: "ESERVFAIL", syscall: "queryA", hostname: "servfail.example" },
+      ]);
+    } finally {
+      server.close();
+    }
   });
 });

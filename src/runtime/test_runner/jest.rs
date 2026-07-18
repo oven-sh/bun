@@ -634,19 +634,25 @@ pub(crate) fn js_node_test_report_late_failure(
     } else {
         let _ = write!(&mut line, "{} {}\n", Output::pretty_fmt::<false>("<r><red>(fail)<r>"), display);
     }
-    let _ = Output::error_writer().write_all(&line);
-    Output::flush();
+    {
+        // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
+        // `&mut`; single-threaded test runner, sole writer for this update.
+        let reporter: &mut CommandLineReporter = unsafe { &mut *rep.as_ptr() };
+        if let Some(idx) = reporter.worker_ipc_file_idx {
+            crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);
+        } else {
+            let _ = Output::error_writer().write_all(&line);
+            Output::flush();
+        }
+        if !reporter.reporters.dots && !reporter.reporters.only_failures {
+            reporter.failures_to_repeat_buf.extend_from_slice(&line);
+        }
+        reporter.summary().fail += 1;
+    }
     if !error.is_empty_or_undefined_or_null() {
         global.bun_vm().as_mut().run_error_handler(error, None);
         Output::flush();
     }
-    // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
-    // `&mut`; single-threaded test runner, sole writer for this update.
-    let reporter: &mut CommandLineReporter = unsafe { &mut *rep.as_ptr() };
-    if !reporter.reporters.dots && !reporter.reporters.only_failures {
-        reporter.failures_to_repeat_buf.extend_from_slice(&line);
-    }
-    reporter.summary().fail += 1;
     Ok(JSValue::UNDEFINED)
 }
 

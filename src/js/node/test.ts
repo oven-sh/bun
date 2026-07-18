@@ -1653,10 +1653,14 @@ function runLateSubtest(
     reportLateFailure(child.fullName, failure);
   }
   // Node runs the body and awaits it; its outcome is discarded in favour of the
-  // parentAlreadyFinished failure above, and the returned promise resolves.
+  // parentAlreadyFinished failure above, and the returned promise resolves. A
+  // no-op done keeps a `(t, done)` body from throwing on `done()`.
+  const ctx = isSuite ? child.getSuiteCtx() : child.getCtx();
   let body: unknown;
   try {
-    body = runWithNode(child, () => fn.$call(undefined, isSuite ? child.getSuiteCtx() : child.getCtx()));
+    body = runWithNode(child, () =>
+      fn.length === 2 ? fn.$call(undefined, ctx, kDefaultFunction) : fn.$call(undefined, ctx),
+    );
   } catch {}
   return Promise.resolve(body).then(
     () => undefined,

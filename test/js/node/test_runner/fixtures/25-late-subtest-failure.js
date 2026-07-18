@@ -7,6 +7,8 @@ const assert = require("node:assert");
 // fix, bun resolved the promise but dropped the failure and exited 0.
 let saved;
 let bodyRan = false;
+let doneBodyRan = false;
+let suiteBodyRan = false;
 let resolvedWith = "unset";
 
 test("parent", t => {
@@ -20,6 +22,17 @@ test("observer", async () => {
   resolvedWith = result;
   console.log("RESOLVED_WITH=" + String(resolvedWith));
   console.log("BODY_RAN=" + String(bodyRan));
+  // A (t, done) body must receive a callable done so the body runs to completion.
+  await saved.test("late-done", (_t, done) => {
+    done();
+    doneBodyRan = true;
+  });
+  console.log("DONE_BODY_RAN=" + String(doneBodyRan));
+  // t.describe() after the parent finished takes the same path (isSuite=true).
+  await saved.describe("late-suite", () => {
+    suiteBodyRan = true;
+  });
+  console.log("SUITE_BODY_RAN=" + String(suiteBodyRan));
   // A late skip/todo subtest is not counted as a failure (Node exits 0 for
   // those); these must not add further fail entries to this run.
   await saved.test("late-skip", { skip: true }, () => {});

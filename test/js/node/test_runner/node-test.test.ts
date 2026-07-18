@@ -253,13 +253,16 @@ describe("node:test", () => {
     const { exitCode, stdout, stderr } = await runTests(["25-late-subtest-failure.js"]);
     expect(stdout).toContain("RESOLVED_WITH=undefined");
     expect(stdout).toContain("BODY_RAN=true");
+    expect(stdout).toContain("DONE_BODY_RAN=true");
+    expect(stdout).toContain("SUITE_BODY_RAN=true");
     expect(stderr).toContain("parent > late");
+    expect(stderr).toContain("parent > late-suite");
     expect(stderr).toContain("test could not be started because its parent finished");
-    // Only the plain late subtest fails; the late skip/todo ones do not.
+    // Only the plain late subtests fail; the late skip/todo ones do not.
     expect(stderr).toContain("2 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 1,
-      stderr: expect.stringContaining("1 fail"),
+      stderr: expect.stringContaining("3 fail"),
     });
   });
 

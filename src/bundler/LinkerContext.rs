@@ -819,13 +819,11 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
 
-                let import_records = import_records_list[source_index as usize].as_slice();
                 let _ = self.validate_tla(
                     source_index,
                     tla_keywords,
                     tla_checks,
                     input_files,
-                    import_records,
                     flags,
                     import_records_list,
                 )?;
@@ -1888,11 +1886,9 @@ impl<'a> LinkerContext<'a> {
         tla_keywords: &[Range],
         tla_checks: &mut [TlaCheck],
         input_files: &[Source],
-        import_records: &[ImportRecord],
         meta_flags: &mut [crate::js_meta::Flags],
         ast_import_records: &[bun_ast::import_record::List<'a>],
     ) -> Result<TlaCheck, AllocError> {
-        let _ = import_records;
         // Explicit-stack postorder DFS (was per-edge recursive). `Enter`
         // seeds a file and queues each followed import paired with an
         // `AfterChild` resume point; that resume reads the child's completed

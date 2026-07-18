@@ -328,18 +328,16 @@ private:
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-        /* node:http compat: the parser's per-connection node state lives in the
-         * IsNodeHttp=true ext block; the Bun.serve instantiation passes nullptr
-         * (and its parser instantiation contains no use of them). */
+        /* node:http compat: the trailer capture lives in the IsNodeHttp=true ext
+         * block; the Bun.serve instantiation passes nullptr (and its parser
+         * instantiation contains no use of it). */
         std::string *nodeHttpRequestTrailers = nullptr;
-        uint64_t *nodeHttpChunkedExtensionsByteCount = nullptr;
         if constexpr (IsNodeHttp) {
             auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
-            nodeHttpChunkedExtensionsByteCount = &nodeHttpResponseData->chunkedExtensionsByteCount;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, nodeHttpRequestTrailers, nodeHttpChunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
             /* For every request we reset the timeout and hang until user makes action */

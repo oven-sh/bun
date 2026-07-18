@@ -132,7 +132,11 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = callback.$apply(this, args);
+    const fn = callback;
+    // Drop the reference so the wrapper cannot keep the callback's
+    // closure (and everything it captured) alive once it has run.
+    callback = undefined;
+    const result = fn.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };

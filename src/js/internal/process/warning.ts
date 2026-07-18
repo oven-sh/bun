@@ -34,10 +34,7 @@ function onWarning(warning: Error): void {
   if (code) msg += `[${code}] `;
   let body: string;
   try {
-    body =
-      typeof warning.toString === "function"
-        ? `${warning.toString()}`
-        : ErrorPrototypeToString.$call(warning);
+    body = typeof warning.toString === "function" ? `${warning.toString()}` : ErrorPrototypeToString.$call(warning);
   } catch {
     body = ErrorPrototypeToString.$call(warning);
   }

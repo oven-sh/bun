@@ -759,7 +759,8 @@ class Utf8Stream extends EventEmitter {
       throw $ERR_INVALID_ARG_TYPE("data", "Buffer", data);
     }
 
-    const len = this.#len + data.length;
+    const dataLength = data.length;
+    const len = this.#len + dataLength;
     const bufs = this.#bufs;
     const lens = this.#lens;
 
@@ -768,12 +769,12 @@ class Utf8Stream extends EventEmitter {
       return this.#len < this.#hwm;
     }
 
-    if (bufs.length === 0 || lens[lens.length - 1] + data.length > this.#maxWrite) {
+    if (bufs.length === 0 || lens[lens.length - 1] + dataLength > this.#maxWrite) {
       bufs.push([]);
-      lens.push(data.length);
+      lens.push(dataLength);
     } else {
       bufs[bufs.length - 1].push(data);
-      lens[lens.length - 1] += data.length;
+      lens[lens.length - 1] += dataLength;
     }
 
     this.#len = len;
@@ -791,7 +792,8 @@ class Utf8Stream extends EventEmitter {
     }
     validateString(data, "data");
 
-    const len = this.#len + data.length;
+    const dataLength = data.length;
+    const len = this.#len + dataLength;
     const bufs = this.#bufs;
 
     if (this.#maxLength && len > this.#maxLength) {
@@ -799,7 +801,7 @@ class Utf8Stream extends EventEmitter {
       return this.#len < this.#hwm;
     }
 
-    if (bufs.length === 0 || bufs[bufs.length - 1].length + data.length > this.#maxWrite) {
+    if (bufs.length === 0 || bufs[bufs.length - 1].length + dataLength > this.#maxWrite) {
       bufs.push("" + data);
     } else {
       bufs[bufs.length - 1] += data;

@@ -14,6 +14,7 @@ use bun_uws as uws;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::ipc::IPC; // scoped logger static for `bun_core::scoped_log!(IPC, ...)`
+use crate::jsc_ext::JSGlobalObjectExt;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
@@ -4932,7 +4933,7 @@ impl VirtualMachine {
                     let _ =
                         zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
                 }
-                holder.deinit(self);
+                holder.deinit(|| ModuleLoader::ModuleLoader::reset_arena(self));
             }
         }
     }
@@ -5634,7 +5635,7 @@ impl VirtualMachine {
         // `function_name`/`source_url`/source-line bodies) populated by
         // `JSC__JSValue__toZigException`. Skipping this leaks ~1 KB/error and
         // OOMs the inspect-error-leak test.
-        exception_holder.deinit(self);
+        exception_holder.deinit(|| ModuleLoader::ModuleLoader::reset_arena(self));
         result
     }
 

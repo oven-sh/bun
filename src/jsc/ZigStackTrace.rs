@@ -134,7 +134,7 @@ pub struct SourceLineIterator<'a> {
     pub i: i32,
 }
 
-pub(crate) struct SourceLine {
+pub struct SourceLine {
     pub line: i32,
     pub text: ZigStringSlice,
 }
@@ -154,7 +154,7 @@ impl<'a> SourceLineIterator<'a> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn until_last(&mut self) -> Option<SourceLine> {
+    pub fn until_last(&mut self) -> Option<SourceLine> {
         if self.i < 1 {
             return None;
         }
@@ -162,7 +162,7 @@ impl<'a> SourceLineIterator<'a> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub(crate) fn next(&mut self) -> Option<SourceLine> {
+    pub fn next(&mut self) -> Option<SourceLine> {
         if self.i < 0 {
             return None;
         }

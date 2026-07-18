@@ -2407,11 +2407,9 @@ function renderNativeHeaders(res) {
 }
 
 const kMustCloseConnection = Symbol("kMustCloseConnection");
-// Tri-state: `true` = the deferred end is scheduled; the symbol value itself =
-// it has run (the current read is fully parsed), so end once the pipeline
-// drains. Two states so a 503's own "finish" during per-request
-// drainMicrotasks() does not close the socket before the next pipelined
-// request is dispatched.
+// `true` = deferred end scheduled; the symbol itself = it fired (read fully
+// parsed), so end on pipeline drain. Two states stop a 503's own "finish" in
+// per-request drainMicrotasks() from closing the socket mid-dispatch.
 const kEndAfterDroppedRequests = Symbol("kEndAfterDroppedRequests");
 
 // Runs once the current read has been fully parsed. With nothing left in flight

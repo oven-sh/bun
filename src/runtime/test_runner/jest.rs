@@ -629,12 +629,8 @@ pub(crate) fn js_node_test_report_late_failure(
         (rep, unsafe { (*rep.as_ptr()).worker_ipc_file_idx })
     };
     let mut line = Vec::<u8>::new();
-    let display = bstr::BStr::new(name_slice.slice());
-    if Output::enable_ansi_colors_stderr() {
-        let _ = writeln!(&mut line, "{} {}", Output::pretty_fmt::<true>("<r><red>✗<r>"), display);
-    } else {
-        let _ = writeln!(&mut line, "{} {}", Output::pretty_fmt::<false>("<r><red>(fail)<r>"), display);
-    }
+    crate::cli::test_command::write_test_status_line(super::execution::Result::Fail, &mut line);
+    let _ = writeln!(&mut line, " {}", bstr::BStr::new(name_slice.slice()));
     if let Some(idx) = worker_idx {
         crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);
     } else {

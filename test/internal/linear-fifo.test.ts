@@ -57,7 +57,7 @@ test.skipIf(!miriAvailable)(
   "linear_fifo unit tests are clean under Stacked Borrows miri",
   async () => {
     await using proc = Bun.spawn({
-      cmd: [cargoBin!, "miri", "test", "-p", "bun_collections", "--", "linear_fifo"],
+      cmd: [cargoBin!, "miri", "test", "--locked", "-p", "bun_collections", "--", "linear_fifo"],
       cwd: repoRoot,
       env: { ...process.env, MIRIFLAGS: "" },
       stdout: "pipe",

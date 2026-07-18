@@ -4132,12 +4132,9 @@ pub mod bv2_impl {
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
 
                             if template.needs(options::PlaceholderField::Dir) {
-                                // `root_dir` was canonicalized via `get_fd_path`
-                                // when the bundler was configured; resolve the
-                                // asset's directory the same way so the relative
-                                // path lines up on Windows even when the cwd
-                                // (and thus `source.path.text`) carries 8.3
-                                // short names. Mirrors `compute_chunks`.
+                                // `root_dir` is already canonical (`get_fd_path`);
+                                // canonicalize the source dir the same way so
+                                // Windows 8.3 short names relativize correctly.
                                 let source_dir: &[u8] = if pathname.dir.is_empty() {
                                     b"."
                                 } else {

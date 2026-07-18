@@ -557,7 +557,9 @@ String Worker::errorCodeOf(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (!value.isObject())
+    // A TerminationException can be pending here (CLEAR_IF_EXCEPTION at the
+    // call sites cannot clear it); do not enter JS with one on the VM.
+    if (!value.isObject() || scope.exception())
         return {};
     JSValue codeValue = value.getObject()->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
     String code;

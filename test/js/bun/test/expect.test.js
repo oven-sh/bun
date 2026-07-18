@@ -4560,6 +4560,31 @@ describe("expect()", () => {
       test("notCloseTo return false if received is not number", () => {
         expect(expect.not.closeTo(1)).not.toEqual("a");
       });
+
+      // Jest keeps precision as a double: threshold = Math.pow(10, -precision) / 2.
+      // ToInt32 coercion would map Infinity/NaN to 0 (threshold 0.5) and truncate
+      // fractional precision, turning these into false passes.
+      test("Infinity precision: threshold is 0, never matches", () => {
+        expect(1.001).not.toEqual(expect.closeTo(1, Infinity));
+        expect(1).not.toEqual(expect.closeTo(1, Infinity));
+        expect(1.001).toEqual(expect.not.closeTo(1, Infinity));
+      });
+      test("NaN precision: threshold is NaN, never matches", () => {
+        expect(1.001).not.toEqual(expect.closeTo(1, NaN));
+        expect(1).not.toEqual(expect.closeTo(1, NaN));
+        expect(1.001).toEqual(expect.not.closeTo(1, NaN));
+      });
+      test("fractional precision is not truncated to an integer", () => {
+        expect(1.003).not.toEqual(expect.closeTo(1, 2.7));
+        expect(1.0005).toEqual(expect.closeTo(1, 2.7));
+        expect(1.003).toEqual(expect.closeTo(1, 2));
+      });
+      test("-Infinity precision: threshold is Infinity, any finite received matches", () => {
+        expect(1e300).toEqual(expect.closeTo(0, -Infinity));
+      });
+      test("precision beyond int32 range does not overflow", () => {
+        expect(1.001).not.toEqual(expect.closeTo(1, 2147483648));
+      });
     });
   });
 

@@ -553,9 +553,11 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         if ((received == infinity && expected == infinity) || (received == -infinity && expected == -infinity)) {
             return AsymmetricMatcherResult::PASS;
         } else {
-            int32_t digits = digitsValue.toInt32(globalObject);
+            // Jest: threshold = Math.pow(10, -precision) / 2 with precision as a
+            // double. ToInt32 would map Infinity/NaN to 0 and truncate fractions.
+            double precision = digitsValue.toNumber(globalObject);
 
-            double threshold = 0.5 * std::pow(10.0, -digits);
+            double threshold = 0.5 * std::pow(10.0, -precision);
             bool isClose = std::abs(expected - received) < threshold;
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }

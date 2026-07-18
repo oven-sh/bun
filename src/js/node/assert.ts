@@ -64,8 +64,7 @@ const TypedArrayPrototypeGetByteLength = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype),
   "byteLength",
 )!.get!;
-const Uint8ArrayFromBuffer = (view: ArrayBufferView) =>
-  new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+const Uint8ArrayFromBuffer = (view: ArrayBufferView) => new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
 
 type nodeAssert = typeof import("node:assert");
 
@@ -423,8 +422,7 @@ function compareBranch(actual, expected, comparedObjects?) {
     if (
       !ArrayBufferIsView(actual) ||
       !ArrayBufferIsView(expected) ||
-      TypedArrayPrototypeGetSymbolToStringTag.$call(actual) !==
-        TypedArrayPrototypeGetSymbolToStringTag.$call(expected)
+      TypedArrayPrototypeGetSymbolToStringTag.$call(actual) !== TypedArrayPrototypeGetSymbolToStringTag.$call(expected)
     ) {
       return false;
     }

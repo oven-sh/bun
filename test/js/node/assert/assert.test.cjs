@@ -131,10 +131,7 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual(new Set([{ a: 1, b: 2 }, { c: 3 }]), new Set([{ a: 1 }]));
     assert.partialDeepStrictEqual(new Set([[1, 2, 3]]), new Set([[1, 3]]));
     assert.partialDeepStrictEqual(new Set([{ a: 1 }, { a: 1, b: 2 }]), new Set([{ a: 1 }, { a: 1 }]));
-    assert.partialDeepStrictEqual(
-      new Set([{ a: 1, nested: { x: 1, y: 2 } }]),
-      new Set([{ nested: { x: 1 } }]),
-    );
+    assert.partialDeepStrictEqual(new Set([{ a: 1, nested: { x: 1, y: 2 } }]), new Set([{ nested: { x: 1 } }]));
 
     expect(() => assert.partialDeepStrictEqual(new Set([{ a: 1 }]), new Set([{ a: 1, b: 2 }]))).toThrow(
       assert.AssertionError,

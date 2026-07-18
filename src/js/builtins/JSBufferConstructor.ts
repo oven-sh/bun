@@ -13,6 +13,9 @@ export function from(value, encodingOrOffset, length) {
       return Buffer.from(valueOf, encodingOrOffset, length);
     }
 
+    // Node's fromObject reads obj.length twice uncached; caching changes the
+    // observable getter count. The double read is intentional.
+    // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
     if (value.length !== undefined || $inheritsArrayBuffer(value.buffer)) {
       if (typeof value.length !== "number") {
         return new $Buffer(0);

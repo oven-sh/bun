@@ -70,6 +70,12 @@ describe("MIME API", () => {
         () => MIMEParams.prototype.delete.call({}, "x"),
         () => MIMEParams.prototype.toString.call({}),
         () => MIMEParams.prototype.toJSON.call({}),
+        // entries/keys/values are generator methods in Node, so the brand check
+        // fires on .next() there; Bun throws at call time. The .next() form
+        // throws a plain TypeError with no .code in both.
+        () => MIMEParams.prototype.entries.call({}).next(),
+        () => MIMEParams.prototype.keys.call({}).next(),
+        () => MIMEParams.prototype.values.call({}).next(),
       ]) {
         let err: any;
         try {

@@ -192,11 +192,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   });
 
   test("a client disconnect while a large write is draining releases the pin", async () => {
-    // Run in a child so the ArrayBuffer pin release on the close path is
-    // observed in isolation: handle_abort_or_timeout clears the cached
-    // pendingWriteBuffer slot via the wrapper C++ supplies, and
-    // mark_request_as_done releases the native pin and owner, so transfer()
-    // detaches again.
+    // Run in a child so the pin release on the close path is observed in
+    // isolation: after 'close' fires the backing store is unpinned, so
+    // transfer() detaches again.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

@@ -9,6 +9,7 @@ use crate::JsCell;
 use bun_core::ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
+use crate::jsc_ext::JSGlobalObjectExt as _;
 use crate::vm::EventLoopHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, JSValue};

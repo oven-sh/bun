@@ -370,7 +370,9 @@ describe("@types/bun integration test", () => {
       await makeTree(checkDir, {
         "tsconfig.json": JSON.stringify(tsconfig, null, 2),
         "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
-           view satisfies Uint8Array<ArrayBuffer>;`,
+           view satisfies Uint8Array<ArrayBuffer>;
+           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
+           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
       });
 
       await using proc = Bun.spawn({

@@ -176,6 +176,11 @@ pub struct RequestContext<
 
     pub sendfile: SendfileContext,
     pub range: RangeRequest::Raw,
+    /// Raw `If-Range` request header, captured at construction because the uWS
+    /// request is gone by the time the response (and its validators) is known.
+    /// RFC 9110 §13.1.5: evaluated against the response's own validator in
+    /// `do_sendfile` to decide whether the Range may be honored.
+    pub if_range: Option<Box<[u8]>>,
 
     pub request_body_readable_stream_ref: readable_stream::Strong,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
@@ -889,6 +894,7 @@ where
 
         self.request_body_buf = Vec::new();
         self.response_buf_owned = Vec::new();
+        self.if_range = None;
         self.response_weakref.deref();
 
         self.request_body_take_unref();
@@ -1347,6 +1353,9 @@ where
                 server: NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from),
                 defer_deinit_until_callback_completes: should_deinit_context,
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
+                if_range: Self::any_request(req)
+                    .header(b"if-range")
+                    .map(|h| h.to_vec().into_boxed_slice()),
                 request_weakref: request::WeakRef::EMPTY,
                 signal: None,
                 cookies: None,
@@ -1727,6 +1736,39 @@ where
         true
     }
 
+    /// RFC 9110 §13.1.5: when the request carried an `If-Range` header, honor
+    /// the Range only if the client's validator still matches the response's
+    /// own validator (`ETag` or `Last-Modified`). A missing/mismatched/weak
+    /// validator returns `false`, so the caller ignores the Range and serves
+    /// the full 200 body. Returns `true` when there is no `If-Range` to check.
+    fn if_range_permits_partial(&mut self) -> bool {
+        let Some(if_range) = self.if_range.clone() else {
+            return true;
+        };
+        let (etag, last_modified) = match self.response_weakref.get() {
+            Some(response) => match response.get_init_headers_mut() {
+                Some(headers) => (
+                    headers
+                        .fast_get(jsc::HTTPHeaderName::ETag)
+                        .map(|s| s.to_slice_clone()),
+                    headers
+                        .fast_get(jsc::HTTPHeaderName::LastModified)
+                        .map(|s| s.to_slice_clone()),
+                ),
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        let last_modified_ms = last_modified
+            .as_ref()
+            .and_then(|s| crate::jsc_hooks::parse_http_date(s.slice()));
+        RangeRequest::if_range_allows_range(
+            &if_range,
+            etag.as_ref().map(|s| s.slice()),
+            last_modified_ms,
+        )
+    }
+
     pub fn do_sendfile(&mut self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1887,6 +1929,7 @@ where
             && !user_handles_range
             && is_whole_file
             && self.range != RangeRequest::Raw::None
+            && self.if_range_permits_partial()
         {
             match self.range.resolve(stat_size) {
                 RangeRequest::Result::None => {}

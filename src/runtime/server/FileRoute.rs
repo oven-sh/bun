@@ -454,6 +454,27 @@ impl FileRoute {
             RangeRequest::Result::None
         };
 
+        // RFC 9110 §13.1.5: If-Range makes resumption safe. When the client's
+        // validator no longer matches the representation we would serve, the
+        // Range header MUST be ignored so the client gets the full 200 body
+        // instead of a 206 that splices old and new bytes.
+        let range = if matches!(range, RangeRequest::Result::None) {
+            range
+        } else if let Some(if_range) = req.header(b"if-range") {
+            let etag = this.headers.get(b"etag");
+            let last_modified = match this.last_modified_date() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            if RangeRequest::if_range_allows_range(if_range, etag, last_modified) {
+                range
+            } else {
+                RangeRequest::Result::None
+            }
+        } else {
+            range
+        };
+
         let status_code: u16 = 'brk: {
             // RFC 9110 §13.2.2: conditional preconditions are evaluated before
             // Range. If-None-Match is evaluated first; when present it suppresses

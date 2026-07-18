@@ -115,6 +115,54 @@ pub fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
+/// RFC 9110 §13.1.5: decide whether a Range request carrying an `If-Range`
+/// header may be served as a partial (206) response. Returns `true` when the
+/// client's validator still matches the representation we would serve (so the
+/// Range is honored), and `false` when it does not (so the caller must ignore
+/// the Range and send the full 200 body instead).
+///
+/// `etag` / `last_modified_ms` are the response's own current validators, each
+/// `None` when absent. Strong comparison is required: a weak If-Range
+/// entity-tag (`W/"..."`), a mismatch, a missing validator of the requested
+/// type, or an unparsable value all return `false` (fail safe to full body).
+pub fn if_range_allows_range(
+    if_range: &[u8],
+    etag: Option<&[u8]>,
+    last_modified_ms: Option<u64>,
+) -> bool {
+    let v = strings::trim(if_range, b" \t");
+    // Only reachable via a whitespace-only header (uWS maps a zero-length
+    // header to "absent"). Empty is neither a valid entity-tag nor an
+    // HTTP-date, so fail closed like every other unparsable case.
+    if v.is_empty() {
+        return false;
+    }
+
+    // Entity-tag form: an opaque-quoted tag, optionally weak-prefixed.
+    if v.first() == Some(&b'"') || v.starts_with(b"W/") {
+        // A weak validator MUST NOT be used for If-Range.
+        if v.starts_with(b"W/") {
+            return false;
+        }
+        let Some(etag) = etag else {
+            return false;
+        };
+        let etag = strings::trim(etag, b" \t");
+        if etag.is_empty() || etag.starts_with(b"W/") {
+            return false;
+        }
+        return etag == v;
+    }
+
+    // HTTP-date form: exact match against Last-Modified. The header we emit is
+    // second-granular, so compare at second precision (matching the
+    // If-Modified-Since comparison in FileRoute).
+    let (Some(lm), Some(d)) = (last_modified_ms, crate::jsc_hooks::parse_http_date(v)) else {
+        return false;
+    };
+    lm / 1000 == d / 1000
+}
+
 // `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
 // it, so take `&AnyRequest` here.
 pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {

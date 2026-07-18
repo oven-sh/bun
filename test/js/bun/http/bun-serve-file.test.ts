@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1138,3 +1138,101 @@ console.log("OK");
   },
   60_000,
 );
+
+// RFC 9110 §13.1.5: a Range request carrying If-Range must only be served as
+// 206 when the client's validator still matches the current representation.
+// A stale/mismatched/weak validator must make the server ignore Range and
+// return the full 200 body, so resuming clients never splice old+new bytes.
+describe.concurrent("If-Range", () => {
+  it("FileRoute: stale Last-Modified makes a resumed Range return the full 200 body", async () => {
+    using dir = tempDir("serve-if-range-filroute", { "asset.bin": Buffer.alloc(400, "A") });
+    const filePath = join(String(dir), "asset.bin");
+    utimesSync(filePath, new Date("2020-01-02T03:04:05Z"), new Date("2020-01-02T03:04:05Z"));
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/f": new Response(Bun.file(filePath)) },
+      fetch: () => new Response("unused", { status: 404 }),
+    });
+
+    // The validator Bun itself advertised for version A.
+    const first = await fetch(new URL("/f", server.url));
+    const lastModifiedA = first.headers.get("last-modified");
+    expect(lastModifiedA).toBeTruthy();
+    await first.arrayBuffer();
+
+    // A matching validator is resume-safe: honor the Range.
+    const fresh = await fetch(new URL("/f", server.url), {
+      headers: { Range: "bytes=200-399", "If-Range": lastModifiedA! },
+    });
+    expect(fresh.status).toBe(206);
+    expect(fresh.headers.get("content-range")).toBe("bytes 200-399/400");
+
+    // The file changes on disk, so A's Last-Modified is now stale.
+    writeFileSync(filePath, Buffer.alloc(400, "B"));
+    utimesSync(filePath, new Date("2021-06-07T08:09:10Z"), new Date("2021-06-07T08:09:10Z"));
+
+    const resumed = await fetch(new URL("/f", server.url), {
+      headers: { Range: "bytes=200-399", "If-Range": lastModifiedA! },
+    });
+    // Stale validator: Range ignored, full new body returned.
+    expect(resumed.status).toBe(200);
+    expect(resumed.headers.get("content-range")).toBeNull();
+    const body = Buffer.from(await resumed.arrayBuffer());
+    expect(body.length).toBe(400);
+    expect(body.every(c => c === 0x42 /* "B" */)).toBe(true);
+  });
+
+  it.each([
+    ["matching strong ETag → 206", '"etag-A"', 206],
+    ["mismatched ETag → 200", '"some-other-etag"', 200],
+    ["weak ETag never matches → 200", 'W/"etag-A"', 200],
+  ])("fetch handler: %s", async (_label, ifRange, expectedStatus) => {
+    using dir = tempDir("serve-if-range-handler", { "asset.bin": Buffer.alloc(400, "A") });
+    const filePath = join(String(dir), "asset.bin");
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(Bun.file(filePath), { headers: { etag: '"etag-A"' } }),
+    });
+
+    const res = await fetch(server.url, {
+      headers: { Range: "bytes=200-399", "If-Range": ifRange },
+    });
+    expect(res.status).toBe(expectedStatus);
+    if (expectedStatus === 206) {
+      expect(res.headers.get("content-range")).toBe("bytes 200-399/400");
+    } else {
+      expect(res.headers.get("content-range")).toBeNull();
+      expect((await res.bytes()).length).toBe(400);
+    }
+  });
+
+  it.each([
+    ["matching Last-Modified → 206", "Wed, 21 Oct 2015 07:28:00 GMT", 206],
+    ["stale Last-Modified → 200", "Tue, 15 Nov 1994 08:12:31 GMT", 200],
+  ])("fetch handler Last-Modified: %s", async (_label, ifRange, expectedStatus) => {
+    using dir = tempDir("serve-if-range-handler-lm", { "asset.bin": Buffer.alloc(400, "A") });
+    const filePath = join(String(dir), "asset.bin");
+    const lastModified = "Wed, 21 Oct 2015 07:28:00 GMT";
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(Bun.file(filePath), { headers: { "last-modified": lastModified } }),
+    });
+
+    const res = await fetch(server.url, {
+      headers: { Range: "bytes=200-399", "If-Range": ifRange },
+    });
+    expect(res.status).toBe(expectedStatus);
+    if (expectedStatus === 206) {
+      expect(res.headers.get("content-range")).toBe("bytes 200-399/400");
+    } else {
+      expect(res.headers.get("content-range")).toBeNull();
+      expect((await res.bytes()).length).toBe(400);
+    }
+  });
+});

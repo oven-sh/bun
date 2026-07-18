@@ -1024,8 +1024,12 @@ impl QuicSession {
                     }
                 }
                 SessionEvent::Keylog(line) => {
-                    let Ok(s) = bun_core::String::clone_utf8(&line).to_js(global) else {
-                        continue;
+                    let s = match bun_core::String::clone_utf8(&line).to_js(global) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            global.report_uncaught_exception_from_error(err);
+                            continue;
+                        }
                     };
                     if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
                         let vm = global.bun_vm().as_mut();
@@ -1197,9 +1201,12 @@ impl QuicSession {
                             continue;
                         }
                     };
-                    let Ok(status_js) = bun_core::String::static_(b"abandoned").to_js(global)
-                    else {
-                        continue;
+                    let status_js = match bun_core::String::static_(b"abandoned").to_js(global) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            global.report_uncaught_exception_from_error(err);
+                            continue;
+                        }
                     };
                     if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                         let vm = global.bun_vm().as_mut();
@@ -1253,8 +1260,12 @@ impl QuicSession {
                                 continue;
                             }
                         };
-                        let Ok(status_js) = bun_core::String::static_(status).to_js(global) else {
-                            continue;
+                        let status_js = match bun_core::String::static_(status).to_js(global) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                global.report_uncaught_exception_from_error(err);
+                                continue;
+                            }
                         };
                         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                             let vm = global.bun_vm().as_mut();
@@ -1352,8 +1363,12 @@ impl QuicSession {
                     } else {
                         b"aborted".as_slice()
                     };
-                    let Ok(result_js) = bun_core::String::static_(result).to_js(global) else {
-                        continue;
+                    let result_js = match bun_core::String::static_(result).to_js(global) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            global.report_uncaught_exception_from_error(err);
+                            continue;
+                        }
                     };
                     // Node passes each fact only from the side that owns it:
                     // the server knows the previous path, the client knows it
@@ -1519,7 +1534,13 @@ impl QuicSession {
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
-            .and_then(|b| bun_core::String::clone_utf8(&b).to_js(global).ok())
+            .and_then(|b| match bun_core::String::clone_utf8(&b).to_js(global) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    global.report_uncaught_exception_from_error(e);
+                    None
+                }
+            })
             .unwrap_or(JSValue::UNDEFINED);
         let cipher_version = bun_core::String::static_(b"TLSv1.3")
             .to_js(global)
@@ -1645,8 +1666,12 @@ impl QuicSession {
         if fin {
             self.qlog_fin_sent.set(true);
         }
-        let Ok(data_js) = bun_core::String::clone_utf8(data.as_bytes()).to_js(global) else {
-            return;
+        let data_js = match bun_core::String::clone_utf8(data.as_bytes()).to_js(global) {
+            Ok(v) => v,
+            Err(err) => {
+                global.report_uncaught_exception_from_error(err);
+                return;
+            }
         };
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
@@ -1710,7 +1735,13 @@ impl QuicSession {
         };
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .and_then(|r| bun_core::String::clone_utf8(&r).to_js(global).ok())
+            .and_then(|r| match bun_core::String::clone_utf8(&r).to_js(global) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    global.report_uncaught_exception_from_error(e);
+                    None
+                }
+            })
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -2076,8 +2107,12 @@ impl QuicSession {
                 return;
             }
         };
-        let Ok(status_js) = bun_core::String::static_(b"abandoned").to_js(global) else {
-            return;
+        let status_js = match bun_core::String::static_(b"abandoned").to_js(global) {
+            Ok(v) => v,
+            Err(err) => {
+                global.report_uncaught_exception_from_error(err);
+                return;
+            }
         };
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();

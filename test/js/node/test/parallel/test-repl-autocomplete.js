@@ -172,7 +172,7 @@ function runTest() {
             }));
             throw e;
           }
-          // upstream-todo(BridgeAR): Auto close on last chunk!
+          // bun: upstream-todo(BridgeAR): Auto close on last chunk!
           i++;
         }
 

@@ -1,5 +1,5 @@
 'use strict';
-// ci sets process.env["FORCE_COLOR"], which makes the test fail in both node and bun
+// bun: ci sets process.env["FORCE_COLOR"], which makes the test fail in both node and bun
 delete process.env["FORCE_COLOR"];
 
 require('../common');

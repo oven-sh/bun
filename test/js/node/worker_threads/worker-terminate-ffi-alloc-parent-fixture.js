@@ -11,6 +11,7 @@ const ITERS = Number(process.env.ITERS || 6);
 const THREADS = Number(process.env.THREADS || 6);
 const body = path.join(__dirname, "worker-terminate-ffi-alloc-worker-fixture.js");
 
+let finished = 0;
 function chain(iter) {
   const w = new Worker(body);
   w.on("message", () => w.terminate());
@@ -20,6 +21,7 @@ function chain(iter) {
   });
   w.on("exit", () => {
     if (iter < ITERS) chain(iter + 1);
+    else if (++finished === THREADS) console.log("done");
   });
 }
 for (let i = 0; i < THREADS; i++) chain(0);

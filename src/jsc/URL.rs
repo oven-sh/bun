@@ -70,37 +70,22 @@ impl URL {
     /// If it fails, the tag is marked Dead
     #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        // Own the returned +1 before the post-call trap check so a termination
-        // request landing between C++'s RETURN_IF_EXCEPTION and ours does not
-        // drop it as a no-op (String is Copy, no Drop).
-        let mut out = String::DEAD;
-        let check = crate::call_check_slow(global, || {
-            out = URL__getHrefFromJS(value, global);
-        });
-        if let Err(e) = check {
-            out.deref();
-            return Err(e);
-        }
-        Ok(out)
+        crate::call_check_slow_owned(global, || URL__getHrefFromJS(value, global), |s| s.deref())
     }
 
     #[track_caller]
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        // Own the returned allocation before the post-call trap check so a
-        // termination request landing between C++'s RETURN_IF_EXCEPTION and
-        // ours does not drop the raw pointer (no-op) and leak it.
-        let mut raw: *mut URL = core::ptr::null_mut();
-        let check = crate::call_check_slow(global, || {
-            raw = URL__fromJS(value, global);
-        });
-        if let Err(e) = check {
-            if !raw.is_null() {
-                // SAFETY: `raw` came from `URL__fromJS` above and has not been freed.
-                unsafe { URL__deinit(raw) };
-            }
-            return Err(e);
-        }
-        Ok(NonNull::new(raw))
+        crate::call_check_slow_owned(
+            global,
+            || URL__fromJS(value, global),
+            // SAFETY: `p` came from `URL__fromJS` above and has not been freed.
+            |p| {
+                if !p.is_null() {
+                    unsafe { URL__deinit(p) }
+                }
+            },
+        )
+        .map(NonNull::new)
     }
 
     pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {

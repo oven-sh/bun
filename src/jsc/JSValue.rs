@@ -2715,24 +2715,16 @@ impl JSValue {
         if flags.for_storage {
             bits |= 1 << 1;
         }
-        // Own the returned allocation before the post-call trap check so a
-        // termination request landing between C++'s exception check and ours
-        // does not drop the raw handle (no-op) and leak it.
-        let mut ext = SerializedScriptValueExternal {
-            bytes: core::ptr::null(),
-            size: 0,
-            handle: core::ptr::null_mut(),
-        };
-        let check = host_fn::from_js_host_call_generic(global, || {
-            ext = Bun__serializeJSValue(global, self, bits);
-        });
-        if let Err(e) = check {
-            if !ext.handle.is_null() {
-                // SAFETY: `ext.handle` was leaked by `Bun__serializeJSValue` above.
-                unsafe { Bun__SerializedScriptSlice__free(ext.handle) };
-            }
-            return Err(e);
-        }
+        let ext = host_fn::from_js_host_call_owned(
+            global,
+            || Bun__serializeJSValue(global, self, bits),
+            |ext| {
+                if !ext.handle.is_null() {
+                    // SAFETY: `ext.handle` was leaked by `Bun__serializeJSValue` above.
+                    unsafe { Bun__SerializedScriptSlice__free(ext.handle) };
+                }
+            },
+        )?;
         if ext.bytes.is_null() || ext.handle.is_null() {
             return Err(JsError::Thrown);
         }

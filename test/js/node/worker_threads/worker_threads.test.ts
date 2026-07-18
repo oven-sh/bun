@@ -1794,7 +1794,13 @@ test.skipIf(!isASAN || isWindows)(
       });
       const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       for (const line of stderr.split("\n")) if (targets.test(line)) hits.push(line.trim());
-      expect(stdout).toBe("");
+      // Positive completion marker so a missing fixture or crash-before-LSan
+      // cannot satisfy the (otherwise purely negative) assertions; exitCode is
+      // 1 from pre-existing Malloc=1 singletons, so check stdout + signalCode.
+      expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+        stdout: "done",
+        signalCode: null,
+      });
     }
     expect(hits).toEqual([]);
   },

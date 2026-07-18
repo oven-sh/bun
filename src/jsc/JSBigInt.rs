@@ -73,17 +73,10 @@ impl JSBigInt {
     }
 
     pub fn to_string(&self, global: &JSGlobalObject) -> JsResult<BunString> {
-        // Own the returned +1 before the post-call trap check so a termination
-        // request landing between C++'s RETURN_IF_EXCEPTION and ours does not
-        // drop it as a no-op (BunString is Copy, no Drop).
-        let mut out = BunString::DEAD;
-        let check = crate::host_fn::from_js_host_call_generic(global, || {
-            out = JSC__JSBigInt__toString(self, global);
-        });
-        if let Err(e) = check {
-            out.deref();
-            return Err(e);
-        }
-        Ok(out)
+        crate::host_fn::from_js_host_call_owned(
+            global,
+            || JSC__JSBigInt__toString(self, global),
+            |s| s.deref(),
+        )
     }
 }

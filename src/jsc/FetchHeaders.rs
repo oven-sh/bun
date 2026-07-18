@@ -144,22 +144,16 @@ impl FetchHeaders {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        // Own the returned allocation before the post-call trap check so a
-        // termination request landing between C++'s RETURN_IF_EXCEPTION and
-        // ours does not drop the raw pointer (no-op) and leak it.
-        let mut raw: *mut FetchHeaders = core::ptr::null_mut();
-        let check = host_fn::from_js_host_call_generic(global, || {
-            raw = WebCore__FetchHeaders__createFromJS(global, value);
-        });
-        let headers = NonNull::new(raw);
-        if let Err(e) = check {
-            if let Some(mut p) = headers {
-                // SAFETY: `p` came from `createFromJS` above and has not been deref'd.
-                unsafe { p.as_mut() }.deref();
-            }
-            return Err(e);
-        }
-        Ok(headers)
+        host_fn::from_js_host_call_owned(
+            global,
+            || NonNull::new(WebCore__FetchHeaders__createFromJS(global, value)),
+            // SAFETY: `p` came from `createFromJS` above and has not been deref'd.
+            |p| {
+                if let Some(mut p) = p {
+                    unsafe { p.as_mut() }.deref()
+                }
+            },
+        )
     }
 
     pub fn put_default(
@@ -340,20 +334,16 @@ impl FetchHeaders {
         &mut self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        // Same trap-window hazard as `create_from_js`; see above.
-        let mut raw: *mut FetchHeaders = core::ptr::null_mut();
-        let check = host_fn::from_js_host_call_generic(global, || {
-            raw = WebCore__FetchHeaders__cloneThis(self, global);
-        });
-        let headers = NonNull::new(raw);
-        if let Err(e) = check {
-            if let Some(mut p) = headers {
-                // SAFETY: `p` came from `cloneThis` above and has not been deref'd.
-                unsafe { p.as_mut() }.deref();
-            }
-            return Err(e);
-        }
-        Ok(headers)
+        host_fn::from_js_host_call_owned(
+            global,
+            || NonNull::new(WebCore__FetchHeaders__cloneThis(self, global)),
+            // SAFETY: `p` came from `cloneThis` above and has not been deref'd.
+            |p| {
+                if let Some(mut p) = p {
+                    unsafe { p.as_mut() }.deref()
+                }
+            },
+        )
     }
 
     pub fn deref(&mut self) {

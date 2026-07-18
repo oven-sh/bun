@@ -88,7 +88,7 @@ describe("Url.prototype.parse", () => {
           href: "http://ab:81/x",
         },
       ],
-      // tab after the first host-ending char is still percent-encoded, not stripped
+      // \t \n \r after the first host-ending char (/, ?, #) are percent-encoded, not stripped
       [
         "http://a\t.b/pa\tth?q\tu#h\ta",
         {
@@ -104,6 +104,40 @@ describe("Url.prototype.parse", () => {
           pathname: "/pa%09th",
           path: "/pa%09th?q%09u",
           href: "http://a.b/pa%09th?q%09u#h%09a",
+        },
+      ],
+      [
+        "http://a\n.b/pa\nth?q\nu#h\na",
+        {
+          protocol: "http:",
+          slashes: true,
+          auth: null,
+          host: "a.b",
+          port: null,
+          hostname: "a.b",
+          hash: "#h%0Aa",
+          search: "?q%0Au",
+          query: "q%0Au",
+          pathname: "/pa%0Ath",
+          path: "/pa%0Ath?q%0Au",
+          href: "http://a.b/pa%0Ath?q%0Au#h%0Aa",
+        },
+      ],
+      [
+        "http://a\r.b/pa\rth?q\ru#h\ra",
+        {
+          protocol: "http:",
+          slashes: true,
+          auth: null,
+          host: "a.b",
+          port: null,
+          hostname: "a.b",
+          hash: "#h%0Da",
+          search: "?q%0Du",
+          query: "q%0Du",
+          pathname: "/pa%0Dth",
+          path: "/pa%0Dth?q%0Du",
+          href: "http://a.b/pa%0Dth?q%0Du#h%0Da",
         },
       ],
     ])("%j", (input, expected) => {

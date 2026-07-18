@@ -3857,7 +3857,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
+    WTF::String keyStr = key->isEmpty() ? WTF::emptyString() : key->toWTFString();
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
@@ -4248,7 +4248,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSC::JSValue::decode(JSValue0);
-    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
+    WTF::String propertyNameString = propertyName->isEmpty() ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
     auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);

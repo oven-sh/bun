@@ -942,7 +942,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
+    WTF::String str = key->isEmpty() ? WTF::emptyString() : key->toWTFString();
     Identifier id = Identifier::fromString(vm, str);
     auto existingValue = target->getIfPropertyExists(global, id);
     RETURN_IF_EXCEPTION(scope, {});
@@ -977,7 +977,7 @@ extern "C" void JSC__JSValue__putBunString(
     JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
+    WTF::String str = key->isEmpty() ? WTF::emptyString() : key->toWTFString();
     Identifier id = Identifier::fromString(vm, str);
     target->putDirect(vm, id, value, 0);
 }

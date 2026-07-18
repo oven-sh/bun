@@ -146,6 +146,71 @@ describe("css", () => {
     },
   });
 
+  // The parser dedupes repeated class/id names through a borrowed lookup
+  // (`add_symbol_for_name`); many references to the same names must all map
+  // to a single hashed symbol each.
+  itBundled("css-module/RepeatedClassAndIdReferences", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css":
+        Array.from({ length: 64 }, (_, i) => `.btn { z-index: ${i} }`).join("\n") +
+        "\n#hero { color: red }\n" +
+        Array.from({ length: 32 }, () => `#hero .btn { color: blue }`).join("\n"),
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      const css = api.readFile("/out/entry.css");
+
+      const btn = js.match(/btn:\s*"(btn_[A-Za-z0-9_-]+)"/);
+      const hero = js.match(/hero:\s*"(hero_[A-Za-z0-9_-]+)"/);
+      expect(btn).not.toBeNull();
+      expect(hero).not.toBeNull();
+
+      // Every `.btn` / `#hero` occurrence shares the same hashed name.
+      const btnHashes = new Set([...css.matchAll(/\.btn_[A-Za-z0-9_-]+/g)].map(m => m[0]));
+      const heroHashes = new Set([...css.matchAll(/#hero_[A-Za-z0-9_-]+/g)].map(m => m[0]));
+      expect([...btnHashes]).toEqual([`.${btn![1]}`]);
+      expect([...heroHashes]).toEqual([`#${hero![1]}`]);
+      expect(css).not.toMatch(/\.btn\b[^_]/);
+      expect(css).not.toMatch(/#hero\b[^_]/);
+    },
+  });
+
+  // Minified `[attr=value]` picks the shorter of identifier vs quoted-string
+  // serialization; this exercises the Printer's reusable scratch buffer.
+  itBundled("css-module/AttributeSelectorValueMinified", {
+    files: {
+      "/entry.css": `
+        [data-x="foo"] { color: red }
+        [data-x="a b"] { color: blue }
+        [data-x=""] { color: green }
+        [data-x="123"] { color: orange }
+        [data-x="\\\\"] { color: purple }
+      `,
+    },
+    entryPoints: ["/entry.css"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      // identifier form is shorter: foo (3) < "foo" (5)
+      expect(css).toContain("[data-x=foo]");
+      // identifier form is shorter: a\ b (4) < "a b" (5)
+      expect(css).toContain("[data-x=a\\ b]");
+      // empty value has no identifier form
+      expect(css).toContain('[data-x=""]');
+      // leading digit: identifier (\31 23) is 6 bytes, "123" is 5 bytes
+      expect(css).toContain('[data-x="123"]');
+      // single backslash: identifier (\\) is 2 bytes, "\\" is 4 bytes
+      expect(css).toContain("[data-x=\\\\]");
+    },
+  });
+
   itBundled("css-module/ExportsMapMultipleClassesAndComposes", {
     files: {
       "/entry.js": `

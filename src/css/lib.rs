@@ -89,8 +89,9 @@ pub use values as css_values;
 // Crate-root re-exports of parser-core helpers referenced by the rule/
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
-    CssRef, CssRefTag, CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe,
-    ParserState, enum_property_util, nth, parse_utility, signfns, void_wrap,
+    CssRef, CssRefTag, CssResult as Result, Delimiters, EnumProperty, IntoParserError,
+    LocalScopeAdapter, Maybe, ParserState, enum_property_util, nth, parse_utility, signfns,
+    void_wrap,
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────

@@ -811,23 +811,9 @@ function listenerCount(emitter, type) {
   const evt_count = jsEventTargetGetEventListenersCount(emitter, type);
   if (evt_count !== undefined) return evt_count;
 
-  // EventEmitter's with no `.listenerCount`
-  return listenerCountSlow(emitter, type);
+  throw $ERR_INVALID_ARG_TYPE("emitter", ["EventEmitter", "EventTarget"], emitter);
 }
 Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
-
-function listenerCountSlow(emitter, type) {
-  const events = emitter._events;
-  if (events !== undefined) {
-    const evlistener = events[type];
-    if (typeof evlistener === "function") {
-      return 1;
-    } else if (evlistener !== undefined) {
-      return evlistener.length;
-    }
-  }
-  return 0;
-}
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {

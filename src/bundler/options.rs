@@ -2507,7 +2507,9 @@ pub(crate) fn source_dir_relative_to_root(
                 }
             }
         }
-        &*bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Auto>(source_dir, &mut buf.0)
+        &*bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Auto>(
+            source_dir, &mut buf.0,
+        )
     };
     bun_paths::resolve_path::relative_alloc(root_dir, dir)
 }

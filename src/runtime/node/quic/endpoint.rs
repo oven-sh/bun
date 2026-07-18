@@ -1832,8 +1832,13 @@ impl QuicEndpoint {
                 .iter()
                 .any(|(addr, _)| addr.decode() == peer_decoded);
         if was_dead {
-            self.dead_provisional_peers
-                .with_mut(|d| d.retain(|(addr, _)| addr.decode() != peer_decoded));
+            // One marker per destroyed provisional, so consume exactly one:
+            // draining them all would treat a peer's later retries as live.
+            self.dead_provisional_peers.with_mut(|d| {
+                if let Some(i) = d.iter().position(|(addr, _)| addr.decode() == peer_decoded) {
+                    d.swap_remove(i);
+                }
+            });
             // Node's dead server goes silent, and `lsquic_conn_abort` sends a
             // CONNECTION_CLOSE -- use the silent variant the sibling in
             // session.rs uses.

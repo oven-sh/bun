@@ -131,6 +131,7 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
+const kAdoptedFd = Symbol("kAdoptedFd");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
@@ -1509,6 +1510,8 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
+  // -1 = do not adopt; otherwise the validated fd to attach at the end of the ctor.
+  let adoptFd = -1;
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
@@ -1549,6 +1552,35 @@ function Socket(options?) {
           this.read(0);
         }
       }
+    } else if (options.readable === undefined && options.writable === undefined && fd > 0) {
+      // Bare `new net.Socket({ fd })`: node's constructor adopts the fd right
+      // away (createHandle + read start), so the socket is live without the
+      // caller having to call connect(). This is how a child reads an extra
+      // stdio pipe it inherited, e.g. `new net.Socket({ fd: 4 })`.
+      //
+      // Only pipes and sockets are adopted. An fd we cannot fstat, or one that
+      // is a file/tty, keeps the previous construct-but-stay-inert behavior:
+      // routing those through connect() surfaces a misleading ECONNREFUSED
+      // rather than node's ERR_INVALID_FD_TYPE, and turning a previously
+      // silent construction into a throw is a bigger behavior change than the
+      // gap being fixed. fd 0 is excluded for the same non-regression reason:
+      // connect()'s fd handling (and the native listener's `get_truthy("fd")`)
+      // both test the fd for truthiness, so adopting 0 here would fall through
+      // to the host/port path and throw ERR_MISSING_ARGS.
+      let stats;
+      try {
+        stats = require("node:fs").fstatSync(fd);
+      } catch {
+        stats = undefined;
+      }
+      // Record the fd and adopt at the very end of the constructor, not here:
+      // attaching a native handle before the remaining option validation would
+      // leak the fd (and the handle) if a later check throws.
+      // Note the `onread` option is still not honored for an adopted fd -
+      // connect()'s fd branch attaches the module-level SocketHandlers rather
+      // than this[khandlers]. That gap predates this branch (a bare { fd } used
+      // to attach nothing at all), so it is left alone here.
+      if (stats !== undefined && (stats.isFIFO() || stats.isSocket())) adoptFd = fd;
     }
   }
 
@@ -1594,6 +1626,20 @@ function Socket(options?) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optsBlockList);
     }
     this.blockList = optsBlockList;
+  }
+
+  // Attach the inherited fd only once every option has been validated: an
+  // attach before the `signal`/`onread`/`blockList` checks would leak the fd
+  // (and its native handle) if one of them threw. kAdoptedFd stops a following
+  // createConnection()-style connect() from attaching the same fd twice.
+  //
+  // `adoptFd` carries the fd validated above rather than re-reading
+  // `options.fd`, so an options object with an `fd` getter cannot return a
+  // different descriptor than the one validateInt32/fstatSync approved.
+  // pauseOnConnect is passed explicitly because connect() assigns it
+  // unconditionally and would otherwise reset it to undefined.
+  if (adoptFd !== -1) {
+    Socket.prototype.connect.$call(this, { fd: adoptFd, pauseOnConnect: this.pauseOnConnect });
   }
 }
 $toClass(Socket, "Socket", Duplex);
@@ -1709,7 +1755,11 @@ Socket.prototype.connect = function connect(...args) {
     if (socket) {
       connection = socket;
     }
-    if (fd) {
+    // A fd already adopted by the constructor is skipped here: createConnection()
+    // constructs the Socket and then calls connect() with the same options, and
+    // attaching the same fd twice would leak the first handle.
+    if (fd && this[kAdoptedFd] !== fd) {
+      this[kAdoptedFd] = fd;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -1718,6 +1768,9 @@ Socket.prototype.connect = function connect(...args) {
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
       }).catch(error => {
+        // The attach failed, so nothing owns this fd now. Drop the sentinel or a
+        // retry with the same fd would be silently skipped by the guard above.
+        this[kAdoptedFd] = undefined;
         if (!this.destroyed) {
           this.emit("error", error);
           this.emit("close", true);
@@ -1970,6 +2023,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  // Release the adopted-fd sentinel: the handle is going away, so a later
+  // connect() with the same fd number must attach again rather than be
+  // mistaken for the constructor's adoption.
+  this[kAdoptedFd] = undefined;
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface

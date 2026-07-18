@@ -3352,8 +3352,8 @@ pub mod formatter {
                 if !ctor.is_callable() {
                     return Ok(true);
                 }
-                let name = ctor.get_name(global)?;
-                return Ok(!percent_s_is_builtin_ctor_name(&name));
+                let name = OwnedString::new(ctor.get_name(global)?);
+                return Ok(!percent_s_is_builtin_ctor_name(&*name));
             }
             let proto = pointer.get_prototype(global);
             if proto.is_empty_or_undefined_or_null() {
@@ -3958,7 +3958,7 @@ pub mod formatter {
             }
 
             drop(writer);
-            if percent_s_has_user_to_string(value, global).unwrap_or(false) {
+            if percent_s_has_user_to_string(value, global)? {
                 return self.print_as::<false>(Tag::String, writer_, value, value.js_type());
             }
 

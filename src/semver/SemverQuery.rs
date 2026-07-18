@@ -1054,9 +1054,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                                     version: second_version,
                                 }
                             }
-                            None => {
-                                Comparator::lt_next_minor(second_version.major, second_version.minor)
-                            }
+                            None => Comparator::lt_next_minor(
+                                second_version.major,
+                                second_version.minor,
+                            ),
                         };
 
                         Range {

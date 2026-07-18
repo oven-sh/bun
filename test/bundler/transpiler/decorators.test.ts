@@ -1057,11 +1057,8 @@ test("decorator and declare", () => {
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
-  // The lowered `this.fN = N` initializers are spliced into the existing constructor
-  // body after the `super()` call. That splice used to be a per-item `insert()` loop,
-  // memmoving the whole tail on every iteration (O(M*N) for M fields and N statements).
-  // Hold N fixed and compare M=100 (splice cost negligible) against M=50000 (splice cost
-  // would dominate with the per-item loop); the ratio is machine-speed-independent.
+  // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
+  // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

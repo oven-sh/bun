@@ -466,19 +466,28 @@ describe("util.debuglog", () => {
     console.log(JSON.stringify(out));
   `;
 
-  it("exposes .enabled, .name and invokes the optional callback", async () => {
+  async function run(nodeDebug) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, NODE_DEBUG: "dbgsect" },
+      env: { ...bunEnv, NODE_DEBUG: nodeDebug },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lines = stderr.split("\n").filter(l => l.startsWith("DBGSECT "));
-    expect(lines.length).toBe(2);
-    expect(lines[0]).toMatch(/^DBGSECT \d+: hello 42$/);
-    expect(lines[1]).toMatch(/^DBGSECT \d+: second$/);
-    expect(JSON.parse(stdout)).toEqual({
+    return {
+      out: JSON.parse(stdout),
+      lines: stderr.split("\n").filter(l => /^(DBGSECT|NOTENABLED|ALSONOT) /.test(l)),
+      exitCode,
+    };
+  }
+
+  it("exposes .enabled, .name and invokes the optional callback", async () => {
+    const [on, off] = await Promise.all([run("dbgsect"), run("")]);
+
+    expect(on.lines.length).toBe(2);
+    expect(on.lines[0]).toMatch(/^DBGSECT \d+: hello 42$/);
+    expect(on.lines[1]).toMatch(/^DBGSECT \d+: second$/);
+    expect(on.out).toEqual({
       onName: "logger",
       onEnabledBefore: true,
       cbCount: 1,
@@ -491,20 +500,10 @@ describe("util.debuglog", () => {
       desc: { hasGet: true, configurable: true, enumerable: true },
       aliased: true,
     });
-    expect(exitCode).toBe(0);
-  });
+    expect(on.exitCode).toBe(0);
 
-  it(".enabled is false and output is silent without NODE_DEBUG", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, NODE_DEBUG: "" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lines = stderr.split("\n").filter(l => /^(DBGSECT|NOTENABLED|ALSONOT) /.test(l));
-    expect(lines).toEqual([]);
-    expect(JSON.parse(stdout)).toEqual({
+    expect(off.lines).toEqual([]);
+    expect(off.out).toEqual({
       onName: "logger",
       onEnabledBefore: false,
       cbCount: 1,
@@ -517,6 +516,6 @@ describe("util.debuglog", () => {
       desc: { hasGet: true, configurable: true, enumerable: true },
       aliased: true,
     });
-    expect(exitCode).toBe(0);
-  });
+    expect(off.exitCode).toBe(0);
+  }, 20_000);
 });

@@ -1060,34 +1060,51 @@ test("lowering many decorated instance fields into a large constructor body stay
   // The lowered `this.fN = N` initializers are spliced into the existing constructor
   // body after the `super()` call. That splice used to be a per-item `insert()` loop,
   // memmoving the whole tail on every iteration (O(M*N) for M fields and N statements).
+  // Hold N fixed and compare M=100 (splice cost negligible) against M=50000 (splice cost
+  // would dominate with the per-item loop); the ratio is machine-speed-independent.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        const M = 50000;
-        const N = 700000;
-        let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
-        for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
-        src += "constructor() {\\nsuper();\\n";
-        src += Buffer.alloc(N * 2, "{}").toString();
-        src += "\\n}\\n}\\n";
+        const N = 500000;
+        function gen(M) {
+          let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
+          for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
+          src += "constructor() {\\nsuper();\\n";
+          src += Buffer.alloc(N * 2, "{}").toString();
+          src += "\\n}\\n}\\n";
+          return src;
+        }
         const t = new Bun.Transpiler({
           loader: "ts",
           tsconfig: { compilerOptions: { experimentalDecorators: true } },
         });
-        const out = t.transformSync(src);
-        if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
-          throw new Error("instance-field initializers missing from lowered constructor");
-        console.log("DONE " + out.length);
+        function time(M) {
+          const src = gen(M);
+          const t0 = performance.now();
+          const out = t.transformSync(src);
+          const ms = performance.now() - t0;
+          if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
+            throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
+          return ms;
+        }
+        const tSmall = time(100);
+        const tLarge = time(50000);
+        console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 30_000,
+    timeout: 60_000,
     killSignal: "SIGKILL",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: expect.stringMatching(/^DONE \d+\n$/), exitCode: 0 });
-}, 60_000);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(/^\{"tSmall":[\d.]+,"tLarge":[\d.]+,"ratio":[\d.]+\}\n$/),
+    exitCode: 0,
+  });
+  const { tSmall, tLarge } = JSON.parse(stdout);
+  expect(tLarge).toBeLessThan(tSmall * 3);
+}, 90_000);

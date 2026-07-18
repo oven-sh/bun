@@ -809,8 +809,7 @@ pub use bun_core::mark_binding;
 pub use self::host_fn::{
     JSHostFn, JSHostFnZig, JSHostFnZigWithContext, JSHostFunctionTypeWithContext,
     from_js_host_call, from_js_host_call_generic, from_js_host_call_owned, host_construct_result,
-    host_fn_result,
-    host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
+    host_fn_result, host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
     to_js_host_fn_with_context,
 };
 pub use self::host_object::{HostFnEntry, create_host_function_object};

@@ -458,13 +458,10 @@ async function runOneFile(
       file: absolute,
     });
   } else {
-    const fileError = new Error(stderrText.trim() || `Test file failed with exit code ${exitCode}`);
-    (fileError as { failureType?: string }).failureType = "testCodeFailure";
-    (fileError as { code?: string }).code = "ERR_TEST_FAILURE";
+    error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
     fileCounts.tests++;
     fileCounts.failed++;
     fileCounts.topLevel++;
-    error = fileError;
   }
 
   // node emits the file node's completion before its verdict, and a failed
@@ -555,7 +552,7 @@ function nestingOf(node: TestNode) {
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
 function serializeRunError(error: unknown) {
-  if (error instanceof Error) {
+  if (Error.isError(error)) {
     return {
       __proto__: null,
       message: error.message,

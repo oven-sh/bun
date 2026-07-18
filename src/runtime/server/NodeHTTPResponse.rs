@@ -14,6 +14,7 @@ use bun_core::ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
+use crate::jsc_ext::{JSGlobalObjectExt as _, RefExt as _};
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };

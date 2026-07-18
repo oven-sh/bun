@@ -167,6 +167,30 @@ impl FetchHeadersExt for FetchHeaders {
     }
 }
 
+// ─── RefExt (cut from `bun_jsc/lib.rs` `impl Ref` at Step 6.1) ──────────────
+pub trait RefExt {
+    fn r#ref(&mut self, vm: &mut VirtualMachine);
+    fn unref(&mut self, vm: &mut VirtualMachine);
+}
+
+impl RefExt for bun_jsc::Ref {
+    fn unref(&mut self, vm: &mut VirtualMachine) {
+        if !self.has {
+            return;
+        }
+        self.has = false;
+        vm.active_tasks -= 1;
+    }
+
+    fn r#ref(&mut self, vm: &mut VirtualMachine) {
+        if self.has {
+            return;
+        }
+        self.has = true;
+        vm.active_tasks += 1;
+    }
+}
+
 // ─── ConsoleFormatter (cut from `bun_jsc/lib.rs` at Step 6.1) ───────────────
 pub use crate::vm::console_object::formatter::Tag as FormatTag;
 pub use crate::vm::console_object::formatter::Tag as FormatAs;

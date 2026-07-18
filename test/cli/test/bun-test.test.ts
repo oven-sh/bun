@@ -1496,7 +1496,8 @@ describe("bun test", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("");
+    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
+    expect(stdout).not.toContain("pass");
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(1);
   });

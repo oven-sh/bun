@@ -27,10 +27,12 @@ const wsPongChannel = dc.channel("undici:websocket:pong");
 // `typeof connectParams.connector` see a function.
 function connector() {}
 
+// Matches undici's headerCharRegex /[^\t\x20-\x7e\x80-\xff]/: reject control
+// chars (except TAB), DEL, and code units above 0xFF.
 function invalidHeaderValueChar(val: string) {
   for (let i = 0; i < val.length; i++) {
     const c = val.$charCodeAt(i);
-    if (c === 0x0d || c === 0x0a || c === 0x00) return true;
+    if ((c < 0x20 && c !== 0x09) || c === 0x7f || c > 0xff) return true;
   }
   return false;
 }

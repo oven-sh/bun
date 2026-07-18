@@ -367,26 +367,19 @@ pub mod js {
 /// detaching.
 #[derive(Clone, Copy)]
 struct PendingPinnedWrite {
-    ptr: *const u8,
-    len: usize,
-    /// Body bytes already accepted by the kernel / cork buffer.
-    offset: usize,
-    /// The ArrayBuffer/View to `unpin()` on release. ZERO for string inputs.
+    /// The body bytes not yet accepted by the kernel / cork buffer. Borrows
+    /// `pending_pinned_write_owner`'s storage; advanced in place on drain.
+    remaining: *const [u8],
+    /// The ArrayBuffer/View to `unpin()` on release. ZERO for string inputs
+    /// (strings are kept alive by the native WTFStringImpl ref in the owner).
     pinned_value: JSValue,
-    /// The JSNodeHTTPResponse wrapper, captured at write time so the
-    /// `pendingWriteBuffer` slot can be cleared on terminal paths where
-    /// `get_this_value()` already returns ZERO (SOCKET_CLOSED / UPGRADED).
-    this_value: JSValue,
 }
 
 impl Default for PendingPinnedWrite {
     fn default() -> Self {
         Self {
-            ptr: core::ptr::null(),
-            len: 0,
-            offset: 0,
+            remaining: ptr::slice_from_raw_parts(ptr::null(), 0),
             pinned_value: JSValue::ZERO,
-            this_value: JSValue::ZERO,
         }
     }
 }
@@ -394,7 +387,14 @@ impl Default for PendingPinnedWrite {
 impl PendingPinnedWrite {
     #[inline]
     fn is_some(&self) -> bool {
-        self.len > 0
+        self.remaining.len() > 0
+    }
+
+    #[inline]
+    fn remaining(&self) -> &[u8] {
+        // SAFETY: `remaining` borrows `pending_pinned_write_owner`'s storage,
+        // which is held for the lifetime of the pending write.
+        unsafe { &*self.remaining }
     }
 }
 
@@ -792,11 +792,9 @@ impl NodeHTTPResponse {
             return JSValue::js_number_from_int32(0);
         }
         if let Some(raw_response) = self.raw_response.get() {
-            let mut amount = raw_response.get_buffered_amount();
-            let p = self.pending_pinned_write.get();
-            if p.is_some() {
-                amount = amount.saturating_add((p.len - p.offset) as u64);
-            }
+            let amount = raw_response
+                .get_buffered_amount()
+                .saturating_add(self.pending_pinned_write.get().remaining.len() as u64);
             return JSValue::js_number_from_uint64(amount);
         }
         JSValue::js_number_from_int32(0)
@@ -1296,6 +1294,11 @@ impl NodeHTTPResponse {
         }
 
         if EVENT == AbortEvent::Abort {
+            // Clear the GC root via the wrapper C++ handed us, since
+            // get_this_value() returns ZERO once SOCKET_CLOSED is set.
+            if !js_this.is_empty() && self.pending_pinned_write.get().is_some() {
+                js::pending_write_buffer_set_cached(js_this, vm_get().global(), JSValue::ZERO);
+            }
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
@@ -1703,8 +1706,11 @@ impl NodeHTTPResponse {
                 self.pending_pinned_write_owner
                     .replace(crate::node::StringOrBuffer::EMPTY),
             );
-            if !p.this_value.is_empty() {
-                js::pending_write_buffer_set_cached(p.this_value, global_object, JSValue::ZERO);
+            // On SOCKET_CLOSED the lookup returns ZERO; the abort path clears
+            // the slot itself with the wrapper it was handed by C++.
+            let this_value = self.get_this_value();
+            if !this_value.is_empty() {
+                js::pending_write_buffer_set_cached(this_value, global_object, JSValue::ZERO);
             }
         }
     }
@@ -1717,11 +1723,7 @@ impl NodeHTTPResponse {
             return;
         }
         if let Some(raw) = self.raw_response.get() {
-            // SAFETY: ptr/len borrow `pending_pinned_write_owner`'s bytes
-            // (WTFStringImpl / pinned ArrayBuffer / owned slice); offset < len.
-            let remaining =
-                unsafe { core::slice::from_raw_parts(p.ptr.add(p.offset), p.len - p.offset) };
-            raw.spill_body(remaining);
+            raw.spill_body(p.remaining());
         }
         self.clear_pending_pinned_write(global_object);
     }
@@ -1734,15 +1736,11 @@ impl NodeHTTPResponse {
         if !p.is_some() {
             return false;
         }
-        // SAFETY: ptr/len borrow `pending_pinned_write_owner`'s bytes
-        // (WTFStringImpl / pinned ArrayBuffer / owned slice); offset < len.
-        let remaining =
-            unsafe { core::slice::from_raw_parts(p.ptr.add(p.offset), p.len - p.offset) };
+        let remaining = p.remaining();
         let consumed = response.try_write_body(remaining, false);
-        let new_offset = p.offset + consumed;
-        if new_offset < p.len {
+        if consumed < remaining.len() {
             self.pending_pinned_write.set(PendingPinnedWrite {
-                offset: new_offset,
+                remaining: ptr::from_ref(&remaining[consumed..]),
                 ..p
             });
             return true;
@@ -2017,25 +2015,11 @@ impl NodeHTTPResponse {
             // the unwritten tail into the uWS backpressure std::string.
             let bytes_len = bytes.len();
             if bytes_len > PINNED_WRITE_THRESHOLD && bytes_len <= c_uint::MAX as usize {
-                let bytes_ptr = bytes.as_ptr();
                 let is_buffer = matches!(string_or_buffer, crate::node::StringOrBuffer::Buffer(_));
-                // For buffers, pin so `transfer()` copies instead of detaching.
-                let pinned_value = if is_buffer && input_value.is_cell() {
-                    if input_value.as_pinned_arraybuffer(global_object).is_some() {
-                        input_value
-                    } else {
-                        JSValue::ZERO
-                    }
-                } else {
-                    JSValue::ZERO
-                };
 
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);
                 let consumed = raw_response.try_write_body(bytes, true);
                 if consumed >= bytes_len {
-                    if pinned_value != JSValue::ZERO {
-                        pinned_value.unpin_array_buffer();
-                    }
                     raw_response.clear_on_writable();
                     js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
                     return Ok(JSValue::js_number_from_uint64(bytes_len as u64));
@@ -2046,6 +2030,21 @@ impl NodeHTTPResponse {
                     consumed,
                     bytes_len
                 );
+                // For buffers, pin so `transfer()` copies instead of detaching.
+                let pinned_value = if is_buffer && input_value.is_cell() {
+                    if input_value.as_pinned_arraybuffer(global_object).is_some() {
+                        input_value
+                    } else {
+                        JSValue::ZERO
+                    }
+                } else {
+                    JSValue::ZERO
+                };
+                let remaining = ptr::slice_from_raw_parts(
+                    // SAFETY: consumed < bytes_len, so the add is in-bounds.
+                    unsafe { bytes.as_ptr().add(consumed) },
+                    bytes_len - consumed,
+                );
                 // `string_or_buffer` owns the bytes (WTFStringImpl ref /
                 // borrowed ArrayBuffer / encoded Vec); move it so it outlives
                 // the write.
@@ -2054,11 +2053,8 @@ impl NodeHTTPResponse {
                         .replace(core::mem::take(&mut string_or_buffer)),
                 );
                 self.pending_pinned_write.set(PendingPinnedWrite {
-                    ptr: bytes_ptr,
-                    len: bytes_len,
-                    offset: consumed,
+                    remaining,
                     pinned_value,
-                    this_value: js_this,
                 });
                 if input_value.is_cell() {
                     js::pending_write_buffer_set_cached(js_this, global_object, input_value);

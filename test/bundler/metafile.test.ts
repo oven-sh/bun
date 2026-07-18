@@ -488,6 +488,77 @@ describe("bundler metafile", () => {
     expect(foundCssBundle).toBe(true);
   });
 
+  test("metafile import paths match input keys for all importers of a shared module", async () => {
+    // When the same module is imported from many files, every import record must emit the
+    // resolved pretty path (matching the "inputs" key), not the raw "./b/shared.js" specifier.
+    const N = 30;
+    const files: Record<string, string> = { "b/shared.js": `export const s = 1;` };
+    for (let i = 0; i < N; i++) {
+      files[`mid${i}.js`] = `import { s } from "./b/shared.js"; export const m${i} = s;`;
+    }
+    files["entry.js"] = Array.from({ length: N }, (_, i) => `export * from "./mid${i}.js";`).join("\n");
+
+    using dir = tempDir("metafile-shared-import", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = result.metafile as Metafile;
+    const inputKeys = Object.keys(metafile.inputs);
+    const sharedKey = inputKeys.find(k => k.endsWith("b/shared.js") || k.endsWith("b\\shared.js"));
+    expect(sharedKey).toBeDefined();
+
+    // Every midN.js must report its import of shared.js using the exact input key,
+    // and must carry the original specifier.
+    const midImports: Array<{ from: string; path: string; original?: string }> = [];
+    for (const [key, input] of Object.entries(metafile.inputs)) {
+      if (!/[\\/]mid\d+\.js$/.test(key)) continue;
+      expect(input.imports.length).toBe(1);
+      midImports.push({ from: key, path: input.imports[0].path, original: input.imports[0].original });
+    }
+    expect(midImports.length).toBe(N);
+
+    const bad = midImports.filter(m => m.path !== sharedKey);
+    expect(bad).toEqual([]);
+    for (const m of midImports) {
+      expect(m.original).toBe("./b/shared.js");
+    }
+
+    // Also verify entry.js imports of midN.js all resolve to input keys.
+    const entryKey = inputKeys.find(k => k.endsWith("entry.js"))!;
+    for (const imp of metafile.inputs[entryKey].imports) {
+      expect(imp.path in metafile.inputs).toBe(true);
+    }
+  });
+
+  test("metafile import paths are deterministic across repeated builds", async () => {
+    const N = 30;
+    const files: Record<string, string> = { "b/shared.js": `export const s = 1;` };
+    for (let i = 0; i < N; i++) {
+      files[`mid${i}.js`] = `import { s } from "./b/shared.js"; export const m${i} = s;`;
+    }
+    files["entry.js"] = Array.from({ length: N }, (_, i) => `export * from "./mid${i}.js";`).join("\n");
+
+    using dir = tempDir("metafile-determinism", files);
+
+    async function collectImportPaths() {
+      const r = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+      expect(r.success).toBe(true);
+      const m = r.metafile as Metafile;
+      return Object.keys(m.inputs)
+        .sort()
+        .map(k => [k, m.inputs[k].imports.map(i => ({ path: i.path, original: i.original }))]);
+    }
+
+    const first = await collectImportPaths();
+    for (let i = 0; i < 4; i++) {
+      expect(await collectImportPaths()).toEqual(first);
+    }
+  });
+
   test("metafile handles circular imports", async () => {
     using dir = tempDir("metafile-circular-test", {
       "a.js": `import { b } from "./b.js"; export const a = 1; console.log(b);`,

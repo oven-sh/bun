@@ -1,5 +1,7 @@
 const server = Bun.serve({
-  hostname: "localhost",
+  // 127.0.0.1, not "localhost": on v6-preferring hosts serve() binds ::1 while
+  // fetch() resolves localhost to 127.0.0.1 → ConnectionRefused.
+  hostname: "127.0.0.1",
   idleTimeout: 0,
   async fetch() {
     throw new Error("Error");

@@ -5576,8 +5576,10 @@ const useNitroApp = () => nitroApp;
 
 try {
   const server = Bun.serve({
-    hostname: "localhost",
-    port: process.env.NITRO_PORT || process.env.PORT || 3e3,
+    // 127.0.0.1, not "localhost": on v6-preferring hosts serve() binds ::1
+    // while fetch(server.url) resolves localhost to 127.0.0.1 → ECONNREFUSED.
+    hostname: "127.0.0.1",
+    port: process.env.NITRO_PORT || process.env.PORT || 0,
     async fetch(request) {
       const url = new URL(request.url);
       let body;

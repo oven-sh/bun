@@ -659,7 +659,9 @@ test("should be able to abrubtly close a upload request", async () => {
   const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
   using server = Bun.serve({
     port: 0,
-    hostname: "localhost",
+    // 127.0.0.1, not "localhost": on v6-preferring hosts serve() binds ::1
+    // while Bun.connect()'s resolver picks 127.0.0.1 → ECONNREFUSED.
+    hostname: "127.0.0.1",
     maxRequestBodySize: 1024 * 1024 * 1024 * 16,
     async fetch(req) {
       let total_size = 0;

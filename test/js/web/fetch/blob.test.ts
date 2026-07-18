@@ -389,6 +389,26 @@ test("Body.blob() returns a plain Blob even when the body is a File", async () =
   expect(Bun.inspect(b).startsWith("Blob")).toBe(true);
 });
 
+test("structuredClone of a file-backed plain Blob stays a Blob", async () => {
+  // These inputs share a Data::File store but have is_jsdom_file=false;
+  // the structured-clone round-trip must not promote them to File.prototype.
+  const bunFile = Bun.file(import.meta.path);
+  const inputs = [
+    bunFile.slice(0, 5),
+    new Blob([bunFile]),
+    await new Response(bunFile).blob(),
+  ];
+  for (const input of inputs) {
+    expect(Object.getPrototypeOf(input)).toBe(Blob.prototype);
+    const clone = structuredClone(input);
+    expect({
+      proto: Object.getPrototypeOf(clone) === Blob.prototype,
+      isFile: clone instanceof File,
+      hasName: "name" in clone,
+    }).toEqual({ proto: true, isFile: false, hasName: false });
+  }
+});
+
 test("File.prototype.constructor is set before the File global is touched", async () => {
   // Bun.file() creates an instance with File.prototype before anything reads
   // globalThis.File; .constructor must still resolve to File, not Blob.

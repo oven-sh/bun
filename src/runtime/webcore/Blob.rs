@@ -4372,12 +4372,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
     // SAFETY: blob_ptr is valid; toJS is infallible.
     let blob_ref = unsafe { &*blob_ptr };
-    // `to_js` picks Blob/File/S3File prototype from the Rust-side flags
-    // (`is_jsdom_file`, `is_s3`). For a `SerializeTag::File` payload that was
-    // created by `Bun.file()`, the serialized `is_jsdom_file` byte read above
-    // is 1 and the clone gets File.prototype; for a payload older than the
-    // flag (version 1), fall back on the store type.
-    if !blob_ref.is_jsdom_file.get() && blob_ref.is_bun_file() {
+    // `to_js` picks Blob/File/S3File prototype from `is_jsdom_file` / `is_s3`.
+    // For version >= 2 payloads the serialized `is_jsdom_file` byte read above
+    // is authoritative (a slice/Body.blob() result serialized 0 and must stay
+    // a Blob). Only version-1 payloads predate the byte, so infer from the
+    // store type there.
+    if version < 2 && blob_ref.is_bun_file() {
         blob_ref.is_jsdom_file.set(true);
     }
     Ok(BlobExt::to_js(blob_ref, global_this))

@@ -1076,10 +1076,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           return;
         }
         if (http_res.socket) {
-          // Detach the socket first, then advance the response pipeline on
-          // the connection it was on (the same order as the two listeners
-          // this replaces). One shared function instead of two per-request
-          // bind() closures.
+          // Detach then advance the response pipeline on this connection (same
+          // order as the two listeners this replaces, no per-request bind()s).
           http_res.on("finish", emitAsyncResponseFinish);
         }
 
@@ -2438,16 +2436,9 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
-// `on("finish", fn.bind(server, socket, ...))` allocated a bound closure per
-// request. Inside a "finish" listener `this` is the response; the connection
-// socket is `this.req.socket`, with `this.socket` (assigned by assignSocket,
-// cleared only by detachSocket) as the fallback for requests the stream
-// destroyer already detached. A single shared function needs no per-request
-// state at all.
 function emitResponseFinishHandleSocket() {
-  // req.socket is nulled by the stream destroyer (pipeline/compose cleanup
-  // does `stream.socket = null` for server requests); the response's own
-  // socket - set by assignSocket and cleared only by detachSocket - still
+  // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
+  // this.socket (set by assignSocket, cleared only by detachSocket) still
   // references the connection then.
   const socket = this.req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);

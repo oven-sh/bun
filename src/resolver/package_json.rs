@@ -1276,10 +1276,9 @@ pub struct EntryDataMap {
     // This is not a std.ArrayHashMap because we also store the key_range which is a little weird
     pub expansion_keys: Box<[MapEntry]>,
     pub list: EntryDataMapList,
-    /// `key → list index` accelerator for `value_for_key`. Built only when
-    /// `list.len() > ENTRY_MAP_INDEX_THRESHOLD` so small condition maps
-    /// (`import`/`require`/`default`) stay a linear scan. Stores indices, not
-    /// keys, so nothing is duplicated from `list`.
+    /// `key → list index` accelerator for `value_for_key`. `None` below
+    /// `ENTRY_MAP_INDEX_THRESHOLD` entries so small condition maps stay a
+    /// linear scan; stores indices, so no key bytes are duplicated.
     index: Option<Box<bun_collections::hashbrown::HashTable<u32>>>,
 }
 

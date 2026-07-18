@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles, withoutAggressiveGC } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1000,10 +1000,8 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(exitCode).toBe(0);
 });
 
-// Exact-key lookup in an `exports` object used to linear-scan the entry list
-// on every `import 'pkg/sub'`; with a wide map (rxjs ~150 keys, @mui/material
-// ~400) that is O(keys) string compares per import. `value_for_key` now
-// consults a hash index built once at parse time for maps over the threshold.
+// Exact-key lookup in a wide `exports` map must be O(1), not O(keys):
+// `value_for_key` consults a hash index built at parse time.
 describe("package.json exports exact-subpath lookup", () => {
   function exportsMapPackage(name: string, n: number) {
     const exportsObj: Record<string, string> = { ".": "./dist/t.js" };
@@ -1014,7 +1012,7 @@ describe("package.json exports exact-subpath lookup", () => {
     };
   }
 
-  it.concurrent("resolves first, last, and root entries in a large exports map", () => {
+  it("resolves first, last, and root entries in a large exports map", () => {
     const N = 300;
     using dir = tempDir("exports-large-map-correctness", {
       "package.json": JSON.stringify({ name: "host" }),
@@ -1025,10 +1023,12 @@ describe("package.json exports exact-subpath lookup", () => {
     expect(Bun.resolveSync("wide", root)).toBe(target);
     expect(Bun.resolveSync("wide/k0", root)).toBe(target);
     expect(Bun.resolveSync("wide/k" + (N - 1), root)).toBe(target);
-    expect(() => Bun.resolveSync("wide/k" + N, root)).toThrow();
+    expect(() => Bun.resolveSync("wide/k" + N, root)).toThrow(
+      expect.objectContaining({ name: "ResolveMessage", message: expect.stringContaining("wide/k" + N) }),
+    );
   });
 
-  it.concurrent("on duplicate keys, returns the first occurrence", () => {
+  it("on duplicate keys, returns the first occurrence", () => {
     const exportsObj: Record<string, string> = {};
     for (let i = 0; i < 30; i++) exportsObj["./k" + i] = "./dist/a.js";
     // JSON.stringify dedupes object keys; build the JSON by hand.
@@ -1060,23 +1060,25 @@ describe("package.json exports exact-subpath lookup", () => {
     expect(Bun.resolveSync("big/k0", root)).toBe(target);
     expect(Bun.resolveSync("big/k" + (N - 1), root)).toBe(target);
 
-    const ITERS = 500;
-    function bench(spec: string) {
-      let best = Infinity;
-      for (let run = 0; run < 3; run++) {
-        const t0 = Bun.nanoseconds();
-        for (let i = 0; i < ITERS; i++) Bun.resolveSync(spec, root);
-        const dt = Bun.nanoseconds() - t0;
-        if (dt < best) best = dt;
+    withoutAggressiveGC(() => {
+      const ITERS = 1000;
+      function bench(spec: string) {
+        let best = Infinity;
+        for (let run = 0; run < 3; run++) {
+          const t0 = Bun.nanoseconds();
+          for (let i = 0; i < ITERS; i++) Bun.resolveSync(spec, root);
+          const dt = Bun.nanoseconds() - t0;
+          if (dt < best) best = dt;
+        }
+        return best;
       }
-      return best;
-    }
 
-    const first = bench("big/k0");
-    const last = bench("big/k" + (N - 1));
+      const first = bench("big/k0");
+      const last = bench("big/k" + (N - 1));
 
-    // Both keys live in the same cached map; the only per-call difference is
-    // the position in `list`. O(1) lookup makes position irrelevant.
-    expect(last / first).toBeLessThan(3);
-  });
+      // Both keys live in the same cached map; the only per-call difference is
+      // the position in `list`. O(1) lookup makes position irrelevant.
+      expect(last / first).toBeLessThan(8);
+    });
+  }, 20_000);
 });

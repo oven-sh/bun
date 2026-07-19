@@ -197,15 +197,53 @@ it("should create template from local folder", async () => {
 });
 
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
-// Unauthenticated GitHub API is limited to 60 req/hr per IP; CI agents running many
-// parallel builds exhaust that quickly. When we detect the rate-limit error, skip the
-// test rather than fail — we are testing `bun create`, not GitHub's availability.
-function isGithubRateLimited(stderr: string): boolean {
-  if (stderr.includes("GitHub returned 403")) {
-    console.warn("Skipping: GitHub API rate limit reached (403). Set GITHUB_TOKEN to avoid this.");
-    return true;
-  }
-  return false;
+// CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
+// during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.
+function githubUnavailableReason(stderr: string): string | null {
+  if (stderr.includes("GitHub is rate limiting"))
+    return "GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.";
+  if (stderr.includes("GitHub returned a server error")) return "GitHub API returned a 5xx server error.";
+  return null;
+}
+function isGithubUnavailable(stderr: string): boolean {
+  const reason = githubUnavailableReason(stderr);
+  if (reason) console.warn(`Skipping: ${reason}`);
+  return reason !== null;
+}
+
+for (const [status, expected] of [
+  [503, "error: GitHub returned a server error"],
+  [429, "error: GitHub returned 429. This usually means GitHub is rate limiting your requests"],
+  [403, "error: GitHub returned 403. This usually means GitHub is rate limiting your requests"],
+] as const) {
+  it(`should name GitHub in the error when the tarball request gets ${status}`, async () => {
+    using server = Bun.serve({
+      tls,
+      port: 0,
+      fetch() {
+        return new Response("nope", { status });
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "github.com/dylan-conway/create-test"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      },
+    });
+
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain(expected);
+    expect(githubUnavailableReason(err)).not.toBeNull();
+    expect(err).not.toContain("NPMIsDown");
+    expect(err).not.toContain("An internal error occurred");
+    expect(exitCode).toBe(1);
+  });
 }
 
 it("should not mention cd prompt when created in current directory", async () => {
@@ -219,7 +257,7 @@ it("should not mention cd prompt when created in current directory", async () =>
   });
 
   const [out, err] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  if (isGithubRateLimited(err)) return;
+  if (isGithubUnavailable(err)) return;
 
   expect(err).not.toContain("error:");
   expect(out).toContain("bun dev");
@@ -237,7 +275,7 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
     });
 
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    if (isGithubRateLimited(err)) return;
+    if (isGithubUnavailable(err)) return;
     expect(err).not.toContain("error:");
     expect(out).toContain("Success! dylan-conway/create-test loaded into create-test");
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);

@@ -2385,6 +2385,12 @@ pub fn format_ip<'a>(
         start += 1;
         end -= 1;
     }
+    // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
+    // in6_addr and never includes the zone identifier; the scope is exposed
+    // separately (e.g. `scopeid` in os.networkInterfaces()).
+    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+        end = start + percent;
+    }
     Ok(&mut into[start..end])
 }
 

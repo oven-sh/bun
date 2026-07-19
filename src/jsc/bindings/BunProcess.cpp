@@ -4175,6 +4175,43 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
 }
 
+extern "C" uint32_t Bun__Timer__getActiveTimeoutCount();
+extern "C" uint32_t Bun__Timer__getActiveImmediateCount();
+
+// Only the resource kinds Bun can enumerate for real are reported: ref'd
+// setTimeout/setInterval ('Timeout') and pending setImmediate ('Immediate').
+// Sockets, servers and in-flight fs requests need loop-level bookkeeping Bun
+// does not keep yet, so they are omitted rather than guessed at.
+JSC_DEFINE_HOST_FUNCTION(Process_functionGetActiveResourcesInfo, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const uint32_t timeouts = Bun__Timer__getActiveTimeoutCount();
+    const uint32_t immediates = Bun__Timer__getActiveImmediateCount();
+
+    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, timeouts + immediates);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    unsigned index = 0;
+    if (timeouts > 0) {
+        JSC::JSString* label = jsString(vm, String("Timeout"_s));
+        for (uint32_t i = 0; i < timeouts; i++) {
+            array->putDirectIndex(globalObject, index++, label);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    if (immediates > 0) {
+        JSC::JSString* label = jsString(vm, String("Immediate"_s));
+        for (uint32_t i = 0; i < immediates; i++) {
+            array->putDirectIndex(globalObject, index++, label);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    return JSValue::encode(array);
+}
+
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
     // Lazy property builder: exceptions must not propagate into
@@ -4758,7 +4795,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   _fatalException                  Process_functionFatalException                      Function 1
   features                         constructFeatures                                   PropertyCallback
-  getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getActiveResourcesInfo           Process_functionGetActiveResourcesInfo              Function 0
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback

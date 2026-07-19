@@ -39,6 +39,32 @@ impl All {
         }
     }
 
+    /// Number of `setTimeout`/`setInterval` objects currently keeping the
+    /// event loop alive (alive and not `unref()`ed). Backs the `'Timeout'`
+    /// entries of `process.getActiveResourcesInfo()`.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__Timer__getActiveTimeoutCount() -> u32 {
+        let all = timer_all();
+        if all.is_null() {
+            return 0;
+        }
+        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
+        unsafe { (*all).js_timeout_ref_count.max(0) as u32 }
+    }
+
+    /// Number of pending `setImmediate` objects currently keeping the event
+    /// loop alive. Backs the `'Immediate'` entries of
+    /// `process.getActiveResourcesInfo()`.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__Timer__getActiveImmediateCount() -> u32 {
+        let all = timer_all();
+        if all.is_null() {
+            return 0;
+        }
+        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
+        unsafe { (*all).immediate_ref_count.max(0) as u32 }
+    }
+
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;

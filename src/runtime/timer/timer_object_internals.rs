@@ -195,6 +195,7 @@ impl TimerObjectInternals {
             // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
+                (*state).timer.js_timeout_ref_count += delta;
                 (*state).timer.increment_timer_ref(delta, uws_loop)
             },
             // setImmediate has slightly different event loop logic

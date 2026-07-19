@@ -94,11 +94,19 @@ describe("Bun.spawn stdin: ArrayBuffer bytes reach the child intact", () => {
     const ab = new ArrayBuffer(hugeBuf.length);
     new Uint8Array(ab).set(hugeBuf);
 
+    // Non-zero-offset views with sentinel bytes on either side, so a bug that
+    // copies the whole backing store instead of just the view range fails.
+    const framed = new ArrayBuffer(7 + hugeBuf.length + 11);
+    new Uint8Array(framed).fill(0xee);
+    new Uint8Array(framed, 7, hugeBuf.length).set(hugeBuf);
+
     const inputs = {
       ArrayBuffer: ab,
       Uint8Array: new Uint8Array(ab),
       Buffer: hugeBuf,
       DataView: new DataView(ab),
+      "Uint8Array(offset)": new Uint8Array(framed, 7, hugeBuf.length),
+      "DataView(offset)": new DataView(framed, 7, hugeBuf.length),
     };
 
     const results = {};
@@ -132,15 +140,16 @@ describe("Bun.spawn stdin: ArrayBuffer bytes reach the child intact", () => {
   `;
 
   const hash = Bun.SHA1.hash(Buffer.alloc(50000 * 5, "hello"), "hex");
+  const labels = ["ArrayBuffer", "Uint8Array", "Buffer", "DataView", "Uint8Array(offset)", "DataView(offset)"];
   const expected = Object.fromEntries(
-    ["ArrayBuffer", "Uint8Array", "Buffer", "DataView"].flatMap(label => [
+    labels.flatMap(label => [
       [`spawn:${label}`, hash],
       [`spawnSync:${label}`, hash],
     ]),
   );
 
   for (const disableMemfd of memfdMatrix) {
-    test.concurrent(`BUN_FEATURE_FLAG_DISABLE_MEMFD=${disableMemfd}`, async () => {
+    test(`BUN_FEATURE_FLAG_DISABLE_MEMFD=${disableMemfd}`, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
         env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: disableMemfd },

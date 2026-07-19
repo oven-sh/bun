@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
 import { isWindows } from "harness";
+import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
 it("arch", () => {
@@ -156,12 +157,48 @@ it("networkInterfaces", () => {
         // may be null
         expect(typeof nI.cidr).toBe("string");
 
+      if (nI.family === "IPv4") {
+        expect(isIPv4(nI.address)).toBeTrue();
+        expect(isIPv4(nI.netmask)).toBeTrue();
+      }
       if (nI.family === "IPv6") {
         expect(nI.scopeid).toBeNumber();
         expect(nI.scope_id).toBeUndefined();
+        expect(isIPv6(nI.address)).toBeTrue();
+        // Node exposes the zone only via the numeric `scopeid` field, never
+        // inline in `address`/`cidr`.
+        expect(nI.address).not.toContain("%");
+        expect(isIPv6(nI.netmask)).toBeTrue();
+        if (nI.cidr) {
+          const [addr, suffix] = nI.cidr.split("/");
+          expect(isIPv6(addr)).toBeTrue();
+          expect(addr).not.toContain("%");
+          expect(Number(suffix)).toBeWithin(0, 129);
+        }
       }
     }
   }
+});
+
+it("networkInterfaces IPv6 loopback", () => {
+  // The loopback interface's IPv6 address/netmask/cidr must be the actual
+  // address, not a placeholder like "<addr family=...>".
+  const entries = Object.values(os.networkInterfaces())
+    .flat()
+    .filter(i => i.internal && i.family === "IPv6" && i.scopeid === 0);
+  // Skip on hosts where IPv6 is disabled entirely (no ::1 on lo). The preceding
+  // test still catches the regression for any IPv6 entries that do exist.
+  if (entries.length === 0) return;
+  const lo = entries.find(e => e.address === "::1") ?? entries[0];
+  expect(lo).toEqual({
+    address: "::1",
+    cidr: "::1/128",
+    netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    family: "IPv6",
+    mac: expect.stringMatching(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/),
+    internal: true,
+    scopeid: 0,
+  });
 });
 
 it("machine", () => {

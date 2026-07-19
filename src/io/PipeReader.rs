@@ -82,12 +82,6 @@ pub trait BufferedReaderParent {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
     unsafe fn loop_(this: *mut Self) -> *mut Loop;
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// Fired when this reader's `MaxBuf` budget goes negative. Only
-    /// `SubprocessPipeReader` overrides this; the default no-ops because no
-    /// other parent type wires a `MaxBuf`.
-    unsafe fn on_max_buffer_overflow(this: *mut Self, maxbuf: NonNull<MaxBuf>) {
-        let _ = (this, maxbuf);
-    }
 }
 
 impl BufferedReaderVTable {
@@ -131,10 +125,6 @@ impl BufferedReaderVTable {
 
     pub(crate) fn on_reader_error(&self, err: sys::Error) {
         self.link().on_reader_error(err)
-    }
-
-    pub(crate) fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
-        self.link().on_max_buffer_overflow(maxbuf)
     }
 }
 
@@ -560,11 +550,7 @@ impl PosixBufferedReader {
         let Some(maxbuf) = parent.maxbuf else {
             return false;
         };
-        if !MaxBuf::on_read_bytes(maxbuf, bytes_read as u64) {
-            return false;
-        }
-        parent.vtable.on_max_buffer_overflow(maxbuf);
-        true
+        MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
     /// Closes the handle so the child cannot put more bytes in the pipe, then
@@ -1282,11 +1268,7 @@ impl WindowsBufferedReader {
         let Some(maxbuf) = self.maxbuf else {
             return false;
         };
-        if !MaxBuf::on_read_bytes(maxbuf, bytes_read as u64) {
-            return false;
-        }
-        self.vtable.on_max_buffer_overflow(maxbuf);
-        true
+        MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
     fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {

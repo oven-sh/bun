@@ -145,14 +145,19 @@ using namespace Zig;
     RETURN_IF_EXCEPTION(napi_preamble_throw_scope__,             \
         napi_set_last_error((_env), napi_object_expected))
 
-// Return an error code if an exception was thrown after NAPI_PREAMBLE
-// During env cleanup, first move any VM exception into the env's pending
-// slot (see NapiEnv::stashExceptionDuringCleanup); for pure value producers
-// this also means they keep working while that exception is pending,
-// matching Node, whose equivalents never check the exception state.
+// Return an error code if an exception was thrown after NAPI_PREAMBLE.
+// During env cleanup, a VM exception is first moved into the env's pending
+// slot (see NapiEnv::stashExceptionDuringCleanup) so it stays visible to
+// napi_is_exception_pending; the call still fails. The stash must not
+// swallow the failure: this macro also guards calls made mid-body (rope
+// resolution, JSBigInt::createFrom) whose throw must surface as
+// napi_pending_exception, not as napi_ok with a null result.
 #define NAPI_RETURN_IF_VM_EXCEPTION(_env)                                                                      \
     do {                                                                                                       \
-        (_env)->stashExceptionDuringCleanup();                                                                 \
+        if ((_env)->isFinishingFinalizers() && napi_preamble_throw_scope__.exception()) [[unlikely]] {         \
+            (_env)->stashExceptionDuringCleanup();                                                             \
+            return napi_set_last_error((_env), napi_pending_exception);                                        \
+        }                                                                                                      \
         RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception)); \
     } while (0)
 

@@ -623,6 +623,12 @@ impl JSGlobalObject {
         crate::cpp::JSC__JSGlobalObject__reload(self)
     }
 
+    /// The same wall-clock milliseconds JS `Date.now()` would return, including
+    /// any fake-timers override installed on this global.
+    pub fn js_date_now(&self) -> f64 {
+        crate::cpp::JSC__JSGlobalObject__jsDateNow(self)
+    }
+
     pub fn run_on_load_plugins(
         &self,
         namespace_: BunString,
@@ -784,38 +790,6 @@ impl JSGlobalObject {
     /// chances are you should be using `.err(...).throw()` instead.
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
         let instance = self.create_error_instance(args);
-        if instance.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
-        self.throw_value(instance)
-    }
-
-    pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
-        // The format string of an already-captured `Arguments<'_>` can't be
-        // rewritten, so render first, then run the `<tag>` → ANSI/strip pass
-        // at runtime via `pretty_fmt_rt`.
-        //
-        // Formatting can fail mid-write (e.g. user `Symbol.toPrimitive` throws
-        // while stringifying the Received value). `pretty_fmt_rt` would
-        // `format!` into a `String`, and `format!` panics if a `Display` impl
-        // returns `fmt::Error` when the underlying writer didn't — so render
-        // via fallible `write!` here: on failure, clear the pending JS
-        // exception and throw with whatever was written so far.
-        let enabled = Output::enable_ansi_colors_stderr();
-        use core::fmt::Write;
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            // if an exception occurs in the middle of formatting the error
-            // message, it's better to just return what we have than an error
-            // about an error. Clear any pending JS exception (e.g. from
-            // Symbol.toPrimitive) so that throwValue doesn't hit
-            // assertNoException.
-            let _ = self.clear_exception_except_termination();
-        }
-        #[allow(clippy::disallowed_methods)] // template built at runtime from caller args
-        let pretty = Output::pretty_fmt_rt(buf.as_slice(), enabled);
-        let instance = ZigString::init_utf8(&pretty).to_error_instance(self);
         if instance.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;

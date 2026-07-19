@@ -397,12 +397,29 @@ impl CreateCommand {
                     ) {
                         Ok(b) => b,
                         Err(err) => {
-                            if matches!(err, crate::Error::HTTPForbidden) {
+                            if matches!(
+                                err,
+                                crate::Error::HTTPForbidden | crate::Error::HTTPTooManyRequests
+                            ) {
                                 node.end();
                                 progress.refresh();
 
                                 pretty_error!(
-                                    "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    "\n<r><red>error:<r> GitHub returned {}. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    if matches!(err, crate::Error::HTTPForbidden) {
+                                        "403"
+                                    } else {
+                                        "429"
+                                    },
+                                );
+                                Global::crash();
+                            } else if matches!(err, crate::Error::GitHubIsDown) {
+                                node.end();
+                                progress.refresh();
+
+                                pretty_error!(
+                                    "\n<r><red>error:<r> GitHub returned a server error while fetching the tarball for <b>\"{}\"<r>. GitHub may be temporarily unavailable; wait a moment and try again.\n",
+                                    bstr::BStr::new(template),
                                 );
                                 Global::crash();
                             } else if matches!(err, crate::Error::GitHubRepositoryNotFound) {
@@ -2322,7 +2339,7 @@ impl Example {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
             403 => return Err(crate::Error::HTTPForbidden),
             429 => return Err(crate::Error::HTTPTooManyRequests),
-            499..=599 => return Err(crate::Error::NPMIsDown),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
             _ => return Err(crate::Error::HTTPError),
         }
@@ -2644,6 +2661,14 @@ impl Example {
                         .expect("infallible: variant checked")
                         .data
                         .slice();
+                    let string_prop = |key: &[u8]| -> &'static [u8] {
+                        property
+                            .value
+                            .and_then(|v| v.as_property(key))
+                            .and_then(|q| q.expr.data.e_string())
+                            .map(|s| s.data.slice())
+                            .unwrap_or(b"")
+                    };
                     list[i] = Example {
                         name: if let Some(slash) =
                             bun_core::strings::index_of_char_usize(name, b'/')
@@ -2652,28 +2677,8 @@ impl Example {
                         } else {
                             name
                         },
-                        version: property
-                            .value
-                            .unwrap()
-                            .as_property(b"version")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
-                        description: property
-                            .value
-                            .unwrap()
-                            .as_property(b"description")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
+                        version: string_prop(b"version"),
+                        description: string_prop(b"description"),
                         local: false,
                     };
                 }

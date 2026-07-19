@@ -13,9 +13,9 @@ import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
-// there; the 10k-request maxSessionMemory stress test takes ~90s under
+// there; the 10k-request maxSessionMemory stress test takes ~105s under
 // debug+ASAN vs ~2s release, so scale for either.
-const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
+const ASAN_MULTIPLIER = isDebug ? 15 : isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -1689,6 +1689,61 @@ it("client stream events observe the request-time async context, not the session
     expect(stores).toEqual(new Array(stores.length).fill(undefined));
   } finally {
     client?.close?.();
+    server.close();
+  }
+});
+
+// Like Node, session.destroy(err) tears open streams down synchronously from the caller's
+// stack: their 'error'/'close' run in the destroy() caller's async context (not the
+// request()-time one), while the session's own 'error'/'close' keep the connect-time context.
+it("client session.destroy() emits open streams' error/close in the caller's async context", async () => {
+  const als = new AsyncLocalStorage();
+  const CONNECT = { id: "connect" };
+  const REQUEST = { id: "request" };
+  const DESTROY = { id: "destroy" };
+  const server = http2.createServer();
+  let client;
+  try {
+    const { promise: streamsOpened, resolve: onStreamsOpened } = Promise.withResolvers();
+    let openStreams = 0;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++openStreams === 2) onStreamsOpened();
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    client = als.run(CONNECT, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("connect", onConnect);
+    const sessionEvents = { error: null, close: null };
+    const { promise: sessionClosed, resolve: onSessionClose } = Promise.withResolvers();
+    client.on("error", () => (sessionEvents.error = als.getStore()));
+    client.on("close", () => {
+      sessionEvents.close = als.getStore();
+      onSessionClose();
+    });
+    await connected;
+    const streamEvents = [];
+    als.run(REQUEST, () => {
+      for (let i = 0; i < 2; i++) {
+        const req = client.request({ ":path": `/${i}` });
+        req.on("error", () => streamEvents.push({ i, event: "error", store: als.getStore() }));
+        req.on("close", () => streamEvents.push({ i, event: "close", store: als.getStore() }));
+      }
+    });
+    await streamsOpened;
+    als.run(DESTROY, () => client.destroy(new Error("boom")));
+    await sessionClosed;
+    // Emission order across the two streams is not the contract; the context each ran in is.
+    streamEvents.sort((a, b) => a.i - b.i || a.event.localeCompare(b.event));
+    expect(streamEvents).toEqual([
+      { i: 0, event: "close", store: DESTROY },
+      { i: 0, event: "error", store: DESTROY },
+      { i: 1, event: "close", store: DESTROY },
+      { i: 1, event: "error", store: DESTROY },
+    ]);
+    expect(sessionEvents).toEqual({ error: CONNECT, close: CONNECT });
+  } finally {
+    client?.destroy?.();
     server.close();
   }
 });

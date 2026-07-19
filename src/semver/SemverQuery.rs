@@ -631,29 +631,25 @@ impl Token {
                             ..Default::default()
                         },
                     };
-                    range.right = Comparator {
-                        op: RangeOp::Lt,
-                        ..Default::default()
-                    };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
                         if let Some(patch) = version.patch {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                             if major == 0 {
-                                if minor == 0 {
-                                    range.right.version.patch = patch.saturating_add(1);
+                                range.right = if minor == 0 {
+                                    Comparator::lt_next_patch(0, 0, patch)
                                 } else {
-                                    range.right.version.minor = minor.saturating_add(1);
-                                }
+                                    Comparator::lt_next_minor(0, minor)
+                                };
                                 break 'done;
                             }
                         } else if major == 0 {
-                            range.right.version.minor = minor.saturating_add(1);
+                            range.right = Comparator::lt_next_minor(0, minor);
                             break 'done;
                         }
                     }
-                    range.right.version.major = major.saturating_add(1);
+                    range.right = Comparator::lt_next_major(major);
                 }
                 return range;
             }
@@ -671,21 +667,16 @@ impl Token {
                             ..Default::default()
                         },
                     };
-                    range.right = Comparator {
-                        op: RangeOp::Lt,
-                        ..Default::default()
-                    };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
                         if let Some(patch) = version.patch {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                         }
-                        range.right.version.major = major;
-                        range.right.version.minor = minor.saturating_add(1);
+                        range.right = Comparator::lt_next_minor(major, minor);
                         break 'done;
                     }
-                    range.right.version.major = major.saturating_add(1);
+                    range.right = Comparator::lt_next_major(major);
                 }
                 return range;
             }
@@ -1031,35 +1022,50 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     }
                     Wildcard::Minor => {
                         // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
-                        second_version.major = second_version.major.saturating_add(1);
-                        second_version.minor = 0;
-                        second_version.patch = 0;
+                        let right = match second_version.major.checked_add(1) {
+                            Some(m) => {
+                                second_version.major = m;
+                                second_version.minor = 0;
+                                second_version.patch = 0;
+                                Comparator {
+                                    op: RangeOp::Lt,
+                                    version: second_version,
+                                }
+                            }
+                            None => Comparator::lt_next_major(second_version.major),
+                        };
 
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right: Comparator {
-                                op: RangeOp::Lt,
-                                version: second_version,
-                            },
+                            right,
                         }
                     }
                     Wildcard::Patch => {
                         // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
-                        second_version.minor = second_version.minor.saturating_add(1);
-                        second_version.patch = 0;
+                        let right = match second_version.minor.checked_add(1) {
+                            Some(m) => {
+                                second_version.minor = m;
+                                second_version.patch = 0;
+                                Comparator {
+                                    op: RangeOp::Lt,
+                                    version: second_version,
+                                }
+                            }
+                            None => Comparator::lt_next_minor(
+                                second_version.major,
+                                second_version.minor,
+                            ),
+                        };
 
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right: Comparator {
-                                op: RangeOp::Lt,
-                                version: second_version,
-                            },
+                            right,
                         }
                     }
                     Wildcard::None => Range {

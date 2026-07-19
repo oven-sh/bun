@@ -408,6 +408,24 @@ const client = new RedisClient("redis://localhost:6379", {
 });
 ```
 
+### Idle Timeout
+
+`connectionTimeout` bounds how long the client waits to establish a connection. Once connected, it no longer applies.
+
+`idleTimeout` bounds how long an established connection may sit without traffic. Every command sent and every reply received resets it. When it elapses, the client closes the connection and calls `onclose`; the next command opens a new one:
+
+```ts idle-timeout.ts icon="/icons/typescript.svg"
+const client = new RedisClient("redis://localhost:6379", {
+  idleTimeout: 30000, // close the connection after 30s of inactivity
+});
+
+await client.set("key", "value");
+// ... 30 seconds pass with no commands, the connection is closed ...
+await client.get("key"); // reconnects transparently
+```
+
+The default is `0`, which keeps the connection open indefinitely.
+
 ### Reconnection Behavior
 
 When a connection is lost, the client automatically attempts to reconnect with exponential backoff:

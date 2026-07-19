@@ -174,8 +174,12 @@ struct AsyncSQLiteTaskStats {
     int64_t postFailures;
     int64_t completionsRun;
     int64_t completionsDropped;
+    int64_t deliveryDisabledDrops;
+    int64_t activeTaskDatabases;
+    int64_t taskInterrupts;
     int64_t liveConnections;
     int64_t activeConnectionOperations;
+    int64_t connectionInterrupts;
     int64_t closeJobsRun;
     int64_t physicalCloses;
 };

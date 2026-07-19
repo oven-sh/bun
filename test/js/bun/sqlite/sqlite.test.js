@@ -2233,6 +2233,8 @@ describe("async SQLite task substrate (Gate A private)", () => {
           let allWorkersTerminated = false;
           let scheduledCount = 0;
           let startedCount = 0;
+          const startedWorkers = new Set();
+          const terminatedWorkers = new Set();
           let resolveScheduled;
           let rejectScheduled;
           let resolveStarted;
@@ -2263,7 +2265,8 @@ describe("async SQLite task substrate (Gate A private)", () => {
                   failHandshake(new Error("async SQLite task did not start off-thread"));
                   return;
                 }
-                startedCount++;
+                startedWorkers.add(worker);
+                startedCount = startedWorkers.size;
                 if (startedCount === 2) resolveStarted();
               } else if (message.type === "error") {
                 failHandshake(new Error(message.message));
@@ -2277,13 +2280,23 @@ describe("async SQLite task substrate (Gate A private)", () => {
             await twoStarted;
             failIf(scheduledCount !== 3, "not all async SQLite tasks were scheduled");
             failIf(startedCount !== 2, "expected exactly two running async SQLite tasks");
+            await waitForCondition(
+              () => asyncSQLiteTaskStatsForTesting().activeTaskDatabases === baseline.activeTaskDatabases + 2,
+              () =>
+                "two async SQLite tasks did not publish active databases: " +
+                JSON.stringify(asyncSQLiteTaskStatsForTesting()),
+            );
 
-            const workersTerminated = workers.map(worker => {
+            const terminateWorker = async worker => {
               const exited = new Promise(resolve => worker.once("exit", resolve));
               const terminated = worker.terminate();
-              return Promise.all([terminated, exited]);
-            });
-            await Promise.all(workersTerminated);
+              await Promise.all([terminated, exited]);
+              terminatedWorkers.add(worker);
+            };
+            const queuedWorker = workers.find(worker => !startedWorkers.has(worker));
+            failIf(!queuedWorker, "expected one queued async SQLite task");
+            await terminateWorker(queuedWorker);
+            await Promise.all([...startedWorkers].map(terminateWorker));
             allWorkersTerminated = true;
 
             const afterTermination = asyncSQLiteTaskStatsForTesting();
@@ -2312,9 +2325,12 @@ describe("async SQLite task substrate (Gate A private)", () => {
             );
 
             const final = asyncSQLiteTaskStatsForTesting();
-            failIf(final.postFailures !== baseline.postFailures + 3, "expected three failed completion posts");
+            failIf(final.activeTaskDatabases !== baseline.activeTaskDatabases, "active task databases did not return to baseline");
+            failIf(final.taskInterrupts !== baseline.taskInterrupts + 2, "expected two interrupts for published task databases");
+            failIf(final.deliveryDisabledDrops !== baseline.deliveryDisabledDrops + 3, "expected three delivery-disabled drops");
+            failIf(final.postFailures !== baseline.postFailures, "delivery-disabled completions must not attempt posts");
             failIf(final.completionsRun !== baseline.completionsRun, "terminated tasks must not run completions");
-            failIf(final.completionsDropped !== baseline.completionsDropped + 3, "expected three dropped completions");
+            failIf(final.completionsDropped !== baseline.completionsDropped, "delivery-disabled completions must not create captures");
             failIf(final.liveJobs !== baseline.liveJobs, "native async SQLite jobs leaked");
             failIf(final.liveResults !== baseline.liveResults, "native async SQLite results leaked");
             failIf(final.liveRequests !== baseline.liveRequests, "native async SQLite requests leaked");
@@ -2324,13 +2340,16 @@ describe("async SQLite task substrate (Gate A private)", () => {
               round,
               scheduled: scheduledCount,
               started: startedCount,
+              activeTaskDatabases: final.activeTaskDatabases - baseline.activeTaskDatabases,
+              taskInterrupts: final.taskInterrupts - baseline.taskInterrupts,
+              deliveryDisabledDrops: final.deliveryDisabledDrops - baseline.deliveryDisabledDrops,
               postFailures: final.postFailures - baseline.postFailures,
               completionsRun: final.completionsRun - baseline.completionsRun,
               completionsDropped: final.completionsDropped - baseline.completionsDropped,
             };
           } finally {
             if (!allWorkersTerminated) {
-              await Promise.all(workers.map(worker => worker.terminate()));
+              await Promise.all(workers.filter(worker => !terminatedWorkers.has(worker)).map(worker => worker.terminate()));
             }
           }
         };
@@ -2379,20 +2398,23 @@ describe("async SQLite task substrate (Gate A private)", () => {
       stderr: "pipe",
     });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(
-      JSON.stringify({
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+      stdout: JSON.stringify({
         rounds: Array.from({ length: rounds }, (_, round) => ({
           round,
           scheduled: 3,
           started: 2,
-          postFailures: 3,
+          activeTaskDatabases: 0,
+          taskInterrupts: 2,
+          deliveryDisabledDrops: 3,
+          postFailures: 0,
           completionsRun: 0,
-          completionsDropped: 3,
+          completionsDropped: 0,
         })),
       }),
-    );
-    expect(exitCode).toBe(0);
+      exitCode: 0,
+    });
   }, 30000);
 });
 
@@ -2412,6 +2434,59 @@ describe("async SQLite connection core (Gate B private)", () => {
     await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
     await asyncSQLiteConnectionCloseForTesting(connection.id);
     await expect(asyncSQLiteConnectionCloseForTesting(connection.id)).resolves.toBe(false);
+  });
+
+  it("does not alias forged or non-safe private connection IDs", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-gate-b-ids", { "empty.txt": "" }), "gate-b.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    await connection.ready;
+    await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
+
+    const forgedId = connection.id + 2 ** 32;
+    const [forgedExec] = await Promise.allSettled([
+      asyncSQLiteConnectionExecForTesting(forgedId, "INSERT INTO gate VALUES (100)"),
+    ]);
+    const forgedClose = await asyncSQLiteConnectionCloseForTesting(forgedId).then(
+      value => ({ status: "fulfilled", value }),
+      error => ({ status: "rejected", message: error?.message }),
+    );
+    const [originalExec] = await Promise.allSettled([
+      asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (1)"),
+    ]);
+    const originalClose = await asyncSQLiteConnectionCloseForTesting(connection.id);
+
+    const db = new Database(file);
+    let rows;
+    try {
+      rows = db.query("SELECT value FROM gate ORDER BY value").all();
+    } finally {
+      db.close();
+    }
+
+    expect({
+      forgedExec: forgedExec.status,
+      forgedClose,
+      originalExec: originalExec.status,
+      originalClose,
+      rows,
+    }).toEqual({
+      forgedExec: "rejected",
+      forgedClose: { status: "fulfilled", value: false },
+      originalExec: "fulfilled",
+      originalClose: true,
+      rows: [{ value: 1 }],
+    });
+    await expect(asyncSQLiteConnectionExecForTesting(Number.MAX_SAFE_INTEGER + 1, "SELECT 1")).rejects.toThrow(
+      "connection ID must be a finite, non-negative safe integer",
+    );
+    await expect(asyncSQLiteConnectionCloseForTesting(Number.MAX_SAFE_INTEGER + 1)).rejects.toThrow(
+      "connection ID must be a finite, non-negative safe integer",
+    );
   });
 
   it("executes accepted operations in FIFO order with one active operation", async () => {
@@ -2889,6 +2964,11 @@ describe("async SQLite connection core (Gate B private)", () => {
         worker.once("error", reject);
         worker.once("exit", code => reject(new Error(`Worker exited before submitting work: ${code}`)));
       });
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        current => current.activeConnectionOperations === baseline.activeConnectionOperations + 1,
+        "Worker teardown did not publish an active Gate B connection operation",
+      );
       await worker.terminate();
       worker = undefined;
       blocker.exec("COMMIT");
@@ -2908,8 +2988,10 @@ describe("async SQLite connection core (Gate B private)", () => {
       expect(final.liveResults).toBe(baseline.liveResults);
       expect(final.liveRequests).toBe(baseline.liveRequests);
       expect(final.activeConnectionOperations).toBe(baseline.activeConnectionOperations);
+      expect(final.connectionInterrupts).toBe(baseline.connectionInterrupts + 1);
       expect(final.closeJobsRun).toBe(baseline.closeJobsRun + 1);
       expect(final.physicalCloses).toBe(baseline.physicalCloses + 1);
+      expect(blocker.query("SELECT value FROM gate ORDER BY rowid").all()).toEqual([]);
     } finally {
       if (worker) await worker.terminate();
       blocker.close();

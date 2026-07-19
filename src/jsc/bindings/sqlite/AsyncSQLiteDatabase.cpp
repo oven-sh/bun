@@ -30,10 +30,10 @@ static inline int lazyLoadSQLite()
 #include <wtf/Threading.h>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 extern "C" void Bun__initializeSQLite();
-extern "C" void AsyncSQLiteTask__schedule(void*);
 
 namespace Bun {
 
@@ -48,8 +48,12 @@ std::atomic<int64_t> liveAbortAlgorithms { 0 };
 std::atomic<int64_t> postFailures { 0 };
 std::atomic<int64_t> completionsRun { 0 };
 std::atomic<int64_t> completionsDropped { 0 };
+std::atomic<int64_t> deliveryDisabledDrops { 0 };
+std::atomic<int64_t> activeTaskDatabases { 0 };
+std::atomic<int64_t> taskInterrupts { 0 };
 std::atomic<int64_t> liveConnections { 0 };
 std::atomic<int64_t> activeConnectionOperations { 0 };
+std::atomic<int64_t> connectionInterrupts { 0 };
 std::atomic<int64_t> closeJobsRun { 0 };
 std::atomic<int64_t> physicalCloses { 0 };
 std::atomic<uint64_t> nextOperationId { 1 };
@@ -142,6 +146,8 @@ public:
     virtual void run() noexcept = 0;
 };
 
+extern "C" void AsyncSQLiteTask__schedule(AsyncSQLiteJobBase*);
+
 static void postConnectionStarted(uint32_t contextId, uint64_t operationId, bool offThread, AsyncSQLiteConnection& connection)
 {
     if (!connection.deliveryEnabled())
@@ -159,7 +165,7 @@ static void postConnectionStarted(uint32_t contextId, uint64_t operationId, bool
 static void postConnectionCompletion(uint32_t contextId, uint64_t operationId, AsyncSQLiteConnection& connection, std::unique_ptr<AsyncSQLiteNativeResult>&& result)
 {
     if (!connection.deliveryEnabled()) {
-        completionsDropped.fetch_add(1, std::memory_order_relaxed);
+        deliveryDisabledDrops.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     auto completion = std::make_unique<ConnectionCompletionCapture>(WTF::Ref { connection }, WTF::move(result));
@@ -255,7 +261,7 @@ public:
 
 static void scheduleConnectionJob(std::unique_ptr<AsyncSQLiteConnectionJob>&& job)
 {
-    AsyncSQLiteTask__schedule(job.release());
+    AsyncSQLiteTask__schedule(static_cast<AsyncSQLiteJobBase*>(job.release()));
 }
 
 AsyncSQLiteConnection::AsyncSQLiteConnection(uint32_t contextId, std::string&& path, uint32_t capacity, int busyTimeout)
@@ -350,8 +356,10 @@ void AsyncSQLiteConnection::scheduleClose()
 
 void AsyncSQLiteConnection::interruptLocked()
 {
-    if (m_activeDatabase)
+    if (m_activeDatabase) {
         sqlite3_interrupt(m_activeDatabase);
+        connectionInterrupts.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 void AsyncSQLiteConnection::abandon()
@@ -401,14 +409,14 @@ void AsyncSQLiteConnection::runOpen(uint64_t operationId, uint32_t callerThreadU
             if (database)
                 sqlite3_close(database);
             result = connectionResult(false, code, WTF::move(message));
-        } else if (sqlite3_extended_result_codes(database, 1) != SQLITE_OK) {
-            int code = sqlite3_extended_errcode(database);
-            std::string message = sqlite3_errmsg(database);
+        } else if (int rc = sqlite3_extended_result_codes(database, 1); rc != SQLITE_OK) {
+            int code = rc;
+            std::string message = sqlite3_errstr(rc);
             sqlite3_close(database);
             result = connectionResult(false, code, WTF::move(message));
-        } else if (sqlite3_busy_timeout(database, m_busyTimeout) != SQLITE_OK) {
-            int code = sqlite3_extended_errcode(database);
-            std::string message = sqlite3_errmsg(database);
+        } else if (int rc = sqlite3_busy_timeout(database, m_busyTimeout); rc != SQLITE_OK) {
+            int code = rc;
+            std::string message = sqlite3_errstr(rc);
             sqlite3_close(database);
             result = connectionResult(false, code, WTF::move(message));
         } else {
@@ -613,8 +621,7 @@ void AsyncSQLiteNativeJob::run() noexcept
     executeSQLiteJob(*this, *result);
 
     if (state->deliveryDisabled()) {
-        postFailures.fetch_add(1, std::memory_order_relaxed);
-        completionsDropped.fetch_add(1, std::memory_order_relaxed);
+        deliveryDisabledDrops.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -638,8 +645,10 @@ void AsyncSQLiteTaskState::cancel(bool disableDelivery)
     m_cancelled = true;
     if (disableDelivery)
         m_deliveryDisabled = true;
-    if (m_activeDatabase)
+    if (m_activeDatabase) {
         sqlite3_interrupt(m_activeDatabase);
+        taskInterrupts.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool AsyncSQLiteTaskState::isCancelled() const
@@ -657,17 +666,20 @@ bool AsyncSQLiteTaskState::deliveryDisabled() const
 bool AsyncSQLiteTaskState::publishActiveDatabase(sqlite3* database)
 {
     WTF::Locker locker { m_lock };
-    if (m_cancelled)
+    if (m_cancelled || !database)
         return false;
     m_activeDatabase = database;
+    activeTaskDatabases.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
 void AsyncSQLiteTaskState::clearActiveDatabase(sqlite3* database)
 {
     WTF::Locker locker { m_lock };
-    if (m_activeDatabase == database)
+    if (m_activeDatabase == database) {
         m_activeDatabase = nullptr;
+        activeTaskDatabases.fetch_sub(1, std::memory_order_relaxed);
+    }
 }
 
 const JSC::ClassInfo JSAsyncSQLitePendingRegistry::s_info = { "AsyncSQLitePendingRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAsyncSQLitePendingRegistry) };
@@ -863,8 +875,12 @@ static AsyncSQLiteTaskStats asyncSQLiteTaskStats()
         postFailures.load(std::memory_order_relaxed),
         completionsRun.load(std::memory_order_relaxed),
         completionsDropped.load(std::memory_order_relaxed),
+        deliveryDisabledDrops.load(std::memory_order_relaxed),
+        activeTaskDatabases.load(std::memory_order_relaxed),
+        taskInterrupts.load(std::memory_order_relaxed),
         liveConnections.load(std::memory_order_relaxed),
         activeConnectionOperations.load(std::memory_order_relaxed),
+        connectionInterrupts.load(std::memory_order_relaxed),
         closeJobsRun.load(std::memory_order_relaxed),
         physicalCloses.load(std::memory_order_relaxed),
     };
@@ -937,7 +953,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteTaskForTesting, (JSC::JSGlobalObj
     context->refEventLoop();
     registry->markKeepAlive(operationId);
 
-    AsyncSQLiteTask__schedule(job.release());
+    AsyncSQLiteTask__schedule(static_cast<AsyncSQLiteJobBase*>(job.release()));
 
     auto* object = JSC::constructEmptyObject(globalObject);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "started"_s), startedPromise);
@@ -960,21 +976,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteTaskStatsForTesting, (JSC::JSGlob
     put("postFailures"_s, stats.postFailures);
     put("completionsRun"_s, stats.completionsRun);
     put("completionsDropped"_s, stats.completionsDropped);
+    put("deliveryDisabledDrops"_s, stats.deliveryDisabledDrops);
+    put("activeTaskDatabases"_s, stats.activeTaskDatabases);
+    put("taskInterrupts"_s, stats.taskInterrupts);
     put("liveConnections"_s, stats.liveConnections);
     put("activeConnectionOperations"_s, stats.activeConnectionOperations);
+    put("connectionInterrupts"_s, stats.connectionInterrupts);
     put("closeJobsRun"_s, stats.closeJobsRun);
     put("physicalCloses"_s, stats.physicalCloses);
     return JSC::JSValue::encode(object);
 }
 
-static JSC::EncodedJSValue rejectedConnectionPromise(JSC::JSGlobalObject* globalObject, WebCore::JSDOMGlobalObject* domGlobalObject, const char* message)
+static bool parseAsyncSQLiteConnectionId(JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::ThrowScope& scope, uint64_t& id)
 {
-    auto promise = WebCore::DeferredPromise::create(*domGlobalObject);
-    if (!promise)
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    auto value = promise->promise();
-    promise->reject(WebCore::ExceptionCode::OperationError, WTF::String::fromUTF8(message));
-    return JSC::JSValue::encode(value);
+    double number = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!std::isfinite(number) || number < 0 || std::trunc(number) != number || number > JSC::maxSafeInteger())
+        return false;
+    id = static_cast<uint64_t>(number);
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionOpenForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1022,10 +1042,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::J
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto id = static_cast<uint64_t>(callFrame->argument(0).toUInt32(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto sqlString = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     auto* context = static_cast<Zig::GlobalObject*>(globalObject)->scriptExecutionContext();
     auto* domGlobalObject = uncheckedDowncast<WebCore::JSDOMGlobalObject>(globalObject);
     auto result = WebCore::DeferredPromise::create(*domGlobalObject);
@@ -1034,23 +1050,30 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::J
         return {};
     }
     auto promise = result->promise();
+    uint64_t id;
+    if (!parseAsyncSQLiteConnectionId(globalObject, callFrame->argument(0), scope, id)) {
+        RETURN_IF_EXCEPTION(scope, {});
+        result->reject(WebCore::ExceptionCode::OperationError, "connection ID must be a finite, non-negative safe integer"_s);
+        return JSC::JSValue::encode(promise);
+    }
+    auto sqlString = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     auto* registry = registryForGlobal(globalObject);
     auto connection = registry->connection(id);
-    if (!connection)
-        return rejectedConnectionPromise(globalObject, domGlobalObject, "connection is closed");
+    if (!connection) {
+        result->reject(WebCore::ExceptionCode::OperationError, "connection is closed"_s);
+        return JSC::JSValue::encode(promise);
+    }
 
     auto operationId = nextOperationId.fetch_add(1, std::memory_order_relaxed);
-    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, false, true });
     auto sqlUTF8 = sqlString.utf8();
     if (!connection->admit(operationId, std::string(sqlUTF8.data(), sqlUTF8.length()))) {
-        registry->remove(operationId);
-        auto rejected = WebCore::DeferredPromise::create(*domGlobalObject);
-        if (!rejected)
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        auto rejectedValue = rejected->promise();
-        rejected->reject(WebCore::ExceptionCode::OperationError, "connection queue is full or closing"_s);
-        return JSC::JSValue::encode(rejectedValue);
+        result->reject(WebCore::ExceptionCode::OperationError, "connection queue is full or closing"_s);
+        return JSC::JSValue::encode(promise);
     }
+    // admit() can schedule a fast completion, but its JS callback cannot claim
+    // the registry until this host function returns.
+    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, false, true });
     context->refEventLoop();
     registry->markKeepAlive(operationId);
     return JSC::JSValue::encode(promise);
@@ -1060,8 +1083,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionCloseForTesting, (JSC::
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto id = static_cast<uint64_t>(callFrame->argument(0).toUInt32(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
     auto* context = static_cast<Zig::GlobalObject*>(globalObject)->scriptExecutionContext();
     auto* domGlobalObject = uncheckedDowncast<WebCore::JSDOMGlobalObject>(globalObject);
     auto result = WebCore::DeferredPromise::create(*domGlobalObject);
@@ -1070,6 +1091,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionCloseForTesting, (JSC::
         return {};
     }
     auto promise = result->promise();
+    uint64_t id;
+    if (!parseAsyncSQLiteConnectionId(globalObject, callFrame->argument(0), scope, id)) {
+        RETURN_IF_EXCEPTION(scope, {});
+        result->reject(WebCore::ExceptionCode::OperationError, "connection ID must be a finite, non-negative safe integer"_s);
+        return JSC::JSValue::encode(promise);
+    }
     auto* registry = registryForGlobal(globalObject);
     auto connection = registry->connection(id);
     if (!connection) {
@@ -1077,16 +1104,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionCloseForTesting, (JSC::
         return JSC::JSValue::encode(promise);
     }
     auto operationId = nextOperationId.fetch_add(1, std::memory_order_relaxed);
-    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, true, true });
     if (!connection->close(operationId, static_cast<uint32_t>(WTF::Thread::currentSingleton().uid()))) {
-        registry->remove(operationId);
-        auto fallback = WebCore::DeferredPromise::create(*domGlobalObject);
-        if (!fallback)
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        auto fallbackValue = fallback->promise();
-        fallback->resolveWithJSValue(JSC::jsBoolean(false));
-        return JSC::JSValue::encode(fallbackValue);
+        result->resolveWithJSValue(JSC::jsBoolean(false));
+        return JSC::JSValue::encode(promise);
     }
+    // close() can schedule a fast completion, which cannot run its JS callback
+    // before this host function installs the request and returns.
+    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, true, true });
     context->refEventLoop();
     registry->markKeepAlive(operationId);
     return JSC::JSValue::encode(promise);
@@ -1099,11 +1123,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionStatsForTesting, (JSC::
     auto* object = JSC::constructEmptyObject(globalObject);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveConnections"_s), JSC::jsNumber(stats.liveConnections));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "activeConnectionOperations"_s), JSC::jsNumber(stats.activeConnectionOperations));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "connectionInterrupts"_s), JSC::jsNumber(stats.connectionInterrupts));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "closeJobsRun"_s), JSC::jsNumber(stats.closeJobsRun));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "physicalCloses"_s), JSC::jsNumber(stats.physicalCloses));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveJobs"_s), JSC::jsNumber(stats.liveJobs));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveResults"_s), JSC::jsNumber(stats.liveResults));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveRequests"_s), JSC::jsNumber(stats.liveRequests));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "deliveryDisabledDrops"_s), JSC::jsNumber(stats.deliveryDisabledDrops));
     return JSC::JSValue::encode(object);
 }
 

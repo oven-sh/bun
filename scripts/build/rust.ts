@@ -761,6 +761,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // `debug_assert!` sites compile to nothing under ASAN. The `dev` profile
     // (debug builds) already defaults it on, so this is a no-op there.
     env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
+    // `debug-assertions` does NOT imply `overflow-checks`; without this, Rust
+    // integer arithmetic still wraps silently in the assert/ASAN profiles and
+    // the narrowing-conversion class of bug is invisible to every fuzzable
+    // build. Turning it on makes those sites panic instead of corrupting data.
+    env.CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS = "true";
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 

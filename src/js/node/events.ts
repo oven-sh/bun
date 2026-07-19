@@ -522,18 +522,23 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
 };
 
 EventEmitterPrototype.listenerCount = function listenerCount(type, method) {
-  if (method == null) return listenerCountSlow(this, type);
   var handlers = this._events?.[type];
-  if (!handlers) return 0;
-  if (typeof handlers === "function") return handlers === method || handlers.listener === method ? 1 : 0;
-  var length = 0;
-  for (let i = 0; i < handlers.length; i++) {
-    const handler = handlers[i];
-    if (handler === method || handler.listener === method) {
-      length++;
-    }
+  if (handlers === undefined) return 0;
+  if (typeof handlers === "function") {
+    if (method != null) return handlers === method || handlers.listener === method ? 1 : 0;
+    return 1;
   }
-  return length;
+  if (method != null) {
+    var length = 0;
+    for (let i = 0; i < handlers.length; i++) {
+      const handler = handlers[i];
+      if (handler === method || handler.listener === method) {
+        length++;
+      }
+    }
+    return length;
+  }
+  return handlers.length;
 };
 Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 

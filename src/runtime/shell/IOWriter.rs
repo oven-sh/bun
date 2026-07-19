@@ -693,6 +693,17 @@ impl IOWriter {
 
     // ── file write (non-pollable sync path) ─────────────────────────────
 
+    /// Tee `amt` bytes from the current buffer position into `writers[idx]`'s
+    /// capture and advance its `written` / `total_bytes_written` counters.
+    #[cfg(not(windows))]
+    fn record_write_progress(&self, idx: usize, amt: usize) {
+        let s = self.state();
+        let lo = s.total_bytes_written;
+        s.writers[idx].tee(&s.buf[lo..lo + amt]);
+        s.total_bytes_written += amt;
+        s.writers[idx].written += amt;
+    }
+
     /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
     #[cfg(not(windows))]
     fn do_file_write(&self, child: ChildPtr) -> Yield {
@@ -720,11 +731,8 @@ impl IOWriter {
                 // EAGAIN from a target that was classified non-pollable (a
                 // FIFO or chardev opened by path with O_NONBLOCK). Record the
                 // partial write and restart this writer on the pollable path.
+                self.record_write_progress(idx, amt);
                 let s = self.state();
-                let lo = s.total_bytes_written;
-                s.writers[idx].tee(&s.buf[lo..lo + amt]);
-                s.total_bytes_written += amt;
-                s.writers[idx].written += amt;
                 s.flags.pollable = true;
                 s.flags.nonblock = true;
                 s.started = false;
@@ -739,12 +747,8 @@ impl IOWriter {
             // error completion is returned, not `Yield::run` from here.
             bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e),
         };
-        let s = self.state();
-        let lo = s.total_bytes_written;
-        s.writers[idx].tee(&s.buf[lo..lo + amt]);
-        s.total_bytes_written += amt;
-        s.writers[idx].written += amt;
-        if !s.writers[idx].wrote_everything() {
+        self.record_write_progress(idx, amt);
+        if !self.state().writers[idx].wrote_everything() {
             // The only case where we get partial writes is when an error is
             // encountered, which returns above.
             unreachable!(

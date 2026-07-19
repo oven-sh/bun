@@ -187,19 +187,19 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          const baseline = livePages();
+          const baselinePages = livePages();
+          const baselineRss = process.memoryUsage.rss();
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
           gc(true);
-          const after = livePages();
-          const diff = after - baseline;
-          console.log("mimalloc page diff", diff, "baseline", baseline, "after", after);
-          console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
-          if (diff > 100) {
-            // Bun v1.1.21 leaked the transpiled source here (RSS +423 MB on
-            // macOS arm64); retaining the module namespace is +2666 pages.
+          const pageDiff = livePages() - baselinePages;
+          const rssDiff = process.memoryUsage.rss() - baselineRss;
+          console.log("mimalloc page diff", pageDiff, "RSS diff", (rssDiff / 1024 / 1024) | 0, "MB");
+          // ASAN routes SourceProvider storage through system malloc, so fall
+          // back to RSS there. Retaining the source is ~+290 MB / +2666 pages.
+          if (${isASAN} ? rssDiff > 320 * 1024 * 1024 : pageDiff > 100) {
             throw new Error("Memory leak detected");
           }
 

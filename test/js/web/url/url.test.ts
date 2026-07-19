@@ -349,15 +349,7 @@ describe.skipIf(!(isLinux || isWindows))("IDNA UTS #46 Unicode 16.0 mappings", (
         "https://\u1874\u10A0/", // MONGOLIAN LETTER ... + GEORGIAN CAPITAL AN
         "https://\uA846\u3002\u2183\u0FB5\uB1AE-/", // WPT IdnaTestV2 "V3 (ignored)" case
       ].map(href => new URL(href).hostname),
-    ).toEqual([
-      "xn--s5a",
-      "xn--3kj",
-      "xn--a-hws",
-      "xn--73g",
-      "xn--r5g",
-      "xn--h9e436h",
-      "xn--fc9a.xn----qmg097k469k",
-    ]);
+    ).toEqual(["xn--s5a", "xn--3kj", "xn--a-hws", "xn--73g", "xn--r5g", "xn--h9e436h", "xn--fc9a.xn----qmg097k469k"]);
   });
 
   it("ignores format controls reclassified in Unicode 16.0", () => {

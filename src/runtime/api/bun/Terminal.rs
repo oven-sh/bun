@@ -1588,9 +1588,7 @@ impl Terminal {
                     // SAFETY: hpcon is a valid open HPCON.
                     let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
                     if hr < 0 {
-                        return Err(
-                            global_object.throw(format_args!("Failed to resize terminal"))
-                        );
+                        return Err(global_object.throw(format_args!("Failed to resize terminal")));
                     }
                 }
             }

@@ -143,21 +143,18 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         seq
     });
     if callback.is_function() {
-        // Ack callbacks live in a JS object held by the Subprocess wrapper's
+        // Ack callbacks live in a JS Map held by the Subprocess wrapper's
         // WriteBarrier slot: one GC edge regardless of how many are in flight,
         // and not a GC root, so the Subprocess stays collectable.
         let map = match subprocess_js::ipc_ack_callbacks_get_cached(arguments[0]) {
             Some(m) => m,
             None => {
-                let m = JSValue::create_empty_object_with_null_prototype(global);
+                let m = bun_jsc::JSMap::create(global);
                 subprocess_js::ipc_ack_callbacks_set_cached(arguments[0], global, m);
                 m
             }
         };
-        ipc_data
-            .internal_msg_queue
-            .get()
-            .put_callback(map, global, this_seq, callback);
+        InternalMsgHolder::put_callback(map, global, this_seq, callback)?;
         if let Some(h) = &mut native_handle {
             h.cluster_seq = Some(this_seq);
         }
@@ -242,11 +239,7 @@ pub(crate) fn handle_internal_message_primary(
         if !p.is_undefined() {
             let ack = p.to_int32();
             if let Some(map) = subprocess_js::ipc_ack_callbacks_get_cached(this_jsvalue) {
-                if let Some(callback) = ipc_data
-                    .internal_msg_queue
-                    .get()
-                    .take_callback(map, global, ack)?
-                {
+                if let Some(callback) = InternalMsgHolder::take_callback(map, global, ack)? {
                     event_loop.run_callback(
                         subprocess.context,
                         callback,

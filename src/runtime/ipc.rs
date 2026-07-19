@@ -38,14 +38,11 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
-///
-/// The `worker`/`cb`/`messages` fields back the child-side
-/// process singleton only. The primary side stores the same state in the
-/// `Subprocess` wrapper's WriteBarrier slots so a worker's object graph is not
-/// pinned by a GC root (see `node_cluster_binding`).
 pub(crate) struct InternalMsgHolder {
     pub seq: i32,
 
+    // These fields back the child-side process singleton; the primary side stores
+    // the same state in the Subprocess wrapper's WriteBarrier slots instead.
     pub worker: bun_jsc::StrongOptional,
     pub cb: bun_jsc::StrongOptional,
     /// JS Array of messages that arrived before the listener was installed.
@@ -65,39 +62,37 @@ impl Default for InternalMsgHolder {
 }
 
 impl InternalMsgHolder {
-    /// Prefixed so the key is never an array index; `putDirect` asserts on
-    /// numeric-string property names.
     #[inline]
-    fn seq_key(buf: &mut [u8; 13], seq: i32) -> &[u8] {
-        bun_core::fmt::buf_print_infallible(buf, format_args!("s{seq}"))
+    fn as_map(map: JSValue) -> &'static mut bun_jsc::JSMap {
+        // `JSMap` is an `opaque_ffi!` ZST; the slot was seeded with
+        // `JSMap::create` so `from_js` is non-null. Single JS thread.
+        bun_jsc::JSMap::opaque_mut(bun_jsc::JSMap::from_js(map).unwrap().as_ptr())
     }
 
-    /// Store `callback` under `seq` on the given JS callbacks object.
+    /// Store `callback` under `seq` on the given JS callbacks Map.
     pub(crate) fn put_callback(
-        &self,
         map: JSValue,
         global: &JSGlobalObject,
         seq: i32,
         callback: JSValue,
-    ) {
-        let mut buf = [0u8; 13];
-        map.put(global, Self::seq_key(&mut buf, seq), callback);
+    ) -> JsResult<()> {
+        Self::as_map(map).set(global, JSValue::js_number(seq as f64), callback)
     }
 
     /// Remove and return the callback stored under `seq` on the given JS
-    /// callbacks object, or `None` when absent.
+    /// callbacks Map, or `None` when absent.
     pub(crate) fn take_callback(
-        &self,
         map: JSValue,
         global: &JSGlobalObject,
         seq: i32,
     ) -> JsResult<Option<JSValue>> {
-        let mut buf = [0u8; 13];
-        let key = Self::seq_key(&mut buf, seq);
-        let Some(cb) = map.get(global, key)? else {
+        let key = JSValue::js_number(seq as f64);
+        let map = Self::as_map(map);
+        let cb = map.get(global, key)?;
+        if cb.is_undefined() {
             return Ok(None);
-        };
-        map.delete_property(global, key)?;
+        }
+        map.remove(global, key)?;
         Ok(Some(cb))
     }
 
@@ -1450,9 +1445,7 @@ impl SendQueue {
                 } else {
                     crate::api::bun::subprocess::js::ipc_ack_callbacks_get_cached(this_jsvalue)
                 };
-                let cb = match map
-                    .map(|map| self.internal_msg_queue.get().take_callback(map, global, seq))
-                {
+                let cb = match map.map(|map| InternalMsgHolder::take_callback(map, global, seq)) {
                     Some(Ok(cb)) => cb,
                     Some(Err(err)) => {
                         crate::dispatch::fold(Err(err));

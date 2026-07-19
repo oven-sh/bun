@@ -991,7 +991,9 @@ struct Parser<'a> {
     value_buffer: &'a mut Vec<u8>,
 }
 
-const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \xA0\n\r";
+// Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
+// there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
+const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {

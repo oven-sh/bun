@@ -373,6 +373,24 @@ test(".env space edgecase (issue #411)", () => {
   expect(stdout).toBe("[A B]");
 });
 
+test(".env does not byte-trim 0xA0 out of UTF-8 values", () => {
+  // U+0920 DEVANAGARI LETTER TTHA encodes as E0 A4 A0 (trailing 0xA0)
+  // U+00A0 NO-BREAK SPACE encodes as C2 A0; Node.js preserves it verbatim.
+  expect(parseEnv("A=x\u0920\nB=\u00A0x\u00A0\nC=\u00A0\nD=  x  \n")).toEqual({
+    A: "x\u0920",
+    B: "\u00A0x\u00A0",
+    C: "\u00A0",
+    D: "x",
+  });
+
+  const dir = tempDirWithFiles("dotenv-utf8-nbsp", {
+    ".env": "A=x\u0920\nB=\u00A0x\u00A0\n",
+    "index.ts": "console.log(JSON.stringify({ A: process.env.A, B: process.env.B }));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({ A: "x\u0920", B: "\u00A0x\u00A0" });
+});
+
 test(".env special characters 1 (issue #2823)", () => {
   const dir = tempDirWithFiles("dotenv-issue-2823", {
     ".env": 'A="a$t"\nC=`c\\$v`',

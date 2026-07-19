@@ -234,6 +234,29 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  // Bun's real implementations, under the names node's tests import them by.
+  "internal/validators": require("internal/validators"),
+  "internal/util/inspect": require("internal/util/inspect"),
+  "internal/freelist": require("internal/freelist"),
+  "internal/fixed_queue": require("internal/fixed_queue"),
+  "internal/assert/myers_diff": require("internal/assert/myers_diff"),
+  // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
+  // is native, not a JS `codes` table, so nothing else is exposed here.
+  "internal/errors": require("internal/errors"),
+  // Only the members Bun genuinely has. normalizeEncoding is the same Rust
+  // binding node:crypto and the webstream adapters call.
+  "internal/util": {
+    normalizeEncoding: $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1),
+  },
+  // Bun's EventTarget/Event/CustomEvent are the native (global) ones; node
+  // keeps them in internal/event_target. kWeakHandler is Bun's real weak
+  // listener symbol from internal/shared. Bun has no NodeEventTarget.
+  "internal/event_target": {
+    Event: globalThis.Event,
+    CustomEvent: globalThis.CustomEvent,
+    EventTarget: globalThis.EventTarget,
+    kWeakHandler: require("internal/shared").kWeakHandler,
+  },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };

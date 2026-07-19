@@ -59,6 +59,11 @@ const hasCrypto = Boolean(process.versions.openssl) &&
 
 const hasSQLite = Boolean(process.versions.sqlite);
 
+// Node gates these on build variables (v8_enable_temporal_support and
+// --localstorage-file). Bun has no equivalent knobs, so feature-detect.
+const hasTemporal = typeof globalThis.Temporal === 'object' && globalThis.Temporal !== null;
+const hasLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')?.enumerable === true;
+
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(major >= 0 && major <= 0xf);
@@ -1134,6 +1139,8 @@ const common = {
   hasOpenSSL,
   hasQuic,
   hasSQLite,
+  hasTemporal,
+  hasLocalStorage,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
@@ -1397,6 +1404,17 @@ function installBunExposeInternalsShim() {
         loader: "object",
         exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
       }));
+      // node's internal/net: normalizedArgsSymbol is a module-private symbol in
+      // Bun's node:net. Recover the real one from a real _normalizeArgs result
+      // rather than minting a look-alike.
+      build.module("internal/net", () => {
+        const net = require("node:net");
+        const probe = net._normalizeArgs([]);
+        const normalizedArgsSymbol = Object.getOwnPropertySymbols(probe).find(
+          s => s.description === "normalizedArgs",
+        );
+        return { loader: "object", exports: { normalizedArgsSymbol } };
+      });
       // node's internal/options: map the few CLI options vendored http tests ask
       // about onto the equivalent runtime values. Unknown options return undefined.
       build.module("internal/options", () => ({

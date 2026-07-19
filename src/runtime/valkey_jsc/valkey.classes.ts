@@ -573,6 +573,7 @@ export default [
       zrank: { fn: "zrank" },
       zrevrank: { fn: "zrevrank" },
       subscribe: { fn: "subscribe" },
+      subscribeBuffer: { fn: "subscribeBuffer" },
       duplicate: { fn: "duplicate" },
       psubscribe: { fn: "psubscribe" },
       unsubscribe: { fn: "unsubscribe" },

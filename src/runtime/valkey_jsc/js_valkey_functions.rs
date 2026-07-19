@@ -1610,52 +1610,40 @@ impl JSValkeyClient {
         NotSubscriber
     );
 
-    #[bun_jsc::host_fn(method)]
-    pub fn publish(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"publish")?;
+    // PUBLISH and SPUBLISH take the same `channel message` argument shape, so
+    // they share `cmd_key_value!` and accept the same value types (string,
+    // Buffer/TypedArray/ArrayBuffer, Blob, number) as every other command.
+    cmd_key_value!(
+        publish,
+        b"publish",
+        "PUBLISH",
+        "channel",
+        "message",
+        NotSubscriber
+    );
 
-        let args_view = frame.arguments();
-        let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
-
-        let arg0 = frame.argument(0);
-        if !arg0.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
-        }
-        let channel = from_js(global, arg0)?.expect("unreachable");
-
-        args.push(channel);
-
-        let arg1 = frame.argument(1);
-        if !arg1.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
-        }
-        let message = from_js(global, arg1)?.expect("unreachable");
-        args.push(message);
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"PUBLISH",
-            CommandArgs::Args(&args),
-            CommandMeta::default(),
-            "Failed to send PUBLISH command",
-        )
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    /// Shared body of `subscribe` and `subscribeBuffer`. `as_buffer` selects
+    /// which listener list each channel's handler is registered under, and
+    /// `function_name` is the JS-visible method name used in error messages.
+    fn subscribe_impl(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        function_name: &'static str,
+        as_buffer: bool,
+    ) -> JsResult<JSValue> {
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
-            return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
+            return Err(global.throw_invalid_argument_type(function_name, "listener", "function"));
         }
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "subscribe requires at least one channel"
+                    "{function_name} requires at least one channel"
                 )));
             }
             redis_channels.ensure_total_capacity(channel_or_many.get_length(global)? as usize);
@@ -1664,7 +1652,7 @@ impl JSValkeyClient {
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
                     return Err(global.throw_invalid_argument_type(
-                        "subscribe",
+                        function_name,
                         "channel",
                         "string",
                     ));
@@ -1681,12 +1669,13 @@ impl JSValkeyClient {
                     global,
                     channel_arg,
                     handler_callback,
+                    as_buffer,
                 )?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
+                return Err(global.throw_invalid_argument_type(function_name, "channel", "string"));
             };
             redis_channels.push(channel);
 
@@ -1694,10 +1683,11 @@ impl JSValkeyClient {
                 global,
                 channel_or_many,
                 handler_callback,
+                as_buffer,
             )?;
         } else {
             return Err(global.throw_invalid_argument_type(
-                "subscribe",
+                function_name,
                 "channel",
                 "string or array",
             ));
@@ -1720,6 +1710,22 @@ impl JSValkeyClient {
         };
 
         Ok(promise_to_js(promise))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        Self::subscribe_impl(this, global, frame, "subscribe", false)
+    }
+
+    /// `subscribeBuffer` registers a listener that receives each message as a
+    /// `Uint8Array` instead of a string, mirroring `get` / `getBuffer`.
+    #[bun_jsc::host_fn(method)]
+    pub fn subscribe_buffer(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::subscribe_impl(this, global, frame, "subscribeBuffer", true)
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.

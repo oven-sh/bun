@@ -191,7 +191,7 @@ Create a publisher in `publisher.ts`:
 ```typescript publisher.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
 
-const writer = new RedisClient("redis://localhost:6739");
+const writer = new RedisClient("redis://localhost:6379");
 await writer.connect();
 
 writer.publish("general", "Hello everyone!");
@@ -204,7 +204,7 @@ In another file, create the subscriber in `subscriber.ts`:
 ```typescript subscriber.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
 
-const listener = new RedisClient("redis://localhost:6739");
+const listener = new RedisClient("redis://localhost:6379");
 await listener.connect();
 
 await listener.subscribe("general", (message, channel) => {
@@ -226,8 +226,9 @@ bun run publisher.ts
 
 <Note>
 Subscribing takes over the `RedisClient` connection: a client with
-subscriptions can only call `RedisClient.prototype.subscribe()`. To send other
-commands to Redis, create a separate connection with `.duplicate()`:
+subscriptions can only use the Pub/Sub methods (`.subscribe()`,
+`.subscribeBuffer()`, `.unsubscribe()`) and `.ping()`. To send other commands
+to Redis, create a separate connection with `.duplicate()`:
 
 ```ts redis.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
@@ -250,15 +251,41 @@ Publish messages with the `publish()` method:
 await client.publish(channelName, message);
 ```
 
+The message can be a string or binary data (`Buffer`, a typed array, or a
+`Blob`). Binary payloads are written to the wire as-is:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.publish("updates", Buffer.from([0x00, 0x01, 0x02]));
+```
+
 ### Subscriptions
 
-Subscribe to channels with the `.subscribe()` method:
+Subscribe to channels with the `.subscribe()` method. The listener receives
+each message decoded as a string:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.subscribe(channel, (message, channel) => {});
 ```
 
-Unsubscribe with the `.unsubscribe()` method:
+To receive a message's raw bytes instead, use `.subscribeBuffer()`. The
+listener is called with a `Uint8Array` (a `Buffer`, like `.getBuffer()`), so
+binary payloads round-trip unchanged. As with `.subscribe()`, publish from a
+separate connection, since a subscribed client can only use the Pub/Sub
+methods:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+const subscriber = await client.duplicate();
+await subscriber.subscribeBuffer("updates", (message, channel) => {
+  console.log(message); // <Buffer 00 01 02>
+});
+await client.publish("updates", new Uint8Array([0, 1, 2]));
+```
+
+String and buffer listeners can be registered on the same channel; each
+receives the message in its own form.
+
+Unsubscribe with the `.unsubscribe()` method, which works the same way for
+listeners registered with either `.subscribe()` or `.subscribeBuffer()`:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.unsubscribe(); // Unsubscribe from all channels.

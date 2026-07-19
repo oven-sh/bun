@@ -162,7 +162,12 @@ impl SubscriptionCtx {
         self.subscription_callback_map().clear(global_object)
     }
 
-    /// Remove a specific receive handler.
+    /// Index of the string-mode listener list in a channel's map entry.
+    const STRING_LISTENERS_SLOT: u32 = 0;
+    /// Index of the buffer-mode (`subscribeBuffer`) listener list in a channel's map entry.
+    const BUFFER_LISTENERS_SLOT: u32 = 1;
+
+    /// Remove a specific receive handler from whichever listener list holds it.
     ///
     /// Returns: The total number of remaining handlers for this channel, or null if there were no
     /// listeners originally registered.
@@ -176,49 +181,51 @@ impl SubscriptionCtx {
     ) -> JsResult<Option<usize>> {
         let map = self.subscription_callback_map();
 
-        let existing = map.get(global_object, channel_name)?;
-        if existing.is_undefined_or_null() {
+        let entry = map.get(global_object, channel_name)?;
+        if entry.is_undefined_or_null() {
             // Nothing to remove.
             return Ok(None);
         }
 
-        // Existing is guaranteed to be an array of callbacks.
+        // The entry is the `[string_listeners, buffer_listeners]` pair.
         if cfg!(debug_assertions) {
-            debug_assert!(existing.is_array());
+            debug_assert!(entry.is_array());
         }
 
-        // TODO(markovejnovic): I can't find a better way to do this... I generate a new array,
-        // filtering out the callback we want to remove. This is woefully inefficient for large
-        // sets (and surprisingly fast for small sets of callbacks).
-        let mut array_it = existing.array_iterator(global_object)?;
-        let updated_array = JSArray::create_empty(global_object, 0)?;
-        while let Some(iter) = array_it.next()? {
-            if iter == callback {
-                continue;
+        let mut remaining = 0usize;
+        for slot in [Self::STRING_LISTENERS_SLOT, Self::BUFFER_LISTENERS_SLOT] {
+            let listeners = entry.get_index(global_object, slot)?;
+            let kept = JSArray::create_empty(global_object, 0)?;
+            let mut array_it = listeners.array_iterator(global_object)?;
+            while let Some(existing) = array_it.next()? {
+                if existing == callback {
+                    continue;
+                }
+                kept.push(global_object, existing)?;
             }
-            updated_array.push(global_object, iter)?;
+            remaining += kept.get_length(global_object)? as usize;
+            entry.put_index(global_object, slot, kept)?;
         }
 
-        // Otherwise, we have ourselves an array of callbacks. We need to remove the element in the
-        // array that matches the callback.
-        let _ = map.remove(global_object, channel_name)?;
-
-        // Only populate the map if we have remaining callbacks for this channel.
-        let new_length = updated_array.get_length(global_object)?;
-
-        if new_length != 0 {
-            map.set(global_object, channel_name, updated_array)?;
+        // Drop the channel entirely once no listener of either kind remains.
+        if remaining == 0 {
+            let _ = map.remove(global_object, channel_name)?;
         }
 
-        Ok(Some(new_length as usize))
+        Ok(Some(remaining))
     }
 
-    /// Add a handler for receiving messages on a specific channel
+    /// Add a handler for receiving messages on a specific channel.
+    ///
+    /// Each channel maps to a `[string_listeners, buffer_listeners]` pair so
+    /// `subscribe` and `subscribeBuffer` listeners can coexist on one channel;
+    /// `as_buffer` selects which list the callback is appended to.
     pub fn upsert_receive_handler(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         callback: JSValue,
+        as_buffer: bool,
     ) -> JsResult<()> {
         // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
         // safe even though intervening JS may re-enter `&self`.
@@ -228,61 +235,41 @@ impl SubscriptionCtx {
         });
         let map = self.subscription_callback_map();
 
-        let handlers_array: JSValue;
-        let mut is_new_channel = false;
-        let existing_handler_arr = map.get(global_object, channel_name)?;
-        if existing_handler_arr != JSValue::UNDEFINED {
-            debug!("Adding a new receive handler.");
-            // Note that we need to cover this case because maps in JSC can return undefined when
-            // the key has never been set.
-            if existing_handler_arr.is_undefined() {
-                // Create a new array if the existing_handler_arr is undefined/null
-                handlers_array = JSArray::create_empty(global_object, 0)?;
-                is_new_channel = true;
-            } else if existing_handler_arr.is_array() {
-                // Use the existing array
-                handlers_array = existing_handler_arr;
-            } else {
-                unreachable!();
-            }
+        // Maps in JSC return undefined when the key has never been set.
+        let existing = map.get(global_object, channel_name)?;
+        let entry = if existing.is_undefined() {
+            let pair = JSArray::create_empty(global_object, 0)?;
+            pair.push(global_object, JSArray::create_empty(global_object, 0)?)?;
+            pair.push(global_object, JSArray::create_empty(global_object, 0)?)?;
+            map.set(global_object, channel_name, pair)?;
+            pair
         } else {
-            // No existing_handler_arr exists, create a new array
-            handlers_array = JSArray::create_empty(global_object, 0)?;
-            is_new_channel = true;
-        }
-        let _ = is_new_channel;
+            debug!("Adding a new receive handler.");
+            existing
+        };
 
-        // Append the new callback to the array
-        handlers_array.push(global_object, callback)?;
-
-        // Set the updated array back in the map
-        map.set(global_object, channel_name, handlers_array)?;
-        Ok(())
+        let slot = if as_buffer {
+            Self::BUFFER_LISTENERS_SLOT
+        } else {
+            Self::STRING_LISTENERS_SLOT
+        };
+        entry
+            .get_index(global_object, slot)?
+            .push(global_object, callback)
     }
 
-    pub fn get_callbacks(
+    /// Deliver an incoming pub/sub payload to every listener registered for
+    /// `channel_name`, converting it at most once per listener kind.
+    pub fn invoke_message_callbacks(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let result = self
+        message: &mut protocol::RESPValue,
+    ) -> JsResult<()> {
+        let entry = self
             .subscription_callback_map()
             .get(global_object, channel_name)?;
-        if result == JSValue::UNDEFINED {
-            return Ok(None);
-        }
-        Ok(Some(result))
-    }
-
-    /// Invoke callbacks for a channel with the given arguments
-    /// Handles both single callbacks and arrays of callbacks
-    pub fn invoke_callbacks(
-        &self,
-        global_object: &JSGlobalObject,
-        channel_name: JSValue,
-        args: &[JSValue],
-    ) -> JsResult<()> {
-        let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
+        if entry.is_undefined() {
             debug!(
                 "No callbacks found for channel {}",
                 // `JSString` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
@@ -291,10 +278,10 @@ impl SubscriptionCtx {
                     .get_zig_string(global_object)
             );
             return Ok(());
-        };
+        }
 
         if cfg!(debug_assertions) {
-            debug_assert!(callbacks.is_array());
+            debug_assert!(entry.is_array());
         }
 
         // Callback runs on the JS thread; VM is alive for the duration.
@@ -308,16 +295,39 @@ impl SubscriptionCtx {
         let parent_br = BackRef::new(self.parent());
         let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
 
-        // If callbacks is an array, iterate and call each one
-        let mut iter = callbacks.array_iterator(global_object)?;
-        while let Some(callback) = iter.next()? {
-            if cfg!(debug_assertions) {
-                debug_assert!(callback.is_callable());
+        // String listeners run first: their conversion only reads the payload,
+        // while the buffer conversion below adopts (moves) the payload's
+        // allocation as the `Uint8Array` backing store.
+        for (slot, return_as_buffer) in [
+            (Self::STRING_LISTENERS_SLOT, false),
+            (Self::BUFFER_LISTENERS_SLOT, true),
+        ] {
+            let listeners = entry.get_index(global_object, slot)?;
+            if listeners.get_length(global_object)? == 0 {
+                continue;
             }
-            // `event_loop_mut()` is the safe accessor for the VM-owned
-            // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
-            vm.event_loop_mut()
-                .run_callback(callback, global_object, JSValue::UNDEFINED, args);
+
+            let message_value = protocol_jsc::resp_value_to_js_with_options(
+                message,
+                global_object,
+                protocol_jsc::ToJSOptions { return_as_buffer },
+            )?;
+            let args = [message_value, channel_name];
+
+            let mut iter = listeners.array_iterator(global_object)?;
+            while let Some(callback) = iter.next()? {
+                if cfg!(debug_assertions) {
+                    debug_assert!(callback.is_callable());
+                }
+                // `event_loop_mut()` is the safe accessor for the VM-owned
+                // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
+                vm.event_loop_mut().run_callback(
+                    callback,
+                    global_object,
+                    JSValue::UNDEFINED,
+                    &args,
+                );
+            }
         }
         Ok(())
     }
@@ -1367,27 +1377,18 @@ impl JSValkeyClient {
             return;
         }
 
-        // Extract channel and message
+        // Extract the channel; the message itself is converted inside
+        // `invoke_message_callbacks`, once per registered listener kind.
         let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], &global_object)
         else {
             debug!("Failed to convert channel to JS");
             return;
         };
-        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], &global_object)
-        else {
-            debug!("Failed to convert message to JS");
-            return;
-        };
 
-        // Invoke callbacks for this channel with message and channel as arguments
         if self
             ._subscription_ctx
             .get()
-            .invoke_callbacks(
-                &global_object,
-                channel_value,
-                &[message_value, channel_value],
-            )
+            .invoke_message_callbacks(&global_object, channel_value, &mut value[1])
             .is_err()
         {
             return;

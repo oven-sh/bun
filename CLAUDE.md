@@ -102,7 +102,7 @@ test("(multi-file test) my feature", async () => {
 - NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. These tests will never fail in CI.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
 - When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
-- Keep tests fast: budget roughly 1s per test and 10s per file. Debug+ASAN builds run 10-100x slower than release, so a 1s local test can take a minute in CI.
+- Keep tests fast: budget roughly 1s per test and 10s per file. Debug+ASAN builds run 10-100x slower than release, so a 1s local test can take a minute in CI. Use `test.concurrent` for independent subprocess-spawning tests.
 - Never contact the public internet (registry.npmjs.org, github.com, CDNs). Use `VerdaccioRegistry` from `"harness"` for package installs and a local `Bun.serve({ port: 0 })` for HTTP.
 - `setDefaultTimeout` is a ceiling, not a target. Leave the default and pass a per-test timeout only for the rare outlier; a 5-minute file default multiplies across retries when one test hangs.
 - Leak tests compare growth rate across two equal-sized runs, not an absolute RSS delta. ASAN quarantine and GC jitter make absolute thresholds flaky.

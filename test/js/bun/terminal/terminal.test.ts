@@ -1278,13 +1278,14 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   });
 
   // An inline terminal must not keep the event loop alive after its subprocess
-  // exits: on_process_exit drives the reader to EOF and unrefs both polls on
-  // POSIX (drain_and_close_slave_fd) and unrefs them on Windows
-  // (unref_after_inline_child_exit), so a script that never calls
-  // terminal.close() still exits. Regression for #33882 which deferred the
-  // reader's EOF to a later poll tick. POSIX-only assertions: on Windows EOF
-  // arrives asynchronously once conhost self-exits, so the exit callback may
-  // not have fired by the time child.exited resolves.
+  // exits: on POSIX on_process_exit drives the reader to EOF and unrefs both
+  // polls (drain_and_close_slave_fd); on Windows it unrefs only the writer
+  // (unref_after_inline_child_exit) and the reader stays ref'd until conhost
+  // self-exits and delivers EOF, so a script that never calls terminal.close()
+  // still exits. Regression for #33882 which deferred the reader's EOF to a
+  // later poll tick. POSIX-only assertions: on Windows EOF arrives
+  // asynchronously once conhost self-exits, so the exit callback may not have
+  // fired by the time child.exited resolves.
   test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [

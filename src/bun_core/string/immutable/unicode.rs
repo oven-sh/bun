@@ -585,7 +585,9 @@ impl BOM {
             //   return .utf32_le;
             return Some(BOM::Utf16Le);
         }
-        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
+        if eql_ignore_len(bytes, &Self::UTF16_BE_BYTES) {
+            return Some(BOM::Utf16Be);
+        }
         // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
         None
     }
@@ -639,6 +641,13 @@ impl BOM {
                 drop(bytes);
                 out
             }
+            BOM::Utf16Be => {
+                let out = crate::strings_impl::to_utf8_alloc_from_be_bytes(
+                    &bytes[Self::UTF16_BE_BYTES.len()..],
+                );
+                drop(bytes);
+                out
+            }
             _ => {
                 // TODO: this needs to re-encode, for now we just remove the BOM
                 crate::vec::drain_front(&mut bytes, self.get_header().len());
@@ -669,6 +678,14 @@ impl BOM {
                 list.extend_from_slice(&out);
                 // Return the list slice (not `out`, the new alloc) to honor the
                 // "always points to the base of the input" doc comment.
+                &list[..]
+            }
+            BOM::Utf16Be => {
+                let out = crate::strings_impl::to_utf8_alloc_from_be_bytes(
+                    &list[Self::UTF16_BE_BYTES.len()..],
+                );
+                list.clear();
+                list.extend_from_slice(&out);
                 &list[..]
             }
             _ => {

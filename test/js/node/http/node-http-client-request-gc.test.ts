@@ -34,7 +34,9 @@ test("http.ClientRequest is collectable after the server sends a second response
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toMatch(/^collected [678]\/8$/);
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: expect.stringMatching(/^collected [678]\/8 destroyed 8\/8$/),
+    stderr: "",
+    exitCode: 0,
+  });
 });

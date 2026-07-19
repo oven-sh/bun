@@ -67,7 +67,9 @@ static inline void closeRangeLoop(int start, int end, bool cloexec_only)
 // Platform-specific close range implementation
 static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
 {
-#if OS(LINUX)
+#if OS(LINUX) && !defined(__OHOS__)
+    // OHOS seccomp blocks close_range (syscall 436) with SIGSYS.
+    // Skip the direct syscall and fall through to the loop fallback.
     unsigned int flags = cloexec_only ? CLOSE_RANGE_CLOEXEC : 0;
     if (bun_close_range(start, end, flags) == 0) {
         return;

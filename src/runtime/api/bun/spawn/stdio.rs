@@ -57,6 +57,9 @@ pub enum Stdio {
     Path(PathLike),
     Blob(webcore::blob::Any),
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
+    /// Bytes copied from a user-supplied ArrayBuffer/TypedArray stdin. Owned
+    /// natively so the pipe writer needs no GC root for the async drain.
+    OwnedBuffer(Vec<u8>),
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -109,6 +112,7 @@ impl Stdio {
             // Vec<u8> outlives this Stdio.
             Self::Capture(c) => unsafe { (*c.buf).slice() },
             Self::ArrayBuffer(ab) => ab.array_buffer.byte_slice(),
+            Self::OwnedBuffer(b) => b,
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
@@ -123,7 +127,7 @@ impl Stdio {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
-            Self::Memfd(_) | Self::ArrayBuffer(_) => true,
+            Self::Memfd(_) | Self::ArrayBuffer(_) | Self::OwnedBuffer(_) => true,
             // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
             // grandchild still writing after the child exits would be lost.
             _ => false,
@@ -285,9 +289,11 @@ impl Stdio {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                buffer()
-            }
+            Self::Capture(_)
+            | Self::Pipe
+            | Self::ArrayBuffer(_)
+            | Self::OwnedBuffer(_)
+            | Self::ReadableStream(_) => buffer(),
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
@@ -313,6 +319,7 @@ impl Stdio {
         match self {
             Self::Capture(_)
             | Self::ArrayBuffer(_)
+            | Self::OwnedBuffer(_)
             | Self::Blob(_)
             | Self::Pipe
             | Self::ReadableStream(_) => true,
@@ -552,21 +559,16 @@ impl Stdio {
         }
 
         if let Some(array_buffer) = value.as_array_buffer(global) {
+            let bytes = array_buffer.byte_slice();
             // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-            if array_buffer.byte_slice().is_empty() {
+            if bytes.is_empty() {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
             }
 
-            let copied_value =
-                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
-            let copied = copied_value
-                .as_array_buffer(global)
-                .expect("create_buffer returns a Uint8Array");
-            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer: copied,
-                held: jsc::StrongOptional::create(copied.value, global),
-            });
+            // Copy into native memory so the async pipe writer owns the bytes
+            // outright (no GC root required while draining stdin).
+            *out_stdio = Stdio::OwnedBuffer(bytes.to_vec());
             return Ok(());
         }
 

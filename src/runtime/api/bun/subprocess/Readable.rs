@@ -167,7 +167,7 @@ impl Readable {
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
-            Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
+            Stdio::ArrayBuffer(..) | Stdio::OwnedBuffer(..) | Stdio::Blob(..) => {
                 panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
             }
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),

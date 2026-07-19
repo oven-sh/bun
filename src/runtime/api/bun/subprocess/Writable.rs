@@ -271,6 +271,16 @@ impl<'a> Writable<'a> {
                         super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
+                Stdio::OwnedBuffer(bytes) => {
+                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                        evtloop,
+                        subprocess as *mut Subprocess<'a>,
+                        result,
+                        super::Source::from_owned_bytes(
+                            core::mem::take(bytes).into_boxed_slice(),
+                        ),
+                    )));
+                }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -373,6 +383,12 @@ impl<'a> Writable<'a> {
                 std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                 result,
                 super::source_from_array_buffer(core::mem::take(array_buffer)),
+            ))),
+            Stdio::OwnedBuffer(bytes) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                evtloop,
+                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                result,
+                super::Source::from_owned_bytes(core::mem::take(bytes).into_boxed_slice()),
             ))),
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so

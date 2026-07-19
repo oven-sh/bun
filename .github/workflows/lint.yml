@@ -22,3 +22,18 @@ jobs:
           bun install --frozen-lockfile
       - name: Lint
         run: bun lint
+
+  lint-tests:
+    name: "Lint Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Need the merge-base to scope findings to lines added in this PR.
+          fetch-depth: 0
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Lint test files
+        run: bun scripts/lint-tests.ts --quiet --changed "origin/${{ github.base_ref || 'main' }}"

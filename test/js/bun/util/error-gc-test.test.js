@@ -56,6 +56,9 @@ test("Error.appendStackTrace after materialized error info doesn't crash in GC",
         b.sourceURL;
         Error.appendStackTrace(a, b);
         keep.push(b);
+        const self = new Error();
+        Error.appendStackTrace(self, self);
+        keep.push(self);
       })();\`);
     }
     Bun.gc(true);
@@ -68,7 +71,7 @@ test("Error.appendStackTrace after materialized error info doesn't crash in GC",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
 // This test fails if:

@@ -31,6 +31,7 @@ pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // for callers that still spell it that way.
 pub mod bun_s3 {
     pub use crate::webcore::s3::MultiPartUpload;
+    pub use bun_s3_signing::error::S3Error;
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
@@ -2125,6 +2126,17 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     }
 }
 
+/// Replacement result callback installed by `NetworkSink::detach_writable`:
+/// the sink is gone, so upload completion has nowhere to report. Matching
+/// `MultiPartUpload.callback`'s non-`Option` signature avoids an `Option`
+/// check on the hot path for a detach that only happens at teardown.
+fn noop_upload_callback(
+    _result: crate::webcore::s3::simple_request::S3UploadResult,
+    _ctx: *mut core::ffi::c_void,
+) -> crate::webcore::jsc::JsTerminatedResult<()> {
+    Ok(())
+}
+
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
 pub type HTTPResponseSink = HTTPServerWritable<false, false>;
 pub type H3ResponseSink = HTTPServerWritable<true, true>;
@@ -2147,6 +2159,10 @@ pub struct NetworkSink {
     pub ended: bool,
     pub done: bool,
     pub cancel: bool,
+    /// GC finalized the JS wrapper while the upload was still in flight: the
+    /// box must stay alive (the task's callbacks and the promises live here)
+    /// and is destroyed by `wrapper_callback_thunk` once the task reports.
+    pub pending_destroy: bool,
 }
 
 impl Default for NetworkSink {
@@ -2161,6 +2177,7 @@ impl Default for NetworkSink {
             ended: false,
             done: false,
             cancel: false,
+            pending_destroy: false,
         }
     }
 }
@@ -2244,7 +2261,31 @@ impl NetworkSink {
     }
 
     fn detach_writable(&mut self) {
-        if let Some(task) = self.task.take() {
+        if let Some(mut task) = self.task.take() {
+            {
+                // Neutralize the task's raw callbacks into this sink BEFORE
+                // releasing our ref: the upload may stay in flight past the
+                // sink's GC finalization (the JS wrapper is the box's sole
+                // owner), and `on_part_response`/`drain_enqueued_parts` would
+                // otherwise call back through a dangling `callback_context`.
+                // SAFETY: single-threaded (see `task_mut`); no overlapping
+                // borrow — `self.task` was just taken.
+                let task_mut = unsafe { task.get_mut() };
+                task_mut.on_writable = None;
+                task_mut.callback = noop_upload_callback;
+                task_mut.callback_context = core::ptr::null_mut();
+                if !task_mut.has_started() {
+                    // The task never issued its first request, so no
+                    // completion callback is coming to release its lifecycle
+                    // ref and event-loop handle: finish it now. Cannot fail:
+                    // the callback is the no-op installed above and a task
+                    // that never started has nothing to roll back.
+                    let _ = task_mut.fail(bun_s3::S3Error {
+                        code: b"UnknownError",
+                        message: b"writer was destroyed before the upload started",
+                    });
+                }
+            }
             // task is ref-counted; deref releases our ref
             bun_s3::MultiPartUpload::deref_(task.as_ptr());
         }
@@ -2427,7 +2468,8 @@ impl NetworkSink {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
         if let Some(task) = self.task_ref() {
             //TODO: we could do better here
-            return task.buffered.memory_cost();
+            return task.part_buf.capacity()
+                + task.ready_parts.iter().map(|&(_, cap)| cap).sum::<usize>();
         }
         0
     }
@@ -2449,7 +2491,27 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         Self::memory_cost(self)
     }
     fn finalize(&mut self) {
-        Self::finalize(self)
+        // `~JSNetworkSink` → `NetworkSink__finalize` is the box's sole owner
+        // releasing its last reference. With no upload in flight, destroy the
+        // heap allocation (ArrayBufferSink's trait-finalize pattern). While a
+        // started task is attached and unfinished, the box must outlive the
+        // wrapper: the task's result callback resolves the promises stored
+        // here — defer destruction to `wrapper_callback_thunk`. A task that
+        // never started (the writer was dropped without `end()` and no part
+        // ever filled) will never report, so there is nothing to defer to:
+        // destroy now, and `detach_writable` tears the idle task down. The
+        // inherent `Self::finalize` (detach-only) stays separate for
+        // `abort()`, which must not free — the JS wrapper still owns the box
+        // at that point.
+        if self
+            .task_ref()
+            .is_some_and(bun_s3::MultiPartUpload::has_started)
+            && !self.done
+        {
+            self.pending_destroy = true;
+        } else {
+            Self::finalize_and_destroy(std::ptr::from_mut::<Self>(self));
+        }
     }
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         Self::write(self, data)

@@ -96,11 +96,10 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_collections::IntegerBitSet;
+use bun_collections::{ByteVecExt, IntegerBitSet};
 use bun_core::{MutableString, strings};
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
-use bun_io::StreamBuffer;
 use bun_jsc::GlobalRef;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::acl::ACL;
@@ -141,7 +140,17 @@ pub struct MultiPartUpload {
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
 
-    pub buffered: StreamBuffer,
+    /// Current part under accumulation. Allocated with one part of capacity
+    /// on first use; ownership transfers to an `UploadPart` when full (or, at
+    /// stream end, as the final partial part).
+    pub part_buf: Vec<u8>,
+    /// Completed parts waiting for a queue slot, FIFO. Each entry owns its
+    /// allocation: a fat pointer to the initialized bytes plus the Vec
+    /// capacity it was allocated with. Reconstruction takes the initialized
+    /// length from the fat pointer and the capacity from the entry
+    /// (`Vec::from_raw_parts(ptr, ptr.len(), cap)`); the final partial part
+    /// has `len < cap`.
+    pub ready_parts: std::collections::VecDeque<(*const [u8], usize)>,
 
     pub path: Box<[u8]>,
     pub proxy: Box<[u8]>,
@@ -226,16 +235,15 @@ pub struct UploadPartResult {
 impl UploadPart {
     fn free_allocated_slice(&mut self) {
         if self.allocated_size > 0 {
-            // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
-            // (either via `to_vec().into_boxed_slice()` where len==cap, or by taking ownership of
-            // StreamBuffer's backing allocation). Reconstruct and drop.
+            // SAFETY: `data.ptr` is the `part_buf` Vec allocation (global allocator) whose
+            // ownership transferred here via `finish_current_part` → `ready_parts` →
+            // `get_create_part`: the fat pointer's length is the initialized prefix and
+            // `allocated_size` is the capacity it was allocated with (the final partial
+            // part has len < cap). Reconstruct and drop.
             unsafe {
+                let len = self.data.len();
                 let ptr = (*self.data).as_ptr().cast_mut();
-                drop(Vec::from_raw_parts(
-                    ptr,
-                    self.allocated_size,
-                    self.allocated_size,
-                ));
+                drop(Vec::from_raw_parts(ptr, len, self.allocated_size));
             }
         }
         self.data = std::ptr::from_ref::<[u8]>(b"" as &[u8]);
@@ -409,6 +417,22 @@ impl Drop for MultiPartUpload {
         // uploadid_buffer: MutableString — Drop
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
         // multipart_upload_list: Vec<u8> — Drop
+        // part_buf: Vec<u8> — Drop
+        // ready_parts entries were never handed to an UploadPart, so this side
+        // still owns their allocations — mirror free_allocated_slice.
+        for (ptr, allocated) in self.ready_parts.drain(..) {
+            // SAFETY: each entry was produced by finish_current_part from a
+            // Vec with the captured capacity; the fat pointer's length is the
+            // initialized prefix (the final partial part has len < cap). Sole
+            // owner here.
+            unsafe {
+                drop(Vec::from_raw_parts(
+                    ptr.cast::<u8>().cast_mut(),
+                    ptr.len(),
+                    allocated,
+                ))
+            };
+        }
         // bun.destroy(this) — handled by deref_() via heap::take
     }
 }
@@ -441,7 +465,7 @@ impl MultiPartUpload {
                             path: &this.path,
                             method: bun_http::Method::PUT,
                             proxy_url: this.proxy_url(),
-                            body: this.buffered.slice(),
+                            body: this.part_buf.as_slice(),
                             content_type: this.content_type.as_deref(),
                             content_disposition: this.content_disposition.as_deref(),
                             content_encoding: this.content_encoding.as_deref(),
@@ -464,20 +488,18 @@ impl MultiPartUpload {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
 
                 if let Some(callback) = this.on_writable {
-                    callback(this, this.callback_context, this.buffered.size() as u64);
+                    callback(this, this.callback_context, this.part_buf.len() as u64);
                 }
                 this.done()
             }
         }
     }
 
-    /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
-    fn get_create_part(
-        &mut self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> Option<*mut UploadPart> {
+    /// This is the only place we allocate the queue, this is responsible for the flow of parts and the max allowed concurrency.
+    /// Takes ownership of `chunk`'s allocation (`allocated_size` is the `Vec` capacity it was
+    /// built with in `finish_current_part`); returns `None` when the queue is at capacity, in
+    /// which case no transfer happens.
+    fn get_create_part(&mut self, chunk: &[u8], allocated_size: usize) -> Option<*mut UploadPart> {
         let Some(index) = self.available.find_first_set() else {
             // this means that the queue is full and we cannot flush it
             return None;
@@ -508,13 +530,7 @@ impl MultiPartUpload {
             }
             self.queue = Some(queue.into_boxed_slice());
         }
-        let (data, allocated_len): (*const [u8], usize) = if needs_clone {
-            let owned = Box::<[u8]>::from(chunk);
-            let len = owned.len();
-            (bun_core::heap::into_raw(owned).cast_const(), len)
-        } else {
-            (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
-        };
+        let data: *const [u8] = std::ptr::from_ref::<[u8]>(chunk);
 
         let part_number = self.current_part_number;
         self.current_part_number += 1;
@@ -523,7 +539,7 @@ impl MultiPartUpload {
         // always set all struct fields to avoid undefined behavior
         *queue_item = UploadPart {
             data,
-            allocated_size: allocated_len,
+            allocated_size,
             part_number,
             ctx: self_ref,
             index: index as u8, // @truncate
@@ -549,9 +565,8 @@ impl MultiPartUpload {
                 }
             }
         }
-        let part_size = self.part_size_in_bytes();
-        if self.ended || self.buffered.size() >= part_size {
-            self.process_multi_part(part_size)?;
+        if self.ended || !self.ready_parts.is_empty() {
+            self.process_multi_part()?;
         }
 
         // empty queue
@@ -868,13 +883,8 @@ impl MultiPartUpload {
         )
     }
 
-    fn enqueue_part(
-        &mut self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> JsTerminatedResult<bool> {
-        let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
+    fn enqueue_part(&mut self, chunk: &[u8], allocated_size: usize) -> JsTerminatedResult<bool> {
+        let Some(part) = self.get_create_part(chunk, allocated_size) else {
             return Ok(false);
         };
 
@@ -909,113 +919,116 @@ impl MultiPartUpload {
         Ok(true)
     }
 
-    fn process_multi_part(&mut self, part_size: usize) -> JsTerminatedResult<()> {
+    fn process_multi_part(&mut self) -> JsTerminatedResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "processMultiPart {} {}",
             BStr::new(&self.path),
-            part_size
+            self.part_size_in_bytes()
         );
-        if self.buffered.is_empty() && self.is_queue_empty() && self.ended {
+        if self.ended {
+            // The stream is over: whatever is accumulated becomes the final
+            // (possibly partial) part.
+            self.finish_current_part();
+        }
+        if self.ready_parts.is_empty() && self.is_queue_empty() && self.ended {
             // no more data to send and we are done
             self.done()?;
             return Ok(());
         }
-        // need to split in multiple parts because of the size
-        // The "reset buffered if empty" cleanup runs after the loop;
-        // early-return paths either reset buffered to default (already empty) or leave it non-empty (no-op).
 
-        while self.buffered.is_not_empty() {
-            let len = part_size.min(self.buffered.size());
-            if len < part_size && !self.ended {
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} {} slice too small",
-                    BStr::new(&self.path),
-                    len
-                );
-                // slice is too small, we need to wait for more data
+        // `enqueue_part` can finish the upload synchronously (e.g. signing the
+        // multipart-init request fails, which runs `fail()`): stop handing
+        // parts to a `Finished` task. `fail()` already canceled the queue, so
+        // parts stored after it would never be started, canceled, or freed.
+        // Entries left in `ready_parts` keep their allocations and are freed
+        // in `Drop`.
+        while self.state != State::Finished {
+            let Some((ptr, allocated)) = self.ready_parts.pop_front() else {
                 break;
-            }
-            // if is one big chunk we can pass ownership and avoid dupe
-            if self.buffered.cursor == 0 && self.buffered.size() == len {
-                // we need to know the allocated size to free the memory later
-                let allocated_size = self.buffered.memory_cost();
-                // Capture a raw slice ptr before calling enqueue_part(&mut self) to satisfy the borrow checker.
-                let slice_ptr = std::ptr::from_ref::<[u8]>(self.buffered.slice());
-                // raw slice pointer carries its length in metadata; no deref needed
-                let slice_len = slice_ptr.len();
-
-                // we dont care about the result because we are sending everything
-                // SAFETY: slice_ptr borrows self.buffered's storage; enqueue_part with needs_clone=false
-                // takes ownership of that storage and self.buffered is reset below before any further use.
-                if self.enqueue_part(unsafe { &*slice_ptr }, allocated_size, false)? {
+            };
+            // Pop BEFORE enqueueing: `enqueue_part` hands the allocation to
+            // the `UploadPart` as soon as `get_create_part` succeeds, and its
+            // fallible tail (`execute_simple_s3_request`, `start`) can still
+            // propagate `Err` afterwards — at which point the part's failure
+            // path frees the buffer. Leaving the entry in `ready_parts` for
+            // that case would make `Drop` free it a second time. On `Err` the
+            // entry must stay popped; only a queue-full `Ok(false)` (no
+            // transfer happened) returns it to the front.
+            // SAFETY: the entry owned its allocation (transferred in
+            // finish_current_part) until this handoff.
+            match self.enqueue_part(unsafe { &*ptr }, allocated) {
+                Ok(true) => {
                     scoped_log!(
                         S3MultiPartUpload,
-                        "processMultiPart {} {} full buffer enqueued",
+                        "processMultiPart {} part enqueued ({} bytes)",
                         BStr::new(&self.path),
-                        slice_len
+                        ptr.len()
                     );
-
-                    // queue is not full, we can clear the buffer part now owns the data
-                    // if its full we will retry later
-                    // SAFETY: ownership of buffered's allocation transferred to the
-                    // UploadPart created via enqueue_part(..., needs_clone=false) above.
-                    // Assigning a fresh StreamBuffer would Drop the old one and free the
-                    // Vec<u8> backing storage, leaving UploadPart.data dangling (UAF on
-                    // perform(), double-free on free_allocated_slice). Take + forget so
-                    // the part remains sole owner.
-                    let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.buffered));
-                    return Ok(());
                 }
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} {} queue full",
-                    BStr::new(&self.path),
-                    slice_len
-                );
-
-                return Ok(());
+                Ok(false) => {
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "processMultiPart {} queue full",
+                        BStr::new(&self.path)
+                    );
+                    // queue is full; no ownership transfer happened — retry
+                    // this part on the next drain
+                    self.ready_parts.push_front((ptr, allocated));
+                    break;
+                }
+                Err(err) => return Err(err),
             }
-
-            // Capture a raw slice ptr before calling enqueue_part(&mut self) to satisfy the borrow checker.
-            let slice_ptr = &raw const self.buffered.slice()[..len];
-            // allocated size is the slice len because we dupe the buffer
-            // SAFETY: slice_ptr borrows self.buffered which is not mutated until after enqueue_part dupes it
-            if self.enqueue_part(unsafe { &*slice_ptr }, len, true)? {
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} {} slice enqueued",
-                    BStr::new(&self.path),
-                    len
-                );
-                // queue is not full, we can set the offset
-                self.buffered.wrote(len);
-            } else {
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} {} queue full",
-                    BStr::new(&self.path),
-                    len
-                );
-                // queue is full stop enqueue and retry later
-                break;
-            }
-        }
-
-        if self.buffered.is_empty() {
-            self.buffered.reset();
         }
         Ok(())
+    }
+
+    /// Append bytes to the current part, handing each filled part off to
+    /// `ready_parts`. Parts are built in place in their own allocation, so
+    /// enqueueing transfers ownership instead of duplicating the bytes.
+    fn stage_bytes(&mut self, mut chunk: &[u8]) -> Result<(), AllocError> {
+        let part_size = self.part_size_in_bytes();
+        while !chunk.is_empty() {
+            if self.part_buf.capacity() == 0 {
+                self.part_buf
+                    .try_reserve_exact(part_size)
+                    .map_err(|_| AllocError)?;
+            }
+            let room = part_size - self.part_buf.len();
+            let take = room.min(chunk.len());
+            self.part_buf.extend_from_slice(&chunk[..take]);
+            chunk = &chunk[take..];
+            if self.part_buf.len() >= part_size {
+                self.finish_current_part();
+            }
+        }
+        Ok(())
+    }
+
+    /// Move the accumulated `part_buf` (full mid-stream, possibly partial at
+    /// stream end) into `ready_parts`, transferring ownership of its
+    /// allocation. The captured capacity is what `free_allocated_slice`
+    /// reconstructs the `Vec` with.
+    fn finish_current_part(&mut self) {
+        if self.part_buf.is_empty() {
+            return;
+        }
+        let vec = core::mem::take(&mut self.part_buf);
+        let len = vec.len();
+        let cap = vec.capacity();
+        let vec = core::mem::ManuallyDrop::new(vec);
+        let ptr = std::ptr::slice_from_raw_parts(vec.as_ptr(), len);
+        self.ready_parts.push_back((ptr, cap));
     }
 
     pub fn proxy_url(&self) -> Option<&[u8]> {
         Some(&self.proxy)
     }
 
-    fn process_buffered(&mut self, part_size: usize) {
+    fn process_buffered(&mut self) {
         if self.ended
-            && self.buffered.size() < self.part_size_in_bytes()
+            && self.ready_parts.is_empty()
+            && self.part_buf.len() < self.part_size_in_bytes()
             && self.state == State::NotStarted
         {
             scoped_log!(
@@ -1025,6 +1038,9 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
+            // Zig parity: both arms below discard a JsTerminated error
+            // (`catch {}` in multipart.zig's processBuffered); termination is
+            // re-checked on the next JS entry.
             let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
             let _ = execute_simple_s3_request(
                 &*self.credentials,
@@ -1032,7 +1048,7 @@ impl MultiPartUpload {
                     path: &self.path,
                     method: bun_http::Method::PUT,
                     proxy_url: self.proxy_url(),
-                    body: self.buffered.slice(),
+                    body: self.part_buf.as_slice(),
                     content_type: self.content_type.as_deref(),
                     content_disposition: self.content_disposition.as_deref(),
                     content_encoding: self.content_encoding.as_deref(),
@@ -1043,10 +1059,10 @@ impl MultiPartUpload {
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 callback_context,
-            ); // TODO: properly propagate exception upwards
+            );
         } else {
             // we need to split
-            let _ = self.process_multi_part(part_size); // TODO: properly propagate exception upwards
+            let _ = self.process_multi_part();
         }
     }
 
@@ -1058,9 +1074,17 @@ impl MultiPartUpload {
         if self.state == State::WaitStreamCheck {
             self.state = State::NotStarted;
             if self.ended {
-                self.process_buffered(self.part_size_in_bytes());
+                self.process_buffered();
             }
         }
+    }
+
+    /// Whether the upload has issued its first request. A task that never
+    /// started has no completion callback coming: whoever drops its last
+    /// external handle must finish it (`fail`) so the lifecycle ref and the
+    /// event-loop handle are released.
+    pub fn has_started(&self) -> bool {
+        !matches!(self.state, State::WaitStreamCheck | State::NotStarted)
     }
 
     pub fn has_backpressure(&self) -> bool {
@@ -1095,8 +1119,8 @@ impl MultiPartUpload {
         if self.state == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
             self.ended = true;
-            if self.buffered.size() > 0 {
-                self.process_buffered(self.part_size_in_bytes());
+            if !self.part_buf.is_empty() || !self.ready_parts.is_empty() {
+                self.process_buffered();
             }
             return Ok(if self.has_backpressure() {
                 ResumableSinkBackpressure::Backpressure
@@ -1104,45 +1128,41 @@ impl MultiPartUpload {
                 ResumableSinkBackpressure::WantMore
             });
         }
-        if is_last {
-            self.ended = true;
-            if !chunk.is_empty() {
-                match encoding {
-                    WriteEncoding::Bytes => self.buffered.write(chunk)?,
-                    WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
-                    WriteEncoding::Utf16 => {
-                        // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
-                        let utf16: &[u16] = bytemuck::cast_slice(chunk);
-                        self.buffered.write_utf16(utf16)?
+        if !is_last && chunk.is_empty() {
+            // still have more data and receive empty, nothing todo here
+            return Ok(if self.has_backpressure() {
+                ResumableSinkBackpressure::Backpressure
+            } else {
+                ResumableSinkBackpressure::WantMore
+            });
+        }
+        if !chunk.is_empty() {
+            match encoding {
+                WriteEncoding::Bytes => self.stage_bytes(chunk)?,
+                WriteEncoding::Latin1 => {
+                    if strings::is_all_ascii(chunk) {
+                        self.stage_bytes(chunk)?;
+                    } else {
+                        let utf8 =
+                            strings::allocate_latin1_into_utf8_with_list(Vec::new(), 0, chunk);
+                        self.stage_bytes(&utf8)?;
                     }
                 }
-            }
-            self.process_buffered(self.part_size_in_bytes());
-        } else {
-            // still have more data and receive empty, nothing todo here
-            if chunk.is_empty() {
-                return Ok(if self.has_backpressure() {
-                    ResumableSinkBackpressure::Backpressure
-                } else {
-                    ResumableSinkBackpressure::WantMore
-                });
-            }
-            match encoding {
-                WriteEncoding::Bytes => self.buffered.write(chunk)?,
-                WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
                 WriteEncoding::Utf16 => {
                     // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
                     let utf16: &[u16] = bytemuck::cast_slice(chunk);
-                    self.buffered.write_utf16(utf16)?
+                    let mut utf8 = Vec::new();
+                    ByteVecExt::write_utf16(&mut utf8, utf16)?;
+                    self.stage_bytes(&utf8)?;
                 }
             }
-            let part_size = self.part_size_in_bytes();
-            if self.buffered.size() >= part_size {
-                // send the part we have enough data
-                self.process_buffered(part_size);
-            }
-
-            // wait for more
+        }
+        if is_last {
+            self.ended = true;
+            self.process_buffered();
+        } else if !self.ready_parts.is_empty() {
+            // at least one full part is staged — try to enqueue it
+            self.process_buffered();
         }
         Ok(if self.has_backpressure() {
             ResumableSinkBackpressure::Backpressure

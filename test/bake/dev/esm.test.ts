@@ -42,6 +42,27 @@ const liveBindingTest = devTest("live bindings with `var`", {
     await dev.fetch("/").equals("Value: -2");
   },
 });
+// https://github.com/oven-sh/bun/issues/34733
+devTest("calling an imported function does not pass the module namespace as `this`", {
+  framework: minimalFramework,
+  files: {
+    "util.ts": `
+      export function getReceiver(this: unknown) {
+        return this;
+      }
+    `,
+    "routes/index.ts": `
+      import { getReceiver } from '../util';
+      export default function(req, meta) {
+        const receiver = getReceiver();
+        return new Response(String(receiver === undefined || receiver === globalThis));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("true");
+  },
+});
 devTest("live bindings through export clause", {
   framework: minimalFramework,
   files: {

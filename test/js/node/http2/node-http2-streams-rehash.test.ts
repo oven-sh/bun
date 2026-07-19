@@ -21,73 +21,8 @@ test("session.request() from a stream 'timeout' listener during forEachStream do
 });
 
 test("http2 client request() does not hold *Stream across user-controlled options getters", async () => {
-  const script = /* js */ `
-    const http2 = require("node:http2");
-
-    const server = http2.createServer();
-    server.on("stream", (stream) => {
-      stream.respond({ ":status": 200 });
-      stream.end();
-    });
-    server.on("error", () => {});
-
-    server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
-      const client = http2.connect("http://127.0.0.1:" + port);
-      client.on("error", () => {});
-
-      client.on("connect", () => {
-        let triggered = false;
-
-        // Use a POST so the options object is passed through to the native
-        // parser without being shallow-copied.
-        const options = {
-          get paddingStrategy() {
-            if (!triggered) {
-              triggered = true;
-              // Insert enough new streams to force the HashMap to rehash,
-              // invalidating any *Stream pointer held by the outer request().
-              for (let i = 0; i < 128; i++) {
-                const r = client.request({ ":path": "/", ":method": "GET" });
-                r.on("error", () => {});
-                r.on("response", () => {});
-                r.resume();
-              }
-            }
-            return 0;
-          },
-          // Ensure the outer request writes through the (previously dangling)
-          // stream pointer after the getter returns.
-          exclusive: true,
-          parent: 1,
-          weight: 16,
-          waitForTrailers: false,
-          endStream: true,
-        };
-
-        const req = client.request({ ":path": "/", ":method": "POST" }, options);
-        req.on("error", () => {});
-        req.on("response", () => {});
-        req.resume();
-        req.on("close", () => {
-          client.close(() => {
-            server.close(() => {
-              if (!triggered) {
-                console.error("getter was never invoked");
-                process.exit(1);
-              }
-              console.log("done");
-              process.exit(0);
-            });
-          });
-        });
-        req.end();
-      });
-    });
-  `;
-
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [bunExe(), path.join(import.meta.dir, "node-http2-getter-rehash.fixture.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

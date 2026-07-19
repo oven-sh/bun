@@ -2395,3 +2395,524 @@ describe("async SQLite task substrate (Gate A private)", () => {
     expect(exitCode).toBe(0);
   }, 30000);
 });
+
+describe("async SQLite connection core (Gate B private)", () => {
+  it("opens and closes a file-backed connection off-thread", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    expect(typeof asyncSQLiteConnectionOpenForTesting).toBe("function");
+
+    const dir = tempDirWithFiles("sqlite-async-gate-b-open", { "empty.txt": "" });
+    const file = path.join(dir, "gate-b.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    expect((await connection.ready).offThread).toBe(true);
+    await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
+    await asyncSQLiteConnectionCloseForTesting(connection.id);
+    await expect(asyncSQLiteConnectionCloseForTesting(connection.id)).resolves.toBe(false);
+  });
+
+  it("executes accepted operations in FIFO order with one active operation", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-gate-b-fifo", { "empty.txt": "" }), "gate-b.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+
+    await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
+    const operations = [1, 2, 3, 4, 5].map(value =>
+      asyncSQLiteConnectionExecForTesting(connection.id, `INSERT INTO gate VALUES (${value})`),
+    );
+    await Promise.all(operations);
+    await asyncSQLiteConnectionCloseForTesting(connection.id);
+
+    const db = new Database(file);
+    try {
+      expect(db.query("SELECT value FROM gate ORDER BY rowid").all()).toEqual(
+        [1, 2, 3, 4, 5].map(value => ({ value })),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("enforces the bounded queue and keeps running after an operation error", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-gate-b-queue", { "empty.txt": "" }), "gate-b.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 2, 60000);
+    await connection.ready;
+    await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
+
+    const blocker = new Database(file);
+    try {
+      blocker.exec("BEGIN IMMEDIATE");
+      const active = asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (1)");
+      const queued = asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (2)");
+      await expect(asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (3)")).rejects.toThrow(
+        "connection queue is full or closing",
+      );
+      blocker.exec("COMMIT");
+      await expect(active).resolves.toBe(true);
+      await expect(queued).resolves.toBe(true);
+
+      await expect(asyncSQLiteConnectionExecForTesting(connection.id, "not valid SQL")).rejects.toThrow(
+        'near "not": syntax error',
+      );
+      await expect(asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (4)")).resolves.toBe(
+        true,
+      );
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    } finally {
+      blocker.close();
+    }
+  });
+
+  it("uses close as an admission fence and closes exactly once", async () => {
+    const dir = tempDirWithFiles("sqlite-async-gate-b-close", {
+      "main.js": `
+        import { Database } from "bun:sqlite";
+        import {
+          asyncSQLiteConnectionCloseForTesting,
+          asyncSQLiteConnectionExecForTesting,
+          asyncSQLiteConnectionOpenForTesting,
+          asyncSQLiteConnectionStatsForTesting,
+        } from "bun:internal-for-testing";
+
+        const waitForCondition = async (predicate, describeCurrent) => {
+          const maxYields = 10_000;
+          for (let i = 0; i < maxYields; i++) {
+            if (predicate()) return;
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          throw new Error(describeCurrent());
+        };
+
+        const file = process.argv[2];
+        const baseline = asyncSQLiteConnectionStatsForTesting();
+        const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+        const blocker = new Database(file);
+        try {
+          await connection.ready;
+          await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
+          blocker.exec("BEGIN IMMEDIATE");
+          const accepted = asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (1)");
+          await waitForCondition(
+            () => asyncSQLiteConnectionStatsForTesting().activeConnectionOperations === baseline.activeConnectionOperations + 1,
+            () => "accepted operation did not become active: " + JSON.stringify(asyncSQLiteConnectionStatsForTesting()),
+          );
+
+          const closing = asyncSQLiteConnectionCloseForTesting(connection.id);
+          let postCloseError;
+          try {
+            await asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (2)");
+          } catch (error) {
+            postCloseError = error;
+          }
+          if (postCloseError?.message !== "connection queue is full or closing")
+            throw new Error("post-close admission did not reject: " + postCloseError?.message);
+
+          blocker.exec("COMMIT");
+          if (await accepted !== true)
+            throw new Error("accepted operation did not settle successfully");
+          if (await closing !== true)
+            throw new Error("close did not settle successfully");
+          if (await asyncSQLiteConnectionCloseForTesting(connection.id))
+            throw new Error("repeated close must report false");
+
+          await waitForCondition(
+            () => {
+              const stats = asyncSQLiteConnectionStatsForTesting();
+              return (
+                stats.liveConnections === baseline.liveConnections &&
+                stats.liveJobs === baseline.liveJobs &&
+                stats.liveResults === baseline.liveResults &&
+                stats.liveRequests === baseline.liveRequests &&
+                stats.activeConnectionOperations === baseline.activeConnectionOperations
+              );
+            },
+            () => "close left native state live: " + JSON.stringify(asyncSQLiteConnectionStatsForTesting()),
+          );
+          const final = asyncSQLiteConnectionStatsForTesting();
+          if (final.closeJobsRun !== baseline.closeJobsRun + 1)
+            throw new Error("expected exactly one close job: " + JSON.stringify({ baseline, final }));
+          if (final.physicalCloses !== baseline.physicalCloses + 1)
+            throw new Error("expected exactly one physical close: " + JSON.stringify({ baseline, final }));
+          console.log(JSON.stringify({
+            accepted: true,
+            closed: true,
+            postCloseRejected: true,
+            closeJobsRun: final.closeJobsRun - baseline.closeJobsRun,
+            physicalCloses: final.physicalCloses - baseline.physicalCloses,
+          }));
+        } finally {
+          blocker.close();
+        }
+      `,
+    });
+    const file = path.join(dir, "gate-b.db");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", file],
+      cwd: dir,
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+      stdout: JSON.stringify({
+        accepted: true,
+        closed: true,
+        postCloseRejected: true,
+        closeJobsRun: 1,
+        physicalCloses: 1,
+      }),
+      exitCode: 0,
+    });
+  });
+
+  it("drains accepted operations when close is requested during Opening", async () => {
+    const dir = tempDirWithFiles("sqlite-async-gate-b-close-opening", {
+      "main.js": `
+        import { Database } from "bun:sqlite";
+        import {
+          asyncSQLiteConnectionCloseForTesting,
+          asyncSQLiteConnectionExecForTesting,
+          asyncSQLiteConnectionOpenForTesting,
+          asyncSQLiteConnectionStatsForTesting,
+          asyncSQLiteTaskForTesting,
+        } from "bun:internal-for-testing";
+
+        const waitForCondition = async (predicate, describeCurrent) => {
+          const maxYields = 10_000;
+          for (let i = 0; i < maxYields; i++) {
+            if (predicate()) return;
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          throw new Error(describeCurrent());
+        };
+
+        const file = process.argv[2];
+        const baseline = asyncSQLiteConnectionStatsForTesting();
+        const blocker = new Database(file);
+        try {
+          blocker.exec("CREATE TABLE gate (value INTEGER)");
+          blocker.exec("BEGIN IMMEDIATE");
+
+          const blockers = [asyncSQLiteTaskForTesting(file), asyncSQLiteTaskForTesting(file)];
+          await Promise.all(blockers.map(task => task.started));
+
+          const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+          let ready;
+          let accepted;
+          let closed;
+          let readyError;
+          let acceptedError;
+          let closeError;
+          let readySettled = false;
+          let acceptedSettled = false;
+          let closeSettled = false;
+          connection.ready.then(
+            value => {
+              ready = value;
+              readySettled = true;
+            },
+            error => {
+              readyError = error;
+              readySettled = true;
+            },
+          );
+          asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (1)").then(
+            value => {
+              accepted = value;
+              acceptedSettled = true;
+            },
+            error => {
+              acceptedError = error;
+              acceptedSettled = true;
+            },
+          );
+          asyncSQLiteConnectionCloseForTesting(connection.id).then(
+            value => {
+              closed = value;
+              closeSettled = true;
+            },
+            error => {
+              closeError = error;
+              closeSettled = true;
+            },
+          );
+          let postCloseError;
+          try {
+            await asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (2)");
+          } catch (error) {
+            postCloseError = error;
+          }
+          blocker.exec("COMMIT");
+
+          await Promise.all(blockers.map(task => task.result));
+          await waitForCondition(
+            () => readySettled && acceptedSettled && closeSettled,
+            () =>
+              "close during Opening did not settle accepted work: " +
+              JSON.stringify({ ready, accepted, closed, readyError: readyError?.message, acceptedError: acceptedError?.message, closeError: closeError?.message, stats: asyncSQLiteConnectionStatsForTesting() }),
+          );
+
+          if (readyError || acceptedError || closeError)
+            throw new Error(JSON.stringify({ readyError: readyError?.message, acceptedError: acceptedError?.message, closeError: closeError?.message }));
+          if (!ready?.offThread || accepted !== true || closed !== true || postCloseError?.message !== "connection queue is full or closing")
+            throw new Error(JSON.stringify({ ready, accepted, closed, postCloseError: postCloseError?.message }));
+          if (await asyncSQLiteConnectionCloseForTesting(connection.id))
+            throw new Error("repeated close must report false");
+          if (blocker.query("SELECT value FROM gate").all().length !== 3)
+            throw new Error("accepted operation did not run exactly once");
+
+          await waitForCondition(
+            () => {
+              const stats = asyncSQLiteConnectionStatsForTesting();
+              return (
+                stats.liveConnections === baseline.liveConnections &&
+                stats.liveJobs === baseline.liveJobs &&
+                stats.liveResults === baseline.liveResults &&
+                stats.liveRequests === baseline.liveRequests &&
+                stats.activeConnectionOperations === baseline.activeConnectionOperations
+              );
+            },
+            () => "close during Opening leaked native state: " + JSON.stringify(asyncSQLiteConnectionStatsForTesting()),
+          );
+          const final = asyncSQLiteConnectionStatsForTesting();
+          if (final.closeJobsRun !== baseline.closeJobsRun + 1)
+            throw new Error("expected exactly one close job: " + JSON.stringify({ baseline, final }));
+          if (final.physicalCloses !== baseline.physicalCloses + 1)
+            throw new Error("expected exactly one physical close: " + JSON.stringify({ baseline, final }));
+          console.log(JSON.stringify({
+            accepted,
+            closed,
+            postCloseRejected: !!postCloseError,
+            closeJobsRun: final.closeJobsRun - baseline.closeJobsRun,
+            physicalCloses: final.physicalCloses - baseline.physicalCloses,
+          }));
+        } finally {
+          blocker.close();
+        }
+      `,
+    });
+    const file = path.join(dir, "gate-b.db");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", file],
+      cwd: dir,
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+      stdout: JSON.stringify({
+        accepted: true,
+        closed: true,
+        postCloseRejected: true,
+        closeJobsRun: 1,
+        physicalCloses: 1,
+      }),
+      exitCode: 0,
+    });
+  });
+
+  it("cleans up a failed open without leaking native state", async () => {
+    const { asyncSQLiteConnectionOpenForTesting, asyncSQLiteConnectionStatsForTesting } = await import(
+      "bun:internal-for-testing"
+    );
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const invalidPath = path.join(
+      tempDirWithFiles("sqlite-async-gate-b-failure", { "directory": {} }),
+      "missing",
+      "db",
+    );
+    const connection = asyncSQLiteConnectionOpenForTesting(invalidPath, 2);
+    await expect(connection.ready).rejects.toThrow("unable to open database file");
+    await waitForAsyncSQLiteStats(
+      asyncSQLiteConnectionStatsForTesting,
+      current =>
+        current.liveConnections === baseline.liveConnections &&
+        current.liveJobs === baseline.liveJobs &&
+        current.liveResults === baseline.liveResults &&
+        current.liveRequests === baseline.liveRequests &&
+        current.activeConnectionOperations === baseline.activeConnectionOperations,
+      "failed Gate B open leaked native state",
+    );
+    expect(asyncSQLiteConnectionStatsForTesting().liveConnections).toBe(baseline.liveConnections);
+  });
+
+  it("rejects operations accepted while an invalid connection is Opening", async () => {
+    const dir = tempDirWithFiles("sqlite-async-gate-b-failure-queued", {
+      "main.js": `
+        import { Database } from "bun:sqlite";
+        import {
+          asyncSQLiteConnectionExecForTesting,
+          asyncSQLiteConnectionOpenForTesting,
+          asyncSQLiteConnectionStatsForTesting,
+          asyncSQLiteTaskForTesting,
+        } from "bun:internal-for-testing";
+
+        const waitForCondition = async (predicate, describeCurrent) => {
+          const maxYields = 10_000;
+          for (let i = 0; i < maxYields; i++) {
+            if (predicate()) return;
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          throw new Error(describeCurrent());
+        };
+
+        const file = process.argv[2];
+        const invalidPath = file + "/missing/gate.db";
+        const baseline = asyncSQLiteConnectionStatsForTesting();
+        const blocker = new Database(file);
+        try {
+          blocker.exec("CREATE TABLE gate (value INTEGER)");
+          blocker.exec("BEGIN IMMEDIATE");
+          const blockers = [asyncSQLiteTaskForTesting(file), asyncSQLiteTaskForTesting(file)];
+          await Promise.all(blockers.map(task => task.started));
+
+          const connection = asyncSQLiteConnectionOpenForTesting(invalidPath, 4);
+          const accepted = [
+            asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (1)"),
+            asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (2)"),
+          ];
+          blocker.exec("COMMIT");
+
+          const [ready, ...operations] = await Promise.allSettled([connection.ready, ...accepted]);
+          await Promise.all(blockers.map(task => task.result));
+          if (ready.status !== "rejected" || ready.reason?.message !== "unable to open database file")
+            throw new Error("unexpected ready result: " + JSON.stringify(ready));
+          if (
+            operations.length !== accepted.length ||
+            operations.some(result => result.status !== "rejected" || result.reason?.message !== "connection open failed")
+          )
+            throw new Error("unexpected queued operation results: " + JSON.stringify(operations));
+
+          await waitForCondition(
+            () => {
+              const stats = asyncSQLiteConnectionStatsForTesting();
+              return (
+                stats.liveConnections === baseline.liveConnections &&
+                stats.liveJobs === baseline.liveJobs &&
+                stats.liveResults === baseline.liveResults &&
+                stats.liveRequests === baseline.liveRequests &&
+                stats.activeConnectionOperations === baseline.activeConnectionOperations
+              );
+            },
+            () => "failed open with queued operations leaked native state: " + JSON.stringify(asyncSQLiteConnectionStatsForTesting()),
+          );
+          const final = asyncSQLiteConnectionStatsForTesting();
+          if (final.closeJobsRun !== baseline.closeJobsRun || final.physicalCloses !== baseline.physicalCloses)
+            throw new Error("failed open without close request scheduled a close: " + JSON.stringify({ baseline, final }));
+          console.log(JSON.stringify({
+            readyRejected: true,
+            queuedRejected: operations.length,
+            closeJobsRun: final.closeJobsRun - baseline.closeJobsRun,
+            physicalCloses: final.physicalCloses - baseline.physicalCloses,
+          }));
+        } finally {
+          blocker.close();
+        }
+      `,
+    });
+    const file = path.join(dir, "gate-b-failure.db");
+    let proc;
+    try {
+      proc = Bun.spawn({
+        cmd: [bunExe(), "main.js", file],
+        cwd: dir,
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdoutPromise = proc.stdout.text();
+      const stderrPromise = proc.stderr.text();
+      const stdout = await stdoutPromise;
+      expect(stdout.trim()).toBe(
+        JSON.stringify({
+          readyRejected: true,
+          queuedRejected: 2,
+          closeJobsRun: 0,
+          physicalCloses: 0,
+        }),
+      );
+      const [, exitCode] = await Promise.all([stderrPromise, proc.exited]);
+      expect(exitCode).toBe(0);
+    } finally {
+      if (proc) await proc.exited;
+    }
+  });
+
+  it("abandons an active and queued connection operation during Worker teardown", async () => {
+    const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+    const { Worker } = await import("node:worker_threads");
+    const dir = tempDirWithFiles("sqlite-async-gate-b-worker", {
+      "main.js": `
+        import { parentPort, workerData } from "node:worker_threads";
+        import {
+          asyncSQLiteConnectionCloseForTesting,
+          asyncSQLiteConnectionOpenForTesting,
+          asyncSQLiteConnectionExecForTesting,
+        } from "bun:internal-for-testing";
+        const connection = asyncSQLiteConnectionOpenForTesting(workerData, 2, 60000);
+        await connection.ready;
+        const first = asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (1)");
+        const second = asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO gate VALUES (2)");
+        const closing = asyncSQLiteConnectionCloseForTesting(connection.id);
+        first.catch(() => {});
+        second.catch(() => {});
+        closing.catch(() => {});
+        parentPort.postMessage("submitted");
+        await new Promise(() => {});
+      `,
+    });
+    const file = path.join(dir, "gate-b-worker.db");
+    const blocker = new Database(file);
+    let worker;
+    try {
+      blocker.exec("CREATE TABLE gate (value INTEGER)");
+      blocker.exec("BEGIN IMMEDIATE");
+      const baseline = asyncSQLiteConnectionStatsForTesting();
+      worker = new Worker(path.join(dir, "main.js"), { type: "module", workerData: file });
+      await new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`Worker exited before submitting work: ${code}`)));
+      });
+      await worker.terminate();
+      worker = undefined;
+      blocker.exec("COMMIT");
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        current =>
+          current.liveConnections === baseline.liveConnections &&
+          current.liveJobs === baseline.liveJobs &&
+          current.liveResults === baseline.liveResults &&
+          current.liveRequests === baseline.liveRequests &&
+          current.activeConnectionOperations === baseline.activeConnectionOperations,
+        "Worker teardown leaked Gate B connection state",
+      );
+      const final = asyncSQLiteConnectionStatsForTesting();
+      expect(final.liveConnections).toBe(baseline.liveConnections);
+      expect(final.liveJobs).toBe(baseline.liveJobs);
+      expect(final.liveResults).toBe(baseline.liveResults);
+      expect(final.liveRequests).toBe(baseline.liveRequests);
+      expect(final.activeConnectionOperations).toBe(baseline.activeConnectionOperations);
+      expect(final.closeJobsRun).toBe(baseline.closeJobsRun + 1);
+      expect(final.physicalCloses).toBe(baseline.physicalCloses + 1);
+    } finally {
+      if (worker) await worker.terminate();
+      blocker.close();
+    }
+  });
+});

@@ -9,6 +9,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Deque.h>
 
 #include <atomic>
 #include <cstdint>
@@ -25,6 +26,62 @@ class DeferredPromise;
 }
 
 namespace Bun {
+
+class AsyncSQLiteConnection;
+
+class AsyncSQLiteConnection final : public WTF::ThreadSafeRefCounted<AsyncSQLiteConnection> {
+public:
+    enum class State : uint8_t {
+        Opening,
+        OpenIdle,
+        OpenActive,
+        ShuttingDown,
+        Closed
+    };
+
+    AsyncSQLiteConnection(uint32_t, std::string&&, uint32_t, int);
+
+    bool admit(uint64_t, std::string&&);
+    void open(uint64_t, uint32_t);
+    bool close(uint64_t, uint32_t);
+    void abandon();
+    bool deliveryEnabled() const;
+    State state() const;
+
+    struct Operation {
+        uint64_t id;
+        std::string sql;
+    };
+
+    uint32_t contextId() const { return m_contextId; }
+    void runOpen(uint64_t, uint32_t callerThreadUid);
+    void runOperation(Operation&&);
+    void runClose(uint64_t);
+
+private:
+    friend class WTF::ThreadSafeRefCounted<AsyncSQLiteConnection>;
+    friend class AsyncSQLiteConnectionJob;
+
+    ~AsyncSQLiteConnection();
+    void finishOperation(uint64_t, bool, int, std::string&&);
+    void scheduleOperation(Operation&&);
+    void scheduleClose();
+    void interruptLocked();
+
+    mutable WTF::Lock m_lock;
+    State m_state { State::Opening };
+    sqlite3* m_database { nullptr };
+    sqlite3* m_activeDatabase { nullptr };
+    WTF::Deque<Operation> m_queue;
+    uint32_t m_contextId;
+    std::string m_path;
+    uint32_t m_capacity;
+    int m_busyTimeout;
+    uint64_t m_closeOperationId { 0 };
+    bool m_closeRequested { false };
+    bool m_closeScheduled { false };
+    bool m_deliveryEnabled { true };
+};
 
 class AsyncSQLiteTaskState final : public WTF::ThreadSafeRefCounted<AsyncSQLiteTaskState> {
 public:
@@ -63,7 +120,10 @@ public:
         WTF::RefPtr<WebCore::DeferredPromise> result;
         WTF::RefPtr<WebCore::AbortSignal> signal;
         uint32_t abortAlgorithmId { 0 };
-        WTF::Ref<AsyncSQLiteTaskState> state;
+        WTF::RefPtr<AsyncSQLiteTaskState> state;
+        WTF::RefPtr<AsyncSQLiteConnection> connection;
+        uint64_t connectionId { 0 };
+        bool removeConnection { false };
         bool keepAlive { false };
     };
 
@@ -88,6 +148,11 @@ public:
     void markKeepAlive(uint64_t);
     void resolveStarted(uint64_t, bool, JSC::JSGlobalObject*);
     void complete(uint64_t, int, WebCore::ScriptExecutionContext&);
+    void completeConnection(uint64_t, bool, int, std::string&&, WebCore::ScriptExecutionContext&);
+    void remove(uint64_t);
+    void addConnection(uint64_t, WTF::Ref<AsyncSQLiteConnection>&&);
+    WTF::RefPtr<AsyncSQLiteConnection> connection(uint64_t);
+    void abandonConnections();
     void abandon(bool unrefEventLoop);
 
     ~JSAsyncSQLitePendingRegistry();
@@ -98,6 +163,7 @@ private:
     void abandonRequest(PendingRequest&, bool unrefEventLoop);
 
     WTF::HashMap<uint64_t, std::unique_ptr<PendingRequest>> m_requests;
+    WTF::HashMap<uint64_t, WTF::Ref<AsyncSQLiteConnection>> m_connections;
 };
 
 struct AsyncSQLiteTaskStats {
@@ -108,11 +174,19 @@ struct AsyncSQLiteTaskStats {
     int64_t postFailures;
     int64_t completionsRun;
     int64_t completionsDropped;
+    int64_t liveConnections;
+    int64_t activeConnectionOperations;
+    int64_t closeJobsRun;
+    int64_t physicalCloses;
 };
 
 void abandonAsyncSQLiteRequestsForGlobal(JSC::JSGlobalObject*);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteTaskForTesting);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteTaskStatsForTesting);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionOpenForTesting);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionCloseForTesting);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionStatsForTesting);
 
 } // namespace Bun

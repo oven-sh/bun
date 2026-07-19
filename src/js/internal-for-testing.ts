@@ -24,6 +24,26 @@ export const asyncSQLiteTaskStatsForTesting = $newCppFunction(
   "jsFunction_asyncSQLiteTaskStatsForTesting",
   0,
 );
+export const asyncSQLiteConnectionOpenForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionOpenForTesting",
+  3,
+);
+export const asyncSQLiteConnectionExecForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionExecForTesting",
+  2,
+);
+export const asyncSQLiteConnectionCloseForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionCloseForTesting",
+  1,
+);
+export const asyncSQLiteConnectionStatsForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionStatsForTesting",
+  0,
+);
 
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.

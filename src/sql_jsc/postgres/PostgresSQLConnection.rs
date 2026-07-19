@@ -125,6 +125,9 @@ pub struct PostgresSQLConnection {
     // so `vm_mut()`'s `&mut *as_ptr()` is sound.
     pub vm: BackRef<VirtualMachine>,
     pub statements: JsCell<PreparedStatementsMap>,
+    /// Next free index into the wrapper's `m_cachedStructures` JSArray; written
+    /// via `putDirectIndex` so prototype index setters are never consulted.
+    cached_structures_len: Cell<u32>,
     pub prepared_statement_id: Cell<u64>,
     pub pending_activity_count: AtomicU32,
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
@@ -1208,6 +1211,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             // canonical `VirtualMachine::as_mut()` accessor.
             vm: BackRef::new_mut(vm),
             statements: JsCell::new(PreparedStatementsMap::default()),
+            cached_structures_len: Cell::new(0),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
@@ -2370,21 +2374,30 @@ impl PostgresSQLConnection {
         js::queries_get_cached(js_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    /// Append a freshly-built result-row `Structure` to this wrapper's
+    /// Write a freshly-built result-row `Structure` into this wrapper's
     /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
-    /// of via a per-statement `Strong` handle. Returns whether the push
-    /// succeeded; on failure the caller keeps the Strong so the structure
-    /// stays rooted.
-    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) -> bool {
+    /// of via a per-statement `Strong` handle. Each statement gets one stable
+    /// `slot` (so a column-shape change overwrites rather than grows). Returns
+    /// the slot written on success; on failure the caller keeps the Strong.
+    /// Uses `putDirectIndex` (own-slot write) so an index setter on
+    /// `Array.prototype` cannot observe or intercept the value.
+    fn add_cached_structure(
+        &self,
+        this_value: JSValue,
+        structure: JSValue,
+        slot: Option<u32>,
+    ) -> Option<u32> {
         debug_assert!(!this_value.is_empty());
-        let Some(array) = js::cached_structures_get_cached(this_value) else {
-            return false;
-        };
-        if array.push(self.global(), structure).is_err() {
+        let array = js::cached_structures_get_cached(this_value)?;
+        let i = slot.unwrap_or(self.cached_structures_len.get());
+        if array.put_index(self.global(), i, structure).is_err() {
             self.global().clear_exception_except_termination();
-            return false;
+            return None;
         }
-        true
+        if slot.is_none() {
+            self.cached_structures_len.set(i + 1);
+        }
+        Some(i)
     }
 
     // `message_type` is a runtime arg; the match
@@ -2440,11 +2453,15 @@ impl PostgresSQLConnection {
                                 .get()
                                 .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
                             && !owner.is_empty()
-                            && self.add_cached_structure(owner, new_structure)
+                            && let Some(slot) = self.add_cached_structure(
+                                owner,
+                                new_structure,
+                                statement.cached_structure.connection_slot,
+                            )
                         {
                             statement
                                 .cached_structure
-                                .mark_traced_from_connection(new_structure);
+                                .mark_traced_from_connection(new_structure, slot);
                         }
                         let cs = &statement.cached_structure;
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
@@ -2669,7 +2686,7 @@ impl PostgresSQLConnection {
                 // the correct structure instead of reusing a stale cached one.
                 // Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
-                statement.cached_structure = Default::default();
+                statement.cached_structure.reset();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
             }

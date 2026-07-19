@@ -52,6 +52,9 @@ pub struct JSMySQLConnection {
     // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
     ref_count: Cell<u32>,
     js_value: JsCell<JsRef>,
+    /// Next free index into the wrapper's `m_cachedStructures` JSArray; written
+    /// via `putDirectIndex` so prototype index setters are never consulted.
+    cached_structures_len: Cell<u32>,
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
     // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton. `BackRef` so the
@@ -526,6 +529,7 @@ impl JSMySQLConnection {
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
+            cached_structures_len: Cell::new(0),
             global_object: GlobalRef::from(global_object),
             vm: BackRef::new_mut(vm),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -691,20 +695,29 @@ impl JSMySQLConnection {
         JSValue::UNDEFINED
     }
 
-    /// Append a freshly-built result-row `Structure` to this wrapper's
+    /// Write a freshly-built result-row `Structure` into this wrapper's
     /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
-    /// of via a per-statement `Strong` handle. Returns whether the push
-    /// succeeded; on failure the caller keeps the Strong so the structure
-    /// stays rooted.
-    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) -> bool {
-        let Some(array) = js::cached_structures_get_cached(this_value) else {
-            return false;
-        };
-        if array.push(&self.global_object, structure).is_err() {
+    /// of via a per-statement `Strong` handle. Each statement gets one stable
+    /// `slot` (so a column-shape change overwrites rather than grows). Returns
+    /// the slot written on success; on failure the caller keeps the Strong.
+    /// Uses `putDirectIndex` (own-slot write) so an index setter on
+    /// `Array.prototype` cannot observe or intercept the value.
+    fn add_cached_structure(
+        &self,
+        this_value: JSValue,
+        structure: JSValue,
+        slot: Option<u32>,
+    ) -> Option<u32> {
+        let array = js::cached_structures_get_cached(this_value)?;
+        let i = slot.unwrap_or(self.cached_structures_len.get());
+        if array.put_index(&self.global_object, i, structure).is_err() {
             self.global_object.clear_exception_except_termination();
-            return false;
+            return None;
         }
-        true
+        if slot.is_none() {
+            self.cached_structures_len.set(i + 1);
+        }
+        Some(i)
     }
 
     #[inline]
@@ -846,11 +859,15 @@ impl JSMySQLConnection {
                 // Per-query simple statements keep their Strong.
                 if let Some(new_structure) = new_structure
                     && !request.is_simple()
-                    && self.add_cached_structure(value, new_structure)
+                    && let Some(slot) = self.add_cached_structure(
+                        value,
+                        new_structure,
+                        statement.cached_structure.connection_slot,
+                    )
                 {
                     statement
                         .cached_structure
-                        .mark_traced_from_connection(new_structure);
+                        .mark_traced_from_connection(new_structure, slot);
                 }
                 let cs = &statement.cached_structure;
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);

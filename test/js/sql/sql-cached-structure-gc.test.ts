@@ -59,6 +59,36 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(reused).toEqual([{ c0: 0 }]);
   });
 
+  test("cached Structures are written via putDirectIndex, not observable to Array.prototype setters", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+    await sql.unsafe(`SELECT $1::int AS warm`, [0]);
+
+    let intercepted = 0;
+    Object.defineProperty(Array.prototype, 1, {
+      set() {
+        intercepted++;
+      },
+      configurable: true,
+    });
+    try {
+      async function once(a: number) {
+        const r = await sql.unsafe(`SELECT $1::int AS px, $2::int AS py`, [a, a + 1]);
+        expect(r).toEqual([{ px: a, py: a + 1 }]);
+      }
+      await once(1);
+      // An Array.prototype index setter must not observe the internal
+      // cachedStructures write (putDirectIndex bypasses prototype accessors).
+      expect(intercepted).toBe(0);
+      Bun.gc(true);
+      Bun.gc(true);
+      // The cached Structure must survive GC and shape a second result.
+      await once(3);
+    } finally {
+      delete (Array.prototype as any)[1];
+    }
+  });
+
   test("simple and prepare:false queries do not pin Structures on the connection", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1 });

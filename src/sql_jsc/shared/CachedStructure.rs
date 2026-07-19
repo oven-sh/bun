@@ -12,6 +12,10 @@ pub struct CachedStructure {
     /// kept alive by the Connection wrapper's `m_cachedStructures` array
     /// (visited in `visitChildren`). At most one of `strong` / `traced` is set.
     traced: JSValue,
+    /// Index into the Connection wrapper's `m_cachedStructures` array once
+    /// assigned. Preserved across [`reset`] so a statement whose column shape
+    /// changes mid-lifetime overwrites its slot instead of growing the array.
+    pub connection_slot: Option<u32>,
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub fields: Option<Box<[ExternColumnIdentifier]>>,
 }
@@ -31,13 +35,22 @@ impl CachedStructure {
         })
     }
 
-    /// Called once the Connection has pushed this structure onto its
-    /// `m_cachedStructures` array: release the per-statement Strong and keep
-    /// only the raw value, so connection-cached statements do not each hold a
-    /// GC-root handle.
-    pub fn mark_traced_from_connection(&mut self, structure: JSValue) {
+    /// Called once the Connection has written this structure into its
+    /// `m_cachedStructures` array at `slot`: release the per-statement Strong
+    /// and keep only the raw value, so connection-cached statements do not each
+    /// hold a GC-root handle.
+    pub fn mark_traced_from_connection(&mut self, structure: JSValue, slot: u32) {
         self.traced = structure;
+        self.connection_slot = Some(slot);
         self.strong.deinit();
+    }
+
+    /// Clear the cached structure so the next row rebuilds it, preserving
+    /// `connection_slot` so a connection-cached statement reuses its array slot.
+    pub fn reset(&mut self) {
+        self.strong.deinit();
+        self.traced = JSValue::ZERO;
+        self.fields = None;
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —

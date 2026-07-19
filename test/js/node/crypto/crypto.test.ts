@@ -1,6 +1,7 @@
 import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import crypto from "crypto";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
@@ -233,6 +234,125 @@ describe("crypto.createSign()/.verifySign()", () => {
       expect(verify).toBeTrue();
     },
   );
+});
+
+describe("SHA-3 sign/verify", () => {
+  const digests = ["sha3-224", "sha3-256", "sha3-384", "sha3-512"];
+  const message = Buffer.from("sha3 signature conformance");
+  const fixture = (name: string) => readFileSync(`${__dirname}/fixtures/${name}`, "utf8");
+
+  const rsaPrivate = fixture("rsa_private_2048.pem");
+  const rsaPublic = fixture("rsa_public_2048.pem");
+  const ecPrivate = fixture("ec_p256_private.pem");
+  const ecPublic = fixture("ec_p256_public.pem");
+
+  // Signatures produced by Node.js (OpenSSL) over `message` with the fixtures
+  // above. RSA PKCS#1 v1.5 is deterministic, so these pin the exact DigestInfo
+  // encoding rather than just proving we can verify what we sign.
+  const rsaPkcs1: Record<string, string> = {
+    "sha3-224":
+      "cwg74JeWAJXCefVOYQgIxnlbFi3m1SffbUkF0IULmqNsveVeTaJCGFIVHw2b7GkxbkoWZ8wqBf5dNkcS3KuwPqg2qqPCXQ6lec5kr9guPML8ElsxC5lHtggHqGYmx+sVKSBQCikhkOIr0KrpiHFbYFeObmThMJGAHdoq5jag/AQMdgTCYT+4dvnFtNqrgzZIlkw9NRkGcARA7UubOpxGI3y6zk8VEQU7RTbftdrah5y4s28TskKvGlqRNGrW/5/v5gcau+9JE9K+Q6AP0NmjEkMxEX5yWMA8LxMFCrMYFDRKqwkE78LD1k787c7Q3I6fRFDShWFlpyWrY+TLF+XJpg==",
+    "sha3-256":
+      "k3SvWv55Mc5CiM/gzYvRhWvpGz3viwy4eCmjioa4WB/BlEoINJLpZvVd5YwX/y3X2/4Ty6Iepebb1/v2DdoMReNAva18eziMdFSiTtnGmmx+p21jySrDxFAv/bQJBQFEXVMv8S62wlCo93X+qHMGl5KG/dvrDZDz571pjfjI+AchRZcpPO70GPY8fQ0e8IB7Mu0PqEXgRS7aF1C/J4hFciC4iO6w6GOnnn/SGp/QiP0+26g3yGDXGUIpyYjI9dcRAW2ZXwmhwTMB5ub421WwbZTDtVst+irnvnGFXmzEfiKq0bRmTXFtOfoToAjhWOkaiBju4QxBlzPALEzawj6Ofg==",
+    "sha3-384":
+      "XGbLh+G95zyRZBTFV2Xd5wJkySWVhe/Rrepp+w9vAxAAkyaCLFYzHdvmGGfFq6iD9aUNSf8OPmoZlsGdmE2NN7cUS6G2npk89oLu14HAs+UhBXGf476YKXPuGOC92Poqu9QTZOE+x0ez1QcPLW3o8Z0Uc4lklLwQJnfxsdCG3Dd24WR1xG352Db6iGl6KO01WRLH8YC0M3rkc4+I6a7sJRtXrnxpkepK/fDxnw9cZEdZZ0wX2a7E+q4fG13NvNVBDOpfU/kUjz5X27wmveq+FPqFl2FWTsryBC/FawItCMCJJU7Aj3CNAAoj1FPWBowErKRua62an0tmOC+bLruXvA==",
+    "sha3-512":
+      "o1KRgi1cc3DdEfUUZZMMo+G+/Bvq48JtU/Q3mx7dCtwR5utC8XpgWzpimiHdKVrVPbxoy/G9mdYX+l2m6HbxnwaPrkz1v7WnvODZF6idH85DZysaWDMkjSn/HzsKcHFMQupaOQKe4LPFdYZlgzmTwz0Prp0Pdu1wXFjjWUU/yncCPbEe7QLFPeoSrtIYOBsWm/L1o9OMOzKhLg4KNp6Pf9gKwIiCkf8MzT0gEoiXE3v/g54TAsDFl3pSr5bWBIlaveJUL0LNkRN/jOYFH8DNqtRjadAtwmlxZeXvY6HxBEHFA40UNq7nmrsrTnuQEd7bU+n0xFvDwydY/DtlPtBRqg==",
+  };
+
+  // PSS and ECDSA are randomized, so these only exercise the verify path.
+  const rsaPss: Record<string, string> = {
+    "sha3-224":
+      "SnseUwZpHfKQjiYxxGSi3aT+ztuCSFaxzKe63jqr2Xqym5wkXGQkIBImI17wYAGed6n26mzKMzeCWZATF6I9QIsKs0LeB94NMR5czejrHiGCSM1TNfcisYhYGUFE0GLcDmIWCT6KPV6v13UQtlZgBJjuIpia3nhDQe6lg5n2sG991eAMftYhUDxcJtaJgIGCDJ/0JIz326o39xXBVFdRMmh4O4iEUt+5Ze/hoIqabYi6JmVfXucrmVj86CLV6Vfm2TJqGFgwtWS4MuGvLAGPs8wz4WskBezDd3n7n8K89bGis/YP043BLM2b/pn1rNyvKzMBLK6fsx8p7QT6Xy+YaQ==",
+    "sha3-256":
+      "krVNLzVUZhXhVY0amrYbQXLqN+snC6wfgkeaqQ1YzlyCV7/pBg4pBsUZ7os+TkOCAB98w8EV9UDMiPzMIcWzbOCS5ajRbY3TTsgEw7oZheAst4IOoUfDO+mecLdzd2wPY2ROFKPzQn3Y+U2mrUKy7DKW1XefttW0YmLX8Dvq5C3stZK+HugvokQlcrFQxcQZ5hg/7uKARHNVYzcBF/FoVAO6Z02G9GnWD5I/d/Bx6Te1PV7RBnsEKn6Q/UQassRslUzwism1+aYCOwAXuCfniwznlnW5TKKKcrVy28763Bv7Qxx9l8gqFySjf82gmiaqQTHKbKVnVFCCFsd8783Crg==",
+    "sha3-384":
+      "RIVSIoiFztt2H8m5H58h+aS2s724SlFyOvvT8+/LaatIIqfnDEi7OZbaBSTtob+QjG4ZaOext8eMx473KppmbxautH+spKSWX2ObPjzN4xuQRFnXCvoO3oDy4kWaIhbfCNr5ZpSDcj+ob66PmNBCw+73CMXxr1RapNyG40nCVbLR4GZmetBMOHMaUfertLI/lbeh0HqPwMs24XMw2f4B5AK/bgVy7EAXj5rIvxIA0wG0mTWMDV9wesqIiL29qrZhJqDGM2VU7/sehw3Tyc3+Ug3+54CvffM9NQpekyVW6W6ygaD2aISV4mwJgZ3r2gbIWoAiOaJUEyLBPCF9ySpi6A==",
+    "sha3-512":
+      "ovdYhzGTXGxL2yDWnIE78V39FI3ex1io9I/FwLzTYJgShW4q1F1xdCP6OqzcFGKHw/BKbKO28OYH682YCHhW48PvgfJfxF9CKcHg6O4fEAKvQiuJ3sgGY4yiwOpTqeKOgKICBDQJ7H7zhHPINuNMjxrNVwKfaGCGbyum+7vnPDBd32f2MOhVaYZcBRRwaeGUJD3QvKqVL7+u/8fiYFh4nrzGhyJ+K5jVUdAS3U1BsH+UGb/3Ypq6AhX4Vjpwe/Ed8WCFeGO3iiWIKyh1fGWNViWokgKPO4VEfK2Y8w32zbq/DV1y2tPXkaUyEoCWKQYTZeoBzmZ7PRpQi9ugJosIXA==",
+  };
+
+  const ecdsa: Record<string, string> = {
+    "sha3-224": "MEUCIG5dISk+pWQw9/WdZOIn9rGPtHOcHzpQt3yrSIbl9st3AiEAv7KOnT3qZ+HiuD8ILscMW7qfnZ1WFQvf/uIVskdZiFI=",
+    "sha3-256": "MEUCIGS2+YLUUBSo+X75ydaCsPwBgxp8lta06qvsR+tXuiTTAiEAuSIId6BzVqktRWe5kDjvUlQbUPFxzZEdiKPaecH2mXM=",
+    "sha3-384": "MEUCIQCBYf0P9HW/S4YYmLZQi6d17Mxs47fPK8M3a2NEh7TLXwIgVjjYG9t6qz2P0gHm/LPj5O/9X2MIpeVodlmerf5+YAY=",
+    "sha3-512": "MEUCIFINSe6XmIatanHebPIwsvcYc5JGY8meV/SZD62A53FeAiEAzamJEHod/DFtAQtd+ylU+0413FWUUxQmtf1GsRSzO6Y=",
+  };
+
+  describe.each(digests)("%s", digest => {
+    test("crypto.sign() and createSign() reproduce OpenSSL's RSA PKCS#1 v1.5 bytes", () => {
+      expect({
+        oneShot: crypto.sign(digest, message, rsaPrivate).toString("base64"),
+        streaming: crypto.createSign(digest).update(message).sign(rsaPrivate, "base64"),
+      }).toEqual({ oneShot: rsaPkcs1[digest], streaming: rsaPkcs1[digest] });
+    });
+
+    test("crypto.verify() accepts OpenSSL's signatures", () => {
+      expect({
+        pkcs1: crypto.verify(digest, message, rsaPublic, Buffer.from(rsaPkcs1[digest], "base64")),
+        pss: crypto.verify(
+          digest,
+          message,
+          { key: rsaPublic, padding: crypto.constants.RSA_PKCS1_PSS_PADDING },
+          Buffer.from(rsaPss[digest], "base64"),
+        ),
+        ecdsa: crypto.verify(digest, message, ecPublic, Buffer.from(ecdsa[digest], "base64")),
+      }).toEqual({ pkcs1: true, pss: true, ecdsa: true });
+    });
+
+    test("createVerify() accepts OpenSSL's signatures", () => {
+      expect({
+        pkcs1: crypto.createVerify(digest).update(message).verify(rsaPublic, rsaPkcs1[digest], "base64"),
+        ecdsa: crypto.createVerify(digest).update(message).verify(ecPublic, ecdsa[digest], "base64"),
+      }).toEqual({ pkcs1: true, ecdsa: true });
+    });
+
+    test("ECDSA signatures round-trip", () => {
+      // ECDSA is randomized, so assert a round-trip instead of exact bytes.
+      const oneShot = crypto.sign(digest, message, ecPrivate);
+      const streaming = crypto.createSign(digest).update(message).sign(ecPrivate);
+      expect({
+        oneShot: crypto.verify(digest, message, ecPublic, oneShot),
+        streaming: crypto.createVerify(digest).update(message).verify(ecPublic, streaming),
+      }).toEqual({ oneShot: true, streaming: true });
+    });
+
+    test("bad signatures are rejected", () => {
+      const tamperedRsa = Buffer.from(rsaPkcs1[digest], "base64");
+      tamperedRsa[tamperedRsa.length - 1] ^= 1;
+      const tamperedEcdsa = Buffer.from(ecdsa[digest], "base64");
+      tamperedEcdsa[tamperedEcdsa.length - 1] ^= 1;
+
+      expect({
+        tamperedRsa: crypto.verify(digest, message, rsaPublic, tamperedRsa),
+        tamperedEcdsa: crypto.verify(digest, message, ecPublic, tamperedEcdsa),
+        wrongMessage: crypto.verify(digest, Buffer.from("other"), rsaPublic, Buffer.from(rsaPkcs1[digest], "base64")),
+        wrongDigest: crypto.verify("sha256", message, rsaPublic, Buffer.from(rsaPkcs1[digest], "base64")),
+      }).toEqual({ tamperedRsa: false, tamperedEcdsa: false, wrongMessage: false, wrongDigest: false });
+    });
+  });
+});
+
+test("createSign().sign() surfaces the OpenSSL error the way crypto.sign() does", () => {
+  // A 512-bit modulus cannot hold a SHA-512 PKCS#1 v1.5 block, so both entry
+  // points hit the same OpenSSL failure and must report it the same way.
+  const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 512 });
+  const message = Buffer.from("too big for this key");
+
+  const capture = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (err) {
+      return err as Error & { code?: string };
+    }
+    throw new Error("expected signing to throw");
+  };
+
+  const oneShot = capture(() => crypto.sign("sha512", message, privateKey));
+  const streaming = capture(() => crypto.createSign("sha512").update(message).sign(privateKey));
+
+  expect(oneShot.code).toMatch(/^ERR_OSSL_/);
+  expect({ name: streaming.name, code: streaming.code }).toEqual({ name: oneShot.name, code: oneShot.code });
 });
 
 it("should send cipher events in the right order", async () => {

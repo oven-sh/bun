@@ -375,7 +375,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     };
 
     if (!pkctx.signInto(data, &sigBuf)) {
-        throwTypeError(lexicalGlobalObject, scope, "Failed to create signature"_s);
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to create signature"_s);
         return nullptr;
     }
 

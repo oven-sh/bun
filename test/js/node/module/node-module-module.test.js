@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -141,6 +141,139 @@ describe.concurrent("node-module-module", () => {
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  test("Module._resolveFilename with an options object missing .paths does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Module } = require("node:module");` +
+          `console.log(Module._resolveFilename("node:fs", module, false, {}));` +
+          `console.log(Module._resolveFilename("node:fs", module, false, { unrelated: 1 }));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "node:fs\nnode:fs\n", stderr: "", exitCode: 0 });
+  });
+
+  test("Overridden _resolveFilename receives Node-compatible arguments from a CJS entry", async () => {
+    using dir = tempDir("resolve-filename-args-cjs", {
+      "real.cjs": "module.exports = 'REAL';",
+      "lvl2.cjs": "module.exports = require('./real.cjs');",
+      "main.cjs": `
+        const path = require("node:path");
+        const { Module } = require("node:module");
+        const oR = Module._resolveFilename;
+        const rows = [];
+        Module._resolveFilename = function (request, parent, isMain, options) {
+          if (request.startsWith("./")) {
+            rows.push({
+              request,
+              parentType: typeof parent,
+              parentFilename: path.basename(String(parent && parent.filename)),
+              isMain,
+              options,
+              argc: arguments.length,
+              thisIsModule: this === Module,
+            });
+          }
+          return oR.apply(this, arguments);
+        };
+        require("./lvl2.cjs");
+        require.resolve("./real.cjs");
+        console.log(JSON.stringify(rows));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      {
+        request: "./lvl2.cjs",
+        parentType: "object",
+        parentFilename: "main.cjs",
+        isMain: false,
+        argc: 4,
+        thisIsModule: true,
+      },
+      {
+        request: "./real.cjs",
+        parentType: "object",
+        parentFilename: "lvl2.cjs",
+        isMain: false,
+        argc: 4,
+        thisIsModule: true,
+      },
+      {
+        request: "./real.cjs",
+        parentType: "object",
+        parentFilename: "main.cjs",
+        isMain: false,
+        options: {},
+        argc: 4,
+        thisIsModule: true,
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Overridden _resolveFilename receives a parent Module for createRequire from ESM", async () => {
+    using dir = tempDir("resolve-filename-args-esm", {
+      "real.cjs": "module.exports = 'REAL';",
+      "main.mjs": `
+        import path from "node:path";
+        import { Module, createRequire } from "node:module";
+        const req = createRequire(import.meta.url);
+        const oR = Module._resolveFilename;
+        const rows = [];
+        const parents = [];
+        Module._resolveFilename = function (request, parent, isMain, options) {
+          if (request.endsWith("real.cjs")) {
+            parents.push(parent);
+            rows.push({
+              parentType: typeof parent,
+              parentFilename: path.basename(String(parent && parent.filename)),
+              isMain,
+              options,
+              argc: arguments.length,
+              thisIsModule: this === Module,
+            });
+          }
+          return oR.apply(this, arguments);
+        };
+        req("./real.cjs");
+        req.resolve("./real.cjs");
+        req.resolve("./real.cjs");
+        Module._resolveFilename = oR;
+        console.log(JSON.stringify({
+          rows,
+          sameParentAcrossRequireAndResolve: parents[0] === parents[1] && parents[1] === parents[2],
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.mjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      rows: [
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, argc: 4, thisIsModule: true },
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
+      ],
+      sameParentAcrossRequireAndResolve: true,
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("Overwriting Module.prototype.require", async () => {

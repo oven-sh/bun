@@ -395,6 +395,7 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
+  parentModule?: unknown,
 ): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;

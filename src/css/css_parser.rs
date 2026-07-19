@@ -5502,8 +5502,7 @@ impl<'a> Tokenizer<'a> {
             // See `consume_4byte_intro`: input is unvalidated bytes, so only
             // apply the UTF-16 undercount when a continuation byte follows.
             if self.next_byte().is_some_and(|b| b & 0xC0 == 0x80) {
-                self.current_line_start_position =
-                    self.current_line_start_position.wrapping_sub(1);
+                self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
             }
         } else if byte & 0xC0 == 0x80 {
             self.current_line_start_position = self.current_line_start_position.wrapping_add(1);

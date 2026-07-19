@@ -27,12 +27,37 @@ export const asyncSQLiteTaskStatsForTesting = $newCppFunction(
 export const asyncSQLiteConnectionOpenForTesting = $newCppFunction(
   "AsyncSQLiteDatabase.cpp",
   "jsFunction_asyncSQLiteConnectionOpenForTesting",
-  3,
+  4,
 );
 export const asyncSQLiteConnectionExecForTesting = $newCppFunction(
   "AsyncSQLiteDatabase.cpp",
   "jsFunction_asyncSQLiteConnectionExecForTesting",
   2,
+);
+export const asyncSQLiteConnectionQueryForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionQueryForTesting",
+  4,
+);
+export const asyncSQLiteConnectionRunForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionRunForTesting",
+  3,
+);
+export const asyncSQLiteConnectionGetForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionGetForTesting",
+  3,
+);
+export const asyncSQLiteConnectionAllForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionAllForTesting",
+  3,
+);
+export const asyncSQLiteConnectionValuesForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionValuesForTesting",
+  3,
 );
 export const asyncSQLiteConnectionCloseForTesting = $newCppFunction(
   "AsyncSQLiteDatabase.cpp",

@@ -347,23 +347,16 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers);
 JSC_DECLARE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers);
 
-static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
+JSValue createSQLiteErrorFromCode(JSC::JSGlobalObject* globalObject, int extendedCode, int byteOffset, const WTF::String& message)
 {
     auto& vm = JSC::getVM(globalObject);
-    int code = sqlite3_extended_errcode(db);
-    int byteOffset = sqlite3_error_offset(db);
-
-    const char* msg = sqlite3_errmsg(db);
-    // Error messages can echo identifiers/values from the query, which SQLite does
-    // not validate as UTF-8, so decode leniently to avoid dropping the message.
-    WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(msg), strlen(msg) });
-    JSC::JSObject* object = JSC::createError(globalObject, str);
+    JSC::JSObject* object = JSC::createError(globalObject, message);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
     String codeStr;
 
-    switch (code) {
+    switch (extendedCode) {
 #define MACRO(SQLITE_DEF)          \
     case SQLITE_DEF: {             \
         codeStr = #SQLITE_DEF##_s; \
@@ -376,10 +369,22 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     if (!codeStr.isEmpty())
         object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
-    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(extendedCode), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
     object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     return object;
+}
+
+static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
+{
+    int code = sqlite3_extended_errcode(db);
+    int byteOffset = sqlite3_error_offset(db);
+
+    const char* msg = sqlite3_errmsg(db);
+    // Error messages can echo identifiers/values from the query, which SQLite does
+    // not validate as UTF-8, so decode leniently to avoid dropping the message.
+    WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(msg), strlen(msg) });
+    return createSQLiteErrorFromCode(globalObject, code, byteOffset, str);
 }
 
 class SQLiteBindingsMap {

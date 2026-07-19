@@ -6,9 +6,11 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "Exception.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSDOMWrapper.h"
 #include "JSAbortSignal.h"
+#include "JSSQLStatement.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
 
@@ -23,14 +25,22 @@ static inline int lazyLoadSQLite()
 #endif
 
 #include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/TopExceptionScope.h>
+#include <JavaScriptCore/TypedArrayInlines.h>
 #include <wtf/Atomics.h>
 #include <wtf/Threading.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <memory>
 
 extern "C" void Bun__initializeSQLite();
@@ -56,6 +66,9 @@ std::atomic<int64_t> activeConnectionOperations { 0 };
 std::atomic<int64_t> connectionInterrupts { 0 };
 std::atomic<int64_t> closeJobsRun { 0 };
 std::atomic<int64_t> physicalCloses { 0 };
+std::atomic<int64_t> liveRows { 0 };
+std::atomic<int64_t> liveErrors { 0 };
+std::atomic<int64_t> copiedRowValues { 0 };
 std::atomic<uint64_t> nextOperationId { 1 };
 
 class AsyncSQLiteAbortAlgorithm final : public WebCore::AbortAlgorithm {
@@ -136,6 +149,26 @@ struct ConnectionCompletionCapture {
     bool ran { false };
 };
 
+struct ConnectionOperationCompletion {
+    ConnectionOperationCompletion(WTF::Ref<AsyncSQLiteConnection>&& connection, std::unique_ptr<AsyncSQLiteOperationResult>&& result)
+        : connection(WTF::move(connection))
+        , result(WTF::move(result))
+    {
+    }
+
+    ~ConnectionOperationCompletion()
+    {
+        if (!ran) {
+            completionsDropped.fetch_add(1, std::memory_order_relaxed);
+            connection->advanceAfterCompletion(true);
+        }
+    }
+
+    WTF::Ref<AsyncSQLiteConnection> connection;
+    std::unique_ptr<AsyncSQLiteOperationResult> result;
+    bool ran { false };
+};
+
 class AsyncSQLiteConnectionJob;
 
 class AsyncSQLiteJobBase {
@@ -175,6 +208,30 @@ static void postConnectionCompletion(uint32_t contextId, uint64_t operationId, A
         if (auto* registry = registryForGlobal(context.globalObject())) {
             auto result = WTF::move(completion->result);
             registry->completeConnection(operationId, result->success, result->errorCode, WTF::move(result->errorMessage), context);
+        }
+    });
+    if (!posted)
+        postFailures.fetch_add(1, std::memory_order_relaxed);
+}
+
+static void postConnectionOperationCompletion(uint32_t contextId, uint64_t operationId, AsyncSQLiteConnection& connection, std::unique_ptr<AsyncSQLiteOperationResult>&& result)
+{
+    if (!connection.deliveryEnabled()) {
+        deliveryDisabledDrops.fetch_add(1, std::memory_order_relaxed);
+        // No JS completion will run, so advance the FIFO to physical close here.
+        connection.advanceAfterCompletion(true);
+        return;
+    }
+    auto completion = std::make_unique<ConnectionOperationCompletion>(WTF::Ref { connection }, WTF::move(result));
+    bool posted = WebCore::ScriptExecutionContext::postTaskTo(contextId, [operationId, completion = WTF::move(completion)](WebCore::ScriptExecutionContext& context) mutable {
+        completion->ran = true;
+        completionsRun.fetch_add(1, std::memory_order_relaxed);
+        auto* registry = registryForGlobal(context.globalObject());
+        if (registry) {
+            registry->completeConnectionOperation(operationId, completion->connection.get(), WTF::move(completion->result), context);
+        } else {
+            // No registry means no request to settle; still advance the FIFO.
+            completion->connection->advanceAfterCompletion(false);
         }
     });
     if (!posted)
@@ -259,16 +316,27 @@ public:
 
 } // namespace
 
+// Owned-payload lifetime counters: ctor/dtor bump these so drop/leak assertions
+// over the private stats surface are non-vacuous. Live counters return to
+// baseline once every owned result/error is released.
+AsyncSQLiteRows::AsyncSQLiteRows() { liveRows.fetch_add(1, std::memory_order_relaxed); }
+AsyncSQLiteRows::~AsyncSQLiteRows() { liveRows.fetch_sub(1, std::memory_order_relaxed); }
+AsyncSQLiteError::AsyncSQLiteError() { liveErrors.fetch_add(1, std::memory_order_relaxed); }
+AsyncSQLiteError::~AsyncSQLiteError() { liveErrors.fetch_sub(1, std::memory_order_relaxed); }
+
 static void scheduleConnectionJob(std::unique_ptr<AsyncSQLiteConnectionJob>&& job)
 {
     AsyncSQLiteTask__schedule(static_cast<AsyncSQLiteJobBase*>(job.release()));
 }
 
-AsyncSQLiteConnection::AsyncSQLiteConnection(uint32_t contextId, std::string&& path, uint32_t capacity, int busyTimeout)
+AsyncSQLiteConnection::AsyncSQLiteConnection(uint32_t contextId, std::string&& path, uint32_t capacity, int busyTimeout, bool strict, bool safeIntegers, int openFlags)
     : m_contextId(contextId)
     , m_path(WTF::move(path))
     , m_capacity(std::max(1u, capacity))
     , m_busyTimeout(std::max(0, busyTimeout))
+    , m_openFlags(openFlags)
+    , m_strict(strict)
+    , m_safeIntegers(safeIntegers)
 {
     liveConnections.fetch_add(1, std::memory_order_relaxed);
 }
@@ -295,17 +363,17 @@ void AsyncSQLiteConnection::open(uint64_t operationId, uint32_t callerThreadUid)
     scheduleConnectionJob(std::make_unique<AsyncSQLiteConnectionJob>(WTF::Ref { *this }, AsyncSQLiteConnectionJob::Kind::Open, operationId, callerThreadUid));
 }
 
-bool AsyncSQLiteConnection::admit(uint64_t operationId, std::string&& sql)
+bool AsyncSQLiteConnection::admit(uint64_t operationId, std::string&& sql, AsyncSQLiteOperationKind kind, std::unique_ptr<AsyncSQLiteBindings>&& bindings)
 {
     bool schedule = false;
-    Operation operation { 0, {} };
+    Operation operation { 0, {}, AsyncSQLiteOperationKind::Exec, nullptr };
     {
         WTF::Locker locker { m_lock };
         if (!m_deliveryEnabled || m_closeRequested || m_state == State::Closed || m_state == State::ShuttingDown)
             return false;
         if (m_queue.size() + (m_state == State::OpenActive ? 1u : 0u) >= m_capacity)
             return false;
-        m_queue.append({ operationId, WTF::move(sql) });
+        m_queue.append({ operationId, WTF::move(sql), kind, WTF::move(bindings) });
         schedule = m_state == State::OpenIdle;
         if (schedule) {
             m_state = State::OpenActive;
@@ -402,7 +470,7 @@ void AsyncSQLiteConnection::runOpen(uint64_t operationId, uint32_t callerThreadU
     if (sqlite3_threadsafe() == 0) {
         result = connectionResult(false, SQLITE_MISUSE, "SQLite library is not thread-safe");
     } else {
-        int rc = sqlite3_open_v2(m_path.c_str(), &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX, nullptr);
+        int rc = sqlite3_open_v2(m_path.c_str(), &database, m_openFlags | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX, nullptr);
         if (rc != SQLITE_OK || !database) {
             int code = rc;
             std::string message = database && sqlite3_errmsg(database) ? sqlite3_errmsg(database) : sqlite3_errstr(rc);
@@ -463,13 +531,330 @@ void AsyncSQLiteConnection::runOpen(uint64_t operationId, uint32_t callerThreadU
         scheduleOperation(WTF::move(operation));
 }
 
+namespace {
+
+// Copies a single column value off the sqlite3_stmt into an owner-agnostic
+// AsyncSQLiteValue so it survives sqlite3_finalize(). Byte length then pointer
+// order matches the synchronous bun:sqlite conversion in JSSQLStatement.cpp.
+AsyncSQLiteValue copyColumnValue(sqlite3_stmt* statement, int column)
+{
+#if ASSERT_ENABLED
+    // Debug-only ownership accounting; release async rows pay no diagnostic cost.
+    copiedRowValues.fetch_add(1, std::memory_order_relaxed);
+#endif
+    AsyncSQLiteValue value;
+    switch (sqlite3_column_type(statement, column)) {
+    case SQLITE_INTEGER:
+        value.kind = AsyncSQLiteValueKind::Integer;
+        value.integer = sqlite3_column_int64(statement, column);
+        break;
+    case SQLITE_FLOAT:
+        value.kind = AsyncSQLiteValueKind::Double;
+        value.number = sqlite3_column_double(statement, column);
+        break;
+    case SQLITE3_TEXT: {
+        value.kind = AsyncSQLiteValueKind::Text;
+        int len = sqlite3_column_bytes(statement, column);
+        const unsigned char* text = len > 0 ? sqlite3_column_text(statement, column) : nullptr;
+        if (text && len > 0)
+            value.bytes.assign(reinterpret_cast<const char*>(text), static_cast<size_t>(len));
+        break;
+    }
+    case SQLITE_BLOB: {
+        value.kind = AsyncSQLiteValueKind::Blob;
+        int len = sqlite3_column_bytes(statement, column);
+        const void* blob = len > 0 ? sqlite3_column_blob(statement, column) : nullptr;
+        if (blob && len > 0)
+            value.bytes.assign(static_cast<const char*>(blob), static_cast<size_t>(len));
+        break;
+    }
+    case SQLITE_NULL:
+    default:
+        value.kind = AsyncSQLiteValueKind::Null;
+        break;
+    }
+    return value;
+}
+
+// Snapshots the connection's authoritative error into an owned AsyncSQLiteError.
+// Must run on the worker immediately after the failing call, before finalize or
+// any later SQLite call overwrites the per-connection error state.
+static std::unique_ptr<AsyncSQLiteError> captureConnectionError(sqlite3* database, int resultCode)
+{
+    auto error = std::make_unique<AsyncSQLiteError>();
+    error->resultCode = resultCode;
+    if (database) {
+        error->extendedCode = sqlite3_extended_errcode(database);
+        error->byteOffset = sqlite3_error_offset(database);
+        if (const char* message = sqlite3_errmsg(database))
+            error->message.assign(message);
+    } else {
+        error->extendedCode = resultCode;
+        error->byteOffset = -1;
+        error->message = "connection is not open";
+    }
+    return error;
+}
+
+// Binds one owned value onto the prepared statement with a worker-local
+// sqlite3_bind_*. Payloads are copied (SQLITE_TRANSIENT); the owned bytes are
+// independent of any JS lifetime. Returns the sqlite result code.
+static int bindOwnedValue(sqlite3_stmt* statement, int index, const AsyncSQLiteValue& value)
+{
+    switch (value.kind) {
+    case AsyncSQLiteValueKind::Null:
+        return sqlite3_bind_null(statement, index);
+    case AsyncSQLiteValueKind::Integer:
+        return sqlite3_bind_int64(statement, index, value.integer);
+    case AsyncSQLiteValueKind::Double:
+        return sqlite3_bind_double(statement, index, value.number);
+    case AsyncSQLiteValueKind::Text:
+        return sqlite3_bind_text64(statement, index, value.bytes.data(), static_cast<sqlite3_uint64>(value.bytes.size()), SQLITE_TRANSIENT, SQLITE_UTF8);
+    case AsyncSQLiteValueKind::Blob:
+        return sqlite3_bind_blob64(statement, index, value.bytes.data(), static_cast<sqlite3_uint64>(value.bytes.size()), SQLITE_TRANSIENT);
+    }
+    return SQLITE_OK;
+}
+
+// Resolves the owned value for one prepared named/positional parameter, matching
+// sync bun:sqlite: nameless (`?`) and strict out-of-order numeric names map to a
+// declared index key; otherwise strict strips the prefix and non-strict keeps it.
+static const AsyncSQLiteValue* resolveNamedBinding(const AsyncSQLiteBindings& bindings, const char* name, int index, bool strict)
+{
+    std::string key;
+    if (!name) {
+        key = std::to_string(index);
+    } else {
+        const char* stripped = (strict && name[0] != '\0') ? name + 1 : name;
+        if (strict && stripped[0] >= '0' && stripped[0] <= '9') {
+            char* endptr = nullptr;
+            long ordinal = std::strtol(stripped, &endptr, 10);
+            key = (endptr && *endptr == '\0' && ordinal >= 1) ? std::to_string(ordinal - 1) : std::string(stripped);
+        } else {
+            key = stripped;
+        }
+    }
+    auto it = bindings.named.find(key);
+    return it != bindings.named.end() ? &it->second : nullptr;
+}
+
+// Applies the owned binding snapshot to one prepared statement. On any bind
+// failure or unsatisfied strict parameter it snapshots a complete
+// AsyncSQLiteError before returning so the caller can finalize.
+static bool bindStatementValues(sqlite3* database, sqlite3_stmt* statement, const AsyncSQLiteBindings& bindings, bool strict, std::unique_ptr<AsyncSQLiteError>& errorOut)
+{
+    int count = sqlite3_bind_parameter_count(statement);
+    if (bindings.kind == AsyncSQLiteBindingKind::Positional) {
+        if (static_cast<int>(bindings.positional.size()) != count) {
+            auto error = std::make_unique<AsyncSQLiteError>();
+            error->kind = AsyncSQLiteErrorKind::Binding;
+            error->resultCode = SQLITE_RANGE;
+            error->extendedCode = SQLITE_RANGE;
+            error->message = std::string("SQLite query expected ") + std::to_string(count) + " values, received " + std::to_string(bindings.positional.size());
+            errorOut = WTF::move(error);
+            return false;
+        }
+        for (int i = 0; i < count; i++) {
+            int rc = bindOwnedValue(statement, i + 1, bindings.positional[i]);
+            if (rc != SQLITE_OK) {
+                errorOut = captureConnectionError(database, rc);
+                errorOut->kind = AsyncSQLiteErrorKind::Binding;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    for (int i = 1; i <= count; i++) {
+        const char* name = sqlite3_bind_parameter_name(statement, i);
+        const AsyncSQLiteValue* value = resolveNamedBinding(bindings, name, i - 1, strict);
+        if (!value) {
+            if (strict) {
+                auto error = std::make_unique<AsyncSQLiteError>();
+                error->kind = AsyncSQLiteErrorKind::Binding;
+                error->resultCode = SQLITE_ERROR;
+                error->extendedCode = SQLITE_ERROR;
+                WTF::String label = name ? WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name + 1), strlen(name + 1) }) : WTF::String::number(i);
+                auto labelUTF8 = label.utf8();
+                error->message = std::string("Missing parameter \"") + std::string(labelUTF8.data(), labelUTF8.length()) + "\"";
+                errorOut = WTF::move(error);
+                return false;
+            }
+            continue; // Non-strict leaves an unmatched parameter as NULL.
+        }
+        int rc = bindOwnedValue(statement, i, *value);
+        if (rc != SQLITE_OK) {
+            errorOut = captureConnectionError(database, rc);
+            errorOut->kind = AsyncSQLiteErrorKind::Binding;
+            return false;
+        }
+    }
+    return true;
+}
+
+static std::unique_ptr<AsyncSQLiteOperationResult> operationError(std::unique_ptr<AsyncSQLiteError>&& error)
+{
+    auto result = std::make_unique<AsyncSQLiteOperationResult>();
+    result->kind = AsyncSQLiteResultKind::Error;
+    result->error = WTF::move(error);
+    return result;
+}
+
+static std::unique_ptr<AsyncSQLiteOperationResult> emptyOperationResult()
+{
+    return std::make_unique<AsyncSQLiteOperationResult>();
+}
+
+static std::unique_ptr<AsyncSQLiteError> validateSingleStatement(sqlite3* database, const std::string& sql)
+{
+    const char* cursor = sql.c_str();
+    const char* end = cursor + sql.size();
+    bool sawStatement = false;
+    while (cursor < end) {
+        sqlite3_stmt* statement = nullptr;
+        const char* tail = nullptr;
+        int rc = sqlite3_prepare_v3(database, cursor, static_cast<int>(end - cursor), 0, &statement, &tail);
+        if (rc != SQLITE_OK)
+            return captureConnectionError(database, rc);
+        const char* next = tail ? tail : end;
+        if (!statement) {
+            if (next == cursor)
+                break;
+            cursor = next;
+            continue;
+        }
+        sqlite3_finalize(statement);
+        if (sawStatement) {
+            auto error = std::make_unique<AsyncSQLiteError>();
+            error->resultCode = SQLITE_MISUSE;
+            error->extendedCode = SQLITE_MISUSE;
+            error->message = "async SQLite operation accepts exactly one executable statement";
+            return error;
+        }
+        sawStatement = true;
+        cursor = next;
+    }
+    if (!sawStatement) {
+        auto error = std::make_unique<AsyncSQLiteError>();
+        error->resultCode = SQLITE_MISUSE;
+        error->extendedCode = SQLITE_MISUSE;
+        error->message = "async SQLite operation requires an executable statement";
+        return error;
+    }
+    return nullptr;
+}
+
+static std::unique_ptr<AsyncSQLiteOperationResult> runOperationSQL(sqlite3* database, const AsyncSQLiteConnection::Operation& operation, bool strict)
+{
+    if (!database) {
+        return operationError(captureConnectionError(nullptr, SQLITE_MISUSE));
+    }
+
+    bool singleStatement = operation.kind == AsyncSQLiteOperationKind::Get || operation.kind == AsyncSQLiteOperationKind::All || operation.kind == AsyncSQLiteOperationKind::Values;
+    if (singleStatement) {
+        if (auto error = validateSingleStatement(database, operation.sql))
+            return operationError(WTF::move(error));
+    }
+
+    bool collectRows = operation.kind == AsyncSQLiteOperationKind::QueryForTesting || singleStatement;
+    const char* cursor = operation.sql.c_str();
+    const char* end = cursor + operation.sql.size();
+    int rc = SQLITE_OK;
+    bool bindingsApplied = false;
+    bool sawStatement = false;
+    int64_t totalChangesBefore = operation.kind == AsyncSQLiteOperationKind::Run ? sqlite3_total_changes64(database) : 0;
+    auto result = emptyOperationResult();
+    while (cursor < end) {
+        sqlite3_stmt* statement = nullptr;
+        const char* tail = nullptr;
+        rc = sqlite3_prepare_v3(database, cursor, static_cast<int>(end - cursor), 0, &statement, &tail);
+        if (rc != SQLITE_OK) {
+            return operationError(captureConnectionError(database, rc));
+        }
+        if (!statement) {
+            const char* next = tail ? tail : end;
+            if (next == cursor)
+                break;
+            cursor = next;
+            continue;
+        }
+        sawStatement = true;
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> finalizedStatement(statement, sqlite3_finalize);
+
+        if (operation.bindings && !bindingsApplied) {
+            bindingsApplied = true;
+            std::unique_ptr<AsyncSQLiteError> error;
+            if (!bindStatementValues(database, statement, *operation.bindings, strict, error)) {
+                return operationError(WTF::move(error));
+            }
+        }
+
+        int columnCount = sqlite3_column_count(statement);
+        std::unique_ptr<AsyncSQLiteRows> statementRows;
+        if (collectRows && columnCount > 0) {
+            statementRows = std::make_unique<AsyncSQLiteRows>();
+            statementRows->columns.reserve(static_cast<size_t>(columnCount));
+            for (int c = 0; c < columnCount; c++) {
+                const char* name = sqlite3_column_name(statement, c);
+                statementRows->columns.emplace_back(name ? name : "");
+            }
+        }
+
+        for (;;) {
+            int stepRc = sqlite3_step(statement);
+            if (stepRc == SQLITE_ROW) {
+                if (statementRows) {
+                    std::vector<AsyncSQLiteValue> row;
+                    row.reserve(static_cast<size_t>(columnCount));
+                    for (int c = 0; c < columnCount; c++)
+                        row.push_back(copyColumnValue(statement, c));
+                    statementRows->rows.push_back(WTF::move(row));
+                }
+                if (operation.kind == AsyncSQLiteOperationKind::Get) {
+                    rc = SQLITE_OK;
+                    break;
+                }
+                continue;
+            }
+            if (stepRc == SQLITE_DONE) {
+                rc = SQLITE_OK;
+                break;
+            }
+            rc = stepRc;
+            auto error = captureConnectionError(database, rc);
+            return operationError(WTF::move(error));
+        }
+
+        if (statementRows)
+            result->rows = WTF::move(statementRows);
+        cursor = tail ? tail : end;
+    }
+
+    if (!sawStatement)
+        return operationError(validateSingleStatement(database, operation.sql));
+    if (operation.kind == AsyncSQLiteOperationKind::Run) {
+        result->kind = AsyncSQLiteResultKind::Changes;
+        result->changes.changes = sqlite3_total_changes64(database) - totalChangesBefore;
+        result->changes.lastInsertRowid = sqlite3_last_insert_rowid(database);
+    } else if (collectRows) {
+        result->kind = AsyncSQLiteResultKind::Rows;
+        if (!result->rows)
+            result->rows = std::make_unique<AsyncSQLiteRows>();
+    }
+    return result;
+}
+
+} // namespace
+
 void AsyncSQLiteConnection::runOperation(Operation&& operation)
 {
     sqlite3* database = nullptr;
     bool execute = false;
+    bool strict = false;
     {
         WTF::Locker locker { m_lock };
         database = m_database;
+        strict = m_strict;
         if (m_deliveryEnabled) {
             m_activeDatabase = database;
             activeConnectionOperations.fetch_add(1, std::memory_order_relaxed);
@@ -477,31 +862,50 @@ void AsyncSQLiteConnection::runOperation(Operation&& operation)
         }
     }
     if (!execute) {
-        finishOperation(operation.id, false, SQLITE_INTERRUPT, "connection was abandoned");
+        auto error = std::make_unique<AsyncSQLiteError>();
+        error->resultCode = SQLITE_INTERRUPT;
+        error->extendedCode = SQLITE_INTERRUPT;
+        error->message = "connection was abandoned";
+        finishOperation(operation.id, operationError(WTF::move(error)));
         return;
     }
 
-    char* error = nullptr;
-    int rc = database ? sqlite3_exec(database, operation.sql.c_str(), nullptr, nullptr, &error) : SQLITE_MISUSE;
-    std::string message;
-    if (error) {
-        message = error;
-        sqlite3_free(error);
-    } else if (database && rc != SQLITE_OK) {
-        message = sqlite3_errmsg(database);
-    }
-    activeConnectionOperations.fetch_sub(1, std::memory_order_relaxed);
-    finishOperation(operation.id, rc == SQLITE_OK, rc, WTF::move(message));
-}
+    auto result = runOperationSQL(database, operation, strict);
 
-void AsyncSQLiteConnection::finishOperation(uint64_t operationId, bool success, int errorCode, std::string&& message)
-{
-    bool close = false;
-    bool schedule = false;
-    Operation operation { 0, {} };
     {
         WTF::Locker locker { m_lock };
+        // The statement is finalized; there is nothing left to interrupt.
         m_activeDatabase = nullptr;
+    }
+    activeConnectionOperations.fetch_sub(1, std::memory_order_relaxed);
+
+    finishOperation(operation.id, WTF::move(result));
+}
+
+void AsyncSQLiteConnection::finishOperation(uint64_t operationId, std::unique_ptr<AsyncSQLiteOperationResult>&& result)
+{
+    // Post the owned result. Successor scheduling / physical close is deferred to
+    // advanceAfterCompletion(), driven by the JS thread once this result has been
+    // materialized and released (or by the drop path on teardown).
+    postConnectionOperationCompletion(m_contextId, operationId, *this, WTF::move(result));
+}
+
+void AsyncSQLiteConnection::advanceAfterCompletion(bool dropped)
+{
+    bool schedule = false;
+    bool close = false;
+    Operation operation { 0, {}, AsyncSQLiteOperationKind::Exec };
+    {
+        WTF::Locker locker { m_lock };
+        if (m_state == State::Closed)
+            return;
+        if (dropped) {
+            // Delivery is gone: stop accepting work, drop queued operations, and
+            // drive straight to the physical close.
+            m_deliveryEnabled = false;
+            m_closeRequested = true;
+            m_queue.clear();
+        }
         if (!m_queue.isEmpty()) {
             operation = m_queue.takeFirst();
             m_state = State::OpenActive;
@@ -515,7 +919,6 @@ void AsyncSQLiteConnection::finishOperation(uint64_t operationId, bool success, 
     }
     if (schedule)
         scheduleOperation(WTF::move(operation));
-    postConnectionCompletion(m_contextId, operationId, *this, connectionResult(success, errorCode, WTF::move(message)));
     if (close)
         scheduleClose();
 }
@@ -635,6 +1038,290 @@ void AsyncSQLiteNativeJob::run() noexcept
     });
     if (!posted)
         postFailures.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Materializes one owned column value into a JS value on the owner thread. Text
+// is decoded from UTF-8 (invalid sequences replaced) and blobs are copied into a
+// fresh Uint8Array, matching the synchronous bun:sqlite conversions.
+static JSC::JSValue materializeValue(JSC::JSGlobalObject* globalObject, const AsyncSQLiteValue& value, bool safeIntegers)
+{
+    auto& vm = globalObject->vm();
+    switch (value.kind) {
+    case AsyncSQLiteValueKind::Null:
+        return JSC::jsNull();
+    case AsyncSQLiteValueKind::Integer:
+        // safeIntegers returns a lossless BigInt like sync jsBigIntFromSQLite;
+        // default returns a Number (may lose precision beyond 2^53).
+        return safeIntegers ? JSC::JSBigInt::createFrom(globalObject, value.integer) : JSC::jsNumber(value.integer);
+    case AsyncSQLiteValueKind::Double:
+        return JSC::jsNumber(value.number);
+    case AsyncSQLiteValueKind::Text: {
+        if (value.bytes.empty())
+            return JSC::jsEmptyString(vm);
+        return JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(value.bytes.data()), value.bytes.size() }));
+    }
+    case AsyncSQLiteValueKind::Blob: {
+        auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), value.bytes.size());
+        if (!array) [[unlikely]]
+            return {};
+        if (!value.bytes.empty())
+            memcpy(array->vector(), value.bytes.data(), value.bytes.size());
+        return array;
+    }
+    }
+    return JSC::jsNull();
+}
+
+// Materializes owned rows into a { columns, rows } object on the owner thread.
+// Returns {} with a pending exception on failure; caller propagates it via
+// ExistingExceptionError. forceFailure injects a deterministic private-test throw.
+static JSC::JSValue materializeRows(JSC::JSGlobalObject* globalObject, const AsyncSQLiteRows* rows, bool forceFailure, bool safeIntegers)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (forceFailure) [[unlikely]] {
+        throwTypeError(globalObject, scope, "forced async SQLite materialization failure"_s);
+        return {};
+    }
+
+    size_t columnCount = rows ? rows->columns.size() : 0;
+    auto* columnsArray = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(columnCount));
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned c = 0; c < columnCount; c++) {
+        auto* name = JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(rows->columns[c].data()), rows->columns[c].size() }));
+        RETURN_IF_EXCEPTION(scope, {});
+        columnsArray->putDirectIndex(globalObject, c, name);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    size_t rowCount = rows ? rows->rows.size() : 0;
+    auto* rowsArray = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(rowCount));
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned r = 0; r < rowCount; r++) {
+        const auto& row = rows->rows[r];
+        auto* rowArray = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(row.size()));
+        RETURN_IF_EXCEPTION(scope, {});
+        for (unsigned c = 0; c < row.size(); c++) {
+            JSC::JSValue element = materializeValue(globalObject, row[c], safeIntegers);
+            RETURN_IF_EXCEPTION(scope, {});
+            rowArray->putDirectIndex(globalObject, c, element);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        rowsArray->putDirectIndex(globalObject, r, rowArray);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    auto* object = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "columns"_s), columnsArray);
+    RETURN_IF_EXCEPTION(scope, {});
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "rows"_s), rowsArray);
+    RETURN_IF_EXCEPTION(scope, {});
+    return object;
+}
+
+static JSC::JSValue materializeRowObject(JSC::JSGlobalObject* globalObject, const AsyncSQLiteRows* rows, size_t index, bool safeIntegers)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!rows || index >= rows->rows.size())
+        return JSC::jsNull();
+    auto* object = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    const auto& row = rows->rows[index];
+    for (unsigned c = 0; c < row.size(); c++) {
+        auto name = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(rows->columns[c].data()), rows->columns[c].size() });
+        auto value = materializeValue(globalObject, row[c], safeIntegers);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto identifier = JSC::Identifier::fromString(vm, name);
+        if (auto propertyIndex = JSC::parseIndex(identifier))
+            object->putDirectIndex(globalObject, *propertyIndex, value);
+        else
+            object->putDirect(vm, identifier, value);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return object;
+}
+
+static JSC::JSValue materializeAllObjects(JSC::JSGlobalObject* globalObject, const AsyncSQLiteRows* rows, bool safeIntegers)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    size_t rowCount = rows ? rows->rows.size() : 0;
+    auto* result = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(rowCount));
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned r = 0; r < rowCount; r++) {
+        auto row = materializeRowObject(globalObject, rows, r, safeIntegers);
+        RETURN_IF_EXCEPTION(scope, {});
+        result->putDirectIndex(globalObject, r, row);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return result;
+}
+
+static JSC::JSValue materializeValues(JSC::JSGlobalObject* globalObject, const AsyncSQLiteRows* rows, bool safeIntegers)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    size_t rowCount = rows ? rows->rows.size() : 0;
+    auto* result = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(rowCount));
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned r = 0; r < rowCount; r++) {
+        const auto& row = rows->rows[r];
+        auto* values = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(row.size()));
+        RETURN_IF_EXCEPTION(scope, {});
+        for (unsigned c = 0; c < row.size(); c++) {
+            auto value = materializeValue(globalObject, row[c], safeIntegers);
+            RETURN_IF_EXCEPTION(scope, {});
+            values->putDirectIndex(globalObject, c, value);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        result->putDirectIndex(globalObject, r, values);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return result;
+}
+
+static JSC::JSValue materializeChanges(JSC::JSGlobalObject* globalObject, const AsyncSQLiteChanges& changes, bool safeIntegers)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* result = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "changes"_s), JSC::jsNumber(changes.changes));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "lastInsertRowid"_s), safeIntegers ? JSC::JSBigInt::createFrom(globalObject, changes.lastInsertRowid) : JSC::jsNumber(changes.lastInsertRowid));
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+// Copies one JS binding value into an owned AsyncSQLiteValue on the JS thread,
+// mirroring sync bun:sqlite type dispatch. bigint range and detached buffers
+// reject; text/blob bytes are copied so later mutation cannot affect execution.
+static bool snapshotBindingValue(JSC::JSGlobalObject* globalObject, JSC::JSValue value, bool safeIntegers, JSC::ThrowScope& scope, AsyncSQLiteValue& out)
+{
+    if (value.isUndefinedOrNull()) {
+        out.kind = AsyncSQLiteValueKind::Null;
+        return true;
+    }
+    if (value.isBoolean()) {
+        out.kind = AsyncSQLiteValueKind::Integer;
+        out.integer = value.asBoolean() ? 1 : 0;
+        return true;
+    }
+    if (value.isAnyInt()) {
+        out.kind = AsyncSQLiteValueKind::Integer;
+        out.integer = value.asAnyInt();
+        return true;
+    }
+    if (value.isNumber()) {
+        out.kind = AsyncSQLiteValueKind::Double;
+        out.number = value.asNumber();
+        return true;
+    }
+    if (value.isString()) {
+        WTF::String string = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        auto utf8 = string.utf8();
+        out.kind = AsyncSQLiteValueKind::Text;
+        out.bytes.assign(utf8.data(), utf8.length());
+        return true;
+    }
+    if (value.isHeapBigInt()) {
+        JSC::JSBigInt* bigInt = value.asHeapBigInt();
+        // Default (safeIntegers off) wraps out-of-i64 input like sync
+        // sqlite3_bind_int64(toBigInt64); safeIntegers on rejects out of range.
+        if (safeIntegers) {
+            const auto min = JSC::JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min());
+            const auto max = JSC::JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max());
+            bool inRange = (min == JSC::JSBigInt::ComparisonResult::GreaterThan || min == JSC::JSBigInt::ComparisonResult::Equal)
+                && (max == JSC::JSBigInt::ComparisonResult::LessThan || max == JSC::JSBigInt::ComparisonResult::Equal);
+            if (!inRange) [[unlikely]] {
+                throwRangeError(globalObject, scope, makeString("BigInt value '"_s, bigInt->toString(globalObject, 10), "' is out of range"_s));
+                return false;
+            }
+        }
+        out.kind = AsyncSQLiteValueKind::Integer;
+        out.integer = JSC::JSBigInt::toBigInt64(value);
+        return true;
+    }
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached()) [[unlikely]] {
+            throwException(globalObject, scope, createError(globalObject, "TypedArray is detached"_s));
+            return false;
+        }
+        out.kind = AsyncSQLiteValueKind::Blob;
+        size_t length = view->byteLength();
+        if (length)
+            out.bytes.assign(reinterpret_cast<const char*>(view->vector()), length);
+        return true;
+    }
+    throwException(globalObject, scope, createTypeError(globalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));
+    return false;
+}
+
+// SQLite's default SQLITE_LIMIT_VARIABLE_NUMBER (sqlite3_local.h documents 32766);
+// exceeding it always fails to prepare, so cap before any large snapshot alloc.
+static constexpr unsigned kMaxSQLiteVariableNumber = 32766;
+
+// Snapshots a binding argument into owned native values before admission.
+// undefined/null -> no bindings; arrays -> positional; objects -> a complete map
+// of own string-keyed properties (getters/Proxy traps run here on the JS thread).
+static bool snapshotBindings(JSC::JSGlobalObject* globalObject, JSC::JSValue arg, bool safeIntegers, JSC::ThrowScope& scope, std::unique_ptr<AsyncSQLiteBindings>& out)
+{
+    auto& vm = globalObject->vm();
+    if (arg.isUndefinedOrNull()) {
+        out = nullptr;
+        return true;
+    }
+    if (auto* array = dynamicDowncast<JSC::JSArray>(arg)) {
+        unsigned length = array->length();
+        // An empty array means "no bindings" (parameters default to NULL), matching
+        // sync rebindStatement; nonempty arrays remain exact-count validated.
+        if (!length) {
+            out = nullptr;
+            return true;
+        }
+        if (length > kMaxSQLiteVariableNumber) [[unlikely]] {
+            throwRangeError(globalObject, scope, makeString("Too many binding values: "_s, length, " exceeds SQLite's maximum of "_s, kMaxSQLiteVariableNumber));
+            return false;
+        }
+        auto bindings = std::make_unique<AsyncSQLiteBindings>();
+        bindings->kind = AsyncSQLiteBindingKind::Positional;
+        bindings->positional.reserve(length);
+        for (unsigned i = 0; i < length; i++) {
+            JSC::JSValue element = array->getDirectIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!element)
+                element = JSC::jsUndefined();
+            AsyncSQLiteValue value;
+            if (!snapshotBindingValue(globalObject, element, safeIntegers, scope, value))
+                return false;
+            bindings->positional.push_back(WTF::move(value));
+        }
+        out = WTF::move(bindings);
+        return true;
+    }
+    if (JSC::JSObject* object = arg.getObject()) {
+        auto bindings = std::make_unique<AsyncSQLiteBindings>();
+        bindings->kind = AsyncSQLiteBindingKind::Named;
+        JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, JSC::DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, false);
+        for (const auto& identifier : names.data()->propertyNameVector()) {
+            JSC::JSValue propertyValue = object->get(globalObject, identifier);
+            RETURN_IF_EXCEPTION(scope, false);
+            AsyncSQLiteValue value;
+            if (!snapshotBindingValue(globalObject, propertyValue, safeIntegers, scope, value))
+                return false;
+            WTF::String keyString = identifier.string();
+            auto keyUTF8 = keyString.utf8();
+            bindings->named.insert_or_assign(std::string(keyUTF8.data(), keyUTF8.length()), WTF::move(value));
+        }
+        out = WTF::move(bindings);
+        return true;
+    }
+    throwException(globalObject, scope, createError(globalObject, "Expected array or object for bindings"_s));
+    return false;
 }
 
 } // namespace
@@ -806,13 +1493,21 @@ void JSAsyncSQLitePendingRegistry::completeConnection(uint64_t operationId, bool
         return;
     liveRequests.fetch_sub(1, std::memory_order_relaxed);
     detachAbortAlgorithm(*request);
+    // Open/close failures are SQLite failures: reject with a SQLiteError carrying
+    // the symbolic code, mirroring synchronous bun:sqlite. Extended codes are not
+    // enabled until after open, so errorCode is the primary result code here.
+    auto* globalObject = context.globalObject();
+    auto sqliteError = [&]() -> JSC::JSValue {
+        auto decoded = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(message.data()), message.size() });
+        return WebCore::createSQLiteErrorFromCode(globalObject, errorCode, -1, decoded);
+    };
     if (!success && request->started)
-        request->started->reject(WebCore::ExceptionCode::OperationError, WTF::String::fromUTF8(message));
+        request->started->reject(sqliteError());
     if (request->result) {
         if (success)
             request->result->resolveWithJSValue(JSC::jsBoolean(true));
         else
-            request->result->reject(WebCore::ExceptionCode::OperationError, WTF::String::fromUTF8(message));
+            request->result->reject(sqliteError());
     }
     if (request->removeConnection || (request->started && !success)) {
         request->connection = nullptr;
@@ -820,7 +1515,75 @@ void JSAsyncSQLitePendingRegistry::completeConnection(uint64_t operationId, bool
     }
     if (request->keepAlive)
         context.unrefEventLoop();
-    UNUSED_PARAM(errorCode);
+}
+
+void JSAsyncSQLitePendingRegistry::completeConnectionOperation(uint64_t operationId, AsyncSQLiteConnection& connection, std::unique_ptr<AsyncSQLiteOperationResult>&& result, WebCore::ScriptExecutionContext& context)
+{
+    auto request = m_requests.take(operationId);
+    if (!request) {
+        // The request is gone (e.g. abandoned), but the FIFO must still advance
+        // so the connection cannot strand or skip its physical close.
+        connection.advanceAfterCompletion(false);
+        return;
+    }
+    liveRequests.fetch_sub(1, std::memory_order_relaxed);
+    detachAbortAlgorithm(*request);
+
+    auto* globalObject = context.globalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Build the JS settlement value while native ownership is still held. Any
+    // pending JS exception (materialization or SQLiteError construction) must be
+    // propagated to the promise, never cleared.
+    JSC::JSValue resolveValue;
+    JSC::JSValue rejectValue;
+    if (request->result) {
+        if (result && result->kind == AsyncSQLiteResultKind::Empty)
+            resolveValue = JSC::jsBoolean(true);
+        else if (result && result->kind == AsyncSQLiteResultKind::Changes)
+            resolveValue = materializeChanges(globalObject, result->changes, connection.safeIntegers());
+        else if (result && result->kind == AsyncSQLiteResultKind::Rows) {
+            if (request->operationKind == AsyncSQLiteOperationKind::QueryForTesting) {
+                resolveValue = materializeRows(globalObject, result->rows.get(), request->forceMaterializeFailure, connection.safeIntegers());
+            } else if (request->operationKind == AsyncSQLiteOperationKind::Get) {
+                resolveValue = materializeRowObject(globalObject, result->rows.get(), 0, connection.safeIntegers());
+            } else if (request->operationKind == AsyncSQLiteOperationKind::All) {
+                resolveValue = materializeAllObjects(globalObject, result->rows.get(), connection.safeIntegers());
+            } else {
+                resolveValue = materializeValues(globalObject, result->rows.get(), connection.safeIntegers());
+            }
+        } else if (result && result->kind == AsyncSQLiteResultKind::Error && result->error) {
+            const auto& error = result->error;
+            auto message = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(error->message.data()), error->message.size() });
+            // Binding failures mirror sync bun:sqlite as plain Errors with no
+            // code/errno; only prepare/step errors carry SQLite diagnostics.
+            if (error->kind == AsyncSQLiteErrorKind::Binding)
+                rejectValue = JSC::createError(globalObject, message);
+            else
+                rejectValue = WebCore::createSQLiteErrorFromCode(globalObject, error->extendedCode, error->byteOffset, message);
+        }
+    }
+    bool exceptionPending = scope.exception();
+
+    // Release owned native payloads (JS holds copies, or an exception is pending)
+    // and advance the FIFO exactly once before settling. Both steps are native
+    // only and leave any pending exception intact.
+    result = nullptr;
+    connection.advanceAfterCompletion(false);
+
+    if (request->result) {
+        if (exceptionPending)
+            // DeferredPromise consumes the pending exception (handling
+            // termination) and rejects with it; never clearException here.
+            request->result->reject(WebCore::Exception { WebCore::ExceptionCode::ExistingExceptionError });
+        else if (rejectValue)
+            request->result->reject(rejectValue);
+        else
+            request->result->resolveWithJSValue(resolveValue);
+    }
+    if (request->keepAlive)
+        context.unrefEventLoop();
 }
 
 void JSAsyncSQLitePendingRegistry::abandonRequest(PendingRequest& request, bool unrefEventLoop)
@@ -883,6 +1646,9 @@ static AsyncSQLiteTaskStats asyncSQLiteTaskStats()
         connectionInterrupts.load(std::memory_order_relaxed),
         closeJobsRun.load(std::memory_order_relaxed),
         physicalCloses.load(std::memory_order_relaxed),
+        liveRows.load(std::memory_order_relaxed),
+        liveErrors.load(std::memory_order_relaxed),
+        copiedRowValues.load(std::memory_order_relaxed),
     };
 }
 
@@ -984,6 +1750,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteTaskStatsForTesting, (JSC::JSGlob
     put("connectionInterrupts"_s, stats.connectionInterrupts);
     put("closeJobsRun"_s, stats.closeJobsRun);
     put("physicalCloses"_s, stats.physicalCloses);
+    put("liveRows"_s, stats.liveRows);
+    put("liveErrors"_s, stats.liveErrors);
+    put("copiedRowValues"_s, stats.copiedRowValues);
     return JSC::JSValue::encode(object);
 }
 
@@ -995,6 +1764,36 @@ static bool parseAsyncSQLiteConnectionId(JSC::JSGlobalObject* globalObject, JSC:
         return false;
     id = static_cast<uint64_t>(number);
     return true;
+}
+
+// Shared open path for the private testing surface and the public AsyncDatabase.
+// Creates the connection with its owned open flags, registers a pending open
+// request, and returns { id, ready }. Path emptiness is validated by the caller.
+static JSC::EncodedJSValue startAsyncSQLiteOpen(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& pathString, uint32_t capacity, int timeout, bool strict, bool safeIntegers, int openFlags)
+{
+    auto& vm = globalObject->vm();
+    auto* context = static_cast<Zig::GlobalObject*>(globalObject)->scriptExecutionContext();
+    auto* domGlobalObject = uncheckedDowncast<WebCore::JSDOMGlobalObject>(globalObject);
+    auto started = WebCore::DeferredPromise::create(*domGlobalObject);
+    if (!started) {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    auto readyPromise = started->promise();
+    auto id = nextOperationId.fetch_add(1, std::memory_order_relaxed);
+    auto pathUTF8 = pathString.utf8();
+    auto connection = WTF::adoptRef(*new AsyncSQLiteConnection(context->identifier(), std::string(pathUTF8.data(), pathUTF8.length()), capacity, timeout, strict, safeIntegers, openFlags));
+    auto* registry = registryForGlobal(globalObject);
+    registry->addConnection(id, connection.copyRef());
+    registry->add(id, JSAsyncSQLitePendingRegistry::PendingRequest { WTF::move(started), nullptr, nullptr, 0, nullptr, connection.copyRef(), id, false, true });
+    context->refEventLoop();
+    registry->markKeepAlive(id);
+    connection->open(id, static_cast<uint32_t>(WTF::Thread::currentSingleton().uid()));
+
+    auto* object = JSC::constructEmptyObject(globalObject);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "id"_s), JSC::jsNumber(static_cast<double>(id)));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "ready"_s), readyPromise);
+    return JSC::JSValue::encode(object);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionOpenForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1013,32 +1812,53 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionOpenForTesting, (JSC::J
     RETURN_IF_EXCEPTION(scope, {});
     int timeout = callFrame->argument(2).isUndefined() ? 60000 : std::max(0, callFrame->argument(2).toInt32(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-
-    auto* context = static_cast<Zig::GlobalObject*>(globalObject)->scriptExecutionContext();
-    auto* domGlobalObject = uncheckedDowncast<WebCore::JSDOMGlobalObject>(globalObject);
-    auto started = WebCore::DeferredPromise::create(*domGlobalObject);
-    if (!started) {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
+    // Private open options (arg 3), fixed per connection to match the future
+    // AsyncDatabase options and sync binding behavior.
+    bool strict = false;
+    bool safeIntegers = false;
+    if (JSC::JSObject* options = callFrame->argument(3).getObject()) {
+        JSC::JSValue strictValue = options->get(globalObject, JSC::Identifier::fromString(vm, "strict"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        strict = strictValue.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::JSValue safeValue = options->get(globalObject, JSC::Identifier::fromString(vm, "safeIntegers"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        safeIntegers = safeValue.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    auto readyPromise = started->promise();
-    auto id = nextOperationId.fetch_add(1, std::memory_order_relaxed);
-    auto pathUTF8 = pathString.utf8();
-    auto connection = WTF::adoptRef(*new AsyncSQLiteConnection(context->identifier(), std::string(pathUTF8.data(), pathUTF8.length()), capacity, timeout));
-    auto* registry = registryForGlobal(globalObject);
-    registry->addConnection(id, connection.copyRef());
-    registry->add(id, JSAsyncSQLitePendingRegistry::PendingRequest { WTF::move(started), nullptr, nullptr, 0, nullptr, connection.copyRef(), id, false, true });
-    context->refEventLoop();
-    registry->markKeepAlive(id);
-    connection->open(id, static_cast<uint32_t>(WTF::Thread::currentSingleton().uid()));
-
-    auto* object = JSC::constructEmptyObject(globalObject);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "id"_s), JSC::jsNumber(static_cast<double>(id)));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "ready"_s), readyPromise);
-    return JSC::JSValue::encode(object);
+    return startAsyncSQLiteOpen(globalObject, scope, pathString, capacity, timeout, strict, safeIntegers, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Public open for AsyncDatabase. Options are validated and coerced in
+// src/js/bun/sqlite.ts, so args arrive as already-checked primitives:
+// (path, openFlags, busyTimeout, maxPending, strict, safeIntegers).
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteDatabaseOpen, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if LAZY_LOAD_SQLITE
+    if (lazyLoadSQLite() < 0)
+        return throwVMError(globalObject, scope, WTF::String::fromUTF8(dlerror()));
+#endif
+    auto pathString = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (pathString.isEmpty())
+        return throwVMTypeError(globalObject, scope, "AsyncDatabase.open requires a path"_s);
+    int openFlags = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int timeout = std::max(0, callFrame->argument(2).toInt32(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    uint32_t capacity = std::max(1, callFrame->argument(3).toInt32(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    bool strict = callFrame->argument(4).toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool safeIntegers = callFrame->argument(5).toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return startAsyncSQLiteOpen(globalObject, scope, pathString, capacity, timeout, strict, safeIntegers, openFlags);
+}
+
+
+static JSC::EncodedJSValue asyncSQLiteConnectionSubmit(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, AsyncSQLiteOperationKind kind, bool acceptsBindings)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1050,6 +1870,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::J
         return {};
     }
     auto promise = result->promise();
+    bool forceMaterializeFailure = false;
+    if (kind == AsyncSQLiteOperationKind::QueryForTesting) {
+        if (JSC::JSObject* options = callFrame->argument(3).getObject()) {
+            JSC::JSValue forceValue = options->get(globalObject, JSC::Identifier::fromString(vm, "forceMaterializeFailure"_s));
+            if (scope.exception()) {
+                result->reject(WebCore::Exception { WebCore::ExceptionCode::ExistingExceptionError });
+                return JSC::JSValue::encode(promise);
+            }
+            forceMaterializeFailure = forceValue.toBoolean(globalObject);
+            if (scope.exception()) {
+                result->reject(WebCore::Exception { WebCore::ExceptionCode::ExistingExceptionError });
+                return JSC::JSValue::encode(promise);
+            }
+        }
+    }
     uint64_t id;
     if (!parseAsyncSQLiteConnectionId(globalObject, callFrame->argument(0), scope, id)) {
         RETURN_IF_EXCEPTION(scope, {});
@@ -1057,7 +1892,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::J
         return JSC::JSValue::encode(promise);
     }
     auto sqlString = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) {
+        result->reject(WebCore::Exception { WebCore::ExceptionCode::ExistingExceptionError });
+        return JSC::JSValue::encode(promise);
+    }
     auto* registry = registryForGlobal(globalObject);
     auto connection = registry->connection(id);
     if (!connection) {
@@ -1065,18 +1903,61 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::J
         return JSC::JSValue::encode(promise);
     }
 
+    // Snapshot all binding input on the JS thread before admission. Any getter,
+    // Proxy trap, or conversion error rejects the returned Promise rather than
+    // escaping synchronously; no keepalive/request has been taken yet.
+    if (!acceptsBindings && !callFrame->argument(2).isUndefined()) {
+        result->reject(WebCore::ExceptionCode::OperationError, "async SQLite exec does not accept bindings"_s);
+        return JSC::JSValue::encode(promise);
+    }
+    std::unique_ptr<AsyncSQLiteBindings> bindings;
+    if (acceptsBindings && !snapshotBindings(globalObject, callFrame->argument(2), connection->safeIntegers(), scope, bindings)) {
+        result->reject(WebCore::Exception { WebCore::ExceptionCode::ExistingExceptionError });
+        return JSC::JSValue::encode(promise);
+    }
+
     auto operationId = nextOperationId.fetch_add(1, std::memory_order_relaxed);
     auto sqlUTF8 = sqlString.utf8();
-    if (!connection->admit(operationId, std::string(sqlUTF8.data(), sqlUTF8.length()))) {
+    if (!connection->admit(operationId, std::string(sqlUTF8.data(), sqlUTF8.length()), kind, WTF::move(bindings))) {
         result->reject(WebCore::ExceptionCode::OperationError, "connection queue is full or closing"_s);
         return JSC::JSValue::encode(promise);
     }
     // admit() can schedule a fast completion, but its JS callback cannot claim
     // the registry until this host function returns.
-    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, false, true });
+    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, false, true, kind != AsyncSQLiteOperationKind::Exec, forceMaterializeFailure, kind });
     context->refEventLoop();
     registry->markKeepAlive(operationId);
     return JSC::JSValue::encode(promise);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionExecForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return asyncSQLiteConnectionSubmit(globalObject, callFrame, AsyncSQLiteOperationKind::Exec, false);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionQueryForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return asyncSQLiteConnectionSubmit(globalObject, callFrame, AsyncSQLiteOperationKind::QueryForTesting, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionRunForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return asyncSQLiteConnectionSubmit(globalObject, callFrame, AsyncSQLiteOperationKind::Run, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionGetForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return asyncSQLiteConnectionSubmit(globalObject, callFrame, AsyncSQLiteOperationKind::Get, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionAllForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return asyncSQLiteConnectionSubmit(globalObject, callFrame, AsyncSQLiteOperationKind::All, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionValuesForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return asyncSQLiteConnectionSubmit(globalObject, callFrame, AsyncSQLiteOperationKind::Values, true);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionCloseForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1126,11 +2007,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionStatsForTesting, (JSC::
     object->putDirect(vm, JSC::Identifier::fromString(vm, "connectionInterrupts"_s), JSC::jsNumber(stats.connectionInterrupts));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "closeJobsRun"_s), JSC::jsNumber(stats.closeJobsRun));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "physicalCloses"_s), JSC::jsNumber(stats.physicalCloses));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "liveRows"_s), JSC::jsNumber(stats.liveRows));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "liveErrors"_s), JSC::jsNumber(stats.liveErrors));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "copiedRowValues"_s), JSC::jsNumber(stats.copiedRowValues));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveJobs"_s), JSC::jsNumber(stats.liveJobs));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveResults"_s), JSC::jsNumber(stats.liveResults));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "liveRequests"_s), JSC::jsNumber(stats.liveRequests));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "deliveryDisabledDrops"_s), JSC::jsNumber(stats.deliveryDisabledDrops));
     return JSC::JSValue::encode(object);
+}
+
+// Builds the public AsyncDatabase native surface. The exec/run/get/all/values/
+// close entry points share the same host functions as the private testing
+// surface (their SQLite semantics are identical); only the arg-shape-specific
+// open differs. Exposed exclusively through this factory, never via
+// bun:internal-for-testing.
+JSC::JSValue createAsyncSQLiteBinding(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto* object = JSC::constructEmptyObject(globalObject);
+    auto put = [&](JSC::ASCIILiteral name, unsigned length, JSC::NativeFunction fn) {
+        object->putDirect(vm, JSC::Identifier::fromString(vm, name), JSC::JSFunction::create(vm, globalObject, length, WTF::String(name), fn, JSC::ImplementationVisibility::Public), 0);
+    };
+    put("open"_s, 6, jsFunction_asyncSQLiteDatabaseOpen);
+    put("exec"_s, 1, jsFunction_asyncSQLiteConnectionExecForTesting);
+    put("run"_s, 2, jsFunction_asyncSQLiteConnectionRunForTesting);
+    put("get"_s, 2, jsFunction_asyncSQLiteConnectionGetForTesting);
+    put("all"_s, 2, jsFunction_asyncSQLiteConnectionAllForTesting);
+    put("values"_s, 2, jsFunction_asyncSQLiteConnectionValuesForTesting);
+    put("close"_s, 1, jsFunction_asyncSQLiteConnectionCloseForTesting);
+    return object;
 }
 
 extern "C" void Bun__AsyncSQLiteNativeJob__runAndDelete(AsyncSQLiteJobBase* job) noexcept

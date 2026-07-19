@@ -63,6 +63,7 @@ typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
 typedef void (*lazy_sqlite3_free_type)(void*);
 typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
 typedef int (*lazy_sqlite3_total_changes_type)(sqlite3*);
+typedef sqlite3_int64 (*lazy_sqlite3_total_changes64_type)(sqlite3*);
 typedef int (*lazy_sqlite3_config_type)(int, ...);
 typedef int (*lazy_sqlite3_open_v2_type)(const char* filename, sqlite3** ppDb, int flags, const char* zVfs);
 typedef int (*lazy_sqlite3_threadsafe_type)();
@@ -195,6 +196,7 @@ inline lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
 inline lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
 inline lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name;
 inline lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes;
+inline lazy_sqlite3_total_changes64_type lazy_sqlite3_total_changes64;
 inline lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 inline lazy_sqlite3_exec_type lazy_sqlite3_exec;
 inline lazy_sqlite3_limit_type lazy_sqlite3_limit;
@@ -269,6 +271,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_finalize lazy_sqlite3_finalize
 #define sqlite3_free lazy_sqlite3_free
 #define sqlite3_get_autocommit lazy_sqlite3_get_autocommit
+#define sqlite3_total_changes64 lazy_sqlite3_total_changes64
 #define sqlite3_open_v2 lazy_sqlite3_open_v2
 #define sqlite3_threadsafe lazy_sqlite3_threadsafe
 #define sqlite3_prepare_v2 lazy_sqlite3_prepare_v2
@@ -437,6 +440,7 @@ inline int lazyLoadSQLite()
     lazy_sqlite3_memory_used = (lazy_sqlite3_memory_used_type)dlsym(sqlite3_handle, "sqlite3_memory_used");
     lazy_sqlite3_bind_parameter_name = (lazy_sqlite3_bind_parameter_name_type)dlsym(sqlite3_handle, "sqlite3_bind_parameter_name");
     lazy_sqlite3_total_changes = (lazy_sqlite3_total_changes_type)dlsym(sqlite3_handle, "sqlite3_total_changes");
+    lazy_sqlite3_total_changes64 = (lazy_sqlite3_total_changes64_type)dlsym(sqlite3_handle, "sqlite3_total_changes64");
     lazy_sqlite3_last_insert_rowid = (lazy_sqlite3_last_insert_rowid_type)dlsym(sqlite3_handle, "sqlite3_last_insert_rowid");
     lazy_sqlite3_exec = (lazy_sqlite3_exec_type)dlsym(sqlite3_handle, "sqlite3_exec");
     lazy_sqlite3_limit = (lazy_sqlite3_limit_type)dlsym(sqlite3_handle, "sqlite3_limit");
@@ -514,6 +518,13 @@ inline int lazyLoadSQLite()
     if (!lazy_sqlite3_changes64) {
         lazy_sqlite3_changes64 = [](sqlite3* db) -> sqlite3_int64 {
             return static_cast<sqlite3_int64>(lazy_sqlite3_changes(db));
+        };
+    }
+    // sqlite3_total_changes64 has the same SQLite 3.37/macOS 12 compatibility
+    // gap as sqlite3_changes64, so retain the long-standing 32-bit fallback.
+    if (!lazy_sqlite3_total_changes64) {
+        lazy_sqlite3_total_changes64 = [](sqlite3* db) -> sqlite3_int64 {
+            return static_cast<sqlite3_int64>(lazy_sqlite3_total_changes(db));
         };
     }
 

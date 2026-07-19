@@ -69,6 +69,548 @@ describe("as", () => {
   });
 });
 
+describe("async SQLite method semantics (Gate C prerequisite private)", () => {
+  it("exposes Promise-shaped private Exec, Run, Get, All, and Values helpers", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionRunForTesting,
+      asyncSQLiteConnectionGetForTesting,
+      asyncSQLiteConnectionAllForTesting,
+      asyncSQLiteConnectionValuesForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+
+    expect(typeof asyncSQLiteConnectionExecForTesting).toBe("function");
+    expect(typeof asyncSQLiteConnectionRunForTesting).toBe("function");
+    expect(typeof asyncSQLiteConnectionGetForTesting).toBe("function");
+    expect(typeof asyncSQLiteConnectionAllForTesting).toBe("function");
+    expect(typeof asyncSQLiteConnectionValuesForTesting).toBe("function");
+
+    const file = path.join(tempDirWithFiles("sqlite-async-method-surface", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      for (const promise of [
+        asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE t (value INTEGER)"),
+        asyncSQLiteConnectionRunForTesting(connection.id, "INSERT INTO t VALUES (1)"),
+        asyncSQLiteConnectionGetForTesting(connection.id, "SELECT value FROM t"),
+        asyncSQLiteConnectionAllForTesting(connection.id, "SELECT value FROM t"),
+        asyncSQLiteConnectionValuesForTesting(connection.id, "SELECT value FROM t"),
+      ]) {
+        expect(promise).toBeInstanceOf(Promise);
+        await promise;
+      }
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+
+  it("exec executes scripts, rejects bindings and empty SQL, and recovers after an error", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionAllForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-exec-semantics", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      await expect(
+        asyncSQLiteConnectionExecForTesting(
+          connection.id,
+          " /* leading */ CREATE TABLE t (value INTEGER); INSERT INTO t VALUES (1); ; INSERT INTO t VALUES (2); -- trailing\n",
+        ),
+      ).resolves.toBe(true);
+      await expect(asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO t VALUES (?)", [3])).rejects.toThrow(
+        "does not accept bindings",
+      );
+      await expect(asyncSQLiteConnectionExecForTesting(connection.id, " ; /* only comment */ ")).rejects.toThrow(
+        "requires an executable statement",
+      );
+      await expect(
+        asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO t VALUES (3); INSERT INTO missing VALUES (4)"),
+      ).rejects.toThrow(SQLiteError);
+      expect(await asyncSQLiteConnectionAllForTesting(connection.id, "SELECT value FROM t ORDER BY value")).toEqual([
+        { value: 1 },
+        { value: 2 },
+        { value: 3 },
+      ]);
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+
+  it("run returns total changes and final row ID with first-statement bindings", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionRunForTesting,
+      asyncSQLiteConnectionAllForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-run-semantics", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      await asyncSQLiteConnectionExecForTesting(
+        connection.id,
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, value INTEGER)",
+      );
+      await expect(
+        asyncSQLiteConnectionRunForTesting(
+          connection.id,
+          "/* lead */ INSERT INTO t (value) VALUES (?); INSERT INTO t (value) VALUES (20);",
+          [10],
+        ),
+      ).resolves.toEqual({ changes: 2, lastInsertRowid: 2 });
+      expect(await asyncSQLiteConnectionAllForTesting(connection.id, "SELECT id, value FROM t ORDER BY id")).toEqual([
+        { id: 1, value: 10 },
+        { id: 2, value: 20 },
+      ]);
+      await expect(asyncSQLiteConnectionRunForTesting(connection.id, "-- only comment")).rejects.toThrow(
+        "requires an executable statement",
+      );
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+
+  it("materializes get, all, and values with their distinct result shapes", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionGetForTesting,
+      asyncSQLiteConnectionAllForTesting,
+      asyncSQLiteConnectionValuesForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-row-shapes", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      await asyncSQLiteConnectionExecForTesting(
+        connection.id,
+        "CREATE TABLE t (value INTEGER); INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)",
+      );
+      expect(
+        await asyncSQLiteConnectionGetForTesting(
+          connection.id,
+          "SELECT value AS first, value + 10 AS first FROM t ORDER BY value",
+        ),
+      ).toEqual({
+        first: 11,
+      });
+      await expect(
+        asyncSQLiteConnectionGetForTesting(connection.id, "SELECT value FROM t WHERE 0"),
+      ).resolves.toBeNull();
+      expect(await asyncSQLiteConnectionAllForTesting(connection.id, "SELECT value FROM t ORDER BY value")).toEqual([
+        { value: 1 },
+        { value: 2 },
+      ]);
+      expect(
+        await asyncSQLiteConnectionValuesForTesting(connection.id, "SELECT value, value + 10 FROM t ORDER BY value"),
+      ).toEqual([
+        [1, 11],
+        [2, 12],
+      ]);
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+
+  it("copies only the first row for get", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionGetForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-get-first-row", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      const before = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
+      await expect(
+        asyncSQLiteConnectionGetForTesting(connection.id, "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3"),
+      ).resolves.toEqual({ value: 1 });
+      const copied = asyncSQLiteConnectionStatsForTesting().copiedRowValues - before;
+      expect(copied).toBe(isDebug || isASAN ? 1 : 0);
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+
+  it("rejects a second executable get/all/values statement before either statement steps", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionGetForTesting,
+      asyncSQLiteConnectionAllForTesting,
+      asyncSQLiteConnectionValuesForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-single-statement", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE t (value INTEGER)");
+      for (const operation of [
+        asyncSQLiteConnectionGetForTesting,
+        asyncSQLiteConnectionAllForTesting,
+        asyncSQLiteConnectionValuesForTesting,
+      ]) {
+        await expect(
+          operation(connection.id, " /* lead */ INSERT INTO t VALUES (1) RETURNING value; INSERT INTO t VALUES (2)"),
+        ).rejects.toThrow("exactly one executable statement");
+      }
+      expect(await asyncSQLiteConnectionAllForTesting(connection.id, "SELECT value FROM t")).toEqual([]);
+      await expect(asyncSQLiteConnectionAllForTesting(connection.id, "SELECT 1; -- trailing only\n")).resolves.toEqual([
+        { 1: 1 },
+      ]);
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+
+  it("keeps run changes numeric while safeIntegers makes row IDs bigint", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionRunForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const dir = tempDirWithFiles("sqlite-async-run-safe-integers", { "empty.txt": "" });
+    const defaultConnection = asyncSQLiteConnectionOpenForTesting(path.join(dir, "default.db"), 8);
+    const safeConnection = asyncSQLiteConnectionOpenForTesting(path.join(dir, "safe.db"), 8, undefined, {
+      safeIntegers: true,
+    });
+    await Promise.all([defaultConnection.ready, safeConnection.ready]);
+    try {
+      for (const connection of [defaultConnection, safeConnection])
+        await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
+      const defaultResult = await asyncSQLiteConnectionRunForTesting(
+        defaultConnection.id,
+        "INSERT INTO t DEFAULT VALUES",
+      );
+      const safeResult = await asyncSQLiteConnectionRunForTesting(safeConnection.id, "INSERT INTO t DEFAULT VALUES");
+      expect(defaultResult).toEqual({ changes: 1, lastInsertRowid: 1 });
+      expect(safeResult).toEqual({ changes: 1, lastInsertRowid: 1n });
+      expect(typeof defaultResult.changes).toBe("number");
+      expect(typeof safeResult.changes).toBe("number");
+    } finally {
+      await Promise.all([
+        asyncSQLiteConnectionCloseForTesting(defaultConnection.id),
+        asyncSQLiteConnectionCloseForTesting(safeConnection.id),
+      ]);
+    }
+  });
+
+  it("keeps the FIFO usable after syntax and schema-change operations", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionAllForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+    } = await import("bun:internal-for-testing");
+    const file = path.join(tempDirWithFiles("sqlite-async-method-recovery", { "empty.txt": "" }), "methods.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
+    await connection.ready;
+    try {
+      await expect(asyncSQLiteConnectionAllForTesting(connection.id, "SELECT FROM")).rejects.toThrow(SQLiteError);
+      await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE t (value INTEGER)");
+      await asyncSQLiteConnectionExecForTesting(connection.id, "ALTER TABLE t ADD COLUMN extra TEXT");
+      await asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO t VALUES (1, 'fresh')");
+      await expect(asyncSQLiteConnectionAllForTesting(connection.id, "SELECT value, extra FROM t")).resolves.toEqual([
+        { value: 1, extra: "fresh" },
+      ]);
+    } finally {
+      await asyncSQLiteConnectionCloseForTesting(connection.id);
+    }
+  });
+});
+
+describe("AsyncDatabase (public Gate C)", () => {
+  const asyncTmp = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "async.db");
+
+  it("exposes AsyncDatabase as an ESM named export and via CommonJS require", async () => {
+    const esm = await import("bun:sqlite");
+    expect(typeof esm.AsyncDatabase).toBe("function");
+    const cjs = require("bun:sqlite");
+    expect(typeof cjs.AsyncDatabase).toBe("function");
+    expect(cjs.AsyncDatabase).toBe(esm.AsyncDatabase);
+  });
+
+  it("keeps the synchronous exports and default export unchanged", async () => {
+    const mod = await import("bun:sqlite");
+    expect(typeof mod.Database).toBe("function");
+    expect(typeof mod.Statement).toBe("function");
+    expect(typeof mod.SQLiteError).toBe("function");
+    expect(mod.constants.SQLITE_OPEN_READWRITE).toBe(2);
+    expect(mod.default.Database).toBe(mod.Database);
+    expect(mod.default.Statement).toBe(mod.Statement);
+    expect(mod.default.SQLiteError).toBe(mod.SQLiteError);
+    expect(mod.default.default).toBe(mod.Database);
+    expect(mod.default.AsyncDatabase).toBe(mod.AsyncDatabase);
+    // The synchronous Database is not an AsyncDatabase and vice versa.
+    const sync = new Database(":memory:");
+    expect(sync).not.toBeInstanceOf(mod.AsyncDatabase);
+    sync.close();
+  });
+
+  it("cannot be constructed publicly; open() is the only construction path", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    expect(() => new AsyncDatabase()).toThrow(TypeError);
+    expect(() => new AsyncDatabase("forged", 0, ":memory:", 1)).toThrow(TypeError);
+    expect(() => Reflect.construct(AsyncDatabase, [Symbol("bun:sqlite:async"), 0, ":memory:", 1])).toThrow(TypeError);
+  });
+
+  it("open() is observably asynchronous and resolves to an instance", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const pending = AsyncDatabase.open(":memory:");
+    expect(pending).toBeInstanceOf(Promise);
+    const db = await pending;
+    expect(db).toBeInstanceOf(AsyncDatabase);
+    expect(db.filename).toBe(":memory:");
+    await db.close();
+  });
+
+  it("defaults the filename to an in-memory database", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open();
+    expect(db.filename).toBe(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    expect(await db.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 0 });
+  });
+
+  it("exposes filename as a read-only property", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const file = asyncTmp("async-db-filename");
+    await using db = await AsyncDatabase.open(file);
+    expect(db.filename).toBe(file);
+    expect(() => {
+      "use strict";
+      db.filename = "hacked";
+    }).toThrow();
+    expect(db.filename).toBe(file);
+  });
+
+  it("opens and persists a file-backed database", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const file = asyncTmp("async-db-file");
+    {
+      await using db = await AsyncDatabase.open(file);
+      await db.exec("CREATE TABLE t (v INTEGER)");
+      await db.run("INSERT INTO t VALUES (42)");
+    }
+    const reader = new Database(file, { readonly: true });
+    try {
+      expect(reader.query("SELECT v FROM t").get()).toEqual({ v: 42 });
+    } finally {
+      reader.close();
+    }
+  });
+
+  it("opens read-only against an existing database and rejects writes", async () => {
+    const { AsyncDatabase, SQLiteError } = await import("bun:sqlite");
+    const file = asyncTmp("async-db-readonly");
+    {
+      const seed = new Database(file);
+      seed.exec("CREATE TABLE t (v INTEGER)");
+      seed.run("INSERT INTO t VALUES (7)");
+      seed.close();
+    }
+    await using db = await AsyncDatabase.open(file, { readonly: true });
+    expect(await db.get("SELECT v FROM t")).toEqual({ v: 7 });
+    await expect(db.run("INSERT INTO t VALUES (8)")).rejects.toThrow(SQLiteError);
+  });
+
+  it("rejects opening an anonymous database read-only", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await expect(AsyncDatabase.open(":memory:", { readonly: true })).rejects.toThrow(/anonymous/);
+  });
+
+  it("rejects opening a missing file when create is false with SQLITE_CANTOPEN", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const missing = path.join(tempDirWithFiles("async-db-nocreate", { "empty.txt": "" }), "missing.db");
+    let error;
+    try {
+      await AsyncDatabase.open(missing, { create: false, readwrite: true });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+    expect(error.message).toBe("unable to open database file");
+    expect(error.code).toBe("SQLITE_CANTOPEN");
+  });
+
+  it("validates open option types, ranges, and conflicting flags", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await expect(AsyncDatabase.open(":memory:", { readonly: true, readwrite: true })).rejects.toThrow();
+    await expect(AsyncDatabase.open(":memory:", { readonly: true, create: true })).rejects.toThrow();
+    await expect(AsyncDatabase.open(":memory:", { readonly: 1 })).rejects.toThrow(TypeError);
+    await expect(AsyncDatabase.open(":memory:", { strict: "yes" })).rejects.toThrow(TypeError);
+    await expect(AsyncDatabase.open(":memory:", { safeIntegers: 1 })).rejects.toThrow(TypeError);
+    await expect(AsyncDatabase.open(":memory:", { busyTimeout: -1 })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { busyTimeout: 1.5 })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { busyTimeout: NaN })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { busyTimeout: Infinity })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { maxPending: 0 })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { maxPending: -3 })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { maxPending: 2.5 })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { maxPending: Infinity })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(1234)).rejects.toThrow(TypeError);
+  });
+
+  it("accepts busyTimeout of zero and normal values", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using zero = await AsyncDatabase.open(":memory:", { busyTimeout: 0 });
+    expect(zero).toBeInstanceOf(AsyncDatabase);
+    await using normal = await AsyncDatabase.open(":memory:", { busyTimeout: 5000 });
+    expect(normal).toBeInstanceOf(AsyncDatabase);
+  });
+
+  it("every method returns a Promise", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    await db.run("INSERT INTO t VALUES (1)");
+    const calls = [
+      db.exec("SELECT 1"),
+      db.run("INSERT INTO t VALUES (2)"),
+      db.get("SELECT v FROM t ORDER BY v"),
+      db.all("SELECT v FROM t ORDER BY v"),
+      db.values("SELECT v FROM t ORDER BY v"),
+    ];
+    for (const call of calls) expect(call).toBeInstanceOf(Promise);
+    await Promise.all(calls);
+  });
+
+  it("materializes exec/run/get/all/values shapes matching sync semantics", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    expect(await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")).toBeUndefined();
+    expect(await db.run("INSERT INTO t (v) VALUES (?)", ["a"])).toEqual({ changes: 1, lastInsertRowid: 1 });
+    expect(await db.get("SELECT v FROM t WHERE id = ?", [1])).toEqual({ v: "a" });
+    expect(await db.get("SELECT v FROM t WHERE id = ?", [999])).toBeNull();
+    await db.run("INSERT INTO t (v) VALUES (?)", ["b"]);
+    expect(await db.all("SELECT v FROM t ORDER BY id")).toEqual([{ v: "a" }, { v: "b" }]);
+    expect(await db.values("SELECT v FROM t ORDER BY id")).toEqual([["a"], ["b"]]);
+    expect(await db.all("SELECT v FROM t WHERE id = 999")).toEqual([]);
+    expect(await db.values("SELECT v FROM t WHERE id = 999")).toEqual([]);
+  });
+
+  it("executes multi-statement scripts through exec", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE a (x INTEGER); CREATE TABLE b (y INTEGER); INSERT INTO a VALUES (1);");
+    expect(await db.get("SELECT x FROM a")).toEqual({ x: 1 });
+    expect(await db.all("SELECT y FROM b")).toEqual([]);
+  });
+
+  it("supports positional and named bindings", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:", { strict: true });
+    await db.exec("CREATE TABLE t (a INTEGER, b INTEGER)");
+    await db.run("INSERT INTO t VALUES ($a, $b)", { a: 1, b: 2 });
+    await db.run("INSERT INTO t VALUES (?, ?)", [3, 4]);
+    expect(await db.all("SELECT a, b FROM t ORDER BY a")).toEqual([
+      { a: 1, b: 2 },
+      { a: 3, b: 4 },
+    ]);
+  });
+
+  it("rejects invalid SQL, invalid bindings, and invalid argument types", async () => {
+    const { AsyncDatabase, SQLiteError } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    await expect(db.all("SELECT FROM")).rejects.toThrow(SQLiteError);
+    await expect(db.get("this is not sql")).rejects.toThrow(SQLiteError);
+    await expect(db.run("INSERT INTO t VALUES (?)", 5)).rejects.toThrow();
+    await expect(db.run(123)).rejects.toThrow(TypeError);
+    await expect(db.exec(null)).rejects.toThrow(TypeError);
+  });
+
+  it("rejects unsupported per-operation options such as AbortSignal", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const controller = new AbortController();
+    await expect(db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal })).rejects.toThrow();
+    await expect(db.exec("SELECT 1", { signal: controller.signal })).rejects.toThrow();
+    await expect(db.get("SELECT v FROM t", undefined, { signal: controller.signal })).rejects.toThrow();
+  });
+
+  it("honors safeIntegers for bindings and results", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:", { safeIntegers: true });
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    await db.run("INSERT INTO t VALUES (?)", [9007199254740993n]);
+    const row = await db.get("SELECT v FROM t");
+    expect(typeof row.v).toBe("bigint");
+    expect(row.v).toBe(9007199254740993n);
+  });
+
+  it("enforces the maxPending boundary: at the limit succeeds, one over rejects", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const file = asyncTmp("async-db-maxpending");
+    await using db = await AsyncDatabase.open(file, { maxPending: 1, busyTimeout: 60000 });
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const blocker = new Database(file);
+    try {
+      blocker.exec("BEGIN IMMEDIATE");
+      const active = db.run("INSERT INTO t VALUES (1)");
+      await expect(db.run("INSERT INTO t VALUES (2)")).rejects.toThrow(/pending/i);
+      blocker.exec("COMMIT");
+      await expect(active).resolves.toEqual({ changes: 1, lastInsertRowid: 1 });
+      // After the slot frees, the next operation is admitted again.
+      await expect(db.run("INSERT INTO t VALUES (3)")).resolves.toEqual({ changes: 1, lastInsertRowid: 3 });
+    } finally {
+      blocker.close();
+    }
+  });
+
+  it("close is idempotent, returns coherent promises, and fences later work", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const first = db.close();
+    const second = db.close();
+    expect(first).toBeInstanceOf(Promise);
+    expect(second).toBeInstanceOf(Promise);
+    await Promise.all([first, second]);
+    await db.close();
+    await expect(db.run("INSERT INTO t VALUES (1)")).rejects.toThrow();
+    await expect(db.exec("SELECT 1")).rejects.toThrow();
+  });
+
+  it("close fences admission immediately while draining accepted work", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using outer = await AsyncDatabase.open(":memory:");
+    await outer.exec("CREATE TABLE seed (v INTEGER)");
+    const db = await AsyncDatabase.open(asyncTmp("async-db-fence"));
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const accepted = db.run("INSERT INTO t VALUES (1)");
+    const closing = db.close();
+    await expect(db.run("INSERT INTO t VALUES (2)")).rejects.toThrow();
+    await expect(accepted).resolves.toEqual({ changes: 1, lastInsertRowid: 1 });
+    await closing;
+  });
+
+  it("[Symbol.asyncDispose] closes the database", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    let escaped;
+    {
+      await using db = await AsyncDatabase.open(":memory:");
+      escaped = db;
+      await db.exec("CREATE TABLE t (v INTEGER)");
+      expect(await db.get("SELECT 1 AS one")).toEqual({ one: 1 });
+    }
+    await expect(escaped.run("INSERT INTO t VALUES (1)")).rejects.toThrow();
+  });
+});
+
 describe("safeIntegers", () => {
   it("should default to false", () => {
     const db = Database.open(":memory:");
@@ -2995,6 +3537,1138 @@ describe("async SQLite connection core (Gate B private)", () => {
     } finally {
       if (worker) await worker.terminate();
       blocker.close();
+    }
+  });
+});
+
+describe("async SQLite owned row results (Gate C prerequisite private)", () => {
+  // Baseline restoration predicate shared by every Gate C test: all live native
+  // ownership must return to the pre-test baseline. copiedRowValues is cumulative
+  // and asserted separately, not here.
+  const baselineRestored = baseline => current =>
+    current.liveConnections === baseline.liveConnections &&
+    current.liveJobs === baseline.liveJobs &&
+    current.liveResults === baseline.liveResults &&
+    current.liveRequests === baseline.liveRequests &&
+    current.liveRows === baseline.liveRows &&
+    current.liveErrors === baseline.liveErrors &&
+    current.activeConnectionOperations === baseline.activeConnectionOperations;
+
+  // Idempotent close registered immediately after open. `done` is set only after
+  // a successful close so a rejected close can still be retried by finally,
+  // avoiding double close and test poisoning.
+  const makeClose = (closeForTesting, id) => {
+    // Memoize the in-flight close so an unawaited getter close() and later cleanup
+    // await the same operation; reset on rejection so a failed close can be retried.
+    let pending = null;
+    return () => {
+      if (!pending) {
+        pending = Promise.resolve(closeForTesting(id)).catch(err => {
+          pending = null;
+          throw err;
+        });
+      }
+      return pending;
+    };
+  };
+
+  it("returns owned column names and rows from a one-shot SELECT that survive finalization", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+    expect(typeof asyncSQLiteConnectionQueryForTesting).toBe("function");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-gate-c", { "empty.txt": "" });
+    const file = path.join(dir, "gate-c.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // A literal one-shot SELECT covering every storage class the copy path must
+      // own: NULL, INTEGER, REAL, non-ASCII TEXT, empty/embedded-NUL BLOB. A
+      // second UNION ALL row exercises negatives, empty TEXT, single-byte BLOB.
+      const result = await asyncSQLiteConnectionQueryForTesting(
+        connection.id,
+        "SELECT NULL AS a, 42 AS b, 3.5 AS c, 'héllo☃' AS d, x'' AS e, x'00ff00' AS f " +
+          "UNION ALL SELECT NULL, -7, 0.0, '', x'01', x''",
+      );
+
+      expect(Array.isArray(result.columns)).toBe(true);
+      expect(result.columns).toEqual(["a", "b", "c", "d", "e", "f"]);
+      expect(Array.isArray(result.rows)).toBe(true);
+      expect(result.rows.length).toBe(2);
+
+      const [row0, row1] = result.rows;
+      expect(row0[0]).toBeNull();
+      expect(row0[1]).toBe(42);
+      expect(row0[2]).toBe(3.5);
+      expect(row0[3]).toBe("héllo☃");
+      expect(row0[4]).toBeInstanceOf(Uint8Array);
+      expect(row0[4].length).toBe(0);
+      expect(row0[5]).toBeInstanceOf(Uint8Array);
+      expect(Array.from(row0[5])).toEqual([0x00, 0xff, 0x00]);
+
+      expect(row1[0]).toBeNull();
+      expect(row1[1]).toBe(-7);
+      expect(row1[2]).toBe(0);
+      expect(row1[3]).toBe("");
+      expect(row1[4]).toBeInstanceOf(Uint8Array);
+      expect(Array.from(row1[4])).toEqual([0x01]);
+      expect(row1[5]).toBeInstanceOf(Uint8Array);
+      expect(row1[5].length).toBe(0);
+
+      // The owned result was copied before sqlite3_finalize() and the worker-local
+      // connection is now torn down; the JS values must remain intact afterwards.
+      await close();
+      expect(result.rows[0][3]).toBe("héllo☃");
+      expect(Array.from(result.rows[0][5])).toEqual([0x00, 0xff, 0x00]);
+
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "Gate C one-shot query leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("snapshots the authoritative SQLite error diagnostics and keeps the connection usable", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-gate-c-err", { "empty.txt": "" });
+    const file = path.join(dir, "gate-c-err.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // A deterministic prepare-time syntax error. The worker must snapshot the
+      // result code, extended code, byte offset, and owned message before
+      // finalize/close or a later call can overwrite the error state.
+      let error;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1 FROM WHERE");
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.name).toBe("SQLiteError");
+      expect(error.code).toBe("SQLITE_ERROR");
+      expect(error.errno).toBe(1);
+      // byteOffset is 14 where the API is available; older/custom libs report -1.
+      expect([14, -1]).toContain(error.byteOffset);
+      expect(error.message).toContain("syntax error");
+
+      // The failed operation must not poison the FIFO: a subsequent valid query
+      // on the same connection must still run and return owned rows.
+      const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 7 AS n");
+      expect(ok.columns).toEqual(["n"]);
+      expect(ok.rows).toEqual([[7]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "Gate C error-path query leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects with the preserved materialization exception and keeps the connection usable", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-gate-c-throw", { "empty.txt": "" });
+    const file = path.join(dir, "gate-c-throw.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // The private options flag forces a deterministic JS exception on the
+      // JS-thread materialization path. The promise must reject with that exact
+      // exception (preserved, not cleared and replaced by a synthesized error).
+      let error;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1 AS n", undefined, {
+          forceMaterializeFailure: true,
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.name).toBe("TypeError");
+      expect(error.message).toContain("forced async SQLite materialization failure");
+
+      // The forced failure must not strand the FIFO: a normal query still works.
+      const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 5 AS n");
+      expect(ok.rows).toEqual([[5]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "Gate C forced materialization failure leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("copies row values only for Query, never for Exec of row-producing SQL", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-gate-c-copy", { "empty.txt": "" });
+    const file = path.join(dir, "gate-c-copy.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // Exec of row-producing SQL (including a multi-statement Gate B script)
+      // must drain rows without copying any values.
+      const beforeExec = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
+      expect(await asyncSQLiteConnectionExecForTesting(connection.id, "SELECT 1, 2, 3")).toBe(true);
+      expect(
+        await asyncSQLiteConnectionExecForTesting(
+          connection.id,
+          "CREATE TABLE t(x); INSERT INTO t VALUES (10); SELECT x FROM t",
+        ),
+      ).toBe(true);
+      const afterExec = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
+      expect(afterExec - beforeExec).toBe(0);
+
+      // Query copies each produced value; the counter is debug-gated, so the
+      // delta is 3 in debug/assert builds and 0 in release.
+      const beforeQuery = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
+      const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1, 2, 3");
+      expect(result.rows).toEqual([[1, 2, 3]]);
+      const afterQuery = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
+      expect(afterQuery - beforeQuery).toBe(isDebug || isASAN ? 3 : 0);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "Gate C exec/query copy accounting leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("decodes non-UTF-8 column names leniently when copying owned rows", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-gate-c-badcols", { "empty.txt": "" });
+    const file = path.join(dir, "gate-c-badcols.db");
+
+    // Sync setup with distinctive same-length ASCII names, then binary-patch the
+    // stored quoted names to same-length invalid UTF-8 (0xE9, 0xFF) so they must
+    // decode to distinct U+FFFD strings and not collide, matching the sync test.
+    const setup = new Database(file, { create: true });
+    setup.run(`CREATE TABLE t ("Xaa" INTEGER, "Ybb" INTEGER)`);
+    setup.run("INSERT INTO t VALUES (1, 2)");
+    setup.close();
+    const buf = readFileSync(file);
+    const patch = (find, replacement) => {
+      const at = buf.indexOf(Buffer.from(find, "latin1"));
+      expect(at).toBeGreaterThanOrEqual(0);
+      Buffer.from(replacement).copy(buf, at);
+    };
+    patch('"Xaa"', [0x22, 0x58, 0xe9, 0x61, 0x22]);
+    patch('"Ybb"', [0x22, 0x59, 0xff, 0x62, 0x22]);
+    writeFileSync(file, buf);
+
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // Both invalid names must survive as distinct leniently-decoded owned
+      // columns; strict fromUTF8 would null/collide them and drop a column.
+      const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT * FROM t");
+      expect(result.columns).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
+      expect(result.rows).toEqual([[1, 2]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "Gate C non-UTF-8 column-name query leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("stops instead of looping forever on an embedded NUL after a valid statement", async () => {
+    const dir = tempDirWithFiles("sqlite-async-gate-c-nul", {
+      "main.js": `
+        import {
+          asyncSQLiteConnectionCloseForTesting,
+          asyncSQLiteConnectionOpenForTesting,
+          asyncSQLiteConnectionQueryForTesting,
+        } from "bun:internal-for-testing";
+
+        const file = process.argv[2];
+        const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+        await connection.ready;
+        // Embedded NUL after a valid statement: the worker must return the first
+        // statement's rows and stop, matching the sync no-progress guard, not loop.
+        const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1 AS n\\0SELECT 2");
+        await asyncSQLiteConnectionCloseForTesting(connection.id);
+        console.log(JSON.stringify({ columns: result.columns, rows: result.rows }));
+      `,
+    });
+    const file = path.join(dir, "gate-c-nul.db");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", file],
+      cwd: dir,
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Drain output while bounded-yielding for exit. The no-progress bug spins the
+    // worker forever so proc.exited never resolves; kill that child and let the
+    // exit/output assertion fail rather than hang the suite.
+    const stdoutPromise = proc.stdout.text();
+    const stderrPromise = proc.stderr.text();
+    let exited = false;
+    let exitCode;
+    proc.exited.then(code => {
+      exited = true;
+      exitCode = code;
+    });
+    const maxYields = 10_000;
+    for (let i = 0; i < maxYields && !exited; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    if (!exited) {
+      proc.kill();
+      await proc.exited;
+    }
+    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+    expect({ exited, exitCode, stdout: stdout.trim(), stderr }).toMatchObject({
+      exited: true,
+      exitCode: 0,
+      stdout: JSON.stringify({ columns: ["n"], rows: [[1]] }),
+    });
+  });
+});
+
+describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
+  // Every binding value is validated and copied on the JS thread before queue
+  // admission; because that snapshot is synchronous inside the submit call,
+  // mutating a source after the call returns is guaranteed to be post-snapshot.
+  const baselineRestored = baseline => current =>
+    current.liveConnections === baseline.liveConnections &&
+    current.liveJobs === baseline.liveJobs &&
+    current.liveResults === baseline.liveResults &&
+    current.liveRequests === baseline.liveRequests &&
+    current.liveRows === baseline.liveRows &&
+    current.liveErrors === baseline.liveErrors &&
+    current.activeConnectionOperations === baseline.activeConnectionOperations;
+
+  const makeClose = (closeForTesting, id) => {
+    // Memoize the in-flight close so an unawaited getter close() and later cleanup
+    // await the same operation; reset on rejection so a failed close can be retried.
+    let pending = null;
+    return () => {
+      if (!pending) {
+        pending = Promise.resolve(closeForTesting(id)).catch(err => {
+          pending = null;
+          throw err;
+        });
+      }
+      return pending;
+    };
+  };
+
+  it("round-trips positional owned values and snapshots them before admission", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-pos", { "empty.txt": "" });
+    const file = path.join(dir, "bind-pos.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      const bytes = new Uint8Array([1, 2, 0, 3]);
+      // A byte window (byteOffset 2, length 4) proves the offset is respected.
+      const windowBuf = new ArrayBuffer(8);
+      const view = new Uint8Array(windowBuf, 2, 4);
+      view.set([9, 8, 7, 6]);
+      // DataView byte window over the middle of its own buffer.
+      const dvBuf = new ArrayBuffer(6);
+      new Uint8Array(dvBuf).set([0, 0xaa, 0xbb, 0xcc, 0, 0]);
+      const dv = new DataView(dvBuf, 1, 3);
+
+      const args = [
+        null,
+        true,
+        false,
+        42,
+        -7,
+        3.5,
+        9007199254740991,
+        123n,
+        "héllo☃",
+        "a\0b",
+        new Uint8Array(0),
+        bytes,
+        view,
+        dv,
+      ];
+      const p = asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?", args);
+
+      // Mutate every mutable source after the synchronous snapshot; the worker
+      // must observe the pre-mutation snapshot, not these later writes.
+      bytes.fill(0xff);
+      view.fill(0xff);
+      new Uint8Array(dvBuf).fill(0xff);
+      args[3] = 999;
+
+      const result = await p;
+      const row = result.rows[0];
+      expect(row[0]).toBeNull();
+      expect(row[1]).toBe(1);
+      expect(row[2]).toBe(0);
+      expect(row[3]).toBe(42);
+      expect(row[4]).toBe(-7);
+      expect(row[5]).toBe(3.5);
+      expect(row[6]).toBe(9007199254740991);
+      expect(row[7]).toBe(123);
+      expect(row[8]).toBe("héllo☃");
+      expect(row[9]).toBe("a\0b");
+      expect(row[10]).toBeInstanceOf(Uint8Array);
+      expect(row[10].length).toBe(0);
+      expect(Array.from(row[11])).toEqual([1, 2, 0, 3]);
+      expect(Array.from(row[12])).toEqual([9, 8, 7, 6]);
+      expect(Array.from(row[13])).toEqual([0xaa, 0xbb, 0xcc]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "positional binding query leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("snapshots all own string-keyed named properties, runs extra getters, ignores inherited/symbol", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-named", { "empty.txt": "" });
+    const file = path.join(dir, "bind-named.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      let extraRan = 0;
+      const proto = { $c: 99 };
+      const obj = Object.create(proto);
+      obj.$a = 1;
+      // Own non-enumerable data property must still be snapshotted.
+      Object.defineProperty(obj, "$b", { value: 2, enumerable: false });
+      // Extra own getter with no matching SQL parameter must still run.
+      Object.defineProperty(obj, "$z", {
+        enumerable: true,
+        get() {
+          extraRan++;
+          return 5;
+        },
+      });
+      obj[Symbol("s")] = 7;
+
+      // Default connection is non-strict: names keep their prefix; $c is inherited
+      // (ignored, left NULL) and the symbol key is ignored.
+      const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT $a AS a, $b AS b, $c AS c", obj);
+      expect(result.rows).toEqual([[1, 2, null]]);
+      expect(extraRan).toBe(1);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "named binding snapshot leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects when a named getter throws and neither admits nor poisons the connection", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-throw", { "empty.txt": "" });
+    const file = path.join(dir, "bind-throw.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      const obj = {
+        get $a() {
+          throw new Error("boom getter");
+        },
+      };
+      let error;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT $a AS a", obj);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("boom getter");
+
+      // The throwing snapshot must not have admitted anything; the connection is
+      // still usable and no request/keepalive leaked.
+      const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1 AS n");
+      expect(ok.rows).toEqual([[1]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "throwing named getter leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("matches non-strict named binding: exact prefixed keys, extras ignored, missing left NULL", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-nonstrict", { "empty.txt": "" });
+    const file = path.join(dir, "bind-nonstrict.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // All three prefixes bind by exact prefixed key; $d is missing -> NULL,
+      // $extra is an unused extra own property.
+      const result = await asyncSQLiteConnectionQueryForTesting(
+        connection.id,
+        "SELECT $a AS a, :b AS b, @c AS c, $d AS d",
+        { $a: 1, ":b": 2, "@c": 3, $extra: 99 },
+      );
+      expect(result.rows).toEqual([[1, 2, 3, null]]);
+
+      // Out-of-order positional array parameters bind by declared index.
+      const ooo = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ?2 AS a, ?1 AS b", ["x", "y"]);
+      expect(ooo.rows).toEqual([["y", "x"]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "non-strict named binding leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("strict named binding strips $ : @ prefixes and rejects missing values", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-strict", { "empty.txt": "" });
+    const file = path.join(dir, "bind-strict.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4, undefined, { strict: true });
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT $a AS a, :b AS b, @c AS c", {
+        a: 1,
+        b: 2,
+        c: 3,
+      });
+      expect(result.rows).toEqual([[1, 2, 3]]);
+
+      let error;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT $a AS a, $missing AS m", {
+          a: 1,
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("Missing parameter");
+
+      // A strict missing-value rejection must not poison the FIFO.
+      const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 9 AS n");
+      expect(ok.rows).toEqual([[9]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "strict named binding leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects binding validation failures with a plain Error matching sync, not SQLiteError", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    // Capture the authoritative sync bun:sqlite errors for the same inputs so the
+    // async rejection must match their name/constructor/message and, crucially,
+    // carry no SQLite .code/.errno (binding errors are plain Errors, not SQLiteError).
+    const syncPlain = new Database(":memory:");
+    let syncCount;
+    try {
+      syncPlain.query("SELECT ?, ?").all([1]);
+    } catch (e) {
+      syncCount = e;
+    }
+    syncPlain.close();
+    const syncStrictDb = new Database(":memory:", { strict: true });
+    let syncMissing;
+    try {
+      syncStrictDb.query("SELECT $a AS a, $missing AS m").all({ a: 1 });
+    } catch (e) {
+      syncMissing = e;
+    }
+    syncStrictDb.close();
+    expect(syncCount).toBeInstanceOf(Error);
+    expect(syncCount.constructor).toBe(Error);
+    expect(syncCount.code).toBeUndefined();
+    expect(syncMissing.constructor).toBe(Error);
+    expect(syncMissing.code).toBeUndefined();
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-plainerr", { "empty.txt": "" });
+    const file = path.join(dir, "bind-plainerr.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4, undefined, { strict: true });
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      let asyncCount;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ?, ?", [1]);
+      } catch (e) {
+        asyncCount = e;
+      }
+      expect(asyncCount).toBeDefined();
+      expect(asyncCount.constructor).toBe(Error);
+      expect(asyncCount).not.toBeInstanceOf(SQLiteError);
+      expect(asyncCount.name).toBe(syncCount.name);
+      expect(asyncCount.message).toBe(syncCount.message);
+      expect(asyncCount.code).toBeUndefined();
+      expect(asyncCount.errno).toBeUndefined();
+
+      let asyncMissing;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT $a AS a, $missing AS m", { a: 1 });
+      } catch (e) {
+        asyncMissing = e;
+      }
+      expect(asyncMissing).toBeDefined();
+      expect(asyncMissing.constructor).toBe(Error);
+      expect(asyncMissing).not.toBeInstanceOf(SQLiteError);
+      expect(asyncMissing.name).toBe(syncMissing.name);
+      expect(asyncMissing.message).toBe(syncMissing.message);
+      expect(asyncMissing.code).toBeUndefined();
+      expect(asyncMissing.errno).toBeUndefined();
+
+      // A genuine execution (prepare/step) error must remain a SQLiteError with code/errno.
+      let execErr;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT * FROM no_such_table");
+      } catch (e) {
+        execErr = e;
+      }
+      expect(execErr).toBeInstanceOf(SQLiteError);
+      expect(execErr.code).toBe("SQLITE_ERROR");
+      expect(typeof execErr.errno).toBe("number");
+
+      // None of the rejections poisoned the FIFO.
+      const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 7 AS n");
+      expect(ok.rows).toEqual([[7]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "binding error classification leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("applies bindings only to the first executable statement, matching sync Database.run", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionRunForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-firststmt", { "empty.txt": "" });
+    const file = path.join(dir, "bind-firststmt.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE t (id INTEGER, tag TEXT)");
+
+      // Two-statement string: the first statement consumes the single binding; the
+      // second has no parameters. Only the first statement may receive the binding,
+      // and leading comments/whitespace must not consume the one binding application.
+      const two = "/* lead */ INSERT INTO t (id) VALUES (?); INSERT INTO t (tag) VALUES ('done')";
+      await asyncSQLiteConnectionRunForTesting(connection.id, two, [11]);
+
+      const rows = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT id, tag FROM t ORDER BY rowid");
+      expect(rows.rows).toEqual([
+        [11, null],
+        [null, "done"],
+      ]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "first-statement binding leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("treats an empty positional array as no bindings, matching sync rebindStatement", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    // Sync bun:sqlite resolves an empty array to a NULL parameter, not a count error.
+    const syncDb = new Database(":memory:");
+    const syncRows = syncDb.query("SELECT ? AS a").all([]);
+    syncDb.close();
+    expect(syncRows).toEqual([{ a: null }]);
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-empty", { "empty.txt": "" });
+    const file = path.join(dir, "bind-empty.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ? AS a", []);
+      expect(result.rows).toEqual([[null]]);
+
+      // A nonempty array must still be exact-count validated.
+      let mismatch;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ?, ?", [1]);
+      } catch (e) {
+        mismatch = e;
+      }
+      expect(mismatch).toBeDefined();
+      expect(mismatch.message).toContain("expected 2 values, received 1");
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "empty-array binding leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("orders a reentrant queued operation ahead of the operation whose getter queued it", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionExecForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-reentrant", { "empty.txt": "" });
+    const file = path.join(dir, "bind-reentrant.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+      expect(await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE log(n INTEGER)")).toBe(true);
+
+      let innerPromise;
+      const obj = {
+        get $x() {
+          // Queue a reentrant op during the outer snapshot. Because the outer op
+          // admits only after its snapshot completes, this inner op admits first.
+          innerPromise = asyncSQLiteConnectionExecForTesting(connection.id, "INSERT INTO log VALUES (1)");
+          return 2;
+        },
+      };
+      const outerPromise = asyncSQLiteConnectionQueryForTesting(
+        connection.id,
+        "INSERT INTO log VALUES ($x) RETURNING n",
+        obj,
+      );
+      const [, outer] = await Promise.all([innerPromise, outerPromise]);
+      expect(outer.rows).toEqual([[2]]);
+
+      const ordered = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT n FROM log ORDER BY rowid");
+      expect(ordered.rows.flat()).toEqual([1, 2]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "reentrant admission ordering leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects after snapshot when a getter closes the connection, never entering SQLite", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-close", { "empty.txt": "" });
+    const file = path.join(dir, "bind-close.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      const obj = {
+        get $x() {
+          // Start close during the snapshot; admission must then be refused.
+          close();
+          return 1;
+        },
+      };
+      let error;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT $x AS v", obj);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+
+      // The connection is closing/closed; a follow-up query must also reject.
+      const after = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1 AS n").catch(e => e);
+      expect(after).toBeInstanceOf(Error);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "close-during-getter leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects detached views before admission and ignores post-return detachment", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-detach", { "empty.txt": "" });
+    const file = path.join(dir, "bind-detach.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      const ab = new ArrayBuffer(4);
+      const detachedView = new Uint8Array(ab);
+      structuredClone(ab, { transfer: [ab] });
+      expect(detachedView.byteLength).toBe(0);
+      let error;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ? AS b", [detachedView]);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("detached");
+
+      // Detaching after the synchronous snapshot cannot change execution.
+      const liveBuf = new ArrayBuffer(3);
+      const liveView = new Uint8Array(liveBuf);
+      liveView.set([1, 2, 3]);
+      const p = asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ? AS b", [liveView]);
+      structuredClone(liveBuf, { transfer: [liveBuf] });
+      const result = await p;
+      expect(Array.from(result.rows[0][0])).toEqual([1, 2, 3]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "detached-buffer binding leaked native state",
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it("binds bigint per safeIntegers mode: default wraps out-of-range, safeIntegers rejects", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const MIN = -9223372036854775808n;
+    const MAX = 9223372036854775807n;
+    const OVER = 9223372036854775808n; // MAX + 1
+    const UNDER = -9223372036854775809n; // MIN - 1
+    const castOne = "SELECT CAST(? AS TEXT) AS a";
+    const castTwo = "SELECT CAST(? AS TEXT) AS a, CAST(? AS TEXT) AS b";
+
+    // Authoritative sync references. safeIntegers off wraps out-of-i64 input via
+    // sqlite3_bind_int64(toBigInt64); safeIntegers on throws a RangeError.
+    const syncDefault = new Database(":memory:");
+    const syncSafe = new Database(":memory:", { safeIntegers: true });
+    const syncMinMax = syncDefault.query(castTwo).all([MIN, MAX])[0];
+    const syncWrapOver = syncDefault.query(castOne).all([OVER])[0].a;
+    const syncWrapUnder = syncDefault.query(castOne).all([UNDER])[0].a;
+    let syncSafeErr;
+    try {
+      syncSafe.query(castOne).all([OVER]);
+    } catch (e) {
+      syncSafeErr = e;
+    }
+    syncDefault.close();
+    syncSafe.close();
+    expect(syncSafeErr).toBeInstanceOf(RangeError);
+
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-bigint", { "empty.txt": "" });
+    const fileDefault = path.join(dir, "bind-bigint-default.db");
+    const fileSafe = path.join(dir, "bind-bigint-safe.db");
+    const connDefault = asyncSQLiteConnectionOpenForTesting(fileDefault, 4);
+    const connSafe = asyncSQLiteConnectionOpenForTesting(fileSafe, 4, undefined, { safeIntegers: true });
+    const closeDefault = makeClose(asyncSQLiteConnectionCloseForTesting, connDefault.id);
+    const closeSafe = makeClose(asyncSQLiteConnectionCloseForTesting, connSafe.id);
+    try {
+      expect((await connDefault.ready).offThread).toBe(true);
+      expect((await connSafe.ready).offThread).toBe(true);
+
+      // Default mode: i64 extremes round-trip and out-of-range wraps like sync.
+      const dmm = await asyncSQLiteConnectionQueryForTesting(connDefault.id, castTwo, [MIN, MAX]);
+      expect(dmm.rows).toEqual([[syncMinMax.a, syncMinMax.b]]);
+      const dover = await asyncSQLiteConnectionQueryForTesting(connDefault.id, castOne, [OVER]);
+      expect(dover.rows).toEqual([[syncWrapOver]]);
+      const dunder = await asyncSQLiteConnectionQueryForTesting(connDefault.id, castOne, [UNDER]);
+      expect(dunder.rows).toEqual([[syncWrapUnder]]);
+
+      // Default mode materializes integer columns as Numbers, including the sync
+      // precision loss beyond 2^53 (9007199254740993 -> 9007199254740992).
+      const dnum = await asyncSQLiteConnectionQueryForTesting(connDefault.id, "SELECT ? AS n, 1 AS small", [
+        9007199254740993n,
+      ]);
+      expect(dnum.rows).toEqual([[9007199254740992, 1]]);
+      expect(typeof dnum.rows[0][0]).toBe("number");
+      expect(typeof dnum.rows[0][1]).toBe("number");
+
+      // safeIntegers mode materializes integer columns as lossless BigInts on the
+      // owner thread, end to end, matching sync jsBigIntFromSQLite.
+      const snum = await asyncSQLiteConnectionQueryForTesting(connSafe.id, "SELECT ? AS n, 1 AS small", [
+        9007199254740993n,
+      ]);
+      expect(snum.rows).toEqual([[9007199254740993n, 1n]]);
+
+      // safeIntegers mode: extremes still bind; one-past boundary rejects with the
+      // same RangeError name/message as sync, on the JS thread before admission.
+      const smm = await asyncSQLiteConnectionQueryForTesting(connSafe.id, castTwo, [MIN, MAX]);
+      expect(smm.rows).toEqual([[MIN.toString(), MAX.toString()]]);
+      let overErr;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connSafe.id, castOne, [OVER]);
+      } catch (e) {
+        overErr = e;
+      }
+      expect(overErr).toBeInstanceOf(RangeError);
+      expect(overErr.name).toBe(syncSafeErr.name);
+      expect(overErr.message).toBe(syncSafeErr.message);
+      let underErr;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connSafe.id, castOne, [UNDER]);
+      } catch (e) {
+        underErr = e;
+      }
+      expect(underErr).toBeInstanceOf(RangeError);
+      expect(underErr.message).toContain("out of range");
+
+      // Neither rejection poisoned the FIFO (safe mode returns a BigInt).
+      const ok = await asyncSQLiteConnectionQueryForTesting(connSafe.id, "SELECT 3 AS n");
+      expect(ok.rows).toEqual([[3n]]);
+
+      await closeDefault();
+      await closeSafe();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "bigint binding leaked native state",
+      );
+    } finally {
+      await closeDefault();
+      await closeSafe();
+    }
+  });
+
+  it("caps a too-large positional array with a RangeError before admission", async () => {
+    const {
+      asyncSQLiteConnectionOpenForTesting,
+      asyncSQLiteConnectionQueryForTesting,
+      asyncSQLiteConnectionCloseForTesting,
+      asyncSQLiteConnectionStatsForTesting,
+    } = await import("bun:internal-for-testing");
+
+    const MAX_VARS = 32766;
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    const dir = tempDirWithFiles("sqlite-async-bind-cap", { "empty.txt": "" });
+    const file = path.join(dir, "bind-cap.db");
+    const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
+    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    try {
+      expect((await connection.ready).offThread).toBe(true);
+
+      // One past the max: rejected on the JS thread by the snapshot cap, before any
+      // admission or large allocation. A sparse array avoids materializing values.
+      let capErr;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1", new Array(MAX_VARS + 1));
+      } catch (e) {
+        capErr = e;
+      }
+      expect(capErr).toBeInstanceOf(RangeError);
+      expect(capErr.message).toContain("32766");
+
+      // At the boundary the snapshot cap must not fire: the request reaches the
+      // worker and fails there with the plain count-mismatch Error instead.
+      let boundaryErr;
+      try {
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1", new Array(MAX_VARS));
+      } catch (e) {
+        boundaryErr = e;
+      }
+      expect(boundaryErr).toBeDefined();
+      expect(boundaryErr).not.toBeInstanceOf(RangeError);
+      expect(boundaryErr.message).toContain("expected 0 values, received 32766");
+
+      // The connection remains usable after both rejections.
+      const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 5 AS n");
+      expect(ok.rows).toEqual([[5]]);
+
+      await close();
+      await waitForAsyncSQLiteStats(
+        asyncSQLiteConnectionStatsForTesting,
+        baselineRestored(baseline),
+        "positional cap leaked native state",
+      );
+    } finally {
+      await close();
     }
   });
 });

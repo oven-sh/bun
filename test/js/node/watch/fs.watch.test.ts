@@ -905,6 +905,63 @@ describe("fs.promises.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
+  test("async iterator has return() and throw() that return Promises", async () => {
+    const root = path.join(testDir, "iter-shape-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const it = fs.promises.watch(root)[Symbol.asyncIterator]();
+    expect(typeof it.return).toBe("function");
+    expect(typeof it.throw).toBe("function");
+    const ret = it.return();
+    expect(ret).toBeInstanceOf(Promise);
+    expect(await ret).toEqual({ value: undefined, done: true });
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test("concurrent next() calls both resolve", async () => {
+    const root = path.join(testDir, "concurrent-next-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const ac = new AbortController();
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]();
+    try {
+      // Two pending next() calls issued before any event fires. The previous
+      // hand-rolled iterator had a single resolver slot, so p2 overwrote p1's
+      // resolver and p1 would never settle (hangs until the test timeout).
+      const p1 = it.next();
+      const p2 = it.next();
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(root, "a.txt"), "1");
+        fs.writeFileSync(path.join(root, "b.txt"), "2");
+      });
+      const [r1, r2] = await Promise.all([p1, p2]).finally(() => clearInterval(interval));
+      expect(r1.done).toBe(false);
+      expect(["rename", "change"]).toContain(r1.value.eventType);
+      expect(r2.done).toBe(false);
+      expect(["rename", "change"]).toContain(r2.value.eventType);
+    } finally {
+      ac.abort();
+      await it.return().catch(() => {});
+    }
+  });
+
+  test("never-iterated watch() does not keep the process alive", async () => {
+    const root = path.join(testDir, "never-iterated-dir");
+    fs.mkdirSync(root, { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const it = require("node:fs").promises.watch(${JSON.stringify(root)});` +
+          `console.log(typeof it[Symbol.asyncIterator]);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("yields events with a null prototype", async () => {
     const root = path.join(testDir, "null-proto-dir");
     fs.mkdirSync(root, { recursive: true });

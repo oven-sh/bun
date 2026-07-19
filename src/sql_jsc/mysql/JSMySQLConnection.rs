@@ -517,6 +517,8 @@ impl JSMySQLConnection {
         let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
 
+        let cached_structures = JSValue::create_empty_array(global_object, 0)?;
+
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
         let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(tls_guard);
@@ -605,11 +607,7 @@ impl JSMySQLConnection {
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
         js::onclose_set_cached(js_value, global_object, on_close);
-        js::cached_structures_set_cached(
-            js_value,
-            global_object,
-            JSValue::create_empty_array(global_object, 0)?,
-        );
+        js::cached_structures_set_cached(js_value, global_object, cached_structures);
 
         Ok(js_value)
     }
@@ -695,14 +693,18 @@ impl JSMySQLConnection {
 
     /// Append a freshly-built result-row `Structure` to this wrapper's
     /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
-    /// of via a per-statement `Strong` handle.
-    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) {
-        let global = &self.global_object;
-        if let Some(array) = js::cached_structures_get_cached(this_value)
-            && array.push(global, structure).is_err()
-        {
-            global.clear_exception_except_termination();
+    /// of via a per-statement `Strong` handle. Returns whether the push
+    /// succeeded; on failure the caller keeps the Strong so the structure
+    /// stays rooted.
+    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) -> bool {
+        let Some(array) = js::cached_structures_get_cached(this_value) else {
+            return false;
+        };
+        if array.push(&self.global_object, structure).is_err() {
+            self.global_object.clear_exception_except_termination();
+            return false;
         }
+        true
     }
 
     #[inline]
@@ -838,13 +840,21 @@ impl JSMySQLConnection {
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
             ResultMode::Objects => self.js_value.get().try_get().map(|value| {
-                let (cs, new_structure) = statement.structure(value, &self.global_object);
-                structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                let cs = ParentRef::new(cs);
-                if let Some(new_structure) = new_structure {
-                    self.add_cached_structure(value, new_structure);
+                let new_structure = statement.structure(value, &self.global_object);
+                // Only hand off to the connection's traced array when this
+                // statement lives in `connection.statements` (prepared).
+                // Per-query simple statements keep their Strong.
+                if let Some(new_structure) = new_structure
+                    && !request.is_simple()
+                    && self.add_cached_structure(value, new_structure)
+                {
+                    statement
+                        .cached_structure
+                        .mark_traced_from_connection(new_structure);
                 }
-                cs
+                let cs = &statement.cached_structure;
+                structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
+                ParentRef::new(cs)
             }),
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,

@@ -1,41 +1,43 @@
 use core::mem::{ManuallyDrop, MaybeUninit};
 
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue};
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
 use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
-    /// Raw `JSC::Structure*`. Not a GC root: kept alive by the owning
-    /// Connection wrapper's `m_cachedStructures` array (visited in
-    /// `visitChildren`), so it is valid only while that wrapper is live.
-    pub structure: JSValue,
+    /// GC root for per-query statements (simple / unnamed). Released when the
+    /// owning statement is dropped.
+    strong: StrongOptional,
+    /// Raw `JSC::Structure*` for connection-cached statements. Not a GC root:
+    /// kept alive by the Connection wrapper's `m_cachedStructures` array
+    /// (visited in `visitChildren`). At most one of `strong` / `traced` is set.
+    traced: JSValue,
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub fields: Option<Box<[ExternColumnIdentifier]>>,
 }
 
 impl CachedStructure {
     pub fn has(&self) -> bool {
-        !self.structure.is_empty() || self.fields.is_some()
+        self.strong.has() || !self.traced.is_empty() || self.fields.is_some()
     }
 
     pub fn js_value(&self) -> Option<JSValue> {
-        if self.structure.is_empty() {
-            None
-        } else {
-            Some(self.structure)
-        }
+        self.strong.get().or_else(|| {
+            if self.traced.is_empty() {
+                None
+            } else {
+                Some(self.traced)
+            }
+        })
     }
 
-    pub fn set(
-        &mut self,
-        _global_object: &JSGlobalObject,
-        value: Option<JSValue>,
-        fields: Option<Box<[ExternColumnIdentifier]>>,
-    ) {
-        if let Some(v) = value {
-            self.structure = v;
-        }
-        self.fields = fields;
+    /// Called once the Connection has pushed this structure onto its
+    /// `m_cachedStructures` array: release the per-statement Strong and keep
+    /// only the raw value, so connection-cached statements do not each hold a
+    /// GC-root handle.
+    pub fn mark_traced_from_connection(&mut self, structure: JSValue) {
+        self.traced = structure;
+        self.strong.deinit();
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —
@@ -116,7 +118,7 @@ impl CachedStructure {
             unsafe { heap_ids.set_len(non_duplicated_count) };
             // Ownership transfer of heap `ids` to CachedStructure, which
             // becomes responsible for freeing the alloc'd slice.
-            self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
+            self.fields = Some(heap_ids.into_boxed_slice());
         } else {
             // Every element in `ids[..]` was `.write()`n above; C++ reads them as
             // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
@@ -131,11 +133,12 @@ impl CachedStructure {
                     ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
                 )
             };
-            self.set(global_object, Some(structure), None);
+            self.strong.set(global_object, structure);
         }
     }
 }
 
-// No explicit `impl Drop` is needed: `structure` is a raw `JSValue` (GC-traced
+// No explicit `impl Drop` is needed: the GC-strong structure handle is freed
+// by `impl Drop for StrongOptional`, `traced` is a raw `JSValue` (GC-traced
 // via the owning Connection wrapper, not here), and the field array is freed
 // by `Drop` on `Box<[ExternColumnIdentifier]>`.

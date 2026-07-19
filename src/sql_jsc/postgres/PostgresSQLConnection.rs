@@ -1180,6 +1180,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let max_lifetime = arguments[13].to_int32();
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
 
+    let cached_structures = JSValue::create_empty_array(global_object, 0)?;
+
     // Ownership transferred into `ptr`; disarm the errdefer and recover the
     // moved `secure`/`tls_config` for the struct literal below.
     let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
@@ -1298,11 +1300,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
-    js::cached_structures_set_cached(
-        js_value,
-        global_object,
-        JSValue::create_empty_array(global_object, 0)?,
-    );
+    js::cached_structures_set_cached(js_value, global_object, cached_structures);
     bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
@@ -2374,15 +2372,19 @@ impl PostgresSQLConnection {
 
     /// Append a freshly-built result-row `Structure` to this wrapper's
     /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
-    /// of via a per-statement `Strong` handle.
-    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) {
+    /// of via a per-statement `Strong` handle. Returns whether the push
+    /// succeeded; on failure the caller keeps the Strong so the structure
+    /// stays rooted.
+    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) -> bool {
         debug_assert!(!this_value.is_empty());
-        let global = self.global();
-        if let Some(array) = js::cached_structures_get_cached(this_value)
-            && array.push(global, structure).is_err()
-        {
-            global.clear_exception_except_termination();
+        let Some(array) = js::cached_structures_get_cached(this_value) else {
+            return false;
+        };
+        if array.push(self.global(), structure).is_err() {
+            self.global().clear_exception_except_termination();
+            return false;
         }
+        true
     }
 
     // `message_type` is a runtime arg; the match
@@ -2426,14 +2428,27 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        if let Some(owner) = self.js_value.get().try_get() {
-                            let (cs, new_structure) = statement.structure(owner, self.global());
-                            structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                            cached_structure = Some(ParentRef::new(cs));
-                            if let Some(new_structure) = new_structure {
-                                self.add_cached_structure(owner, new_structure);
-                            }
+                        let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                        let new_structure = statement.structure(owner, self.global());
+                        // Only hand off to the connection's traced array when
+                        // this statement lives in `self.statements` (named
+                        // prepared). Per-query statements keep their Strong.
+                        if let Some(new_structure) = new_structure
+                            && !request_flags.simple
+                            && !self
+                                .flags
+                                .get()
+                                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
+                            && !owner.is_empty()
+                            && self.add_cached_structure(owner, new_structure)
+                        {
+                            statement
+                                .cached_structure
+                                .mark_traced_from_connection(new_structure);
                         }
+                        let cs = &statement.cached_structure;
+                        structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
+                        cached_structure = Some(ParentRef::new(cs));
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure

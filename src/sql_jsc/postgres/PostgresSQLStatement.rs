@@ -93,18 +93,17 @@ impl PostgresSQLStatement {
             dedupe_columns(self.fields.iter_mut().rev().map(|f| &mut f.name_or_index));
     }
 
-    // Note: returning
-    // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
-    // a `Box<[ExternColumnIdentifier]>`, not `Copy`). The second tuple slot is
-    // `Some(structure)` when this call allocated a new `JSC::Structure`, so the
-    // caller can register it with the Connection wrapper for GC tracing.
+    /// Populate `self.cached_structure` for the current column set (no-op if
+    /// already built). Returns `Some(structure)` when this call allocated a new
+    /// `JSC::Structure`, so the caller can register it with the Connection
+    /// wrapper for GC tracing; `None` on cache hit or for the wide-row path.
     pub fn structure(
         &mut self,
         owner: JSValue,
         global_object: &JSGlobalObject,
-    ) -> (&PostgresCachedStructure, Option<JSValue>) {
+    ) -> Option<JSValue> {
         if self.cached_structure.has() {
-            return (&self.cached_structure, None);
+            return None;
         }
         self.check_for_duplicate_fields();
         self.cached_structure.build_from_columns(
@@ -112,7 +111,7 @@ impl PostgresSQLStatement {
             owner,
             self.fields.iter().map(|f| &f.name_or_index),
         );
-        (&self.cached_structure, self.cached_structure.js_value())
+        self.cached_structure.js_value()
     }
 }
 

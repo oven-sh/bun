@@ -102,15 +102,16 @@ describe("scripts/lint-tests.ts", () => {
     expect(findings).toEqual([]);
   });
 
-  test("allow-comment on same line or line above suppresses", async () => {
+  test("allow-comment on same line or line above suppresses exactly one line", async () => {
     const { findings } = await lint({
       "allowed.test.ts": [
-        `// lint-tests-allow: testing a privileged-port error path`,
-        `Bun.serve({ port: 1003, fetch: () => new Response("") });`,
-        `await Bun.sleep(5000); // lint-tests-allow: testing`,
+        /* 1 */ `// lint-tests-allow: testing a privileged-port error path`,
+        /* 2 */ `Bun.serve({ port: 1003, fetch: () => new Response("") });`,
+        /* 3 */ `await Bun.sleep(5000); // lint-tests-allow: subprocess warmup`,
+        /* 4 */ `Bun.serve({ port: 4567 });`, // trailing allow on line 3 must NOT leak here
       ].join("\n"),
     });
-    expect(findings).toEqual([]);
+    expect(byRule(findings)).toEqual({ "hardcoded-port": [4] });
   });
 
   test("--all-errors turns warnings into errors and exits 1", async () => {
@@ -122,24 +123,20 @@ describe("scripts/lint-tests.ts", () => {
   // The full-tree scan is a CI smoke check run with a release bun; under the
   // debug/ASAN binary the per-char classifier is two orders of magnitude
   // slower, so skip there.
-  test.skipIf(isDebug)(
-    "full repo scan stays under 2s and reports warnings only",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), script, "--json"],
-        env: bunEnv,
-        cwd: root,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const out = JSON.parse(stdout);
-      // None of the existing baseline should be errors in default mode.
-      expect(out.findings.some((f: Finding) => f.error)).toBe(false);
-      expect(out.scanned).toBeGreaterThan(1000);
-      expect(out.elapsed).toBeLessThan(5);
-      expect(exitCode).toBe(0);
-    },
-    15_000,
-  );
+  test.skipIf(isDebug)("full repo scan stays fast and reports warnings only", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script, "--json"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = JSON.parse(stdout);
+    // None of the existing baseline should be errors in default mode.
+    expect(out.findings.some((f: Finding) => f.error)).toBe(false);
+    expect(out.scanned).toBeGreaterThan(1000);
+    expect(out.elapsed).toBeLessThan(5);
+    expect(exitCode).toBe(0);
+  });
 });

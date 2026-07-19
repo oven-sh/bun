@@ -27,6 +27,9 @@ import { relative, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 const ALLOW_COMMENT = /\/\/\s*lint-tests-allow\b/;
+// A standalone allow-comment suppresses the *next* line; a trailing one only
+// suppresses its own line (so one comment can't silently excuse two lines).
+const ALLOW_COMMENT_LINE = /^\s*\/\/\s*lint-tests-allow\b/;
 // Cheap pre-filter: skip rule matching on lines that can't possibly hit any rule.
 const TRIGGER = /port:|sleep|setTimeout|setDefaultTimeout|fetch\(|fetch \(|tmpdirSync/;
 const isGithubActions = !!process.env.GITHUB_ACTIONS;
@@ -266,16 +269,32 @@ function addedLines(base: string): Map<string, Set<number>> {
   // edits are covered locally and CI (clean tree) sees the branch's commits.
   const mb = spawnSync("git", ["merge-base", base, "HEAD"], { cwd: ROOT, encoding: "utf8" });
   const from = mb.status === 0 ? mb.stdout.trim() : base;
-  const diff = spawnSync("git", ["diff", "--unified=0", "--diff-filter=AM", from, "--", "test/"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const map = new Map<string, Set<number>>();
+  // Pin the diff format so user-level git config (color.diff, diff.external,
+  // diff.mnemonicPrefix, diff.renames) can't break the parser below.
+  const diff = spawnSync(
+    "git",
+    [
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=0",
+      "--diff-filter=AM",
+      from,
+      "--",
+      "test/",
+    ],
+    { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
   if (diff.status !== 0) {
-    console.error(`warning: git diff against '${base}' failed; treating all findings as warnings`);
-    return map;
+    // --changed was explicitly requested; failing to compute the diff must not
+    // silently pass the gate.
+    console.error(`error: git diff against '${base}' failed:\n${diff.stderr || diff.error}`);
+    process.exit(1);
   }
+  const map = new Map<string, Set<number>>();
   let current: Set<number> | undefined;
   for (const line of diff.stdout.split("\n")) {
     if (line.startsWith("+++ ")) {
@@ -333,7 +352,7 @@ for (const file of listTestFiles()) {
     for (const rule of rules) {
       const col = rule.match(line, code);
       if (col < 0) continue;
-      if (i > 0 && ALLOW_COMMENT.test(lines[i - 1])) continue;
+      if (i > 0 && ALLOW_COMMENT_LINE.test(lines[i - 1])) continue;
       const error = allErrors || (changed ? !!fileAdded?.has(i + 1) : false);
       findings.push({
         file,

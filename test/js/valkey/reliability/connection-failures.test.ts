@@ -441,3 +441,144 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
     }
   });
 });
+
+/**
+ * A client that lost its connection sits between auto-reconnect attempts with a
+ * timer armed and no socket. `close()` has to cancel that timer, or the client
+ * reconnects moments later and nothing ever settles the offline queue.
+ */
+describe("Valkey: close() during auto-reconnect", () => {
+  type Conn = { id: number; socket: net.Socket; open: boolean };
+
+  // Minimal RESP3 mock that records every connection the client opens. A
+  // connection `helloOk` rejects never gets a handshake reply, so the client
+  // stays in its "connecting" state on it.
+  function mockRedisServer(helloOk: (id: number) => boolean = () => true) {
+    const conns: Conn[] = [];
+    const server = net.createServer(socket => {
+      const conn: Conn = { id: conns.length + 1, socket, open: true };
+      conns.push(conn);
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        conn.open = false;
+      });
+      socket.on("data", data => {
+        if (data.includes("HELLO") && helloOk(conn.id)) socket.write("+OK\r\n");
+      });
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      conns: Conn[];
+      port: number;
+      close: () => void;
+    }>();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      resolve({
+        conns,
+        port: (server.address() as net.AddressInfo).port,
+        close() {
+          for (const conn of conns) conn.socket.destroy();
+          server.close();
+        },
+      });
+    });
+    return promise;
+  }
+
+  // Polls a condition over a bounded window and reports whether it ever held.
+  async function until(condition: () => boolean, timeoutMs = 1000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!condition() && Date.now() < deadline) await delay(1);
+    return condition();
+  }
+
+  test("close() cancels the armed retry and settles the offline queue", async () => {
+    const { conns, port, close } = await mockRedisServer();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true });
+    let closes = 0;
+    client.onclose = () => closes++;
+
+    try {
+      await client.connect();
+      expect(client.connected).toBe(true);
+
+      // The server drops the connection; the client arms its 50ms reconnect timer.
+      conns[0].socket.destroy();
+      expect(await until(() => !client.connected)).toBe(true);
+
+      // Queued into the offline queue; close() is the only thing left to settle it.
+      const settled = client.get("orphan").then(
+        () => ({ rejected: false }),
+        (error: any) => ({ rejected: true, code: error.code }),
+      );
+
+      client.close();
+
+      // The timer fires 50ms after the drop: give it 10x that to prove it no
+      // longer reopens the connection.
+      await until(() => conns.length >= 2, 500);
+      expect(conns.map(conn => conn.id)).toEqual([1]);
+      expect(client.connected).toBe(false);
+      expect(await settled).toEqual({ rejected: true, code: "ERR_REDIS_CONNECTION_CLOSED" });
+      expect(closes).toBe(1);
+    } finally {
+      client.close();
+      close();
+    }
+  });
+
+  test("close() after the retries are exhausted does not report a second close", async () => {
+    // Take a port and give it straight back, so every attempt is refused and the
+    // client gives up after one retry. The timer is no longer armed by then, so
+    // close() must not re-run the close path.
+    const { port, close } = await mockRedisServer();
+    close();
+
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true, maxRetries: 1 });
+    let closes = 0;
+    client.onclose = () => closes++;
+
+    try {
+      await client.connect().catch(() => {});
+      expect(await until(() => closes >= 1)).toBe(true);
+
+      client.close();
+      await until(() => closes >= 2, 200);
+      expect(closes).toBe(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("close() during a reconnect attempt reports the close exactly once", async () => {
+    // Only the first connection gets a handshake reply, so the explicit connect()
+    // below leaves the client connecting with the retry timer still armed. The
+    // socket close reports the close, so close() must not report it again.
+    const { conns, port, close } = await mockRedisServer(id => id === 1);
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true });
+    let closes = 0;
+    client.onclose = () => closes++;
+
+    try {
+      await client.connect();
+      expect(client.connected).toBe(true);
+
+      conns[0].socket.destroy();
+      expect(await until(() => !client.connected)).toBe(true);
+
+      const reconnecting = client.connect();
+      reconnecting.catch(() => {}); // settled by close() below
+      expect(await until(() => conns.length >= 2)).toBe(true);
+
+      client.close();
+
+      await until(() => closes >= 2, 200);
+      expect(closes).toBe(1);
+      await expect(reconnecting).rejects.toThrow(/connection closed/i);
+    } finally {
+      client.close();
+      close();
+    }
+  });
+});

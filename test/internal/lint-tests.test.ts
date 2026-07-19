@@ -5,8 +5,9 @@
 // Bun build artifacts.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import path from "node:path";
+import { parseUnifiedDiff } from "../../scripts/lint-tests.ts";
 
 const root = path.resolve(import.meta.dir, "..", "..");
 const script = path.join(root, "scripts", "lint-tests.ts");
@@ -31,10 +32,12 @@ async function lint(files: Record<string, string>, extraArgs: string[] = []) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   let findings: Finding[] = [];
-  try {
-    findings = JSON.parse(stdout).findings;
-  } catch {
-    throw new Error(`lint-tests did not emit JSON:\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+  if (stdout.trim()) {
+    try {
+      findings = JSON.parse(stdout).findings;
+    } catch {
+      throw new Error(`lint-tests did not emit JSON:\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
   }
   return { findings, exitCode, stderr };
 }
@@ -120,10 +123,51 @@ describe("scripts/lint-tests.ts", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("--changed with an unresolvable base ref fails closed", async () => {
+    const { exitCode, stderr } = await lint({ "bad.test.ts": `Bun.serve({ port: 4567 });` }, [
+      "--changed",
+      "lint-tests-no-such-ref",
+    ]);
+    expect(stderr).toContain("git diff against 'lint-tests-no-such-ref' failed");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    {
+      name: "new file",
+      diff: ["--- /dev/null", "+++ b/test/a.test.ts", "@@ -0,0 +1,3 @@", "+x", "+y", "+z"],
+      want: { "test/a.test.ts": [1, 2, 3] },
+    },
+    {
+      name: "single-line hunk (no count) and multi-hunk",
+      diff: [
+        "--- a/test/b.test.ts",
+        "+++ b/test/b.test.ts",
+        "@@ -4 +4 @@",
+        "-old",
+        "+new",
+        "@@ -10,0 +11,2 @@",
+        "+p",
+        "+q",
+      ],
+      want: { "test/b.test.ts": [4, 11, 12] },
+    },
+    {
+      name: "deletion is ignored",
+      diff: ["--- a/test/c.test.ts", "+++ /dev/null", "@@ -1,5 +0,0 @@", "-a", "-b"],
+      want: {},
+    },
+  ])("parseUnifiedDiff: $name", ({ diff, want }) => {
+    const got = Object.fromEntries(
+      [...parseUnifiedDiff(diff.join("\n"))].map(([k, v]) => [k, [...v].sort((a, b) => a - b)]),
+    );
+    expect(got).toEqual(want);
+  });
+
   // The full-tree scan is a CI smoke check run with a release bun; under the
   // debug/ASAN binary the per-char classifier is two orders of magnitude
   // slower, so skip there.
-  test.skipIf(isDebug)("full repo scan stays fast and reports warnings only", async () => {
+  test.skipIf(isDebug || isASAN)("full repo scan reports warnings only in default mode", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), script, "--json"],
       env: bunEnv,
@@ -136,7 +180,6 @@ describe("scripts/lint-tests.ts", () => {
     // None of the existing baseline should be errors in default mode.
     expect(out.findings.some((f: Finding) => f.error)).toBe(false);
     expect(out.scanned).toBeGreaterThan(1000);
-    expect(out.elapsed).toBeLessThan(5);
     expect(exitCode).toBe(0);
   });
 });

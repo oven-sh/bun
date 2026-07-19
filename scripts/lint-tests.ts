@@ -263,6 +263,31 @@ function listTestFiles(): string[] {
   return out.sort();
 }
 
+/** Parse `git diff -U0` text into file -> Set of 1-based added line numbers. */
+export function parseUnifiedDiff(text: string): Map<string, Set<number>> {
+  const map = new Map<string, Set<number>>();
+  let current: Set<number> | undefined;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("+++ ")) {
+      let path = line.slice(4);
+      if (path.startsWith("b/")) path = path.slice(2);
+      if (path === "/dev/null") {
+        current = undefined;
+        continue;
+      }
+      current = new Set();
+      map.set(path, current);
+    } else if (current && line.startsWith("@@")) {
+      const m = /\+(\d+)(?:,(\d+))?/.exec(line); // @@ -a[,b] +c[,d] @@
+      if (!m) continue;
+      const start = parseInt(m[1], 10);
+      const count = m[2] ? parseInt(m[2], 10) : 1;
+      for (let i = 0; i < count; i++) current.add(start + i);
+    }
+  }
+  return map;
+}
+
 /** file -> Set of 1-based line numbers added relative to `base`. */
 function addedLines(base: string): Map<string, Set<number>> {
   // Diff from merge-base(base, HEAD) to the *working tree*, so uncommitted
@@ -294,27 +319,7 @@ function addedLines(base: string): Map<string, Set<number>> {
     console.error(`error: git diff against '${base}' failed:\n${diff.stderr || diff.error}`);
     process.exit(1);
   }
-  const map = new Map<string, Set<number>>();
-  let current: Set<number> | undefined;
-  for (const line of diff.stdout.split("\n")) {
-    if (line.startsWith("+++ ")) {
-      let path = line.slice(4);
-      if (path.startsWith("b/")) path = path.slice(2);
-      if (path === "/dev/null") {
-        current = undefined;
-        continue;
-      }
-      current = new Set();
-      map.set(path, current);
-    } else if (current && line.startsWith("@@")) {
-      const m = /\+(\d+)(?:,(\d+))?/.exec(line); // @@ -a[,b] +c[,d] @@
-      if (!m) continue;
-      const start = parseInt(m[1], 10);
-      const count = m[2] ? parseInt(m[2], 10) : 1;
-      for (let i = 0; i < count; i++) current.add(start + i);
-    }
-  }
-  return map;
+  return parseUnifiedDiff(diff.stdout);
 }
 
 // ── scan ────────────────────────────────────────────────────────────────────
@@ -329,73 +334,77 @@ interface Finding {
   error: boolean;
 }
 
-const changed = changedBase ? addedLines(changedBase) : undefined;
-const started = performance.now();
-const findings: Finding[] = [];
-let scanned = 0;
+function main() {
+  const changed = changedBase ? addedLines(changedBase) : undefined;
+  const started = performance.now();
+  const findings: Finding[] = [];
+  let scanned = 0;
 
-for (const file of listTestFiles()) {
-  let text: string;
-  try {
-    text = readFileSync(resolve(ROOT, file), "utf8");
-  } catch {
-    continue;
-  }
-  scanned++;
-  const lines = text.split("\n");
-  const fileAdded = changed?.get(file);
-  const state: LineState = { inTemplate: false, inBlockComment: false };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const code = classify(line, state);
-    if (!TRIGGER.test(line) || ALLOW_COMMENT.test(line)) continue;
-    for (const rule of rules) {
-      const col = rule.match(line, code);
-      if (col < 0) continue;
-      if (i > 0 && ALLOW_COMMENT_LINE.test(lines[i - 1])) continue;
-      const error = allErrors || (changed ? !!fileAdded?.has(i + 1) : false);
-      findings.push({
-        file,
-        line: i + 1,
-        col: col + 1,
-        rule: rule.name,
-        why: rule.why,
-        text: line.trim().slice(0, 200),
-        error,
-      });
+  for (const file of listTestFiles()) {
+    let text: string;
+    try {
+      text = readFileSync(resolve(ROOT, file), "utf8");
+    } catch {
+      continue;
+    }
+    scanned++;
+    const lines = text.split("\n");
+    const fileAdded = changed?.get(file);
+    const state: LineState = { inTemplate: false, inBlockComment: false };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const code = classify(line, state);
+      if (!TRIGGER.test(line) || ALLOW_COMMENT.test(line)) continue;
+      for (const rule of rules) {
+        const col = rule.match(line, code);
+        if (col < 0) continue;
+        if (i > 0 && ALLOW_COMMENT_LINE.test(lines[i - 1])) continue;
+        const error = allErrors || (changed ? !!fileAdded?.has(i + 1) : false);
+        findings.push({
+          file,
+          line: i + 1,
+          col: col + 1,
+          rule: rule.name,
+          why: rule.why,
+          text: line.trim().slice(0, 200),
+          error,
+        });
+      }
     }
   }
-}
 
-// ── report ──────────────────────────────────────────────────────────────────
+  // ── report ──────────────────────────────────────────────────────────────────
 
-const elapsed = ((performance.now() - started) / 1000).toFixed(2);
-const errors = findings.filter(f => f.error);
+  const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+  const errors = findings.filter(f => f.error);
 
-if (asJson) {
-  console.log(JSON.stringify({ scanned, elapsed: +elapsed, findings }, null, 2));
-} else {
-  const visible = quiet ? errors : findings;
-  for (const f of visible) {
-    const level = f.error ? "error" : "warning";
-    if (isGithubActions) {
-      console.log(`::${level} file=${f.file},line=${f.line},col=${f.col},title=lint-tests/${f.rule}::${f.why}`);
+  if (asJson) {
+    console.log(JSON.stringify({ scanned, elapsed: +elapsed, findings }, null, 2));
+  } else {
+    const visible = quiet ? errors : findings;
+    for (const f of visible) {
+      const level = f.error ? "error" : "warning";
+      if (isGithubActions) {
+        console.log(`::${level} file=${f.file},line=${f.line},col=${f.col},title=lint-tests/${f.rule}::${f.why}`);
+      }
+      const tag = f.error ? "\x1b[31merror\x1b[0m" : "\x1b[33mwarning\x1b[0m";
+      console.log(`${f.file}:${f.line}:${f.col}: ${tag} [${f.rule}] ${f.why}`);
+      console.log(`  ${f.text}`);
     }
-    const tag = f.error ? "\x1b[31merror\x1b[0m" : "\x1b[33mwarning\x1b[0m";
-    console.log(`${f.file}:${f.line}:${f.col}: ${tag} [${f.rule}] ${f.why}`);
-    console.log(`  ${f.text}`);
+    const byRule = new Map<string, number>();
+    for (const f of findings) byRule.set(f.rule, (byRule.get(f.rule) ?? 0) + 1);
+    const summary = [...byRule.entries()].map(([r, n]) => `${r}: ${n}`).join(", ");
+    console.error(
+      `\nlint-tests: scanned ${scanned} files in ${elapsed}s; ` +
+        `${findings.length} finding(s), ${errors.length} error(s)` +
+        (summary ? `  (${summary})` : ""),
+    );
+    if (errors.length) {
+      console.error(`  suppress a finding with \`// lint-tests-allow: <reason>\` on the line above.`);
+    }
   }
-  const byRule = new Map<string, number>();
-  for (const f of findings) byRule.set(f.rule, (byRule.get(f.rule) ?? 0) + 1);
-  const summary = [...byRule.entries()].map(([r, n]) => `${r}: ${n}`).join(", ");
-  console.error(
-    `\nlint-tests: scanned ${scanned} files in ${elapsed}s; ` +
-      `${findings.length} finding(s), ${errors.length} error(s)` +
-      (summary ? `  (${summary})` : ""),
-  );
-  if (errors.length) {
-    console.error(`  suppress a finding with \`// lint-tests-allow: <reason>\` on the line above.`);
-  }
+
+  process.exit(errors.length ? 1 : 0);
 }
 
-process.exit(errors.length ? 1 : 0);
+if (import.meta.main) main();

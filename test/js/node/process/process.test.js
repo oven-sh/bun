@@ -218,6 +218,39 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
 });
 
+it("Object.defineProperty on process.env rejects accessor and partial descriptors", () => {
+  const dataMsg = "'process.env' only accepts a configurable, writable, and enumerable data descriptor";
+  const accessorMsg = "'process.env' does not accept an accessor(getter/setter) descriptor";
+  const expectThrow = (fn, message) =>
+    expect(fn).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", message }),
+    );
+
+  expectThrow(() => Object.defineProperty(process.env, "goo", { get() {}, set() {} }), accessorMsg);
+  expectThrow(() => Object.defineProperty(process.env, "goo", { get() {} }), accessorMsg);
+  expectThrow(() => Object.defineProperty(process.env, "foo", { value: "foo1" }), dataMsg);
+  for (const attr of ["configurable", "writable", "enumerable"]) {
+    expectThrow(() => Object.defineProperty(process.env, "goo", { [attr]: false }), dataMsg);
+    expectThrow(
+      () =>
+        Object.defineProperty(process.env, "goo", {
+          value: "v",
+          configurable: true,
+          writable: true,
+          enumerable: true,
+          [attr]: false,
+        }),
+      dataMsg,
+    );
+  }
+  expect(process.env.foo).toBeUndefined();
+  expect(process.env.goo).toBeUndefined();
+
+  Object.defineProperty(process.env, "goo", { value: "goo", configurable: true, writable: true, enumerable: true });
+  expect(process.env.goo).toBe("goo");
+  delete process.env.goo;
+});
+
 it("process.env is spreadable and editable", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";
   const { "LOL SMILE UTF16 😂": lol, ...rest } = process.env;

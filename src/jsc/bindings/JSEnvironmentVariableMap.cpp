@@ -19,6 +19,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
 #include "BunProcess.h"
+#include "ErrorCode.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
 #include "wtf/NeverDestroyed.h"
@@ -364,6 +365,82 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 #endif
 }
 
+// Node.js rejects any Object.defineProperty on process.env whose descriptor is
+// not a fully-specified {value, writable: true, enumerable: true, configurable:
+// true} data descriptor (node_env_var.cc EnvDefiner). An accessor could never be
+// reflected into the real environment block.
+static bool throwIfInvalidEnvDescriptor(JSGlobalObject* globalObject, JSC::ThrowScope& scope, const PropertyDescriptor& descriptor)
+{
+    static constexpr auto dataMsg = "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s;
+    if (descriptor.value()) {
+        if (!descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent()
+            || !descriptor.writable() || !descriptor.enumerable() || !descriptor.configurable()) {
+            throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, dataMsg);
+            return false;
+        }
+        return true;
+    }
+    if (descriptor.getterPresent() || descriptor.setterPresent()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY,
+            "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+    throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, dataMsg);
+    return false;
+}
+
+// The regular process.env object: a plain object with the defineOwnProperty
+// override above. No instance state, so no custom subspace.
+class JSProcessEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSProcessEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSProcessEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSProcessEnvMap* ptr = new (NotNull, JSC::allocateCell<JSProcessEnvMap>(vm)) JSProcessEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
+    {
+        VM& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!throwIfInvalidEnvDescriptor(globalObject, scope, descriptor))
+            return false;
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+private:
+    JSProcessEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
+
 // ============================================================================
 // worker_threads SHARE_ENV
 //
@@ -602,23 +679,11 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (!throwIfInvalidEnvDescriptor(globalObject, scope, descriptor))
+        return false;
+
     auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
-        // The descriptor lands on the Base object, but getOwnPropertySlot reads the
-        // store first, so a store entry would shadow it. Move the entry onto Base as
-        // an enumerable data property first: a partial descriptor then keeps that
-        // enumerability, exactly as it does on the regular process.env. (Node rejects
-        // accessors on process.env outright — on both maps — so match bun's own map.)
-        if (!propertyName.isSymbol() && uid) {
-            if (auto* store = sharedEnvStoreFor(object)) {
-                String existing = store->get(String(uid));
-                if (!existing.isNull()) {
-                    syncWindowsEnv(store, String(uid), nullptr);
-                    store->remove(String(uid));
-                    object->putDirect(vm, propertyName, jsString(vm, existing), 0);
-                }
-            }
-        }
+    if (propertyName.isSymbol() || !uid) {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 
@@ -749,12 +814,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSProcessEnvMap::create(vm, structure);
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);

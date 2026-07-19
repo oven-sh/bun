@@ -1742,6 +1742,18 @@ describe("expect()", () => {
     expect(ab1).not.toEqual(new ArrayBuffer(1));
   });
 
+  test("toEqual detached ArrayBuffer is not equal to a zero-length ArrayBuffer", () => {
+    function detached() {
+      const buf = new ArrayBuffer(4);
+      buf.transfer();
+      return buf;
+    }
+    expect(detached()).not.toEqual(new ArrayBuffer(0));
+    expect(detached()).not.toEqual(detached());
+    expect(detached()).not.toStrictEqual(new ArrayBuffer(0));
+    expect({ x: detached() }).not.toEqual({ x: new ArrayBuffer(0) });
+  });
+
   test("symbol based keys in arrays are processed correctly", () => {
     const mySymbol = Symbol("test");
 

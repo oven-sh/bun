@@ -522,18 +522,23 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
 };
 
 EventEmitterPrototype.listenerCount = function listenerCount(type, method) {
-  if (method == null) return listenerCountSlow(this, type);
   var handlers = this._events?.[type];
-  if (!handlers) return 0;
-  if (typeof handlers === "function") return handlers === method || handlers.listener === method ? 1 : 0;
-  var length = 0;
-  for (let i = 0; i < handlers.length; i++) {
-    const handler = handlers[i];
-    if (handler === method || handler.listener === method) {
-      length++;
-    }
+  if (handlers === undefined) return 0;
+  if (typeof handlers === "function") {
+    if (method != null) return handlers === method || handlers.listener === method ? 1 : 0;
+    return 1;
   }
-  return length;
+  if (method != null) {
+    var length = 0;
+    for (let i = 0; i < handlers.length; i++) {
+      const handler = handlers[i];
+      if (handler === method || handler.listener === method) {
+        length++;
+      }
+    }
+    return length;
+  }
+  return handlers.length;
 };
 Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 
@@ -811,23 +816,9 @@ function listenerCount(emitter, type) {
   const evt_count = jsEventTargetGetEventListenersCount(emitter, type);
   if (evt_count !== undefined) return evt_count;
 
-  // EventEmitter's with no `.listenerCount`
-  return listenerCountSlow(emitter, type);
+  throw $ERR_INVALID_ARG_TYPE("emitter", ["EventEmitter", "EventTarget"], emitter);
 }
 Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
-
-function listenerCountSlow(emitter, type) {
-  const events = emitter._events;
-  if (events !== undefined) {
-    const evlistener = events[type];
-    if (typeof evlistener === "function") {
-      return 1;
-    } else if (evlistener !== undefined) {
-      return evlistener.length;
-    }
-  }
-  return 0;
-}
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {

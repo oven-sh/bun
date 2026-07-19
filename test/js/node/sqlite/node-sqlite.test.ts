@@ -1527,9 +1527,83 @@ describe("serialize() / deserialize()", () => {
     dst.close();
     Bun.gc(true);
   });
+
+  test("succeeds while an iterate() cursor is open (resets outstanding statements like Node)", () => {
+    // Node calls FinalizeStatements() before sqlite3_deserialize(), so an
+    // un-reset cursor never holds a read transaction through the swap. Bun
+    // can't finalize (wrappers own the stmt*) but must reset, otherwise the
+    // internal ATTACH returns SQLITE_BUSY and the generation bump leaves
+    // every statement dead against the OLD database content.
+    const donor = new DatabaseSync(":memory:");
+    donor.exec("CREATE TABLE q(z); INSERT INTO q VALUES (9)");
+    const img = donor.serialize();
+    donor.close();
+
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1),(2)");
+    const idle = db.prepare("SELECT a FROM t");
+    const it = db.prepare("SELECT a FROM t").iterate();
+    expect(it.next().value).toEqual({ a: 1 }); // cursor now mid-iteration: open read txn
+
+    db.deserialize(img);
+
+    expect(() => idle.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    expect(db.prepare("SELECT z FROM q").get()).toEqual({ z: 9 });
+    expect(() => db.prepare("SELECT count(*) c FROM t").get()).toThrow(/no such table: t/);
+    db.close();
+  });
 });
 
 describe("createTagStore()", () => {
+  test("capacity coercion matches Node: double→int→size_t with no clamp", () => {
+    // Node: `int capacity = args[0].As<Number>()->Value()` then handed to
+    // LRUCache(size_t). -1 sign-extends to SIZE_MAX (unlimited), 0 stays 0
+    // (cache nothing), fractions truncate, non-numbers use the 1000 default.
+    const db = new DatabaseSync(":memory:");
+    expect({
+      "-1": db.createTagStore(-1).capacity,
+      "-2": db.createTagStore(-2).capacity,
+      "0": db.createTagStore(0).capacity,
+      "1.5": db.createTagStore(1.5).capacity,
+      "0.9": db.createTagStore(0.9).capacity,
+      "-0.5": db.createTagStore(-0.5).capacity,
+      "NaN": db.createTagStore(NaN).capacity,
+      "Inf": db.createTagStore(Infinity).capacity,
+      "'5'": db.createTagStore("5" as any).capacity,
+      "null": db.createTagStore(null as any).capacity,
+      "undef": db.createTagStore(undefined).capacity,
+      "noarg": db.createTagStore().capacity,
+    }).toEqual({
+      "-1": 18446744073709552000,
+      "-2": 18446744073709552000,
+      "0": 0,
+      "1.5": 1,
+      "0.9": 0,
+      "-0.5": 0,
+      // Node's raw double→int cast is UB here; Bun uses ES ToInt32 (→ 0).
+      "NaN": 0,
+      "Inf": 0,
+      "'5'": 1000,
+      "null": 1000,
+      "undef": 1000,
+      "noarg": 1000,
+    });
+
+    // Behavior, not just the getter: capacity=0 caches nothing.
+    const s0 = db.createTagStore(0);
+    expect(s0.get`SELECT 1 AS v`).toEqual({ __proto__: null, v: 1 });
+    expect(s0.get`SELECT 2 AS v`).toEqual({ __proto__: null, v: 2 });
+    expect(s0.size).toBe(0);
+
+    // capacity=-1 is effectively unlimited: three distinct SQLs all stay cached.
+    const sNeg = db.createTagStore(-1);
+    sNeg.get`SELECT 1`;
+    sNeg.get`SELECT 2`;
+    sNeg.get`SELECT 3`;
+    expect(sNeg.size).toBe(3);
+    db.close();
+  });
+
   test("reusing the same SQL while a tag.iterate() iterator is live invalidates the iterator", () => {
     // Deliberate divergence: Node's SQLTagStore resets the cached statement
     // without bumping reset_generation_, so the iterator silently re-yields

@@ -216,7 +216,10 @@ describe("null byte injection protection", () => {
     });
 
     test(".cwd() and .env() accept valid values", async () => {
-      const result = await $`echo ok`.cwd(process.cwd()).env({ ...process.env }).text();
+      const result = await $`echo ok`
+        .cwd(process.cwd())
+        .env({ ...process.env })
+        .text();
       expect(result.trim()).toBe("ok");
     });
   });

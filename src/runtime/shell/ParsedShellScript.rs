@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
-use bun_core::{strings, OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString, strings};
 use bun_jsc::{
     CallFrame, ErrorCode, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsCell, JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,

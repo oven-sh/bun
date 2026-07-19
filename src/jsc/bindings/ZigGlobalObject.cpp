@@ -4155,7 +4155,17 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    vm.derefSuppressingSaferCPPChecking();
+    // The two refs that exist when this runs at event-loop top level are
+    // Zig__GlobalObject__create's manual ref and the boot-scope JSLockHolder.
+    // When process.exit() is called from inside a JS callback, every nested
+    // JSLockHolder still on the native stack (e.g. JSEventListener::handleEvent)
+    // holds a RefPtr<VM>, so a fixed two derefs leave the count > 0 and ~VM
+    // (and with it Heap::lastChanceToFinalize, which clears all marks and
+    // sweeps every cell) is skipped. Those holders never destruct because this
+    // path never returns, so release on their behalf.
+    for (uint32_t n = vm.refCount(); n > 1; --n)
+        vm.derefSuppressingSaferCPPChecking();
+    // refCount 1 -> 0 runs ~VM; `vm` is dead past this line.
     vm.derefSuppressingSaferCPPChecking();
     runLoop->threadWillExit();
 }

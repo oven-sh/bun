@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::MultiArrayList;
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{

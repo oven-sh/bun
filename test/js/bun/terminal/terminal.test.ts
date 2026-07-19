@@ -1323,6 +1323,41 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     });
   });
 
+  // On Windows, Subprocess::on_process_exit used to fire ClosePseudoConsole
+  // immediately; that routes teardown through conhost's PtySignalInputThread,
+  // which on Server 2019 races the ConsoleIoThread still processing the
+  // child's last WriteConsole and can drop the final render. The inline
+  // pseudoconsole now releases its ConDrv \Reference handle at spawn time so
+  // conhost exits via its IoThread (sequentially after the last write) and the
+  // reader sees every byte before EOF.
+  test("inline terminal: fast-exiting child's output is delivered before exit callback", async () => {
+    let output = "";
+    let outputAtExit = "";
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('LAST-FRAME', () => process.exit(0))"],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          outputAtExit = output;
+          eof.resolve();
+        },
+      },
+    });
+    try {
+      await proc.exited;
+      await eof.promise;
+      // The exit callback fires on reader EOF: on Windows that is conhost closing
+      // the output pipe from its IoThread; on POSIX it is drain_and_close_slave_fd.
+      expect(outputAtExit).toContain("LAST-FRAME");
+    } finally {
+      proc.terminal?.close();
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/33187
   // Not `test.concurrent`: spawns run concurrently inside the body; the serial
   // `Bun.spawn` loop must be the only contention to reproduce the race.

@@ -956,9 +956,12 @@ impl Subprocess<'_> {
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // Deliver EOF to the terminal reader without closing the Terminal:
+            // Deliver EOF to the terminal reader without closing the Terminal.
             // POSIX drains then releases slave_fd (BSD kernels flush on last
-            // slave close); Windows closes the ConPTY pseudoconsole.
+            // slave close). Windows: the ConDrv \Reference handle was released
+            // at spawn time, so conhost exits and breaks the output pipe once
+            // its last client (this child, or a grandchild it left behind) has
+            // disconnected; unref the reader so that wait doesn't pin the loop.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
@@ -967,7 +970,7 @@ impl Subprocess<'_> {
                 #[cfg(unix)]
                 term.drain_and_close_slave_fd();
                 #[cfg(windows)]
-                term.close_pseudoconsole();
+                term.unref_after_inline_child_exit();
             }
         }
 

@@ -135,9 +135,9 @@ if (process.argv.length === 2 &&
       if (flag === "--no-warnings" && process.versions.bun) {
         // Keep scanning so a later --expose-internals / --expose-gc in the
         // same Flags line still installs its shim in-process. Bun's onWarning
-        // printer installs lazily on the first emitWarning and honors a JS
-        // process.noWarnings read at that point, so set it here.
-        process.noWarnings = true;
+        // printer installs lazily on the first emitWarning and honors Node's
+        // process.noProcessWarnings alias read at that point, so set it here.
+        process.noProcessWarnings = true;
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {

@@ -276,9 +276,7 @@ impl<'a> Writable<'a> {
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::Source::from_owned_bytes(
-                            core::mem::take(bytes).into_boxed_slice(),
-                        ),
+                        super::Source::from_owned_bytes(core::mem::take(bytes).into_boxed_slice()),
                     )));
                 }
                 Stdio::Fd(fd) => {

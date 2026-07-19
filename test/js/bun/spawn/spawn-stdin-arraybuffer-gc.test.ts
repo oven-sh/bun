@@ -3,8 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 // Child reads all of stdin via Bun.stdin (avoids node:streams so this stays
 // hermetic to spawn's stdin handling) and prints the SHA-1 of what it received.
-const catScript =
-  "Bun.readableStreamToArrayBuffer(Bun.stdin.stream()).then(b => console.log(Bun.SHA1.hash(b, 'hex')))";
+const catScript = "Bun.readableStreamToArrayBuffer(Bun.stdin.stream()).then(b => console.log(Bun.SHA1.hash(b, 'hex')))";
 
 // Bun.spawn copies ArrayBuffer/TypedArray stdin into its own storage before
 // writing it to the child. That copy should live in native memory owned by the
@@ -64,11 +63,7 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
       const { protectedBefore, protectedDuring, liveDuring } = JSON.parse(stdout.trim());
@@ -115,11 +110,7 @@ describe("Bun.spawn stdin: ArrayBuffer bytes reach the child intact", () => {
           stderr: "pipe",
           env,
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
         expect(stdout.trim()).toBe(expectedHash);
         expect(exitCode).toBe(0);

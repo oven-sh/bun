@@ -57,8 +57,9 @@ fn from_seconds(seconds: f64) -> TimeLike {
 #[cfg(not(windows))]
 fn from_seconds(seconds: f64) -> TimeLike {
     libc::timespec {
-        // `as` saturates on overflow/NaN.
-        tv_sec: seconds as _,
+        // floor (not truncate) so negative fractions pair with the
+        // always-non-negative `rem_euclid` nanoseconds. `as` saturates on overflow/NaN.
+        tv_sec: seconds.div_euclid(1.0) as _,
         tv_nsec: (seconds.rem_euclid(1.0) * NS_PER_S) as _,
     }
 }
@@ -70,17 +71,9 @@ fn from_milliseconds(milliseconds: f64) -> TimeLike {
 
 #[cfg(not(windows))]
 fn from_milliseconds(milliseconds: f64) -> TimeLike {
-    let mut sec: f64 = milliseconds.div_euclid(MS_PER_S);
-    let mut nsec: f64 = milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS;
-
-    if nsec < 0.0 {
-        nsec += NS_PER_S;
-        sec -= 1.0;
-    }
-
     libc::timespec {
-        tv_sec: sec as _,
-        tv_nsec: nsec as _,
+        tv_sec: milliseconds.div_euclid(MS_PER_S) as _,
+        tv_nsec: (milliseconds.rem_euclid(MS_PER_S) * NS_PER_MS) as _,
     }
 }
 

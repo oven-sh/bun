@@ -4155,6 +4155,31 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
+  // TODO: make this work on Windows
+  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, "-1.5", "-1.5");
+
+    const stats = fs.statSync(tmp);
+    expect(stats.atime.getTime()).toBe(-1500);
+    expect(stats.mtime.getTime()).toBe(-1500);
+  });
+
+  it("treats negative number timestamps as the current time", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    // fs timestamp granularity can be coarser than Date.now()
+    const before = Date.now() - 1000;
+    fs.utimesSync(tmp, -1.5, -1.5);
+
+    const stats = fs.statSync(tmp);
+    expect(stats.mtime.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stats.atime.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
   it("works with whole numbers", () => {
     const atime = Math.floor(Date.now() / 1000);
     const mtime = Math.floor(Date.now() / 1000);

@@ -249,7 +249,9 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
                 m
             }
         };
-        ipc_data.internal_msg_queue.put_callback(map, global, seq, callback);
+        ipc_data
+            .internal_msg_queue
+            .put_callback(map, global, seq, callback);
     }
 
     // sequence number for InternalMsgHolder
@@ -327,8 +329,9 @@ pub(crate) fn handle_internal_message_primary(
         if !p.is_undefined() {
             let ack = p.to_int32();
             if let Some(map) = subprocess_js::ipc_ack_callbacks_get_cached(this_jsvalue) {
-                if let Some(callback) =
-                    ipc_data.internal_msg_queue.take_callback(map, global, ack)?
+                if let Some(callback) = ipc_data
+                    .internal_msg_queue
+                    .take_callback(map, global, ack)?
                 {
                     event_loop.run_callback(callback, global, worker, &[message, JSValue::NULL]);
                     return Ok(());

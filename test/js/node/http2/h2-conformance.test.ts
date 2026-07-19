@@ -914,7 +914,9 @@ describe("inbound stream lifecycle", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const result = JSON.parse(stdout.trim().split("\n")[0]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    const result = JSON.parse(stdout.trim().split("\n")[0] || "null");
     expect(result).toEqual({ refs: 8, cbErrs: 8, live: 0 });
     expect(exitCode).toBe(0);
   }, 30_000);

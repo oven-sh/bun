@@ -5638,12 +5638,6 @@ impl H2FrameParser {
         }
     }
 
-    /// Resolve the JS stream context for the rewrite engine's dispatches (see `stream_ctx`; kept
-    /// as an alias so the Sink impl's per-callback shape stays legible).
-    fn rewrite_stream_ctx(&self, stream_id: u32) -> JSValue {
-        self.stream_ctx(stream_id)
-    }
-
     /// Record outbound DATA the legacy encoder wrote so the engine's send windows track reality.
     /// Buffered in cells and applied in rewrite_read: inbound WINDOW_UPDATE handling always goes
     /// through rewrite_read first, so the windows are in sync before any overflow check runs.
@@ -6176,7 +6170,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(flags as f64),
             );
         } else {
-            let stream_ctx = self.rewrite_stream_ctx(stream_id);
+            let stream_ctx = self.stream_ctx(stream_id);
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamHeaders,
                 stream_ctx,
@@ -6188,7 +6182,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn on_data(&self, stream_id: u32, data: &[u8]) {
         let g = self.global();
-        let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        let stream_ctx = self.stream_ctx(stream_id);
         // Skip the JS dispatch when conversion fails (VM terminating).
         let Ok(chunk) = self.handlers.get().binary_type.to_js(data, &g) else {
             return;
@@ -6223,7 +6217,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 };
             }
         }
-        let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        let stream_ctx = self.stream_ctx(stream_id);
         self.dispatch_with_extra(
             JSH2FrameParser::Gc::onStreamEnd,
             stream_ctx,
@@ -6282,7 +6276,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 (*stream).rst_code = code;
             }
         }
-        let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        let stream_ctx = self.stream_ctx(stream_id);
         if code == crate::api::h2::wire::ErrorCode::Cancel.as_u32() {
             // A peer CANCEL is an abort, not an error (node emits 'aborted' and closes with
             // rstCode 8 without an 'error' event).

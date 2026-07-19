@@ -223,7 +223,7 @@ describe("transpiler cache", () => {
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
   });
-  test("module_type (package.json \"type\") invalidates cache", () => {
+  test('module_type (package.json "type") invalidates cache', () => {
     // A file with a top-level `return` and no ESM/CJS-forcing syntax is valid
     // CommonJS but a SyntaxError as an ES module. Same bytes, different
     // package.json "type" must not share a cache entry.

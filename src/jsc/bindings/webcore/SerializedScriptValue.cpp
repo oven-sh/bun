@@ -5977,6 +5977,14 @@ static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffe
     if (arrayBuffers.isEmpty())
         return nullptr;
 
+    // Re-check detachability after serialization: an own accessor getter invoked by
+    // CloneSerializer can pin() a buffer that passed the up-front transfer-list check.
+    // Reject before any transferTo() so no sibling is left detached on failure.
+    for (auto& ab : arrayBuffers) {
+        if (ab && !ab->isDetachable())
+            return Exception { DataCloneError, "Cannot transfer an ArrayBuffer that is in use by an asynchronous I/O operation"_s };
+    }
+
     auto contents = makeUnique<ArrayBufferContentsArray>(arrayBuffers.size());
 
     HashSet<JSC::ArrayBuffer*> visited;
@@ -6408,6 +6416,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
+            // Not detached/shared/locked yet not detachable: a native borrow holds a
+            // pin(). transferTo() would copy; fail closed per StructuredSerializeWithTransfer.
+            if (!arrayBuffer->isDetachable())
+                return Exception { DataCloneError, "Cannot transfer an ArrayBuffer that is in use by an asynchronous I/O operation"_s };
             arrayBuffers.append(WTF::move(arrayBuffer));
             continue;
         }

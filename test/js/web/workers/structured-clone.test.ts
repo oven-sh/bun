@@ -1,8 +1,16 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
-import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  createSecretKey,
+  KeyObject,
+  randomFill,
+  X509Certificate,
+} from "node:crypto";
 import { BlockList } from "node:net";
+import zlib from "node:zlib";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -501,6 +509,106 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           const cloned = structuredCloneFn({ buffer }, { transfer: new Set([buffer]) as any });
           expect(cloned.buffer.byteLength).toBe(8);
           expect(buffer.byteLength).toBe(0);
+        });
+        // An in-flight async native op pins the backing ArrayBuffer so its bytes
+        // can't move. A transfer that cannot detach must throw DataCloneError per
+        // HTML StructuredSerializeWithTransfer, not silently copy.
+        describe("pinned ArrayBuffer cannot be transferred while an async op borrows it", () => {
+          const pinners = [
+            ["zlib.gzip", (u8: Uint8Array, cb: () => void) => zlib.gzip(u8, cb)],
+            ["zlib.deflate", (u8: Uint8Array, cb: () => void) => zlib.deflate(u8, cb)],
+            ["zlib.brotliCompress", (u8: Uint8Array, cb: () => void) => zlib.brotliCompress(u8, cb)],
+          ] as const;
+          test.each(pinners)("%s: structuredClone transfer throws DataCloneError", async (_name, pin) => {
+            const ab = new ArrayBuffer(1 << 16);
+            const u8 = new Uint8Array(ab).fill(65);
+            const { promise, resolve } = Promise.withResolvers<void>();
+            pin(u8, () => resolve());
+
+            let error: unknown;
+            try {
+              structuredCloneFn(ab, { transfer: [ab] });
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+            expect((error as DOMException).code).toBe(DOMException.DATA_CLONE_ERR);
+            // The rejected transfer must not have detached or mutated the source.
+            expect(ab.byteLength).toBe(1 << 16);
+            expect(u8[0]).toBe(65);
+
+            await promise;
+            // Once the async op completes and unpins, transfer detaches normally.
+            const cloned = structuredCloneFn(ab, { transfer: [ab] });
+            expect(ab.byteLength).toBe(0);
+            expect(cloned.byteLength).toBe(1 << 16);
+            expect(new Uint8Array(cloned)[0]).toBe(65);
+          });
+          test("MessagePort.postMessage transfer throws DataCloneError", async () => {
+            const ab = new ArrayBuffer(1 << 16);
+            const u8 = new Uint8Array(ab).fill(65);
+            const { promise, resolve } = Promise.withResolvers<void>();
+            zlib.gzip(u8, () => resolve());
+
+            const { port1, port2 } = new MessageChannel();
+            let error: unknown;
+            try {
+              port1.postMessage(ab, [ab]);
+            } catch (e) {
+              error = e;
+            } finally {
+              port1.close();
+              port2.close();
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+            expect(ab.byteLength).toBe(1 << 16);
+            await promise;
+          });
+          test("a sibling ArrayBuffer in the same transfer list is not detached on rejection", async () => {
+            const pinned = new ArrayBuffer(1 << 16);
+            const other = new ArrayBuffer(8);
+            const { promise, resolve } = Promise.withResolvers<void>();
+            zlib.gzip(new Uint8Array(pinned), () => resolve());
+
+            expect(() => structuredCloneFn({ pinned, other }, { transfer: [other, pinned] })).toThrow(DOMException);
+            // The whole transfer step is rejected before any buffer is detached.
+            expect(other.byteLength).toBe(8);
+            expect(pinned.byteLength).toBe(1 << 16);
+            await promise;
+          });
+          test("a getter that pins the buffer during serialization still throws DataCloneError", async () => {
+            const ab = new ArrayBuffer(1 << 16);
+            const other = new ArrayBuffer(8);
+            const { promise, resolve } = Promise.withResolvers<void>();
+            const value = Object.defineProperty({ ab, other }, "p", {
+              enumerable: true,
+              get() {
+                zlib.gzip(new Uint8Array(ab), () => resolve());
+                return 1;
+              },
+            });
+            let error: unknown;
+            try {
+              structuredCloneFn(value, { transfer: [other, ab] });
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+            // Re-checked after serialization, before any sibling is detached.
+            expect(ab.byteLength).toBe(1 << 16);
+            expect(other.byteLength).toBe(8);
+            await promise;
+          });
+          test("randomFill does not block transfer (negative control)", () => {
+            const ab = new ArrayBuffer(1 << 16);
+            randomFill(new Uint8Array(ab), () => {});
+            const cloned = structuredCloneFn(ab, { transfer: [ab] });
+            expect(ab.byteLength).toBe(0);
+            expect(cloned.byteLength).toBe(1 << 16);
+          });
         });
       });
     }

@@ -3149,19 +3149,19 @@ bool JSC__JSValue__asArrayBuffer(
 // unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
 // impl.
 //
-// A pin does not make detaching fail, it makes it copy. `pin()` clears
-// `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
-// undetachable buffer by copying the bytes into the destination and reporting
-// success (`if (!isDetachable()) m_contents.copyTo(result)`). So while a borrow
-// is live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
-// `port.postMessage(v, [ab])` each return normally, give the destination an
-// independent copy, and leave `ab` attached; the bytes being read never move.
+// `pin()` clears `ArrayBuffer::isDetachable()`. JSC's `ArrayBuffer::transferTo()`
+// answers an undetachable buffer by copying the bytes into the destination and
+// reporting success (`if (!isDetachable()) m_contents.copyTo(result)`), so while a
+// borrow is live `ab.transfer()` returns normally, gives the destination an
+// independent copy, and leaves `ab` attached; the bytes being read never move.
 //
-// That departs from ES2024, where transfer() must detach or throw, and from
-// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
-// common case and memory-safe in every case, at the cost of a transfer that
-// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
-// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
+// `structuredClone(v, { transfer: [ab] })` and `port.postMessage(v, [ab])`
+// instead throw a `DataCloneError` DOMException for a pinned buffer (see the
+// `!isDetachable()` check in SerializedScriptValue's transfer-list validation),
+// so a transfer that cannot detach fails loudly rather than silently copying.
+// The borrow stays zero-copy in the common case and memory-safe in every case;
+// once the borrowing op (zlib, fs, crypto, shell, Bun.Image, SQL blob binds,
+// ...) completes and unpins, the buffer becomes detachable again.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))

@@ -97,11 +97,7 @@ impl PostgresSQLStatement {
     /// already built). Returns `Some(structure)` when this call allocated a new
     /// `JSC::Structure`, so the caller can register it with the Connection
     /// wrapper for GC tracing; `None` on cache hit or for the wide-row path.
-    pub fn structure(
-        &mut self,
-        owner: JSValue,
-        global_object: &JSGlobalObject,
-    ) -> Option<JSValue> {
+    pub fn structure(&mut self, owner: JSValue, global_object: &JSGlobalObject) -> Option<JSValue> {
         if self.cached_structure.has() {
             return None;
         }

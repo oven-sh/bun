@@ -502,6 +502,49 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           expect(cloned.buffer.byteLength).toBe(8);
           expect(buffer.byteLength).toBe(0);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
+        // WPT: html/webappapis/structured-clone "A detached platform object cannot be transferred"
+        test("A detached MessagePort cannot be transferred", () => {
+          const { port1, port2 } = new MessageChannel();
+          structuredCloneFn(null, { transfer: [port1] });
+          let error: unknown;
+          try {
+            structuredCloneFn(port1, { transfer: [port1] });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect((error as DOMException).name).toBe("DataCloneError");
+          expect((error as DOMException).code).toBe(DOMException.DATA_CLONE_ERR);
+          port2.close();
+        });
+        test("transferring a MessagePort detaches the original and returns a new entangled port", async () => {
+          const { port1, port2 } = new MessageChannel();
+          const cloned = structuredCloneFn(port1, { transfer: [port1] });
+          expect(cloned).toBeInstanceOf(MessagePort);
+          expect(cloned).not.toBe(port1);
+          // the original is now detached: a second transfer over any path must throw
+          const sink = new MessageChannel();
+          expect(() => sink.port1.postMessage(null, [port1])).toThrow(DOMException);
+          expect(() => structuredCloneFn(null, { transfer: [port1] })).toThrow(DOMException);
+          // the returned port took over port1's end of the channel
+          const { promise, resolve } = Promise.withResolvers<unknown>();
+          port2.onmessage = e => resolve(e.data);
+          cloned.postMessage("hello");
+          expect(await promise).toBe("hello");
+          cloned.close();
+          port2.close();
+          sink.port1.close();
+          sink.port2.close();
+        });
+        test("a rejected MessagePort transfer leaves sibling ArrayBuffers attached", () => {
+          const { port1, port2 } = new MessageChannel();
+          structuredCloneFn(null, { transfer: [port1] });
+          const buffer = new ArrayBuffer(8);
+          expect(() => structuredCloneFn(null, { transfer: [buffer, port1] })).toThrow(DOMException);
+          expect(buffer.byteLength).toBe(8);
+          port2.close();
+        });
       });
     }
   });

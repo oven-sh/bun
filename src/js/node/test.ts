@@ -2244,7 +2244,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   return failure;
 }
 
-function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise<undefined> {
+function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
@@ -2258,10 +2258,10 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
     } catch (err) {
       failure = err;
     }
-    // Check the child's own options.todo, not the inherited todoFlag: a subtest
-    // that threw must still fail a {todo:true} parent so bun:test reports Todo
-    // (failure rolls up), not FailBecauseTodoPassed (parent body "passed").
-    if (failure !== undefined && !child.options.todo && !child.skipped) {
+    // Check the child's own todo declaration (options.todo or test.todo(...)),
+    // not the inherited todoFlag: a subtest that threw must still fail a
+    // {todo:true} parent so bun:test under --todo reports Todo (failure rolls up).
+    if (failure !== undefined && !ownTodo && !child.skipped) {
       parent.failedSubtests++;
       parent.firstSubtestError ??= failure;
     }
@@ -2412,8 +2412,9 @@ function addTest(
         reportDirectiveOnlyNode(child, "skip");
         return Promise.resolve(undefined);
       }
-      if (mode === "todo") child.todoFlag = true;
-      return scheduleSubtest(runningNode, child, fn);
+      const ownTodo = mode === "todo" || !!options.todo;
+      if (ownTodo) child.todoFlag = true;
+      return scheduleSubtest(runningNode, child, fn, ownTodo);
     }
   }
 

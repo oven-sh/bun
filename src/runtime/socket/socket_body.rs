@@ -4197,6 +4197,12 @@ impl DuplexUpgradeContext {
                 // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
+                //
+                // Neuter the JS listener thunks now, while the wrapper is still
+                // strongly held, so the later `StartTLS` → `deinit` → `Drop`
+                // teardown (after `handle_connect_error` downgrades it) is a
+                // no-op on already-cleared shadows.
+                self.upgrade.teardown();
                 let p = tls.into_this_ptr();
                 let _ =
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
@@ -4288,6 +4294,12 @@ impl DuplexUpgradeContext {
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
+                        //
+                        // Neuter the JS listener thunks now, while the wrapper
+                        // is still strongly held, so the `deinit` → `Drop`
+                        // teardown below is a no-op on already-cleared shadows.
+                        // SAFETY: `this` is live; `&mut` ends before `deinit`.
+                        unsafe { (*this).upgrade.teardown() };
                         let p = tls.into_this_ptr();
                         let _ = TLSSocket::handle_connect_error(p, errno, 0);
                     }

@@ -522,8 +522,10 @@ impl UpgradedDuplex {
     }
 
     /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
-    /// Idempotent — resets to empty state. Not the public API; callers drop the struct.
-    fn teardown(&mut self) {
+    /// Idempotent: resets to empty state. Also invoked by
+    /// `DuplexUpgradeContext`'s connect-error branches so the listener thunks
+    /// are neutered while the wrapper is still strongly reachable.
+    pub(super) fn teardown(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "deinit");
         // clear the timer
         self.set_timeout(0);

@@ -47,7 +47,7 @@ const integrity = {
   "a-dep@1.0.5": "sha512-eKtFd4hOTiMNvOOCpwRCkRvkUB6DU6HmDF/AFCUw28s6nhNLzX62xh/ETLWMhOmeEH8JnKx3/3IY/QMhdju1jw==",
   "a-dep@1.0.10": "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg==",
   "no-deps@1.0.0": "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
-  "no-deps@1.1.0": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
+  "no-deps@1.0.1": "sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==",
   "no-deps@2.0.0": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
   "is-number@1.0.0": "sha512-PWbU1PO3loy/91zx8zOoQ37b8UWuu64eJONVIObQSlUUrYag+zy562vmZuRwRcv2hDhgK1Dc9qkJVS954CB1Nw==",
   "@types/is-number@2.0.0":
@@ -214,11 +214,6 @@ beforeAll(async () => {
             integrity: integrity["is-number@1.0.0"],
           },
           "node_modules/lol": { resolved: "packages/lol-package", link: true },
-          "node_modules/no-deps": {
-            version: "1.1.0",
-            resolved: reg("no-deps", "1.1.0"),
-            integrity: integrity["no-deps@1.1.0"],
-          },
           "node_modules/not-body-parser": { resolved: "packages/body-parser", link: true },
           "node_modules/second": { resolved: "packages/second", link: true },
           "node_modules/with-postinstall": { resolved: "packages/with-postinstall", link: true },
@@ -252,6 +247,13 @@ beforeAll(async () => {
             // left-pad is listed only here, with no matching `packages` entry, so the migrator has
             // nothing to install for it. The `mustNotExist` checks below make that observable.
             dependencies: { "@types/is-number": ">=1.0.0", "no-deps": "^1.0.0", "left-pad": "1.0.0" },
+          },
+          // Workspace-rooted entry two node_modules segments deep: exercises the migrator's
+          // nested-path walk past the first resolved level.
+          "packages/second/node_modules/body-parser/node_modules/no-deps": {
+            version: "1.0.1",
+            resolved: reg("no-deps", "1.0.1"),
+            integrity: integrity["no-deps@1.0.1"],
           },
           "packages/with-postinstall": {
             version: "1.0.0",
@@ -324,12 +326,12 @@ validate("packages/second/node_modules/body-parser", "1.0.0", "two-range-deps");
 validate("node_modules/@types/is-number", "2.0.0");
 validate("node_modules/is-number", "1.0.0");
 
-// lol: workspace whose folder name differs from its package name, with a no-deps version that
-// conflicts with two-range-deps' `^1.0.0`. bun hoists `^2.0.0` to the root and nests `1.1.0`
-// under the aliased two-range-deps; npm did the inverse. Both satisfy the ranges.
+// lol: workspace whose folder name differs from its package name. Its `^2.0.0` no-deps
+// conflicts with the `1.0.1` pinned two levels deep under the aliased two-range-deps; bun
+// hoists 2.0.0 to the root and preserves the pinned 1.0.1 at its nested path.
 mustExist("node_modules/lol/package.json");
 validate("node_modules/no-deps", "2.0.0");
-validate("packages/second/node_modules/body-parser/node_modules/no-deps", "1.1.0");
+validate("packages/second/node_modules/body-parser/node_modules/no-deps", "1.0.1");
 mustNotExist("packages/lol-package/node_modules/no-deps");
 
 // with-postinstall: lifecycle script ran

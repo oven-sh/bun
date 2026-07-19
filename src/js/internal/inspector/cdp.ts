@@ -8,9 +8,13 @@
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
 const { pathToFileURL, fileURLToPath } = require("node:url");
-const { isAbsolute } = require("node:path");
+const { basename, isAbsolute } = require("node:path");
 
 const EXECUTION_CONTEXT_ID = 1;
+// Bun names code with no file of its own after the directory it ran in:
+// `<cwd>/[eval]` for -e/--eval/-p, `<cwd>/[stdin]` for `bun -`. Node reports
+// the bare names; a real file so named is reported that way too, as in Node.
+const PSEUDO_SCRIPT_NAMES = new Set(["[eval]", "[stdin]"]);
 
 type AnyObject = Record<string, any>;
 
@@ -18,6 +22,10 @@ function toCdpUrl(url: string): string {
   // V8 reports filesystem-backed scripts with file:// URLs; JSC script URLs
   // are usually plain absolute paths.
   if (url && isAbsolute(url)) {
+    const base = basename(url);
+    if (PSEUDO_SCRIPT_NAMES.$has(base)) {
+      return base;
+    }
     try {
       return pathToFileURL(url).href;
     } catch {
@@ -41,6 +49,12 @@ function escapeRegex(text: string): string {
 // CDP clients address scripts by file:// URL while JSC usually knows them by
 // plain path, so match a breakpoint URL against every spelling.
 function breakpointUrlRegex(url: string): string {
+  if (PSEUDO_SCRIPT_NAMES.$has(url)) {
+    // The reverse of toCdpUrl. Anchored on the trailing path segment rather
+    // than on a cwd captured here: the debugger thread's cwd can differ from
+    // the one the script URL was built with.
+    return [`${escapeRegex("/" + url)}$`, `${escapeRegex("\\" + url)}$`, `^${escapeRegex(url)}$`].join("|");
+  }
   const candidates = new Set([url]);
   if (url.startsWith("file://")) {
     try {
@@ -494,9 +508,9 @@ class InspectorCDPAdapter {
       case "Runtime.setAsyncCallStackDepth":
       case "Profiler.enable":
       case "Profiler.disable":
-      // Accepted and ignored: JSC's sampling interval is not configurable.
-      // Nothing can observe the difference, since Profiler.start has no
-      // translation and is rejected as unknown.
+      // Accepted and ignored. Bun can set a sampling interval
+      // (Bun__setSamplingInterval), but Profiler.start has no translation and
+      // is rejected as unknown, so no profile can observe the difference.
       case "Profiler.setSamplingInterval":
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":

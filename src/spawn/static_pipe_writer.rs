@@ -249,13 +249,18 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             err
         );
         // Clear the buffer before detaching: `buffer` aliases `self.source`'s
-        // storage, and `detach()` frees it. `drain_buffered_data` calls
-        // on_error() then Parent::on_write(), which would otherwise re-slice
-        // the freed allocation.
+        // storage, and `detach()` frees it.
         self.buffer = RawSlice::EMPTY;
         self.source.detach();
-        // Can't release start()'s +1 here: `drain_buffered_data` calls on_error() then
-        // Parent::on_write(); freeing here would UAF.
+        // `on_write` is not dispatched after `on_error`, so release start()'s
+        // +1 here. `_on_error` brackets us with `Parent::ref_/deref`, so this
+        // cannot free `self` before the trailing `close()` runs.
+        #[cfg(not(windows))]
+        if core::mem::replace(&mut self.started, false) {
+            // SAFETY: matches `start()`'s ref; `_on_error`'s keepalive keeps
+            // `self` alive past this deref.
+            unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+        }
     }
 
     pub fn on_close(&mut self) {

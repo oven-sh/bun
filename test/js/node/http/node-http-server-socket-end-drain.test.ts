@@ -33,7 +33,12 @@ test("server.close() completes after res.socket.end() with a 2 MB upload in flig
         c.write(body);
         c.on("error", () => {});
         c.on("end", () => c.end());
-        const socketClosed = once(c, "close");
+        // Not once(c, "close"): that also registers an 'error' rejector, and on
+        // macOS the 2 MB upload can hit EPIPE once the server's SHUT_WR +
+        // resume drains the body. The write error is expected (and swallowed
+        // above); rejecting socketClosed on it turned it into an uncaught
+        // top-level rejection instead of exercising the drain/close path.
+        const socketClosed = new Promise(r => c.once("close", r));
         await handled.promise;
         const serverClosed = new Promise(r => server.close(() => r()));
         const watchdog = setTimeout(() => {

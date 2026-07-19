@@ -94,9 +94,7 @@ test.concurrent("TOML parse error after astral characters reports UTF-16 column"
   });
 });
 
-async function lineTextWindow(
-  source: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function lineTextWindow(source: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   using dir = tempDir("parse-col-window", {});
   const file = join(String(dir), "long.js");
   await Bun.write(file, source);

@@ -557,6 +557,96 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+test("primary does not root the worker object graph per live worker", async () => {
+  // `onInternalMessagePrimary` stores the Worker object and the internal
+  // message callback for each forked worker. Storing them as GC roots (one
+  // `JSC::Strong` each) means:
+  //   * every live worker adds two entries to the protected-object set, and
+  //   * Worker → ChildProcess → Subprocess → ipc_data → Strong(Worker) is a
+  //     cycle through a root, so the whole graph survives GC after the worker
+  //     exits.
+  // Held in the Subprocess wrapper's own WriteBarrier slots instead, they are
+  // a GC edge rather than a GC root: neither effect occurs.
+  using dir = tempDir("cluster-internal-msg-roots", {
+    "primary.ts": `
+import cluster from "node:cluster";
+import { heapStats } from "bun:jsc";
+
+if (!cluster.isPrimary) {
+  process.on("message", () => {});
+  await new Promise(() => {});
+}
+
+const N = 6;
+
+function protectedCounts() {
+  Bun.gc(true);
+  const p = heapStats().protectedObjectTypeCounts;
+  return { Function: p.Function ?? 0, Object: p.Object ?? 0 };
+}
+
+const before = protectedCounts();
+
+const workers: import("node:cluster").Worker[] = [];
+for (let i = 0; i < N; i++) workers.push(cluster.fork());
+await Promise.all(workers.map(w => new Promise<void>(r => w.once("online", () => r()))));
+
+const during = protectedCounts();
+
+// Kill every worker, wait for the channel to close, then drop user references.
+for (const w of workers) w.process.kill();
+await Promise.all(
+  workers.map(w => new Promise<void>(r => {
+    let n = 0;
+    const step = () => { if (++n === 2) r(); };
+    w.once("exit", step);
+    w.once("disconnect", step);
+  })),
+);
+workers.length = 0;
+
+// Bounded poll across event-loop turns: finalization may need a few extra
+// turns, while a Strong-rooted Subprocess never goes away.
+let liveSubprocess = Infinity;
+for (let i = 0; i < 60; i++) {
+  await new Promise<void>(r => setImmediate(r));
+  Bun.gc(true);
+  liveSubprocess = heapStats().objectTypeCounts.Subprocess ?? 0;
+  if (liveSubprocess <= 1) break;
+}
+
+console.log(JSON.stringify({ N, before, during, liveSubprocess }));
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "primary.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.trim()).toBe("");
+  const { N, before, during, liveSubprocess } = JSON.parse(stdout.trim());
+  // No per-worker protected roots while the workers are alive. Strict equality
+  // against the baseline: a regression shows up as `before + N`.
+  expect({
+    protectedFunctionDelta: during.Function - before.Function,
+    protectedObjectDelta: during.Object - before.Object,
+  }).toEqual({
+    protectedFunctionDelta: 0,
+    protectedObjectDelta: 0,
+  });
+  // After every worker exits and user code holds no reference, the Subprocess
+  // wrappers are collectable. Allow one straggler for a conservatively rooted
+  // async frame; a root-cycle leak retains all N.
+  expect(liveSubprocess).toBeLessThanOrEqual(1);
+  expect(liveSubprocess).toBeLessThan(N);
+  expect(exitCode).toBe(0);
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

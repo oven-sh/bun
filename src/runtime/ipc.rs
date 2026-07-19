@@ -38,37 +38,83 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
+///
+/// The `worker`/`cb`/`messages` fields back the child-side
+/// process singleton only. The primary side stores the same state in the
+/// `Subprocess` wrapper's WriteBarrier slots so a worker's object graph is not
+/// pinned by a GC root (see `node_cluster_binding`).
 pub(crate) struct InternalMsgHolder {
     pub seq: i32,
 
-    // TODO: move this to an Array or a JS Object or something which doesn't
-    // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, bun_jsc::StrongOptional>,
     pub worker: bun_jsc::StrongOptional,
     pub cb: bun_jsc::StrongOptional,
-    pub(crate) messages: Vec<bun_jsc::StrongOptional>,
+    /// JS Array of messages that arrived before the listener was installed.
+    /// Lazily created.
+    pub(crate) messages: bun_jsc::StrongOptional,
 }
 
 impl Default for InternalMsgHolder {
     fn default() -> Self {
         Self {
             seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
             worker: bun_jsc::StrongOptional::empty(),
             cb: bun_jsc::StrongOptional::empty(),
-            messages: Vec::new(),
+            messages: bun_jsc::StrongOptional::empty(),
         }
     }
 }
 
 impl InternalMsgHolder {
+    /// Prefixed so the key is never an array index; `putDirect` asserts on
+    /// numeric-string property names.
+    #[inline]
+    fn seq_key(buf: &mut [u8; 13], seq: i32) -> &[u8] {
+        bun_core::fmt::buf_print_infallible(buf, format_args!("s{seq}"))
+    }
+
+    /// Store `callback` under `seq` on the given JS callbacks object.
+    pub(crate) fn put_callback(
+        &self,
+        map: JSValue,
+        global: &JSGlobalObject,
+        seq: i32,
+        callback: JSValue,
+    ) {
+        let mut buf = [0u8; 13];
+        map.put(global, Self::seq_key(&mut buf, seq), callback);
+    }
+
+    /// Remove and return the callback stored under `seq` on the given JS
+    /// callbacks object, or `None` when absent.
+    pub(crate) fn take_callback(
+        &self,
+        map: JSValue,
+        global: &JSGlobalObject,
+        seq: i32,
+    ) -> JsResult<Option<JSValue>> {
+        let mut buf = [0u8; 13];
+        let key = Self::seq_key(&mut buf, seq);
+        let Some(cb) = map.get(global, key)? else {
+            return Ok(None);
+        };
+        map.delete_property(global, key)?;
+        Ok(Some(cb))
+    }
+
     pub(crate) fn is_ready(&self) -> bool {
         self.worker.has() && self.cb.has()
     }
 
-    pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
-        self.messages
-            .push(bun_jsc::StrongOptional::create(message, global));
+    pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let arr = match self.messages.get() {
+            Some(a) => a,
+            None => {
+                let a = JSValue::create_empty_array(global, 0)?;
+                self.messages.set(global, a);
+                a
+            }
+        };
+        arr.push(global, message)
     }
 
     pub(crate) fn dispatch(
@@ -80,8 +126,7 @@ impl InternalMsgHolder {
         if !self.is_ready() {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
-            self.enqueue(message, global);
-            return Ok(());
+            return self.enqueue(message, global);
         }
         self.dispatch_unsafe(message, handle, global)
     }
@@ -109,28 +154,28 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
+        let Some(messages) = self.messages.try_swap() else {
+            return Ok(());
+        };
+        let _keep = bun_jsc::EnsureStillAlive(messages);
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
+        // listener which can re-enter via a fresh `&mut Self` and write
+        // `self.cb` / `self.worker`. Launder so each iteration re-reads
+        // through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
-        for strong in messages {
-            if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
+        let len = messages.get_length(global)? as u32;
+        for i in 0..len {
+            let message = messages.get_index(global, i)?;
+            if message.is_undefined_or_null() {
+                continue;
             }
-            // strong drops here (== `strong.deinit()`)
+            // SAFETY: `this` is still live across re-entry — the IPC
+            // dispatcher is owned by the Subprocess/Worker which outlives
+            // this `flush` frame; `&mut *this` is the unique mutable view
+            // for this call.
+            unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
         }
-        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
         Ok(())
     }
 
@@ -1007,6 +1052,14 @@ impl SendQueue {
         self.owner.get()
     }
 
+    /// The owning Subprocess's JS wrapper, or `ZERO` for the VM-side owner.
+    #[inline]
+    pub(crate) fn owner_this_jsvalue(&self) -> JSValue {
+        self.owner_ref()
+            .map(SendQueueOwner::this_jsvalue)
+            .unwrap_or_default()
+    }
+
     pub(crate) fn set_owner(&self, owner: SendQueueOwner) {
         self.owner.set(Some(owner));
     }
@@ -1391,13 +1444,22 @@ impl SendQueue {
                 .waiting_for_ack
                 .with_mut(|w| w.as_ref().and_then(|i| i.handle.as_ref()?.cluster_seq));
             if let Some(seq) = cluster_seq {
-                let cb = self.internal_msg_queue.with_mut(|q| {
-                    let entry = q.callbacks.get(&seq).map(|s| s.get());
-                    if entry.is_some() {
-                        q.callbacks.swap_remove(&seq);
+                let this_jsvalue = self.owner_this_jsvalue();
+                let map = if this_jsvalue.is_empty() {
+                    None
+                } else {
+                    crate::api::bun::subprocess::js::ipc_ack_callbacks_get_cached(this_jsvalue)
+                };
+                let cb = match map
+                    .map(|map| self.internal_msg_queue.get().take_callback(map, global, seq))
+                {
+                    Some(Ok(cb)) => cb,
+                    Some(Err(err)) => {
+                        crate::dispatch::fold(Err(err));
+                        None
                     }
-                    entry.flatten()
-                });
+                    None => None,
+                };
                 if let Some(cb) = cb {
                     let reply = JSValue::create_empty_object(global, 1);
                     reply.put(global, b"accepted", JSValue::FALSE);

@@ -360,3 +360,22 @@ Stage 1 (landed): `InlineAtomCache`, a 512-slot fiber-word-keyed `RefPtr<AtomStr
 Stage 2 (scoped, not started): `PropertyName`/`Identifier` hold the fiber word natively. Touch surface: ~35 files dereference the uid, notably `IdentifierRepHash::hash` (the single chokepoint for PropertyTable/StructureTransitionTable/SymbolTable hashing), every `RefPtr<UniquedStringImpl>` field (`HasOwnPropertyCache::Entry`, `MegamorphicCache::*Entry::m_uid`, `Structure::m_transitionPropertyName`), `CompactPointerTuple<UniquedStringImpl*,..>` in `CompactPropertyTableEntry`/`PropertyCondition`, and JIT codegen that reads `StringImpl::m_hashAndFlags` from a live uid register (`AssemblyHelpers.cpp:521/618/713`, DFG/FTL `compileCheckIdent` + HasOwnProperty paths, `InlineCacheCompiler.cpp:2395`). `CacheableIdentifier` already uses bit 0 as a tag; a fiber word stored there needs bits 0|1 set.
 
 Results at 20 commits: RAMification geomean +0.4% (peak footprint, 20 string-heavy JetStream2 subtests, 5 runs), JetStream2 score geomean -0.4% (same subset, 3 runs). Both within container noise. Individual subtests: pdfjs +5.5% score / +3% footprint, babylon-wtb +3.2% score, string-unpack-code +3.1% score / -2.8% footprint, typescript +2.8% score / -3.9% footprint.
+
+### JetStream2 Overall
+
+Interleaved full-suite runs (5 baseline/patched pairs, 64 subtests each) on a container with ±5% session drift:
+
+| Pair | Baseline | Patched | Delta |
+| ---- | -------: | ------: | ----: |
+| 1    |   188.15 |  189.40 | +0.7% |
+| 2    |   204.64 |  214.22 | +4.7% |
+| 3    |   209.64 |  219.11 | +4.5% |
+| 4    |   214.75 |  211.75 | -1.4% |
+| 5    |   214.55 |  215.72 | +0.5% |
+| **median** | **209.64** | **214.22** | **+2.2%** |
+
+Per-pair geomean +1.8%. 4 of 5 pairs favor patched. The interleaving cancels container drift that made earlier sequential measurements swing ±5%.
+
+Stage-1 `CacheableIdentifier` change (landed): `isCacheableIdentifierCell`/`createFromCell`/`getCacheableIdentifier` resolve inline cells to atoms so `obj[inlineStr]` populates an AccessCase instead of taking the generic slow path on every access. With `InlineStringCache`, subsequent accesses return the same resolved cell and hit the IC's atom-pointer compare.
+
+Prototype: `oven-sh/WebKit#307` (23 commits).

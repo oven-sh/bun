@@ -961,7 +961,8 @@ impl Subprocess<'_> {
             // slave close). Windows: the ConDrv \Reference handle was released
             // at spawn time, so conhost exits and breaks the output pipe once
             // its last client (this child, or a grandchild it left behind) has
-            // disconnected; unref the reader so that wait doesn't pin the loop.
+            // disconnected; unref the writer here and leave the reader ref'd
+            // until that EOF arrives.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and

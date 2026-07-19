@@ -295,13 +295,13 @@ Phase-2/3 fast paths: DFG/FTL `compileStringEquality`/`stringsEqual` compare `m_
 
 Function-scoped loops, 2M ops, vs unpatched release:
 
-| Op on 5-char inline            | Baseline |  Final |    Delta |
-| ------------------------------ | -------: | -----: | -------: |
-| `.length`                      |  14.9 ms | 6.5 ms | **-56%** |
-| `.charCodeAt`                  |  14.7 ms | 7.1 ms | **-52%** |
-| `===` (50/50 true/false)       |  30.2 ms | 7.8 ms | **-74%** |
-| `=== "literal"`                |  15.1 ms | 13.9 ms | **-8%** |
-| short `a + b` concat           | 32 B/obj | 16 B/obj | **-50%** |
+| Op on 5-char inline      | Baseline |    Final |    Delta |
+| ------------------------ | -------: | -------: | -------: |
+| `.length`                |  14.9 ms |   6.5 ms | **-56%** |
+| `.charCodeAt`            |  14.7 ms |   7.1 ms | **-52%** |
+| `===` (50/50 true/false) |  30.2 ms |   7.8 ms | **-74%** |
+| `=== "literal"`          |  15.1 ms |  13.9 ms |  **-8%** |
+| short `a + b` concat     | 32 B/obj | 16 B/obj | **-50%** |
 
 Net: smaller and 2-4x faster than rope substrings for the eligible range.
 

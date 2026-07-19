@@ -744,10 +744,13 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
+#if !OS(WINDOWS)
 // The default (non-SHARE_ENV) process.env object. Identical to a plain object for
 // reads, but overrides put/putByIndex/defineOwnProperty so every assigned value is
 // coerced to a string before it lands, matching Node.js (`process.env.x = 42` reads
 // back as "42", `= undefined` reads back as "undefined" rather than deleting).
+// Windows keeps a plain object: the windowsEnv Proxy's set/defineProperty traps do
+// the coercion there, and also store own functions (toJSON) on the target directly.
 class JSProcessEnvMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -835,6 +838,7 @@ bool JSProcessEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* global
     coerced.setValue(string);
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
 }
+#endif
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
@@ -843,12 +847,21 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
-    JSC::JSObject* object = JSProcessEnvMap::create(vm, structure);
-
 #if OS(WINDOWS)
+    // Windows wraps this object in the windowsEnv Proxy whose set/defineProperty
+    // traps already coerce values, and which stores own functions (toJSON,
+    // inspect.custom) on it directly. Keep it a plain object so those survive.
+    JSC::JSObject* object = nullptr;
+    if (count < 63) {
+        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+    } else {
+        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
+    }
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
+#else
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSProcessEnvMap::create(vm, structure);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");

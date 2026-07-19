@@ -530,6 +530,10 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // Node coerces env values to strings on defineProperty too, same as assignment.
+      if ("value" in attributes) {
+        attributes = { ...attributes, value: String(attributes.value) };
+      }
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }

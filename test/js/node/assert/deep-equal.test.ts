@@ -721,6 +721,65 @@ describe("util.isDeepStrictEqual", () => {
   });
 });
 
+describe("detached ArrayBuffer", () => {
+  function detached() {
+    const buf = new ArrayBuffer(4);
+    buf.transfer();
+    return buf;
+  }
+
+  const table: Array<[string, Thunk, Thunk]> = [
+    ["two distinct detached ArrayBuffers", detached, detached],
+    ["a detached ArrayBuffer and a zero-length ArrayBuffer", detached, () => new ArrayBuffer(0)],
+    ["a zero-length ArrayBuffer and a detached ArrayBuffer", () => new ArrayBuffer(0), detached],
+    ["nested detached ArrayBuffers", () => ({ x: detached() }), () => ({ x: detached() })],
+  ];
+
+  for (const [label, a, b] of table) {
+    test(`throws TypeError on ${label}`, () => {
+      expect(() => assert.deepStrictEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.deepEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.notDeepStrictEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.notDeepEqual(a(), b())).toThrow(TypeError);
+      expect(() => util.isDeepStrictEqual(a(), b())).toThrow(TypeError);
+    });
+  }
+
+  test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
+    expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
+  });
+
+  test("error matches Node's message", () => {
+    const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(0)));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error?.message).toBe("Cannot perform Construct on a detached ArrayBuffer");
+  });
+
+  test("reference-identical detached ArrayBuffer short-circuits as equal", () => {
+    const buf = detached();
+    expect(() => assert.deepStrictEqual(buf, buf)).not.toThrow();
+    expect(util.isDeepStrictEqual(buf, buf)).toBe(true);
+  });
+
+  test("detached ArrayBuffer vs non-zero-length ArrayBuffer is an ordinary mismatch", () => {
+    const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(4)));
+    expect(error?.code).toBe("ERR_ASSERTION");
+  });
+
+  // Node v26 passes typed-array views directly to Buffer.compare (no re-wrap over
+  // .buffer), so a detached view compares as zero-length. Node v22 and earlier threw.
+  test("a detached typed-array view is comparable as zero-length", () => {
+    function detachedView() {
+      const buf = new ArrayBuffer(4);
+      const view = new Uint8Array(buf);
+      buf.transfer();
+      return view;
+    }
+    expect(() => assert.deepStrictEqual(detachedView(), detachedView())).not.toThrow();
+    expect(() => assert.deepStrictEqual(detachedView(), new Uint8Array(0))).not.toThrow();
+  });
+});
+
 describe("AssertionError", () => {
   test("deepStrictEqual reports actual, expected and operator", () => {
     const error = caught(() => assert.deepStrictEqual({ a: 1 }, { a: 2 })) as any;

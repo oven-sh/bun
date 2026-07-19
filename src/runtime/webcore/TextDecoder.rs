@@ -605,8 +605,32 @@ impl TextDecoder {
             // default to utf-8
             decoder.encoding = EncodingLabel::Utf8;
         } else {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("TextDecoder(encoding) label is invalid",)));
+            // WebIDL DOMString coercion: any other label value is stringified
+            // and then looked up, so `1` or `{}` reports the same
+            // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
+            // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, so the +1
+            // ref `from_js` returns has to be wrapped to deref on scope exit.
+            let converted =
+                OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
+            let str = converted.to_utf8();
+
+            // Same rule as the string branch above: "If encoding is failure or
+            // replacement, then throw a RangeError."
+            if let Some(label) = EncodingLabel::which(str.slice())
+                && label != EncodingLabel::Replacement
+            {
+                decoder.encoding = label;
+            } else {
+                return Err(global_this
+                    .err(
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                        format_args!(
+                            "Unsupported encoding label \"{}\"",
+                            bstr::BStr::new(str.slice())
+                        ),
+                    )
+                    .throw());
+            }
         }
 
         if !options_value.is_undefined() {

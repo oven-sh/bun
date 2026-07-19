@@ -923,7 +923,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector, bool enableNodeCDP)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
@@ -949,6 +949,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsBoolean(isUrlServer));
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
+    arguments.append(jsBoolean(enableNodeCDP));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

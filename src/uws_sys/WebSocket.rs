@@ -458,6 +458,7 @@ pub struct WebSocketBehavior {
     pub reset_idle_timeout_on_send: bool,
     pub send_pings_automatically: bool,
     pub max_lifetime: c_ushort,
+    pub allow_any_sec_websocket_key: bool,
     pub upgrade: uws_websocket_upgrade_handler,
     pub open: uws_websocket_handler,
     pub message: uws_websocket_message_handler,
@@ -478,6 +479,7 @@ impl Default for WebSocketBehavior {
             reset_idle_timeout_on_send: true,
             send_pings_automatically: true,
             max_lifetime: 0,
+            allow_any_sec_websocket_key: false,
             upgrade: None,
             open: None,
             message: None,
@@ -680,6 +682,7 @@ where
             reset_idle_timeout_on_send: behavior.reset_idle_timeout_on_send,
             send_pings_automatically: behavior.send_pings_automatically,
             max_lifetime: behavior.max_lifetime,
+            allow_any_sec_websocket_key: behavior.allow_any_sec_websocket_key,
             upgrade: Some(Self::on_upgrade),
             open: Some(Self::on_open),
             message: if T::HAS_ON_MESSAGE {

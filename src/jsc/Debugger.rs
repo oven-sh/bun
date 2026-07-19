@@ -168,6 +168,7 @@ unsafe extern "C" {
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
+        enable_node_cdp: bool,
     );
 }
 
@@ -521,13 +522,25 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false, false);
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            // A `--inspect*` listener keeps its JSC-protocol pathname and adds
+            // Node's `/json` endpoints plus a second, CDP-speaking pathname.
+            // `inspector.open()` servers are already CDP-only.
+            let enable_node_cdp = !is_node_inspector && !is_connect;
+            Bun__startJSDebuggerThread(
+                global,
+                ctx_id,
+                &mut url,
+                0,
+                is_connect,
+                is_node_inspector,
+                enable_node_cdp,
+            );
         }
 
         this.global().handle_rejected_promises();

@@ -112,6 +112,7 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+  enableNodeCDP: boolean,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
@@ -220,7 +221,7 @@ export default function (
 
   let debug: Debugger | undefined;
   try {
-    debug = new Debugger(executionContextId, url, createBackend, send, close);
+    debug = new Debugger(executionContextId, url, createBackend, send, close, false, enableNodeCDP);
   } catch (error) {
     exit("Failed to start inspector:\n", error);
   }
@@ -238,6 +239,15 @@ export default function (
           Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
         }
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+        // Node's banner, verbatim, for the CDP endpoint served alongside the
+        // JSC one: Node-shaped tools scrape stderr for this exact line.
+        const cdpUrl = debug.cdpUrl;
+        if (cdpUrl) {
+          Bun.write(
+            Bun.stderr,
+            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`,
+          );
+        }
       }
     } else {
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
@@ -290,7 +300,13 @@ class Debugger {
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
+  // --inspect* mode: a second pathname (plus the /json discovery endpoints)
+  // serving the V8 CDP. The JSC-protocol pathname above is unaffected.
+  #cdpPathname?: string;
+  #enableNodeCDP = false;
   #server?: WebSocketServer;
+  // Secondary loopback listener; see #listen().
+  #loopbackServer?: WebSocketServer;
 
   constructor(
     executionContextId: number,
@@ -299,8 +315,10 @@ class Debugger {
     send: (message: string | string[]) => void,
     close: () => void,
     isNodeInspector: boolean = false,
+    enableNodeCDP: boolean = false,
   ) {
     this.#nodeInspector = isNodeInspector;
+    this.#enableNodeCDP = enableNodeCDP;
     this.#createBackend = (refEventLoop, receive) => {
       const backend = createBackend(executionContextId, refEventLoop, receive);
       return {
@@ -349,11 +367,20 @@ class Debugger {
     return this.#url;
   }
 
+  // The CDP endpoint's ws:// URL, when one is served alongside the JSC one
+  // (--inspect*). Undefined for node:inspector servers and non-listening modes.
+  get cdpUrl(): string | undefined {
+    if (!this.#cdpPathname || !this.#url) return undefined;
+    return `ws://${this.#url.host}${this.#cdpPathname}`;
+  }
+
   // Stops the node:inspector server and terminates its connections
   // (inspector.close() on the inspected thread).
   stop(): void {
     this.#server?.stop(true);
     this.#server = undefined;
+    this.#loopbackServer?.stop(true);
+    this.#loopbackServer = undefined;
   }
 
   // A backend connection that is not tied to a WebSocket client, used for
@@ -377,6 +404,29 @@ class Debugger {
       this.#server = server;
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
+      if (this.#enableNodeCDP) {
+        // A distinct random pathname, like the JSC one, so it also acts as a
+        // bearer token: knowing the port is not enough to attach.
+        this.#cdpPathname = `/${randomId()}`;
+        if (hostname === defaultHostname) {
+          // "localhost" binds one address family only, but Node's inspector
+          // listens on 127.0.0.1 and CDP clients dial loopback over either
+          // family. Additively bind whichever loopback address is still free.
+          for (const loopback of ["127.0.0.1", "::1"]) {
+            try {
+              this.#loopbackServer = Bun.serve({
+                hostname: loopback,
+                port: server.port,
+                fetch: this.#fetch.bind(this),
+                websocket: this.#websocket,
+              });
+              break;
+            } catch {
+              // Already bound by the primary listener, or unavailable.
+            }
+          }
+        }
+      }
       return;
     }
 
@@ -443,10 +493,17 @@ class Debugger {
     });
   }
 
-  get #websocket(): WebSocketHandler<Connection> {
+  // internalAllowAnySecWebSocketKey is intentionally absent from the public
+  // WebSocketHandler type, so widen the return type rather than casting the
+  // literal, which would drop checking on every handler in it.
+  get #websocket(): WebSocketHandler<Connection> & { internalAllowAnySecWebSocketKey: boolean } {
     return {
       idleTimeout: 0,
       closeOnBackpressureLimit: false,
+      // Node's inspector accepts a Sec-WebSocket-Key of any length (its own
+      // test helper sends `key==`); Bun otherwise enforces the RFC 6455 shape,
+      // matching `ws`. This server, and only this server, opts out.
+      internalAllowAnySecWebSocketKey: true,
       open: ws => this.#open(ws, webSocketWriter(ws)),
       message: (ws, message) => {
         if (typeof message === "string") {
@@ -466,7 +523,10 @@ class Debugger {
   // not the bind address, matching Node's discovery endpoints. Disallowed Host
   // values are rejected in #fetch before this is called.
   #nodeInspectorTargets(host: string | null): unknown[] {
-    const { hostname, port, pathname } = this.#url!;
+    const { hostname, port } = this.#url!;
+    // For --inspect*, discovery must point CDP clients at the CDP pathname, not
+    // at the JSC-protocol one they cannot speak.
+    const pathname = this.#cdpPathname ?? this.#url!.pathname;
     const id = pathname.slice(1);
     const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
     return [
@@ -509,19 +569,23 @@ class Debugger {
 
     switch (pathname) {
       case "/json/version":
+        // Unchanged for --inspect*: debug.bun.sh and the VSCode extension
+        // identify a Bun target by these fields.
         return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
       case "/json":
       case "/json/list":
-        // Discovery endpoint used by CDP clients (chrome://inspect, vscode-js-debug)
-        // to find the WebSocket URL. Only served for node:inspector servers; the
-        // Bun-protocol inspector has no CDP-speaking clients to discover it.
-        if (this.#nodeInspector) {
+        // Discovery endpoint used by CDP clients (chrome://inspect,
+        // vscode-js-debug) to find the WebSocket URL. Served whenever a
+        // CDP endpoint exists, as Node does.
+        if (this.#nodeInspector || this.#cdpPathname) {
           return Response.json(this.#nodeInspectorTargets(headers.get("Host")));
         }
         break;
     }
 
-    if (!isUnix && this.#url!.pathname !== pathname) {
+    const isCDP = this.#cdpPathname !== undefined && pathname === this.#cdpPathname;
+
+    if (!isUnix && !isCDP && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
       });
@@ -529,6 +593,7 @@ class Debugger {
 
     const data: Connection = {
       refEventLoop: headers.get("Ref-Event-Loop") === "0",
+      isCDP,
     };
 
     if (!server.upgrade(request, { data })) {
@@ -547,7 +612,7 @@ class Debugger {
 
     const client = bufferedWriter(writer);
 
-    if (this.#nodeInspector) {
+    if (this.#nodeInspector || data.isCDP) {
       // node:inspector clients speak CDP; the adapter sits between the
       // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
       // --inspect connections, an attached client must not keep the process
@@ -907,6 +972,8 @@ type ConnectionOwner = {
 
 type Connection = {
   refEventLoop: boolean;
+  // True for a connection on the CDP pathname of a --inspect* server.
+  isCDP?: boolean;
   client?: Writer;
   backend?: Backend;
   // Present for node:inspector connections, which speak the V8 protocol.

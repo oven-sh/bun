@@ -1979,7 +1979,20 @@ where
         }
 
         if sec_websocket_key_str.len != 24 {
-            return Ok(JSValue::FALSE);
+            // Bun enforces the RFC 6455 key shape (base64 of 16 bytes = 24
+            // chars), matching `ws`; Node's inspector does not validate it at
+            // all. `websocket.internalAllowAnySecWebSocketKey` (undocumented,
+            // used only by src/js/internal/debugger.ts, also read by uWS's
+            // routing gate in App.h) opts a server out. The key must still be
+            // present: the accept header is computed from it.
+            let allow_any_key = self
+                .config
+                .websocket
+                .as_ref()
+                .is_some_and(|ws| ws.allow_any_sec_websocket_key);
+            if !allow_any_key || sec_websocket_key_str.len == 0 {
+                return Ok(JSValue::FALSE);
+            }
         }
         if sec_websocket_protocol.len > 0 {
             sec_websocket_protocol.mark_utf8();

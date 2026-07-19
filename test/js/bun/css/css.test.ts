@@ -5266,6 +5266,8 @@ describe("css tests", () => {
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
     minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
     minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
+    minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");

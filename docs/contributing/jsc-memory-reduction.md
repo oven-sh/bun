@@ -291,17 +291,19 @@ Performance (2M ops, patched RelWithDebInfo vs baseline release; builds not perf
 | `.charCodeAt(0)`                    |   ~67 ms |  ~57 ms | **-15%** |
 | `.length` on 20-char rope (control) |   ~12 ms |  ~12 ms |      +3% |
 
-Phase-2 fast paths (DFG/FTL `compileStringEquality`/`stringsEqual` compare `m_fiber` words directly when both operands are inline; `ThunkGenerators::decodeString` decodes length/is8Bit/data from the fiber word; DFG/FTL string-length already had the shift+mask path from phase 1) replace the slow-path routing:
+Phase-2/3 fast paths: DFG/FTL `compileStringEquality`/`stringsEqual` compare `m_fiber` words directly when both operands are inline; `ThunkGenerators::decodeString` decodes from the fiber word; `SpecStringInline` speculation type plumbed through the lattice so DFG/FTL emit OSR-guarded branch-free decodes for `.length`/`charCodeAt`; `FixupPhase` skips `ResolveRope` for monomorphic-inline `StringCharCodeAt`; `jsString(globalObject, a, b)` writes short concats directly into an inline cell.
 
-| Op on 5-char inline            | Baseline | Phase-2 |    Delta |
-| ------------------------------ | -------: | ------: | -------: |
-| `.length`                      |   8.2 ms |  6.2 ms | **-24%** |
-| `.charCodeAt(0)`               |  66.7 ms |   54 ms | **-19%** |
-| `===` (50/50 true/false)       |  33.8 ms | 18.5 ms | **-45%** |
-| `!==` (unequal pairs)          |  36.8 ms | 19.0 ms | **-48%** |
-| `===` (always-true, synthetic) |   9.5 ms |   15 ms |     +58% |
+Function-scoped loops, 2M ops, vs unpatched release:
 
-Net: smaller and faster than rope substrings for the eligible range. The always-true `===` case is slower because baseline rope-substrings share a base whose data stays cache-hot under that synthetic workload; the realistic mixed case is nearly twice as fast.
+| Op on 5-char inline            | Baseline |  Final |    Delta |
+| ------------------------------ | -------: | -----: | -------: |
+| `.length`                      |  14.9 ms | 6.5 ms | **-56%** |
+| `.charCodeAt`                  |  14.7 ms | 7.1 ms | **-52%** |
+| `===` (50/50 true/false)       |  30.2 ms | 7.8 ms | **-74%** |
+| `=== "literal"`                |  15.1 ms | 13.9 ms | **-8%** |
+| short `a + b` concat           | 32 B/obj | 16 B/obj | **-50%** |
+
+Net: smaller and 2-4x faster than rope substrings for the eligible range.
 
 Correctness: all four tiers pass a 1M-iteration suite; `JSTests/stress/string-*.js` 158/160 (the two failures are ICU collation data issues in the local build environment, not this change); Bun's `node/util`/`buffer`/`path`/`stringWidth`/`url` suites, 1543 tests, 0 failures.
 

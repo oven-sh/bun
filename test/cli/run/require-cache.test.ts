@@ -168,34 +168,38 @@ describe.concurrent("require.cache", () => {
       const dir = tempDirWithFiles("require-cache-bug-leak-4", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
+          import { heapStats } from "bun:jsc";
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           function bust() {
             delete require.cache[path];
           }
+          // Live page count from the heap walk (not the aggregate counter,
+          // which can under-count across threads).
+          function livePages() {
+            let n = 0;
+            for (const h of heapStats({ dump: true }).mimallocDump.heaps) n += h.pages.length;
+            return n;
+          }
 
-          // Same warmup and measured rounds: after #34009 mimalloc's working
-          // set for this loop settles after ~200-250 iterations, so a 50-iter
-          // warmup captures baseline below the plateau.
-          for (let i = 0; i < 250; i++) {
+          for (let i = 0; i < 50; i++) {
             await import(path);
             bust();
           }
           gc(true);
-          const baseline = process.memoryUsage.rss();
+          const baseline = livePages();
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
           gc(true);
-          const rss = process.memoryUsage.rss();
-          const diff = rss - baseline;
-          console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
-          console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 128} * 1024 * 1024) {
-            // Bun v1.1.21 reported 423 MB here on macoS arm64.
-            // Bun v1.4.0 (#34009) plateaus ~200 MB with heapSize flat
-            // (allocator retention); leaking the source is ~290 MB/250 iters.
+          const after = livePages();
+          const diff = after - baseline;
+          console.log("mimalloc page diff", diff, "baseline", baseline, "after", after);
+          console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
+          if (diff > 100) {
+            // Bun v1.1.21 leaked the transpiled source here (RSS +423 MB on
+            // macOS arm64); retaining the module namespace is +2666 pages.
             throw new Error("Memory leak detected");
           }
 

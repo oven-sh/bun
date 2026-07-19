@@ -393,16 +393,21 @@ impl BuiltinIO {
                 // stored cursor is u32.
                 let idx = *i as usize;
                 let total = arraybuf.array_buffer.byte_len as usize;
-                if idx >= total {
+                let remaining = total.saturating_sub(idx);
+                let write_len = remaining.min(buf.len());
+                if write_len > 0 {
+                    let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                    dst.copy_from_slice(&buf[..write_len]);
+                    *i = i.saturating_add(write_len as u32);
+                }
+                // A truncated write is ENOSPC: the caller's output did not
+                // fit, same as `echo foo > /dev/full`.
+                if write_len < buf.len() {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
@@ -907,7 +912,9 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
+    /// Returns `Err(ENOSPC)` when an ArrayBuffer target cannot hold all of
+    /// `buf` (whatever fits is written first). Callers should fold that into
+    /// the builtin's exit code; use [`write_no_io_exit`] for the common case.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub fn write_no_io(
         interp: &Interpreter,
@@ -932,6 +939,21 @@ impl Builtin {
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
         unsafe { out.write_no_io_to(shell, buf) }
+    }
+
+    /// [`write_no_io`] folded to an exit code: `exit_code` on success, `1`
+    /// (or `exit_code` if already nonzero) on ENOSPC.
+    pub fn write_no_io_exit(
+        interp: &Interpreter,
+        cmd: NodeId,
+        io_kind: IoKind,
+        buf: &[u8],
+        exit_code: ExitCode,
+    ) -> ExitCode {
+        match Self::write_no_io(interp, cmd, io_kind, buf) {
+            Ok(_) => exit_code,
+            Err(_) => exit_code.max(1),
+        }
     }
 
     /// Shell exec env of the owning Cmd.

@@ -203,8 +203,8 @@ impl Seq {
                 .stdout
                 .enqueue(child, &buf, safeguard);
         }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
-        Builtin::done(interp, cmd, 0)
+        let code = Builtin::write_no_io_exit(interp, cmd, IoKind::Stdout, &out, 0);
+        Builtin::done(interp, cmd, code)
     }
 
     pub(crate) fn on_io_writer_chunk(

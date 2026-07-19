@@ -49,33 +49,33 @@ impl Which {
             // captured buffer, then finish.
             let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
             let mut had_not_found = false;
+            let mut had_write_err = false;
             for i in 0..argc {
                 let arg = Self::arg(interp, cmd, i);
-                match Self::resolve(&path_env, &cwd, &arg) {
-                    Some(resolved) => {
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            None,
-                            format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        )
-                        .to_vec();
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-                    }
+                let buf = match Self::resolve(&path_env, &cwd, &arg) {
+                    Some(resolved) => Builtin::fmt_error_arena(
+                        interp,
+                        cmd,
+                        None,
+                        format_args!("{}\n", bstr::BStr::new(&resolved)),
+                    )
+                    .to_vec(),
                     None => {
                         had_not_found = true;
-                        let buf = Builtin::fmt_error_arena(
+                        Builtin::fmt_error_arena(
                             interp,
                             cmd,
                             Some(Kind::Which),
                             format_args!("{} not found\n", bstr::BStr::new(&arg)),
                         )
-                        .to_vec();
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                        .to_vec()
                     }
+                };
+                if Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf).is_err() {
+                    had_write_err = true;
                 }
             }
-            return Builtin::done(interp, cmd, if had_not_found { 1 } else { 0 });
+            return Builtin::done(interp, cmd, if had_not_found || had_write_err { 1 } else { 0 });
         }
 
         Self::state_mut(interp, cmd).state = State::MultiArgs {

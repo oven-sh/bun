@@ -44,8 +44,8 @@ impl Dirname {
                 .stdout
                 .enqueue(child, &owned, safeguard);
         }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        Builtin::done(interp, cmd, 0)
+        let code = Builtin::write_no_io_exit(interp, cmd, IoKind::Stdout, &buf, 0);
+        Builtin::done(interp, cmd, code)
     }
 
     fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {

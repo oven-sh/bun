@@ -85,7 +85,7 @@ void SigintWatcher::uninstall()
 {
     if (m_installed.exchange(false)) {
         WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
-        ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
+        ASSERT(!currentThread || !m_thread || m_thread->uid() != currentThread->uid());
 
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
@@ -100,7 +100,9 @@ void SigintWatcher::uninstall()
 #endif
 
         m_semaphore.signal();
-        m_thread->waitForCompletion();
+        if (m_thread) {
+            m_thread->waitForCompletion();
+        }
     }
 }
 

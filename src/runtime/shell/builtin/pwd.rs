@@ -56,9 +56,9 @@ impl Pwd {
                 .stdout
                 .enqueue(child, &cwd, safeguard);
         }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &cwd);
+        let code = Builtin::write_no_io_exit(interp, cmd, IoKind::Stdout, &cwd, 0);
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, 0)
+        Builtin::done(interp, cmd, code)
     }
 
     pub(crate) fn on_io_writer_chunk(

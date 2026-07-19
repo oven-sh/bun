@@ -472,6 +472,39 @@ describe("bunshell", () => {
     expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(await thisFile.text());
   });
 
+  describe("redirect to ArrayBuffer that is too small", () => {
+    // A builtin whose output does not fit in the ArrayBuffer sink must exit
+    // nonzero, like `echo > /dev/full` does. Whatever fits is still written.
+    type Run = (b: ArrayBufferView) => ReturnType<typeof $>;
+    const cases: Array<[string, Run, string | undefined]> = [
+      ["echo", b => $`echo hello > ${b}`, "hello\n"],
+      ["seq", b => $`seq 1 3 > ${b}`, "1\n2\n3\n"],
+      ["basename", b => $`basename /a/b/cde > ${b}`, "cde\n"],
+      ["dirname", b => $`dirname /a/b/cde > ${b}`, "/a/b\n"],
+      ["pwd", b => $`pwd > ${b}`, undefined],
+    ];
+    test.concurrent.each(cases)("%s", async (_name, run, full) => {
+      const zero = new Uint8Array(0);
+      const small = new Uint8Array(2);
+      const big = new Uint8Array(1 << 10);
+      const [r0, rSmall, rBig] = await Promise.all([
+        run(zero).nothrow().quiet(),
+        run(small).nothrow().quiet(),
+        run(big).nothrow().quiet(),
+      ]);
+      const bigText = new TextDecoder().decode(big.slice(0, sentinelByte(big)));
+      expect({
+        zero: { exitCode: r0.exitCode },
+        small: { exitCode: rSmall.exitCode, buf: new TextDecoder().decode(small) },
+        big: { exitCode: rBig.exitCode, buf: full === undefined ? "<dynamic>" : bigText },
+      }).toEqual({
+        zero: { exitCode: 1 },
+        small: { exitCode: 1, buf: (full ?? bigText).slice(0, 2) },
+        big: { exitCode: 0, buf: full ?? "<dynamic>" },
+      });
+    });
+  });
+
   test("redirect Bun.File", async () => {
     const filepath = join(temp_dir, "lmao.txt");
     const file = Bun.file(filepath);

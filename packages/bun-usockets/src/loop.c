@@ -73,7 +73,7 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
 
 uint64_t us_internal_monotonic_ns(void) {
-    struct timespec ts;
+    struct timespec ts = {0, 0};
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
 }

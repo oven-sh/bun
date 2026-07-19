@@ -1641,6 +1641,13 @@ static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* p
         return;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Also honor a JS-set process.noWarnings so the Node-test common harness
+    // can suppress the printer in-process when it skips the --no-warnings
+    // re-spawn (to install --expose-internals / --expose-gc shims instead).
+    JSValue noWarnings = process->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "noWarnings"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    if (noWarnings && noWarnings.toBoolean(globalObject))
+        return;
     auto* installer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInstallOnWarningListenerCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(process);

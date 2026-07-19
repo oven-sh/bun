@@ -133,9 +133,11 @@ if (process.argv.length === 2 &&
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--no-warnings" && process.versions.bun) {
-        // Harmless under Bun; keep scanning so a later --expose-internals (or
-        // --expose-gc) in the same Flags line still installs its shim instead
-        // of re-spawning the test as a child process.
+        // Keep scanning so a later --expose-internals / --expose-gc in the
+        // same Flags line still installs its shim in-process. Bun's onWarning
+        // printer installs lazily on the first emitWarning and honors a JS
+        // process.noWarnings read at that point, so set it here.
+        process.noWarnings = true;
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {

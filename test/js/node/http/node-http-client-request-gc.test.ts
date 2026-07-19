@@ -20,3 +20,21 @@ test("http.ClientRequest is collectable while the agent's once() connect wrapper
     exitCode: 0,
   });
 });
+
+// Deterministic twin of test/js/node/test/parallel/test-http-client-leaky-with-double-response.js.
+// That upstream file depends on a single FinalizationRegistry delivery, which
+// JSC's conservative GC cannot guarantee; see test/expectations.txt.
+test("http.ClientRequest is collectable after the server sends a second response on a kept-alive socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "node-http-client-double-response-gc-fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toMatch(/^collected [678]\/8$/);
+  expect(exitCode).toBe(0);
+});

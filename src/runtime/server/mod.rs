@@ -2305,18 +2305,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // --- 4. Register negative routes ---
+        // A `false` route means "fall through to the default handler": same
+        // ladder as the `/*` fallback in step 9. H3 stays on on_h3_request,
+        // which already falls back to on_h3_404 when on_request is empty.
+        let negative_h1 = if !self.config.on_node_http_request.is_empty() {
+            trampoline::on_node_http_request::<SSL, DEBUG>
+        } else if !self.config.on_request.is_empty() {
+            trampoline::on_request::<SSL, DEBUG>
+        } else {
+            trampoline::on_404::<SSL, DEBUG>
+        };
         for route_path in self.config.negative_routes.iter() {
             let p = route_path.as_bytes();
-            app.head(
-                p,
-                Some(trampoline::on_request::<SSL, DEBUG>),
-                self_ptr.cast(),
-            );
-            app.any(
-                p,
-                Some(trampoline::on_request::<SSL, DEBUG>),
-                self_ptr.cast(),
-            );
+            app.head(p, Some(negative_h1), self_ptr.cast());
+            app.any(p, Some(negative_h1), self_ptr.cast());
             if Self::HAS_H3 {
                 if let Some(h3_app) = self.h3_app {
                     // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.

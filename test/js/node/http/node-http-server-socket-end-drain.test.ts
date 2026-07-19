@@ -1,0 +1,54 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+
+// res.socket.end() half-closes the connection; the server must still drain the
+// unconsumed request body so the peer's FIN arrives and server.close() resolves.
+// A net client is used so the peer's FIN is deterministic (c.end() on 'end');
+// Bun's fetch client may pool the connection after the upload fails, which
+// leaves the server waiting on the peer and is a separate concern.
+test("server.close() completes after res.socket.end() with a 2 MB upload in flight", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { once } from "node:events";
+        import http from "node:http";
+        import net from "node:net";
+        let sock;
+        const handled = Promise.withResolvers();
+        const server = http.createServer((req, res) => {
+          res.writeHead(200, { Connection: "close" });
+          sock = res.socket;
+          res.socket.end();
+          try { res.write("x"); } catch {}
+          handled.resolve();
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = server.address().port;
+        const c = net.connect(port, "127.0.0.1");
+        await once(c, "connect");
+        const body = Buffer.alloc(2 * 1024 * 1024, 0x61);
+        c.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: " + body.length + "\\r\\nConnection: close\\r\\n\\r\\n");
+        c.write(body);
+        c.on("error", () => {});
+        c.on("end", () => c.end());
+        const socketClosed = once(c, "close");
+        await handled.promise;
+        const serverClosed = new Promise(r => server.close(() => r()));
+        const watchdog = setTimeout(() => {
+          process.stdout.write("timeout destroyed=" + (sock?.destroyed ?? "none") + "\\n");
+          process.exit(1);
+        }, 10000);
+        await Promise.all([socketClosed, serverClosed]);
+        clearTimeout(watchdog);
+        process.stdout.write("closed destroyed=" + sock.destroyed + "\\n");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
+});

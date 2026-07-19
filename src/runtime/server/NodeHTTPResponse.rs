@@ -2045,33 +2045,42 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
+                // Resizable (non-shared) buffers are spilled: `resize()` mprotect()s
+                // trimmed pages PROT_NONE and `pin()` doesn't prevent it.
                 let pinned_value = if is_buffer && input_value.is_cell() {
-                    if input_value.as_pinned_arraybuffer(global_object).is_some() {
-                        input_value
-                    } else {
-                        JSValue::ZERO
+                    match input_value.as_pinned_arraybuffer(global_object) {
+                        Some(ab) if ab.resizable && !ab.shared => {
+                            input_value.unpin_array_buffer();
+                            None
+                        }
+                        Some(_) => Some(input_value),
+                        None => Some(JSValue::ZERO),
                     }
                 } else {
-                    JSValue::ZERO
+                    Some(JSValue::ZERO)
                 };
-                let remaining = ptr::slice_from_raw_parts(
-                    // SAFETY: consumed < bytes_len, so the add is in-bounds.
-                    unsafe { bytes.as_ptr().add(consumed) },
-                    bytes_len - consumed,
-                );
-                // `string_or_buffer` owns the bytes (WTFStringImpl ref /
-                // borrowed ArrayBuffer / encoded Vec); move it so it outlives
-                // the write.
-                drop(
-                    self.pending_pinned_write_owner
-                        .replace(core::mem::take(&mut string_or_buffer)),
-                );
-                self.pending_pinned_write.set(PendingPinnedWrite {
-                    remaining,
-                    pinned_value,
-                });
-                if input_value.is_cell() {
-                    js::pending_write_buffer_set_cached(js_this, global_object, input_value);
+                if let Some(pinned_value) = pinned_value {
+                    let remaining = ptr::slice_from_raw_parts(
+                        // SAFETY: consumed < bytes_len, so the add is in-bounds.
+                        unsafe { bytes.as_ptr().add(consumed) },
+                        bytes_len - consumed,
+                    );
+                    // `string_or_buffer` owns the bytes (WTFStringImpl ref /
+                    // borrowed ArrayBuffer / encoded Vec); move it so it
+                    // outlives the write.
+                    drop(
+                        self.pending_pinned_write_owner
+                            .replace(core::mem::take(&mut string_or_buffer)),
+                    );
+                    self.pending_pinned_write.set(PendingPinnedWrite {
+                        remaining,
+                        pinned_value,
+                    });
+                    if input_value.is_cell() {
+                        js::pending_write_buffer_set_cached(js_this, global_object, input_value);
+                    }
+                } else {
+                    raw_response.spill_body(&bytes[consumed..]);
                 }
                 js::on_writable_set_cached(
                     js_this,

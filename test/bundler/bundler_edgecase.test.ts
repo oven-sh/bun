@@ -2744,6 +2744,45 @@ describe("bundler", () => {
       expect(out).not.toContain("na_ve");
     },
   });
+  // The bundler's per-edge graph walks (reachable files, tree-shaking /
+  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
+  // validation, async propagation, dependency wrapping) used to recurse once
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
+  const deepChainDepth = 7000;
+  const deepChainFiles = {
+    ...Object.fromEntries(
+      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+        `/m${i}.js`,
+        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+      ]),
+    ),
+    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+  };
+  itBundled("edgecase/DeepImportChain", {
+    files: {
+      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    run: { stdout: String(deepChainDepth) },
+  });
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; checking for the deepest wrapper is enough.
+  itBundled("edgecase/DeepImportChainWrappedTLA", {
+    files: {
+      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toContain(`init_m${deepChainDepth - 2}`);
+    },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

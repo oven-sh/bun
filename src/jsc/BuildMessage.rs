@@ -145,17 +145,17 @@ impl BuildMessage {
         object.put(
             global,
             b"lineText",
-            ZigString::init(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
+            ZigString::init_utf8(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
         );
         object.put(
             global,
             b"file",
-            ZigString::init(&location.file).to_js(global),
+            ZigString::init_utf8(&location.file).to_js(global),
         );
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            ZigString::init_utf8(location.namespace).to_js(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
@@ -191,7 +191,7 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&self.msg.data.text).to_js(global))
+        Ok(ZigString::init_utf8(&self.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]

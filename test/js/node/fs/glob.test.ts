@@ -170,6 +170,40 @@ describe("fs.promises.glob", () => {
     expect(fs.promises.glob.name).toEqual("glob");
   });
 
+  describe("invalid arguments", () => {
+    // Node's fs.promises.glob is an async generator: the iterator is always
+    // returned and validation errors reject the first .next() instead of
+    // throwing synchronously at the call site.
+    it.each([
+      ["non-string pattern", () => fs.promises.glob(1 as any)],
+      ["non-object options", () => fs.promises.glob("*", 1 as any)],
+      ["object pattern", () => fs.promises.glob({} as any)],
+      ["non-string array element", () => fs.promises.glob(["*", 1] as any)],
+      ["invalid exclude", () => fs.promises.glob("*", { exclude: "bad" as any })],
+      ["invalid followSymlinks", () => fs.promises.glob("*", { followSymlinks: 1 as any })],
+    ])("%s: returns iterator, first .next() rejects", async (_name, mk) => {
+      let it: any;
+      expect(() => (it = mk())).not.toThrow();
+      expect(typeof it[Symbol.asyncIterator]).toBe("function");
+      const next = it.next();
+      expect(next).toBeInstanceOf(Promise);
+      await expect(next).rejects.toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+
+    it("for-await catches the validation error", async () => {
+      const it = fs.promises.glob("*", { exclude: "bad" as any });
+      let caught: any;
+      try {
+        for await (const _ of it) {
+        }
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(TypeError);
+      expect(caught.code).toBe("ERR_INVALID_ARG_TYPE");
+    });
+  });
+
   it("returns an AsyncIterable over matched paths", async () => {
     const iter = fs.promises.glob("*.txt", { cwd: tmp });
     // FIXME: .toHaveProperty does not support symbol keys

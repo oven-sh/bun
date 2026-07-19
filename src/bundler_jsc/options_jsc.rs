@@ -41,9 +41,27 @@ pub fn loader_from_js(
 
     let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
         return Err(global.throw_invalid_arguments(format_args!(
-            "invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md"
+            "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, text, wasm, or md"
         )));
     };
+    // These are valid `Loader` variants for the bundler but have no source-text
+    // transform; letting them through hits `parse_unsupported_loader` and aborts.
+    if matches!(
+        v,
+        bun_ast::Loader::File
+            | bun_ast::Loader::Napi
+            | bun_ast::Loader::Base64
+            | bun_ast::Loader::Dataurl
+            | bun_ast::Loader::Bunsh
+            | bun_ast::Loader::Sqlite
+            | bun_ast::Loader::SqliteEmbedded
+            | bun_ast::Loader::Html
+    ) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "loader \"{}\" is not supported in Bun.Transpiler",
+            bstr::BStr::new(slice.slice()),
+        )));
+    }
     Ok(Some(v))
 }
 

@@ -315,7 +315,7 @@ describe("junit reporter", () => {
     expect(xmlContent2).toContain("line=");
   });
 
-  it("should emit separate testcase entries for each retry attempt", async () => {
+  it("should report only the final result for a retried test", async () => {
     const tmpDir = tempDirWithFiles("junit-retry", {
       "package.json": "{}",
       "flaky.test.js": `
@@ -327,6 +327,12 @@ describe("junit reporter", () => {
             throw new Error("flaky failure attempt " + attempt);
           }
           expect(true).toBe(true);
+        });
+
+        let exhausted = 0;
+        test("exhausted test", { retry: 2 }, () => {
+          exhausted++;
+          throw new Error("always fails " + exhausted);
         });
 
         test("stable test", () => {
@@ -345,21 +351,38 @@ describe("junit reporter", () => {
     await proc.exited;
 
     const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
 
-    // Each retry attempt should be a separate testcase with the same name
-    const flakyTestCases = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^>]*>/g)];
-    expect(flakyTestCases).toHaveLength(3);
-
-    // The first two should have <failure> elements, the last should be self-closing
+    // A test that passes after retries must not leave <failure> entries behind:
+    // CI systems (Buildkite, Jenkins, GitLab) count every <failure> as a real
+    // failure regardless of sibling passing entries for the same name.
     const flakyEntries = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g)];
-    expect(flakyEntries).toHaveLength(3);
-    expect(flakyEntries[0][0]).toContain("<failure");
-    expect(flakyEntries[1][0]).toContain("<failure");
-    expect(flakyEntries[2][0]).not.toContain("<failure");
+    expect(flakyEntries).toHaveLength(1);
+    expect(flakyEntries[0][0]).not.toContain("<failure");
+
+    // A test that fails every retry attempt is reported once, as a failure.
+    const exhaustedEntries = [
+      ...xmlContent.matchAll(/<testcase[^>]*name="exhausted test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g),
+    ];
+    expect(exhaustedEntries).toHaveLength(1);
+    expect(exhaustedEntries[0][0]).toContain("<failure");
 
     expect(xmlContent).toContain('name="stable test"');
 
-    expect(proc.exitCode).toBe(0);
+    // Suite/top-level counts must match the final outcomes (1 failure, 3 tests),
+    // not the number of attempts.
+    expect(result.testsuites.$.tests).toBe("3");
+    expect(result.testsuites.$.failures).toBe("1");
+    const suite = result.testsuites.testsuite[0];
+    expect(suite.$.tests).toBe("3");
+    expect(suite.$.failures).toBe("1");
+
+    expect(proc.exitCode).toBe(1);
   });
 });
 

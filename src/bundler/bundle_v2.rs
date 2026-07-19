@@ -1707,6 +1707,20 @@ pub mod bv2_impl {
         pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
         pub additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+
+        pub stack: Vec<ReachFrame>,
+    }
+
+    #[derive(Copy, Clone)]
+    pub enum ReachFrame {
+        Enter {
+            source_index: Index,
+            was_dynamic_import: bool,
+        },
+        Leave {
+            source_index: Index,
+            was_dynamic_import: bool,
+        },
     }
 
     impl<'a> ReachableFileVisitor<'a> {
@@ -1716,141 +1730,178 @@ pub mod bv2_impl {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
+        //
+        // Explicit-stack DFS (was per-edge recursive). `Enter` does the
+        // pre-order work and queues successors; `Leave` performs the
+        // post-order append. Successors are pushed in pop order then the tail
+        // is reversed so LIFO pop reproduces the original recursion order.
         pub fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
             was_dynamic_import: bool,
         ) {
-            if source_index.is_invalid() {
-                return;
-            }
+            debug_assert!(self.stack.is_empty());
+            self.stack.push(ReachFrame::Enter {
+                source_index,
+                was_dynamic_import,
+            });
 
-            if self.visited.is_set(source_index.get() as usize) {
-                if CHECK_DYNAMIC_IMPORTS {
-                    if was_dynamic_import {
+            while let Some(frame) = self.stack.pop() {
+                let (source_index, was_dynamic_import) = match frame {
+                    ReachFrame::Leave {
+                        source_index,
+                        was_dynamic_import,
+                    } => {
+                        // Each file must come after its dependencies
+                        self.reachable.push(source_index);
+                        if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                            self.dynamic_import_entry_points
+                                .put(source_index.get(), ())
+                                .expect("unreachable");
+                        }
+                        continue;
+                    }
+                    ReachFrame::Enter {
+                        source_index,
+                        was_dynamic_import,
+                    } => (source_index, was_dynamic_import),
+                };
+
+                if source_index.is_invalid() {
+                    continue;
+                }
+
+                if self.visited.is_set(source_index.get() as usize) {
+                    if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
                         self.dynamic_import_entry_points
                             .put(source_index.get(), ())
                             .expect("unreachable");
                     }
+                    continue;
                 }
-                return;
-            }
-            self.visited.set(source_index.get() as usize);
+                self.visited.set(source_index.get() as usize);
 
-            if let Some(scb_bitset) = &self.scb_bitset {
-                if scb_bitset.is_set(source_index.get() as usize) {
-                    let scb_index = self
-                        .scb_list
-                        .get_index(source_index.get())
-                        .expect("unreachable");
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::init(self.scb_list.list.items_reference_source_index()[scb_index]),
-                        false,
-                    );
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::init(self.scb_list.list.items_ssr_source_index()[scb_index]),
-                        false,
-                    );
-                }
-            }
+                let mark = self.stack.len();
 
-            let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
-            let is_css = self.all_loaders[source_index.get() as usize].is_css();
-
-            let import_record_list_id = source_index;
-            // when there are no import records, v index will be invalid
-            if (import_record_list_id.get() as usize) < self.all_import_records.len() {
-                // reshaped for borrowck — split borrow of all_import_records
-                let import_records_len =
-                    self.all_import_records[import_record_list_id.get() as usize].len() as usize;
-                for ir_idx in 0..import_records_len {
-                    let import_record = &mut self.all_import_records
-                        [import_record_list_id.get() as usize]
-                        .as_mut_slice()[ir_idx];
-                    let mut other_source = import_record.source_index;
-                    if other_source.is_valid() {
-                        let mut redirect_count: usize = 0;
-                        while let Some(redirect_id) =
-                            get_redirect_id(self.redirects[other_source.get() as usize])
-                        {
-                            // reshaped for borrowck — copy out the redirect target's
-                            // (source_index, path) before re-borrowing `all_import_records` mutably.
-                            let (other_src_idx, other_path) = {
-                                let other_import_records =
-                                    self.all_import_records[other_source.get() as usize].as_slice();
-                                let other_import_record =
-                                    &other_import_records[redirect_id as usize];
-                                (other_import_record.source_index, other_import_record.path)
-                            };
-                            let import_record = &mut self.all_import_records
-                                [import_record_list_id.get() as usize]
-                                .as_mut_slice()[ir_idx];
-                            import_record.source_index = other_src_idx;
-                            import_record.path = other_path;
-                            other_source = other_src_idx;
-                            if redirect_count == Self::MAX_REDIRECTS {
-                                import_record.path.is_disabled = true;
-                                import_record.source_index = Index::INVALID;
-                                break;
-                            }
-
-                            // Handle redirects to a builtin or external module
-                            // https://github.com/oven-sh/bun/issues/3764
-                            if !other_source.is_valid() {
-                                break;
-                            }
-                            redirect_count += 1;
-                        }
-
-                        let import_record = &self.all_import_records
-                            [import_record_list_id.get() as usize]
-                            .as_slice()[ir_idx];
-                        // Mark if the file is imported by JS and its URL is inlined for CSS
-                        let is_inlined = import_record.source_index.is_valid()
-                            && !self.all_urls_for_css[import_record.source_index.get() as usize]
-                                .is_empty();
-                        if is_js && is_inlined {
-                            self.additional_files_imported_by_js_and_inlined_in_css
-                                .set(import_record.source_index.get() as usize);
-                        } else if is_css && is_inlined {
-                            self.additional_files_imported_by_css_and_inlined
-                                .set(import_record.source_index.get() as usize);
-                        }
-
-                        let next_source = import_record.source_index;
-                        let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
-                        self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                            next_source,
-                            CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
-                        );
+                if let Some(scb_bitset) = &self.scb_bitset {
+                    if scb_bitset.is_set(source_index.get() as usize) {
+                        let scb_index = self
+                            .scb_list
+                            .get_index(source_index.get())
+                            .expect("unreachable");
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::init(
+                                self.scb_list.list.items_reference_source_index()[scb_index],
+                            ),
+                            was_dynamic_import: false,
+                        });
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::init(
+                                self.scb_list.list.items_ssr_source_index()[scb_index],
+                            ),
+                            was_dynamic_import: false,
+                        });
                     }
                 }
 
-                // Redirects replace the source file with another file
-                if let Some(redirect_id) =
-                    get_redirect_id(self.redirects[source_index.get() as usize])
-                {
-                    let redirect_source_index = self.all_import_records
-                        [source_index.get() as usize]
-                        .as_slice()[redirect_id as usize]
-                        .source_index
-                        .get();
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::source(redirect_source_index),
-                        was_dynamic_import,
-                    );
-                    return;
-                }
-            }
+                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
+                let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
-            // Each file must come after its dependencies
-            self.reachable.push(source_index);
-            if CHECK_DYNAMIC_IMPORTS {
-                if was_dynamic_import {
-                    self.dynamic_import_entry_points
-                        .put(source_index.get(), ())
-                        .expect("unreachable");
+                let import_record_list_id = source_index;
+                let mut has_redirect = false;
+                // when there are no import records, v index will be invalid
+                if (import_record_list_id.get() as usize) < self.all_import_records.len() {
+                    let import_records_len = self.all_import_records
+                        [import_record_list_id.get() as usize]
+                        .len() as usize;
+                    for ir_idx in 0..import_records_len {
+                        let import_record = &mut self.all_import_records
+                            [import_record_list_id.get() as usize]
+                            .as_mut_slice()[ir_idx];
+                        let mut other_source = import_record.source_index;
+                        if other_source.is_valid() {
+                            let mut redirect_count: usize = 0;
+                            while let Some(redirect_id) =
+                                get_redirect_id(self.redirects[other_source.get() as usize])
+                            {
+                                let (other_src_idx, other_path) = {
+                                    let other_import_records = self.all_import_records
+                                        [other_source.get() as usize]
+                                        .as_slice();
+                                    let other_import_record =
+                                        &other_import_records[redirect_id as usize];
+                                    (other_import_record.source_index, other_import_record.path)
+                                };
+                                let import_record = &mut self.all_import_records
+                                    [import_record_list_id.get() as usize]
+                                    .as_mut_slice()[ir_idx];
+                                import_record.source_index = other_src_idx;
+                                import_record.path = other_path;
+                                other_source = other_src_idx;
+                                if redirect_count == Self::MAX_REDIRECTS {
+                                    import_record.path.is_disabled = true;
+                                    import_record.source_index = Index::INVALID;
+                                    break;
+                                }
+
+                                // Handle redirects to a builtin or external module
+                                // https://github.com/oven-sh/bun/issues/3764
+                                if !other_source.is_valid() {
+                                    break;
+                                }
+                                redirect_count += 1;
+                            }
+
+                            let import_record = &self.all_import_records
+                                [import_record_list_id.get() as usize]
+                                .as_slice()[ir_idx];
+                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            let is_inlined = import_record.source_index.is_valid()
+                                && !self.all_urls_for_css
+                                    [import_record.source_index.get() as usize]
+                                    .is_empty();
+                            if is_js && is_inlined {
+                                self.additional_files_imported_by_js_and_inlined_in_css
+                                    .set(import_record.source_index.get() as usize);
+                            } else if is_css && is_inlined {
+                                self.additional_files_imported_by_css_and_inlined
+                                    .set(import_record.source_index.get() as usize);
+                            }
+
+                            let next_source = import_record.source_index;
+                            let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
+                            self.stack.push(ReachFrame::Enter {
+                                source_index: next_source,
+                                was_dynamic_import: CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
+                            });
+                        }
+                    }
+
+                    // Redirects replace the source file with another file
+                    if let Some(redirect_id) =
+                        get_redirect_id(self.redirects[source_index.get() as usize])
+                    {
+                        let redirect_source_index = self.all_import_records
+                            [source_index.get() as usize]
+                            .as_slice()[redirect_id as usize]
+                            .source_index
+                            .get();
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::source(redirect_source_index),
+                            was_dynamic_import,
+                        });
+                        has_redirect = true;
+                    }
                 }
+
+                if !has_redirect {
+                    self.stack.push(ReachFrame::Leave {
+                        source_index,
+                        was_dynamic_import,
+                    });
+                }
+
+                self.stack[mark..].reverse();
             }
         }
     }
@@ -1933,6 +1984,7 @@ pub mod bv2_impl {
                     &mut additional_files_imported_by_js_and_inlined_in_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
+                stack: Vec::new(),
             };
 
             // If we don't include the runtime, __toESM or __toCommonJS will not get

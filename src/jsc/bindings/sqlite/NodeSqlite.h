@@ -795,7 +795,7 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSNodeSqliteTagStore* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, unsigned capacity);
+    static JSNodeSqliteTagStore* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, size_t capacity);
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -809,8 +809,8 @@ public:
     ~JSNodeSqliteTagStore() = default;
 
     JSDatabaseSync* database() const { return m_database.get(); }
-    unsigned capacity() const { return m_capacity; }
-    unsigned size() const { return static_cast<unsigned>(m_order.size()); }
+    size_t capacity() const { return m_capacity; }
+    size_t size() const { return m_order.size(); }
     void clear();
 
     // Build SQL from the template-tag arguments ("part0 ? part1 ? …"),
@@ -827,7 +827,7 @@ private:
         : Base(vm, structure)
     {
     }
-    void finishCreation(JSC::VM& vm, JSDatabaseSync* db, unsigned capacity);
+    void finishCreation(JSC::VM& vm, JSDatabaseSync* db, size_t capacity);
 
     struct Entry {
         WTF::String sql;
@@ -838,7 +838,7 @@ private:
     // StatementSync is where the real win is, this just avoids
     // re-preparing the SQL.
     WTF::Vector<Entry> m_order;
-    unsigned m_capacity = 1000;
+    size_t m_capacity = 1000;
 };
 
 class JSNodeSqliteTagStorePrototype final : public JSC::JSNonFinalObject {

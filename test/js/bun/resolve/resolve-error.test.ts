@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -45,6 +46,64 @@ describe("ResolveMessage", () => {
     } catch (e: any) {
       expect(e.code).toBe("MODULE_NOT_FOUND");
     }
+  });
+
+  it("preserves non-ASCII specifier in .message and .specifier (import)", async () => {
+    const spec = "./caf\u00e9-missing-\u{1F389}";
+    let err: any;
+    try {
+      await import(spec);
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err.name).toBe("ResolveMessage");
+    expect(err.specifier).toBe(spec);
+    expect(err.message).toContain(spec);
+    expect(String(err)).toContain(spec);
+    expect(JSON.parse(JSON.stringify(err))).toMatchObject({ specifier: spec });
+  });
+
+  it("preserves non-ASCII specifier in .message and .specifier (require node:)", () => {
+    const spec = "node:sql\u0131te"; // dotless i U+0131
+    let err: any;
+    try {
+      require(spec);
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_UNKNOWN_BUILTIN_MODULE");
+    expect(err.specifier).toBe(spec);
+    expect(err.message).toBe(`No such built-in module: ${spec}`);
+  });
+
+  it("preserves non-ASCII referrer in .referrer and .message", () => {
+    const referrer = "/tmp/caf\u00e9-tr\u00e8s-\u{1F389}/file.js";
+    let err: any;
+    try {
+      Bun.resolveSync("./does-not-exist", referrer);
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err.referrer).toBe(referrer);
+    expect(err.message).toContain(referrer);
+  });
+
+  it("preserves non-ASCII in position.lineText and position.file", async () => {
+    const lineText = `const caf\u00e9 = 1; import "./na\u00efve-missing.js"; // \u{1F389}`;
+    const fileName = "entry-caf\u00e9-\u{1F389}.js";
+    using dir = tempDir("resolve-position-utf8", {
+      [fileName]: lineText + "\n",
+    });
+    const result = await Bun.build({ entrypoints: [path.join(String(dir), fileName)], throw: false });
+    expect(result.success).toBe(false);
+    const log: any = result.logs.find(l => l.name === "ResolveMessage");
+    expect(log).toBeDefined();
+    expect(log.position.lineText).toBe(lineText);
+    expect(path.basename(log.position.file)).toBe(fileName);
+    expect(log.specifier).toBe("./na\u00efve-missing.js");
   });
 
   it("invalid data URL import", async () => {

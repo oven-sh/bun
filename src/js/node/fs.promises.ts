@@ -110,11 +110,13 @@ async function* watch(
 
   try {
     while (true) {
+      // The abort check must run between every yield: resuming from `yield`
+      // lands mid-loop, and abort may have fired while suspended there.
       if (signal?.aborted) {
         throw makeAbortError();
       }
-      let event: Event;
-      while ((event = queue.shift() as Event)) {
+      const event = queue.shift() as Event | undefined;
+      if (event !== undefined) {
         if (event.eventType === "close") {
           return;
         }
@@ -122,6 +124,7 @@ async function* watch(
           throw event.filename;
         }
         yield event;
+        continue;
       }
       const { promise, resolve } = Promise.withResolvers();
       pendingResolve = resolve;

@@ -851,29 +851,147 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   }
 
   test.each([
-    ["empty :path", [[":method", "GET"], [":scheme", "http"], [":path", ""], [":authority", "localhost"]]],
-    ["empty :method", [[":method", ""], [":scheme", "http"], [":path", "/"], [":authority", "localhost"]]],
-    ["empty :scheme", [[":method", "GET"], [":scheme", ""], [":path", "/"], [":authority", "localhost"]]],
-    ["empty :authority", [[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", ""]]],
-    ["missing :path", [[":method", "GET"], [":scheme", "http"], [":authority", "localhost"]]],
-    ["missing :method", [[":scheme", "http"], [":path", "/"], [":authority", "localhost"]]],
-    ["missing :scheme", [[":method", "GET"], [":path", "/"], [":authority", "localhost"]]],
-    ["no :authority or host", [[":method", "GET"], [":scheme", "http"], [":path", "/"]]],
-    ["CONNECT with :path", [[":method", "CONNECT"], [":authority", "localhost"], [":path", "/"]]],
-    ["CONNECT with :scheme", [[":method", "CONNECT"], [":authority", "localhost"], [":scheme", "http"]]],
+    [
+      "empty :path",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", ""],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :method",
+      [
+        [":method", ""],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :scheme",
+      [
+        [":method", "GET"],
+        [":scheme", ""],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "empty :authority",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", ""],
+      ],
+    ],
+    [
+      "missing :path",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "missing :method",
+      [
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "missing :scheme",
+      [
+        [":method", "GET"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "no :authority or host",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "CONNECT with :path",
+      [
+        [":method", "CONNECT"],
+        [":authority", "localhost"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "CONNECT with :scheme",
+      [
+        [":method", "CONNECT"],
+        [":authority", "localhost"],
+        [":scheme", "http"],
+      ],
+    ],
     ["CONNECT without :authority", [[":method", "CONNECT"]]],
   ] as const)("a request with %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
     expectStreamProtocolError(await probe(headers as [string, string][]));
   });
 
   test.each([
-    [":protocol on non-CONNECT", [[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", "localhost"], [":protocol", "websocket"]]],
-    ["extended CONNECT without :scheme", [[":method", "CONNECT"], [":protocol", "websocket"], [":path", "/"], [":authority", "localhost"]]],
-    ["extended CONNECT without :path", [[":method", "CONNECT"], [":protocol", "websocket"], [":scheme", "http"], [":authority", "localhost"]]],
-    ["extended CONNECT without :authority", [[":method", "CONNECT"], [":protocol", "websocket"], [":scheme", "http"], [":path", "/"]]],
-    ["extended CONNECT with empty :path", [[":method", "CONNECT"], [":protocol", "websocket"], [":scheme", "http"], [":path", ""], [":authority", "localhost"]]],
+    [
+      ":protocol on non-CONNECT",
+      [
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+        [":protocol", "websocket"],
+      ],
+    ],
+    [
+      "extended CONNECT without :scheme",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "extended CONNECT without :path",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":authority", "localhost"],
+      ],
+    ],
+    [
+      "extended CONNECT without :authority",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", "/"],
+      ],
+    ],
+    [
+      "extended CONNECT with empty :path",
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", ""],
+        [":authority", "localhost"],
+      ],
+    ],
   ] as const)("with enableConnectProtocol: %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
-    expectStreamProtocolError(await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }));
+    expectStreamProtocolError(
+      await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }),
+    );
   });
 
   test("a valid request block is dispatched", async () => {

@@ -1247,6 +1247,10 @@ impl Drop for DevServer {
                     // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
                     unsafe { StaticRoute::deref_(cached.as_ptr()) };
                 }
+                // SAFETY: paired with the `ref_` taken in
+                // `get_or_put_route_bundle` when this bundle was created; the
+                // raw `html_bundle` field has no Drop, so release it here.
+                unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::deref(html.html_bundle) };
             }
         }
 
@@ -5249,13 +5253,13 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
         return;
     }
 
-    if dev
+    if !dev
         .server
         .as_ref()
         .expect("infallible: server bound")
         .config()
         .on_request
-        .is_some()
+        .is_empty()
     {
         dev.server
             .as_mut()
@@ -5388,8 +5392,8 @@ impl DevServer {
                     let file = &mut self.client_graph.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
-                    // Bump the intrusive refcount; matched by
-                    // `RouteBundle::deinit`'s deref of `html_bundle`.
+                    // Bump the intrusive refcount; matched by the
+                    // `html_bundle` deref in `DevServer`'s `Drop`.
                     // SAFETY: `html` is a live IntrusiveRc-managed allocation.
                     unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
                     break 'brk route_bundle::Data::Html(route_bundle::Html {

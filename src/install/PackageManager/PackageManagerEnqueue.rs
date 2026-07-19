@@ -2082,14 +2082,23 @@ fn get_or_put_resolved_package_with_find_result(
     if cfg!(debug_assertions) {
         debug_assert!(package.meta.id != invalid_package_id);
     }
-    // Record exact-version pins so `Lockfile::get_package_id`'s
-    // order-independence guard can tell them apart from range-resolved
-    // entries (which it treats as network-order artefacts).
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
+    // Record locally-pinned appends so `Lockfile::get_package_id`'s
+    // order-independence guard leaves them alone: dependencies declared in a
+    // local package.json (root or workspace) are enqueued before any
+    // network-ordered transitive, and an exact `=X.Y.Z` resolves to one
+    // version regardless of order. Everything else the guard may treat as a
+    // network-order artefact.
+    let is_local_pin = {
         // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
+        // `is_workspace_dependency` reads `lockfile.packages` only (disjoint
+        // from `package`, which was returned by-value above).
+        unsafe { &*(*this_ptr).lockfile }.is_workspace_dependency(dependency_id)
+            || (version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact())
+    };
+    if is_local_pin {
+        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
+        // `mark_local_pin` touches `lockfile.local_pinned` only.
+        unsafe { &mut *(*this_ptr).lockfile }.mark_local_pin(package.meta.id);
     }
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the

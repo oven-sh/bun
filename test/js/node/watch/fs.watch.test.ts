@@ -950,6 +950,24 @@ describe("fs.promises.watch", () => {
     }
   });
 
+  test("abort between yields throws AbortError on the next next()", async () => {
+    const root = path.join(testDir, "abort-at-yield-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const ac = new AbortController();
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]();
+    const interval = repeat(() => fs.writeFileSync(path.join(root, "a.txt"), "1"));
+    try {
+      const r1 = await it.next();
+      expect(r1.done).toBe(false);
+      // generator is now suspended at `yield event`; abort here.
+      ac.abort();
+      await expect(it.next()).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      clearInterval(interval);
+      await it.return().catch(() => {});
+    }
+  });
+
   test("never-iterated watch() does not keep the process alive", async () => {
     const root = path.join(testDir, "never-iterated-dir");
     fs.mkdirSync(root, { recursive: true });

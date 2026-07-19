@@ -761,6 +761,19 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // `debug_assert!` sites compile to nothing under ASAN. The `dev` profile
     // (debug builds) already defaults it on, so this is a no-op there.
     env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
+
+    // Trap on `+ - * << >>` and unary neg overflow too. Cargo carries
+    // `overflow-checks` as its own profile key (default off on `release`), so
+    // the line above does not imply it: release-asan wrapped silently and ASAN
+    // never saw it. Overflow is the bug class ASAN cannot catch on its own —
+    // a wrapped length or index stays inside the allocation it then corrupts.
+    // In practice `usize` subtraction underflow dominates. `panic = "abort"`
+    // means these surface as SIGABRT, not catchable panics.
+    // `[profile.shim]` pins both keys off (it `inherits = "release"`, and a
+    // Windows *debug* build still runs `cargo --profile shim` with this env),
+    // so the shim PE stays byte-identical. Inert under `--profile dev`, which
+    // this var does not name and which already enables both.
+    env.CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS = "true";
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 

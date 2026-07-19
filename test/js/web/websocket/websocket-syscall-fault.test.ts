@@ -301,14 +301,16 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
   test("send → short writes (1 byte) deliver complete frame to client", async () => {
     const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      let resolveServerClosed;
+      const serverClosed = new Promise(r => { resolveServerClosed = r; });
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", {status:426}); },
-        websocket: { open(ws) {}, message(ws, m) { ws.send(m); }, close() {} } });
+        websocket: { open(ws) {}, message(ws, m) { ws.send(m); }, close() { resolveServerClosed(); } } });
       fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
       const ws = new WebSocket("ws://127.0.0.1:" + s.port);
       ws.onopen = () => ws.send(Buffer.alloc(4096, 0x57).toString());
       ws.onmessage = (e) => { console.log(JSON.stringify({ len: e.data.length })); ws.close(); };
-      ws.onclose = () => { fault.clear(); process.exit(0); };
+      ws.onclose = async () => { fault.clear(); await serverClosed; s.stop(true); };
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -331,6 +333,8 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     // the only test exercising that hook.
     const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      let resolveServerClosed;
+      const serverClosed = new Promise(r => { resolveServerClosed = r; });
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", {status:426}); },
         websocket: {
@@ -339,7 +343,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
             ws.send(Buffer.alloc(20000, 0x57));
           },
           message() {},
-          close() {},
+          close() { resolveServerClosed(); },
         } });
       const ws = new WebSocket("ws://127.0.0.1:" + s.port);
       ws.binaryType = "arraybuffer";
@@ -347,7 +351,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
         console.log(JSON.stringify({ len: e.data.byteLength }));
         ws.close();
       };
-      ws.onclose = () => { fault.clear(); s.stop(true); process.exit(0); };
+      ws.onclose = async () => { fault.clear(); await serverClosed; s.stop(true); };
       ws.onerror = () => { console.log(JSON.stringify({ err: true })); process.exit(1); };
     `;
     await using proc = Bun.spawn({

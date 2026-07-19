@@ -745,7 +745,7 @@ macro_rules! from_field_ptr {
 /// bun_core::impl_field_parent! { Assets => DevServer.assets; pub fn owner; fn owner_mut; }
 ///
 /// // (2) ref-only                   (&self -> &P)
-/// bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
+/// bun_core::impl_field_parent! { Child => Parent.child; fn parent; }
 ///
 /// // (3) mut-only                   (&mut self -> *mut P)
 /// bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
@@ -767,6 +767,13 @@ macro_rules! from_field_ptr {
 /// `$Parent.$field` for its entire lifetime. If `$Child` can exist
 /// standalone, the generated accessors are unsound; keep a hand-rolled
 /// `pub unsafe fn` instead.
+///
+/// **Do not combine with `JsCell<$Child>` / `UnsafeCell<$Child>`.** The
+/// generated `parent()` derives `*const $Parent` from `&self`, which carries
+/// provenance only for `$Child`'s bytes when `&self` came from
+/// `UnsafeCell::get()`. Accessing sibling fields of `$Parent` through it is
+/// UB and LLVM dead-stores the writes (#33726). Pass `&$Parent` explicitly
+/// from the caller that already has it instead.
 #[macro_export]
 macro_rules! impl_field_parent {
     // ref + raw-mut pair

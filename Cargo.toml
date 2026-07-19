@@ -170,9 +170,9 @@ lto = true
 codegen-units = 1
 strip = "symbols"
 # Pin these so the shim PE is byte-identical across bun's own profiles.
-# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
-# bun_bin build and the shim build shares that env; without explicit values
-# here the env overrides on `release` would be inherited.
+# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS,OVERFLOW_CHECKS} for
+# the main bun_bin build and the shim build shares that env; without explicit
+# values here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
 

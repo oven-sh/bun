@@ -1678,6 +1678,7 @@ impl JSValkeyClient {
                 // the SUBSCRIBE command fails? We have no way to roll back the addition of the
                 // handler.
                 this._subscription_ctx.get().upsert_receive_handler(
+                    this,
                     global,
                     channel_arg,
                     handler_callback,
@@ -1691,6 +1692,7 @@ impl JSValkeyClient {
             redis_channels.push(channel);
 
             this._subscription_ctx.get().upsert_receive_handler(
+                this,
                 global,
                 channel_or_many,
                 handler_callback,
@@ -1714,7 +1716,7 @@ impl JSValkeyClient {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
                 this._subscription_ctx
                     .get()
-                    .clear_all_receive_handlers(global)?;
+                    .clear_all_receive_handlers(this, global)?;
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
         };
@@ -1759,7 +1761,7 @@ impl JSValkeyClient {
         if args_view.is_empty() {
             this._subscription_ctx
                 .get()
-                .clear_all_receive_handlers(global)?;
+                .clear_all_receive_handlers(this, global)?;
             return Self::send_unsubscribe_request_and_cleanup(
                 this,
                 frame.this(),
@@ -1808,6 +1810,7 @@ impl JSValkeyClient {
             redis_channels.push(ch);
 
             let remaining_listeners = match this._subscription_ctx.get().remove_receive_handler(
+                this,
                 global,
                 channel,
                 listener_cb,
@@ -1866,7 +1869,7 @@ impl JSValkeyClient {
                 // Clear the handlers for this channel
                 this._subscription_ctx
                     .get()
-                    .clear_receive_handlers(global, channel_arg)?;
+                    .clear_receive_handlers(this, global, channel_arg)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -1877,7 +1880,7 @@ impl JSValkeyClient {
             // Clear the handlers for this channel
             this._subscription_ctx
                 .get()
-                .clear_receive_handlers(global, channel_or_many)?;
+                .clear_receive_handlers(this, global, channel_or_many)?;
         } else {
             return Err(global.throw_invalid_argument_type(
                 "unsubscribe",

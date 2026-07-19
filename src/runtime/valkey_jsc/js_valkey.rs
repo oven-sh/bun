@@ -92,10 +92,6 @@ pub struct SubscriptionCtx {
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
 pub use crate::generated_classes::js_RedisClient as Js;
 
-// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
-// (intrusive backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`.
-bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
-
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(&valkey_parent.global_object);
@@ -122,13 +118,8 @@ impl SubscriptionCtx {
         })
     }
 
-    fn subscription_callback_map(&self) -> &mut JSMap {
-        let parent_this = self
-            .parent()
-            .this_value
-            .get()
-            .try_get()
-            .expect("unreachable");
+    fn subscription_callback_map(&self, parent: &JSValkeyClient) -> &mut JSMap {
+        let parent_this = parent.this_value.get().try_get().expect("unreachable");
         let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
@@ -137,29 +128,42 @@ impl SubscriptionCtx {
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
-    pub fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> JsResult<u32> {
-        let count = self.subscription_callback_map().size(global_object)?;
+    pub fn channels_subscribed_to_count(
+        &self,
+        parent: &JSValkeyClient,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<u32> {
+        let count = self.subscription_callback_map(parent).size(global_object)?;
         Ok(count)
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
-    pub fn has_subscriptions(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
-        Ok(self.channels_subscribed_to_count(global_object)? > 0)
+    pub fn has_subscriptions(
+        &self,
+        parent: &JSValkeyClient,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<bool> {
+        Ok(self.channels_subscribed_to_count(parent, global_object)? > 0)
     }
 
     pub fn clear_receive_handlers(
         &self,
+        parent: &JSValkeyClient,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<()> {
-        let map = self.subscription_callback_map();
+        let map = self.subscription_callback_map(parent);
         let _ = map.remove(global_object, channel_name)?;
         Ok(())
     }
 
-    pub fn clear_all_receive_handlers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        self.subscription_callback_map().clear(global_object)
+    pub fn clear_all_receive_handlers(
+        &self,
+        parent: &JSValkeyClient,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<()> {
+        self.subscription_callback_map(parent).clear(global_object)
     }
 
     /// Remove a specific receive handler.
@@ -170,11 +174,12 @@ impl SubscriptionCtx {
     /// Note: This function will empty out the map entry if there are no more handlers registered.
     pub fn remove_receive_handler(
         &self,
+        parent: &JSValkeyClient,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<Option<usize>> {
-        let map = self.subscription_callback_map();
+        let map = self.subscription_callback_map(parent);
 
         let existing = map.get(global_object, channel_name)?;
         if existing.is_undefined_or_null() {
@@ -216,17 +221,18 @@ impl SubscriptionCtx {
     /// Add a handler for receiving messages on a specific channel
     pub fn upsert_receive_handler(
         &self,
+        parent: &JSValkeyClient,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
         // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
         // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
+        let parent_br = BackRef::new(parent);
         let _guard = scopeguard::guard(parent_br, |p| {
             p.on_new_subscription_callback_insert();
         });
-        let map = self.subscription_callback_map();
+        let map = self.subscription_callback_map(parent);
 
         let handlers_array: JSValue;
         let mut is_new_channel = false;
@@ -262,11 +268,12 @@ impl SubscriptionCtx {
 
     pub fn get_callbacks(
         &self,
+        parent: &JSValkeyClient,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<Option<JSValue>> {
         let result = self
-            .subscription_callback_map()
+            .subscription_callback_map(parent)
             .get(global_object, channel_name)?;
         if result == JSValue::UNDEFINED {
             return Ok(None);
@@ -278,11 +285,12 @@ impl SubscriptionCtx {
     /// Handles both single callbacks and arrays of callbacks
     pub fn invoke_callbacks(
         &self,
+        parent: &JSValkeyClient,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         args: &[JSValue],
     ) -> JsResult<()> {
-        let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
+        let Some(callbacks) = self.get_callbacks(parent, global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
                 // `JSString` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
@@ -305,7 +313,7 @@ impl SubscriptionCtx {
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
         // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
         // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
+        let parent_br = BackRef::new(parent);
         let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
 
         // If callbacks is an array, iterate and call each one
@@ -323,22 +331,29 @@ impl SubscriptionCtx {
     }
 
     /// Return whether the subscription context is ready to be deleted by the JS garbage collector.
-    pub fn is_deletable(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
+    pub fn is_deletable(
+        &self,
+        parent: &JSValkeyClient,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<bool> {
         // The user may request .close(), in which case we can dispose of the subscription object.
         // If that is the case, finalized will be true. Otherwise, we should treat the object as
         // disposable if there are no active subscriptions.
-        Ok(self.parent().client.get().flags.finalized || !self.has_subscriptions(global_object)?)
+        Ok(
+            parent.client.get().flags.finalized
+                || !self.has_subscriptions(parent, global_object)?,
+        )
     }
 
     // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
     // `close` per PORTING.md (never expose `pub fn deinit`).
-    pub fn close(&self, global_object: &JSGlobalObject) {
+    pub fn close(&self, parent: &JSValkeyClient, global_object: &JSGlobalObject) {
         if cfg!(debug_assertions) {
-            let go = self.parent().global_object;
-            debug_assert!(self.is_deletable(&go).expect("unreachable"));
+            let go = parent.global_object;
+            debug_assert!(self.is_deletable(parent, &go).expect("unreachable"));
         }
 
-        if let Some(parent_this) = self.parent().this_value.get().try_get() {
+        if let Some(parent_this) = parent.this_value.get().try_get() {
             Js::subscription_callback_map_set_cached(
                 parent_this,
                 global_object,
@@ -358,15 +373,11 @@ impl SubscriptionCtx {
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut RedisClient` — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `JsCell` is
-// `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
-// `ValkeyClient::parent`) sees identical offsets.
+// auto-derefs to `&T` so the impls below compile against either.
 //
-// `#[repr(C)]`: `client` MUST be
-// at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
-// `from_field_ptr!`, but belt-and-suspenders against any path that assumes
-// `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
-// — see `connect()` below).
+// `#[repr(C)]`: `client` at offset 0 — belt-and-suspenders against any path
+// that assumes `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the
+// socket ext slot did; see `connect()`).
 #[repr(C)]
 pub struct JSValkeyClient {
     pub client: JsCell<valkey::ValkeyClient>,
@@ -452,8 +463,8 @@ impl JSValkeyClient {
     #[allow(clippy::mut_from_ref)]
     pub(super) fn client_mut(&self) -> &mut valkey::ValkeyClient {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
-        // `&mut` is fresh per call site; reentrancy through
-        // `ValkeyClient::parent()` forms a shared `&JSValkeyClient` only.
+        // `&mut` is fresh per call site; re-entrant callers receive
+        // `&JSValkeyClient` as an explicit `parent` parameter alongside it.
         unsafe { self.client.get_mut() }
     }
 
@@ -908,7 +919,7 @@ impl JSValkeyClient {
             "removeSubscription: entering, has subscriptions: {}",
             self._subscription_ctx
                 .get()
-                .has_subscriptions(&self.global_object)
+                .has_subscriptions(self, &self.global_object)
                 .unwrap_or(false)
         );
         self.ref_();
@@ -918,7 +929,7 @@ impl JSValkeyClient {
         if !self
             ._subscription_ctx
             .get()
-            .has_subscriptions(&self.global_object)
+            .has_subscriptions(self, &self.global_object)
             .unwrap_or(false)
         {
             let (q, p) = {
@@ -1055,7 +1066,7 @@ impl JSValkeyClient {
         if self.client.get().status == valkey::Status::Disconnected {
             return Ok(JSValue::UNDEFINED);
         }
-        self.client_mut().disconnect();
+        self.client_mut().disconnect(self);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1384,6 +1395,7 @@ impl JSValkeyClient {
             ._subscription_ctx
             .get()
             .invoke_callbacks(
+                self,
                 &global_object,
                 channel_value,
                 &[message_value, channel_value],
@@ -1468,16 +1480,8 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    // Callback for when Valkey client times out
-    pub fn on_valkey_timeout(&self) {
-        let _ = self.client_fail(
-            b"Connection timeout",
-            protocol::RedisError::ConnectionClosed,
-        );
-    }
-
     pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
-        narrow_terminated(self.client_mut().fail(message, err))
+        narrow_terminated(self.client_mut().fail(self, message, err))
     }
 
     pub fn fail_with_js_value(&self, value: JSValue) {
@@ -1502,16 +1506,16 @@ impl JSValkeyClient {
         // would never run; close inline (this_value is cleared, no JS re-entry).
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
-            self.client_mut().close();
+            self.client_mut().close(self);
             return;
         }
 
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         struct Holder {
-            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
-            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop.
+            // BACKREF — JSValkeyClient is intrusively ref-counted; the
+            // `self.ref_()` above / `(*ctx).deref()` in run() keep it alive
+            // across the task hop.
             ctx: *const JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }
@@ -1522,7 +1526,7 @@ impl JSValkeyClient {
                 let ctx = self_.ctx;
                 // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
                 unsafe {
-                    (*ctx).client_mut().close();
+                    (*ctx).client_mut().close(&*ctx);
                     JSValkeyClient::deref(ctx.cast_mut());
                 }
                 // self_ dropped here (Box freed).
@@ -1602,6 +1606,17 @@ impl JSValkeyClient {
             }
         };
 
+        // Take the socket keep-alive ref now so `on_valkey_close()` (which
+        // unconditionally releases it) is balanced on every exit path below,
+        // including the SSL_CTX-creation failure branch.
+        self.ref_();
+        let self_ptr = self.as_ctx_ptr();
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
+            // guard releases that ref on early return.
+            unsafe { JSValkeyClient::deref(p) }
+        });
+
         // Populate `_secure` first, then handle the failure branch outside the
         // borrow of `self.client.tls`.
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
@@ -1629,7 +1644,9 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
-            self.client_mut().on_valkey_close()?;
+            // `on_valkey_close()` consumes the keep-alive ref; hand it over.
+            scopeguard::ScopeGuard::into_inner(errdefer_deref);
+            self.on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
         }
@@ -1642,15 +1659,6 @@ impl JSValkeyClient {
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
 
-        self.ref_();
-        // Balance the ref above if connect() throws — the caller (e.g. send())
-        // only knows to clean up its own state, not the keep-alive ref.
-        let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
-            // guard releases that ref on early return.
-            unsafe { JSValkeyClient::deref(p) }
-        });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| {
@@ -1789,7 +1797,7 @@ impl JSValkeyClient {
             || !self
                 ._subscription_ctx
                 .get()
-                .has_subscriptions(&self.global_object)
+                .has_subscriptions(self, &self.global_object)
                 .unwrap_or(false);
 
         let has_activity =
@@ -1873,7 +1881,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsTerminatedResult<()> {
         this.client_mut().socket = Self::_socket(socket);
-        narrow_terminated(this.client_mut().on_open(Self::_socket(socket)))
+        narrow_terminated(this.client_mut().on_open(this, Self::_socket(socket)))
     }
 
     pub fn on_handshake_(
@@ -1962,7 +1970,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     return Self::fail_handshake(this, vm, err);
                 }
             }
-            narrow_terminated(this.client_mut().start())?;
+            narrow_terminated(this.client_mut().start(this))?;
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the
@@ -1990,7 +1998,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     this.global_object.clear_exception();
                     this.client_mut().flags.is_authenticated = false;
                     this.client_mut().flags.is_manually_closed = true;
-                    this.client_mut().close();
+                    this.client_mut().close(this);
                     return Ok(());
                 }
             };
@@ -2006,11 +2014,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;
         let this_br = BackRef::new(this);
-        let _close = scopeguard::guard(this_br, |p| p.client_mut().close());
-        narrow_terminated(
-            this.client_mut()
-                .fail_with_js_value(&this.global_object, err_value),
-        )
+        let _close = scopeguard::guard(this_br, |p| p.client_mut().close(&p));
+        narrow_terminated(this.client_mut().fail_with_js_value(
+            this,
+            &this.global_object,
+            err_value,
+        ))
     }
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`
@@ -2046,7 +2055,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         });
 
-        let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
+        let _ = this.client_mut().on_close(this);
     }
 
     pub fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -2077,7 +2086,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         });
 
-        narrow_terminated(this.client_mut().on_close())
+        narrow_terminated(this.client_mut().on_close(this))
     }
 
     pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -2093,7 +2102,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
         this.ref_();
         let _d = deref_guard(this);
-        let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
+        let _ = this.client_mut().on_data(this, data);
         this.update_poll_ref();
     }
 

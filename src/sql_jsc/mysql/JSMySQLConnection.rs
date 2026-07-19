@@ -44,8 +44,7 @@ bun_core::declare_scope!(MySQLConnection, visible);
 // shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
 // to `&T` so the impls below compile against either.
 // `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
-// (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
-// offsets.
+// (`from_timer_ptr`) sees identical offsets.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLConnection {
@@ -62,8 +61,7 @@ pub struct JSMySQLConnection {
 
     // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
     // via a `ParentRef<JSMySQLConnection>` shared borrow; the inner protocol
-    // struct's `get_js_connection()` recovers the embedding via
-    // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
+    // struct receives the embedding as an explicit `parent` parameter.
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
     pub auto_flusher: JsCell<AutoFlusher>,
@@ -174,9 +172,8 @@ impl JSMySQLConnection {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
-        // `&mut` is fresh per call site; reentrancy through
-        // `MySQLConnection::get_js_connection()` forms a shared
-        // `&JSMySQLConnection` only.
+        // `&mut` is fresh per call site; reentrancy through the threaded
+        // `parent: &JSMySQLConnection` forms a shared borrow only.
         unsafe { self.connection.get_mut() }
     }
 
@@ -391,7 +388,7 @@ impl JSMySQLConnection {
         let _loop_guard = self.event_loop().entered();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
-            self.connection_mut().flush_queue()
+            self.connection_mut().flush_queue(self)
         {
             self.fail(
                 b"Authentication failed",
@@ -698,15 +695,15 @@ impl JSMySQLConnection {
     }
     #[inline]
     pub fn can_pipeline(&self) -> bool {
-        self.connection_mut().can_pipeline()
+        self.connection_mut().can_pipeline(self)
     }
     #[inline]
     pub fn can_prepare_query(&self) -> bool {
-        self.connection_mut().can_prepare_query()
+        self.connection_mut().can_prepare_query(self)
     }
     #[inline]
     pub fn can_execute_query(&self) -> bool {
-        self.connection_mut().can_execute_query()
+        self.connection_mut().can_execute_query(self)
     }
     #[inline]
     pub fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
@@ -1063,7 +1060,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _loop_guard = this.event_loop().entered();
         this.ensure_js_value_is_alive();
 
-        if let Err(e) = this.connection_mut().read_and_process_data(data) {
+        if let Err(e) = this.connection_mut().read_and_process_data(this, data) {
             this.on_error(None, e);
         }
     }

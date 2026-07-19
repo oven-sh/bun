@@ -5,50 +5,51 @@ import { join } from "node:path";
 // Guards the checked-in table that drives LPT shard bin-packing in
 // scripts/runner.node.mjs. Regenerate via scripts/update-test-durations.mjs.
 const table = JSON.parse(readFileSync(join(import.meta.dir, "..", "expected-durations.json"), "utf8"));
+const entries = Object.entries(table).filter(([k]) => k !== "_meta") as [string, Record<string, number>][];
 
 describe("test/expected-durations.json", () => {
-  test("has a _meta block with the lanes the runner selects", () => {
+  test("every lane the runner selects is declared and populated", () => {
     expect(table._meta).toBeObject();
     expect(table._meta.lanes).toBeObject();
     // runner.node.mjs lane selection: asan / musl / windows / default.
     for (const lane of ["default", "asan", "musl", "windows"]) {
       expect(table._meta.lanes[lane]).toBeString();
+      const populated = entries.filter(([, e]) => typeof e[lane] === "number").length;
+      expect(populated).toBeGreaterThan(1000);
     }
   });
 
-  test("keys are test paths, not runner retry/error labels", () => {
-    // A broken parseLog() captures `[N/M] <path> - code 1` and
-    // `[N/M] <path> [attempt #2]` headers as if they were file paths.
-    const bad = Object.keys(table).filter(k => k !== "_meta" && (k.includes(" - ") || k.includes("[attempt")));
+  test("keys are relative test paths, not runner retry/error labels", () => {
+    // Same predicate parseLog() uses to reject `[N/M] <path> - code 1` /
+    // `[N/M] <path> [attempt #2]` headers; anything it lets through must be a
+    // forward-slash relative path ending at a test file extension.
+    const isTestPath = (k: string) => !k.startsWith("/") && !k.includes("\\") && /\.(?:[cm]?[jt]sx?|json)$/.test(k);
+    const bad = entries.map(([k]) => k).filter(k => !isTestPath(k));
     expect(bad).toEqual([]);
   });
 
   test("covers the parallel-safe phase", () => {
     // js/{node,bun}/test/parallel/ run N-wide and log without a `--- ` group
     // prefix; a parser that only matches `--- [N/M]` drops ~3k entries here.
-    const parallelSafe = Object.keys(table).filter(
-      k => k.startsWith("js/node/test/parallel/") || k.startsWith("js/bun/test/parallel/"),
+    const parallelSafe = entries.filter(
+      ([k]) => k.startsWith("js/node/test/parallel/") || k.startsWith("js/bun/test/parallel/"),
     );
     expect(parallelSafe.length).toBeGreaterThan(1000);
   });
 
-  test("every entry is {lane: positive ms}", () => {
+  test("every entry is {lane: non-negative ms}", () => {
     const lanes = Object.keys(table._meta.lanes);
-    let count = 0;
-    for (const [key, entry] of Object.entries(table)) {
-      if (key === "_meta") continue;
-      count++;
+    for (const [, entry] of entries) {
       expect(typeof entry).toBe("object");
-      let hasLane = false;
-      for (const [lane, ms] of Object.entries(entry as Record<string, unknown>)) {
+      const entryLanes = Object.keys(entry);
+      expect(entryLanes.length).toBeGreaterThan(0);
+      for (const lane of entryLanes) {
         expect(lanes).toContain(lane);
-        expect(ms).toBeNumber();
-        expect(ms).toBeGreaterThanOrEqual(0);
-        hasLane = true;
+        expect(entry[lane]).toBeNumber();
+        expect(entry[lane]).toBeGreaterThanOrEqual(0);
       }
-      expect(hasLane).toBe(true);
     }
     // Loose lower bound: the runner currently shards ~5k files.
-    expect(count).toBeGreaterThan(3000);
+    expect(entries.length).toBeGreaterThan(3000);
   });
 });

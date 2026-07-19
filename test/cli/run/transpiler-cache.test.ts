@@ -248,19 +248,22 @@ describe("transpiler cache", () => {
     // Prime the cache from the ESM side. This is a legitimate SyntaxError.
     const esm = run("esm");
     expect(esm.stderr.toString()).toContain("SyntaxError");
-    expect(esm.exitCode).toBe(1);
     expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
+    expect(esm.exitCode).toBe(1);
 
     // Same bytes loaded as CommonJS must not reuse the ESM-format entry.
+    // features_hash mismatch -> unlink + rewrite, same filename, net count 0.
     const cjs = run("cjs");
     expect(cjs.stderr.toString()).toBe("");
     expect(cjs.stdout.toString().trim()).toBe("cjs ok");
+    expect(newCacheCount()).toBe(0);
     expect(cjs.exitCode).toBe(0);
 
     // And running CJS again is now a cache hit.
     const cjs2 = run("cjs");
     expect(cjs2.stdout.toString().trim()).toBe("cjs ok");
+    expect(newCacheCount()).toBe(0);
     expect(cjs2.exitCode).toBe(0);
   });
   test("--feature flag invalidates cache", () => {

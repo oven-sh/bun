@@ -2,7 +2,7 @@
   {
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
-    "tag": "1.4.28",
+    "tag": "1.4.29",
     "skipTests": {
       "ws*connection.test.ts": "TEMPORARY: elysia 1.4.28 asserts wasClean=false for a server-initiated ws.close(), but that's a clean Close handshake — Bun now reports wasClean=true to match Node/WHATWG (oven-sh/bun#31518). Fixed upstream in elysiajs/elysia#1908; remove this skip on the next elysia bump. (glob * = path separator, so it also matches Windows backslash paths)",
       "adapter*web-standard*map-response.test.ts": "TEMPORARY: Bun's Response.redirect now puts the WHATWG serialization of the url into Location (oven-sh/bun#33126), matching Node and https://fetch.spec.whatwg.org/#dom-response-redirect, so Response.redirect('https://cunny.school') yields 'https://cunny.school/'. elysia 1.4.28's 'map redirect' test asserts the unserialized string; remove this skip once the upstream assertion expects the trailing slash.",

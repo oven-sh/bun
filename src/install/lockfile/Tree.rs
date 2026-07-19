@@ -832,6 +832,24 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                    // Folder deps bypass `hoist_dependency`, so nothing dedupes a folder
+                    // package that reaches itself (directly or via another folder) and it
+                    // would re-enqueue forever. Skip if already an enclosing subtree.
+                    let mut anc = next_id;
+                    loop {
+                        let tree = builder.list.items_tree()[anc as usize];
+                        let anc_pkg = match tree.dependency_id {
+                            ROOT_DEP_ID => 0,
+                            id => builder.resolutions[id as usize],
+                        };
+                        if anc_pkg == pkg_id {
+                            continue 'dep;
+                        }
+                        if tree.parent == INVALID_ID {
+                            break;
+                        }
+                        anc = tree.parent;
+                    }
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: false,

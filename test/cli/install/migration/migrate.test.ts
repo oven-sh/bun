@@ -517,6 +517,60 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
 
+// npm records a `file:` link target's declared dependencies in the lockfile but does not
+// install them, so for a link target that depends on its own name (or on another link
+// target that depends back on it) there is no nested `<target>/node_modules/<name>` entry.
+// Migration resolves such a dep through the root `node_modules/<name>` link, producing a
+// folder package whose dependency graph reaches itself. The hoist pass must break that
+// cycle; before this fix it re-enqueued the same subtree forever and the migration hung.
+function folderLockfile(rootDeps: Record<string, string>, folders: Record<string, Record<string, string>>) {
+  const packages: Record<string, unknown> = { "": { name: "root", dependencies: rootDeps } };
+  const files: Record<string, string> = { "package.json": JSON.stringify({ name: "root", dependencies: rootDeps }) };
+  for (const [name, dependencies] of Object.entries(folders)) {
+    files[`${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", dependencies });
+    packages[name] = { version: "1.0.0", dependencies };
+    packages[`node_modules/${name}`] = { resolved: name, link: true };
+  }
+  files["package-lock.json"] = JSON.stringify({ name: "root", lockfileVersion: 3, requires: true, packages });
+  return files;
+}
+
+test.concurrent.each([
+  ["depends on its own name", folderLockfile({ pkg: "file:pkg" }, { pkg: { pkg: "^1.0.0" } })],
+  ["aliases its own name via npm:", folderLockfile({ pkg: "file:pkg" }, { pkg: { pkg: "npm:something@^1.0.0" } })],
+  [
+    "and another link target depend on each other",
+    folderLockfile({ a: "file:a", b: "file:b" }, { a: { b: "^1.0.0" }, b: { a: "^1.0.0" } }),
+  ],
+])("package-lock.json migration terminates when a file: link target %s", async (_desc, files) => {
+  const testDir = tempDirWithFiles("migrate-folder-cycle", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    // Without the fix the spawned process never exits; bound the wait so the assertion
+    // below can report the hang instead of relying on the suite-level test timeout.
+    timeout: 30_000,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+  expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
+  for (const name of Object.keys(JSON.parse(files["package.json"]).dependencies)) {
+    expect(await Bun.file(join(testDir, "node_modules", name, "package.json")).json()).toHaveProperty("name", name);
+  }
+
+  // The bun.lock the migration wrote must round-trip through bun's own parser.
+  const second = await install(testDir, "--frozen-lockfile");
+  expect(second.stderr).not.toContain("Ignoring lockfile");
+  expect(second.exitCode).toBe(0);
+});
+
 test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency", async () => {
   // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
   // same way the npm one did. pnpm records them for any `packages:` entry whose manifest

@@ -55,14 +55,17 @@ test.concurrent("JS parse error column agrees for BMP vs astral lines of equal U
 test.concurrent("JS parse error column matches JSC runtime column for the same line", async () => {
   // Parse error and runtime error originate at the same UTF-16 offset; before
   // the fix only the parse column drifted.
-  using dir = tempDir("parse-col-rt", {});
+  using dir = tempDir("parse-col-rt", {
+    "rt.js": 'const a = "\u{1F600}\u{1F600}"; f();\nfunction f(){ throw new Error("x") }',
+    "bad.js": 'const a = "\u{1F600}\u{1F600}"; ]',
+  });
   const rt = join(String(dir), "rt.js");
-  await Bun.write(rt, 'const a = "\u{1F600}\u{1F600}"; f();\nfunction f(){ throw new Error("x") }');
+  const bad = join(String(dir), "bad.js");
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const parse = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), "bad.js"))}], throw: false })
+      `const parse = await Bun.build({ entrypoints: [${JSON.stringify(bad)}], throw: false })
          .then(r => r.logs[0].position.column);
        let runtime;
        try { await import(${JSON.stringify(rt)}); } catch (e) {
@@ -74,7 +77,6 @@ test.concurrent("JS parse error column matches JSC runtime column for the same l
     stdout: "pipe",
     stderr: "pipe",
   });
-  await Bun.write(join(String(dir), "bad.js"), 'const a = "\u{1F600}\u{1F600}"; ]');
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
     stdout: `{"parse":19,"runtime":19}`,

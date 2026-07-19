@@ -730,10 +730,8 @@ impl IOWriter {
                 s.started = false;
                 return match self.write() {
                     WriteOutcome::Suspended => Yield::suspended(),
-                    WriteOutcome::IsActuallyFile => self.on_sync_error(
-                        child,
-                        &sys::Error::from_code(E::EAGAIN, sys::Tag::write),
-                    ),
+                    WriteOutcome::IsActuallyFile => self
+                        .on_sync_error(child, &sys::Error::from_code(E::EAGAIN, sys::Tag::write)),
                     WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
                 };
             }

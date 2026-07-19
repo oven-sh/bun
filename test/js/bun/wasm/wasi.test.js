@@ -24,6 +24,109 @@ it("Should support printing 'hello world'", () => {
   });
 });
 
+it("random_get fills the guest buffer and returns success", () => {
+  const wasi = new WASI({});
+  // 2 pages so the request can exceed getRandomValues' 65536-byte limit.
+  wasi.setMemory(new WebAssembly.Memory({ initial: 2 }));
+
+  const WASI_ESUCCESS = 0;
+  const CHUNK = 65536;
+  const bufPtr = 8;
+  const bufLen = 70000; // > CHUNK to exercise the chunking loop
+  const guardBefore = bufPtr - 4;
+  const guardAfter = bufPtr + bufLen;
+
+  const bytes = new Uint8Array(wasi.memory.buffer);
+  bytes[guardBefore] = 0xab;
+  bytes[guardAfter] = 0xcd;
+
+  // Stub the RNG so the write is deterministic: each byte is a non-zero value
+  // derived from its absolute offset, so a partial or misplaced write is caught.
+  const fillByte = offset => (offset % 255) + 1;
+  const calls = [];
+  const realGetRandomValues = crypto.getRandomValues;
+  crypto.getRandomValues = view => {
+    calls.push({ byteOffset: view.byteOffset, byteLength: view.byteLength });
+    for (let i = 0; i < view.length; i++) view[i] = fillByte(view.byteOffset + i);
+    return view;
+  };
+
+  try {
+    expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+  } finally {
+    crypto.getRandomValues = realGetRandomValues;
+  }
+
+  // The whole region must be filled with exactly the expected chunks, in order.
+  expect(calls).toEqual([
+    { byteOffset: bufPtr, byteLength: CHUNK },
+    { byteOffset: bufPtr + CHUNK, byteLength: bufLen - CHUNK },
+  ]);
+
+  // Every byte of the requested region must carry its expected value.
+  const expected = new Uint8Array(bufLen);
+  for (let i = 0; i < bufLen; i++) expected[i] = fillByte(bufPtr + i);
+  expect(new Uint8Array(wasi.memory.buffer, bufPtr, bufLen)).toEqual(expected);
+
+  // Bytes just outside the requested region must be untouched.
+  expect(bytes[guardBefore]).toBe(0xab);
+  expect(bytes[guardAfter]).toBe(0xcd);
+});
+
+it("random_get returns EINVAL for out-of-bounds guest memory instead of throwing", () => {
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const byteLength = wasi.memory.buffer.byteLength;
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EINVAL = 28;
+
+  // A range that runs past the end of guest memory must not throw a RangeError.
+  expect(wasi.wasiImport.random_get(byteLength - 4, 8)).toBe(WASI_EINVAL);
+  expect(wasi.wasiImport.random_get(byteLength + 1, 4)).toBe(WASI_EINVAL);
+  expect(wasi.wasiImport.random_get(-1, 4)).toBe(WASI_EINVAL);
+  expect(wasi.wasiImport.random_get(0, -1)).toBe(WASI_EINVAL);
+
+  // A range that ends exactly at the boundary is still valid.
+  expect(wasi.wasiImport.random_get(byteLength - 8, 8)).toBe(WASI_ESUCCESS);
+});
+
+it("getImportObject returns wasi_snapshot_preview1 by default", () => {
+  const wasi = new WASI({});
+  const importObject = wasi.getImportObject();
+  expect(Object.keys(importObject)).toEqual(["wasi_snapshot_preview1"]);
+  expect(importObject.wasi_snapshot_preview1).toBe(wasi.wasiImport);
+});
+
+it("getImportObject respects version: 'preview1'", () => {
+  const wasi = new WASI({ version: "preview1" });
+  const importObject = wasi.getImportObject();
+  expect(Object.keys(importObject)).toEqual(["wasi_snapshot_preview1"]);
+  expect(importObject.wasi_snapshot_preview1).toBe(wasi.wasiImport);
+});
+
+it("getImportObject respects version: 'unstable'", () => {
+  const wasi = new WASI({ version: "unstable" });
+  const importObject = wasi.getImportObject();
+  expect(Object.keys(importObject)).toEqual(["wasi_unstable"]);
+  expect(importObject.wasi_unstable).toBe(wasi.wasiImport);
+});
+
+it("WASI throws for an unsupported version", () => {
+  expect(() => new WASI({ version: "bogus" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
+});
+
+it("getImportObject provides every import a WASI module needs", async () => {
+  // hello-wasi.wasm imports from the wasi_unstable namespace.
+  const wasi = new WASI({ version: "unstable" });
+  const bytes = fs.readFileSync(path.join(import.meta.dir, "hello-wasi.wasm"));
+  // A missing import throws a LinkError, so instantiating proves completeness.
+  const { instance } = await WebAssembly.instantiate(bytes, wasi.getImportObject());
+  expect(typeof instance.exports._start).toBe("function");
+});
+
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",

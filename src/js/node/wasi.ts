@@ -794,6 +794,12 @@ var require_wasi = __commonJS({
         let preopens = wasiConfig.preopens ?? defaultConfig.preopens;
         this.env = wasiConfig.env ?? defaultConfig.env;
 
+        const version = wasiConfig.version ?? "preview1";
+        if (version !== "unstable" && version !== "preview1") {
+          throw $ERR_INVALID_ARG_VALUE("options.version", version, "unsupported WASI version");
+        }
+        this.version = version;
+
         const args = wasiConfig.args ?? defaultConfig.args;
         this.memory = void 0;
         this.view = void 0;
@@ -1847,8 +1853,14 @@ var require_wasi = __commonJS({
           },
           random_get: (bufPtr, bufLen) => {
             this.refreshMemory();
-            crypto.getRandomValues(this.memory.buffer, bufPtr, bufLen);
-            return bufLen;
+            if (bufPtr < 0 || bufLen < 0 || bufPtr + bufLen > this.memory.buffer.byteLength) {
+              return constants_1.WASI_EINVAL;
+            }
+            const buffer = new Uint8Array(this.memory.buffer, bufPtr, bufLen);
+            for (let offset = 0; offset < bufLen; offset += 65536) {
+              crypto.getRandomValues(buffer.subarray(offset, Math.min(offset + 65536, bufLen)));
+            }
+            return constants_1.WASI_ESUCCESS;
           },
           sched_yield() {
             return constants_1.WASI_ESUCCESS;
@@ -1997,6 +2009,14 @@ var require_wasi = __commonJS({
                 "\n",
             );
           }
+        }
+      }
+      getImportObject() {
+        switch (this.version) {
+          case "unstable":
+            return { wasi_unstable: this.wasiImport };
+          default:
+            return { wasi_snapshot_preview1: this.wasiImport };
         }
       }
       initWasiFdInfo() {

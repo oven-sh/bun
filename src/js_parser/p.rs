@@ -7027,14 +7027,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(mut cf) = constructor_function {
                         // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
-                            old_stmts.len() + instance_members.len(),
-                            self.arena,
-                        );
-                        constructor_stmts.extend_from_slice(old_stmts);
                         // statements coming from class body inserted after super call or beginning of constructor.
                         let mut super_index: Option<usize> = None;
-                        for (index, item) in constructor_stmts.iter().enumerate() {
+                        for (index, item) in old_stmts.iter().enumerate() {
                             if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
                             {
                                 continue;
@@ -7044,10 +7039,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let i = super_index.map(|j| j + 1).unwrap_or(0);
-                        // bumpalo Vec lacks insert_slice; emulate via per-item insert.
-                        for (off, m) in instance_members.iter().enumerate() {
-                            constructor_stmts.insert(i + off, *m);
-                        }
+                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
+                            old_stmts.len() + instance_members.len(),
+                            self.arena,
+                        );
+                        constructor_stmts.extend_from_slice(&old_stmts[..i]);
+                        constructor_stmts.extend_from_slice(&instance_members);
+                        constructor_stmts.extend_from_slice(&old_stmts[i..]);
 
                         cf.func.body.stmts =
                             bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());

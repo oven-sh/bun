@@ -666,6 +666,7 @@ impl Route {
                         headers,
                         cached_blob_size,
                         has_content_disposition: false,
+                        has_date: false,
                     }));
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;

@@ -1881,7 +1881,20 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     }
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        self.inner.insert(owned_key::<A>(key), value);
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(mut e) => {
+                e.insert(value);
+            }
+            RawEntryMut::Vacant(e) => {
+                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
+            }
+        }
         Ok(())
     }
 
@@ -1985,7 +1998,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// just `put` without the `Result`.
     #[inline]
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        self.inner.insert(owned_key::<A>(key), value);
+        let _ = self.put(key, value);
     }
 
     /// Asserts the key was not already present.
@@ -2021,22 +2034,29 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
 impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
-    /// PERF: the previous shape (`contains_key` + `entry(Box::from(key))`)
-    /// hashed `key` twice and unconditionally heap-allocated the `Box` even on
-    /// hit. `Scope::members` calls this once per declared identifier during
-    /// parse, so on three.js that was ~thousands of redundant `Box`
-    /// allocations + double-hashes per file. Route through a single `entry()`
-    /// match; the `Box` is still allocated upfront (std `HashMap::entry`
-    /// requires the owned key) but on hit it is dropped without a second
-    /// probe. Full prehash reuse needs a `raw_entry`-style API; see
-    /// [`get_hashed`] / [`put_static_key_hashed`] for the existing single-hash
-    /// entry points.
+    /// Single hash + single probe via `raw_entry_mut`; the key `Box` is only
+    /// allocated on miss. Callers whose key bytes already outlive the map
+    /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
+    /// box.
     pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
         Ok(self.get_or_put_context_adapted(key, ()))
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
-        Ok(self.inner.entry(owned_key::<A>(key)).or_insert(value))
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(e) => e.into_mut(),
+                RawEntryMut::Vacant(e) => {
+                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
+                }
+            },
+        )
     }
 
     /// See `get_adapted` for
@@ -2046,15 +2066,22 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
         key: &[u8],
         _adapter: C,
     ) -> StringHashMapGetOrPut<'_, V> {
-        use hashbrown::hash_map::Entry as HbEntry;
-        match self.inner.entry(owned_key::<A>(key)) {
-            HbEntry::Occupied(o) => StringHashMapGetOrPut {
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(o) => StringHashMapGetOrPut {
                 found_existing: true,
                 value_ptr: o.into_mut(),
             },
-            HbEntry::Vacant(v) => StringHashMapGetOrPut {
+            RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
                 found_existing: false,
-                value_ptr: v.insert(V::default()),
+                value_ptr: v
+                    .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
+                    .1,
             },
         }
     }
@@ -2351,5 +2378,72 @@ mod index_tests {
             assert_eq!(m.get(k.as_bytes()), Some(&i));
         }
         assert_eq!(m.get(b"missing"), None);
+    }
+
+    use core::alloc::Layout;
+    use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTING_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Copy, Default)]
+    struct CountingAlloc;
+
+    // SAFETY: thin forwarder to `std::alloc::Global`.
+    unsafe impl core::alloc::Allocator for CountingAlloc {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
+            COUNTING_ALLOCS.fetch_add(1, Ordering::Relaxed);
+            std::alloc::Global.allocate(layout)
+        }
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
+            unsafe { std::alloc::Global.deallocate(ptr, layout) }
+        }
+    }
+
+    // SAFETY: delegates to the `core::alloc::Allocator` impl above.
+    unsafe impl allocator_api2::alloc::Allocator for CountingAlloc {
+        fn allocate(
+            &self,
+            layout: Layout,
+        ) -> Result<NonNull<[u8]>, allocator_api2::alloc::AllocError> {
+            core::alloc::Allocator::allocate(self, layout)
+                .map_err(|_| allocator_api2::alloc::AllocError)
+        }
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
+            unsafe { core::alloc::Allocator::deallocate(self, ptr, layout) }
+        }
+    }
+
+    #[test]
+    fn string_hash_map_no_alloc_on_hit() {
+        let mut m: StringHashMap<u32, CountingAlloc> = StringHashMap::new();
+        // Pre-size so the table itself does not reallocate during the test.
+        m.ensure_total_capacity(4).unwrap();
+        let base = COUNTING_ALLOCS.load(Ordering::Relaxed);
+
+        m.put(b"aa", 1).unwrap();
+        m.put(b"bb", 2).unwrap();
+        let after_miss = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after_miss - base, 2, "one key Box per distinct key on miss");
+
+        // Hits via every safe owning entry point must not box the key again.
+        m.put(b"aa", 10).unwrap();
+        m.put_assume_capacity(b"bb", 20);
+        assert!(m.get_or_put(b"aa").unwrap().found_existing);
+        assert_eq!(*m.get_or_put_value(b"bb", 0).unwrap(), 20);
+        let after_hit = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after_hit, after_miss, "hits must not allocate a key Box");
+
+        // A fresh key via get_or_put boxes exactly once.
+        let g = m.get_or_put(b"cc").unwrap();
+        assert!(!g.found_existing);
+        *g.value_ptr = 30;
+        assert_eq!(COUNTING_ALLOCS.load(Ordering::Relaxed), after_hit + 1);
+
+        assert_eq!(*m.get(b"aa".as_slice()).unwrap(), 10);
+        assert_eq!(*m.get(b"bb".as_slice()).unwrap(), 20);
+        assert_eq!(*m.get(b"cc".as_slice()).unwrap(), 30);
     }
 }

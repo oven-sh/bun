@@ -1204,19 +1204,6 @@ impl CommandLineReporter {
                 }
             }
 
-            for attempt in sequence.flaky_attempts() {
-                junit
-                    .write_test_case(
-                        attempt.result,
-                        filename,
-                        display_label,
-                        &concatenated_describe_scopes,
-                        0,
-                        attempt.elapsed_ns,
-                        line_number,
-                    )
-                    .expect("oom");
-            }
             junit
                 .write_test_case(
                     status,

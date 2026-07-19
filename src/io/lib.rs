@@ -39,7 +39,7 @@ pub mod windows_event_loop;
 // `#[cfg(unix)]`-gated so the module still compiles on Windows.
 mod keep_alive;
 pub mod posix_event_loop;
-pub use keep_alive::KeepAlive;
+pub use keep_alive::{KeepAlive, UserKeepAlive};
 
 // ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
 // Windows handles orphan death via Job Objects in `spawn`. Downstream code

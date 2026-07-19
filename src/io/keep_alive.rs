@@ -164,3 +164,46 @@ impl KeepAlive {
         self.unref_concurrently(loop_);
     }
 }
+
+/// Gate for a keep-alive that is both automatically managed ("a write is in
+/// flight") and exposed to JS as `.ref()`/`.unref()`.
+///
+/// `allowed` is what the user asked for (starts `true`; `.unref()` clears it,
+/// `.ref()` restores it). `wanted` is what the automatic management asks for
+/// right now. The owner holds the actual handle (a `FilePoll` or libuv handle)
+/// and applies [`is_active`](Self::is_active) to it after each set call, so
+/// `.unref()` survives the automatic path re-asserting `wanted` and `.ref()`
+/// restores it without pinning an idle handle.
+#[derive(Default)]
+pub struct UserKeepAlive {
+    allowed: bool,
+    wanted: bool,
+}
+
+impl UserKeepAlive {
+    pub fn init() -> Self {
+        Self {
+            allowed: true,
+            wanted: false,
+        }
+    }
+
+    /// JS-facing `.ref()`/`.unref()` (the 0↔1 crossing). Returns
+    /// [`is_active`](Self::is_active) for the owner to apply.
+    pub fn set_allowed(&mut self, value: bool) -> bool {
+        self.allowed = value;
+        self.is_active()
+    }
+
+    /// Automatic management path. Returns [`is_active`](Self::is_active) for
+    /// the owner to apply.
+    pub fn set_wanted(&mut self, value: bool) -> bool {
+        self.wanted = value;
+        self.is_active()
+    }
+
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.allowed && self.wanted
+    }
+}

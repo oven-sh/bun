@@ -42,13 +42,13 @@ declare module "bun" {
     }): void;
 
     /**
-     * For FIFOs & pipes, keep Bun's process alive until the pipe closes.
+     * For FIFOs & pipes, restore the automatic keep-alive management that
+     * {@link unref} turned off.
      *
-     * By default, this is managed automatically: while the stream is open the
-     * process stays alive, and once the other end hangs up or the stream
-     * closes, the process exits.
-     *
-     * If you previously called {@link unref}, call this to re-enable automatic management.
+     * By default keep-alive is managed automatically: Bun's process stays alive
+     * while a write to the pipe is still in flight, and stops holding the event
+     * loop open once that write drains. This does not pin an idle stream —
+     * calling it is only useful after {@link unref}.
      *
      * Internally, calls to {@link ref} and {@link unref} are reference counted. The count starts at 1.
      *
@@ -58,7 +58,11 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * For FIFOs & pipes, allow Bun's process to exit while the stream is open.
+     * For FIFOs & pipes, allow Bun's process to exit while the stream is open,
+     * even if a write to it has not drained yet.
+     *
+     * This survives later writes: automatic keep-alive management stays off
+     * until {@link ref} is called.
      *
      * If the file is not a FIFO or pipe, {@link ref} and {@link unref} do
      * nothing. If the pipe is already closed, this does nothing.

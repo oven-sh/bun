@@ -192,7 +192,7 @@ To flush the buffer and close the file:
 writer.end();
 ```
 
-By default, the `bun` process stays alive until this `FileSink` is explicitly closed with `.end()`. To opt out of this behavior, "unref" the instance.
+When the destination is a FIFO or pipe, the `bun` process stays alive while a write to it is still in flight, so buffered data isn't silently dropped on exit. To opt out of that, "unref" the instance — the process is then free to exit with the write unfinished.
 
 ```ts
 writer.unref();
@@ -200,6 +200,8 @@ writer.unref();
 // to "re-ref" it later
 writer.ref();
 ```
+
+For regular files, `.ref()` and `.unref()` do nothing: those writes never hold the event loop open. A `FileSink` on its own does not keep `bun` running indefinitely; if you need the process to stay alive while you wait for something to write, keep that source of work (a server, a socket, a timer) referenced.
 
 ---
 

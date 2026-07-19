@@ -716,10 +716,26 @@ impl IOWriter {
         // holding a stale `&mut`.
         let amt = match result {
             bun_io::WriteResult::Done(amt) | bun_io::WriteResult::Wrote(amt) => amt,
-            bun_io::WriteResult::Pending(_) => {
-                unreachable!(
-                    "drainBufferedData returning .pending in IOWriter.doFileWrite should not happen"
-                );
+            bun_io::WriteResult::Pending(amt) => {
+                // EAGAIN from a target that was classified non-pollable (a
+                // FIFO or chardev opened by path with O_NONBLOCK). Record the
+                // partial write and restart this writer on the pollable path.
+                let s = self.state();
+                let lo = s.total_bytes_written;
+                s.writers[idx].tee(&s.buf[lo..lo + amt]);
+                s.total_bytes_written += amt;
+                s.writers[idx].written += amt;
+                s.flags.pollable = true;
+                s.flags.nonblock = true;
+                s.started = false;
+                return match self.write() {
+                    WriteOutcome::Suspended => Yield::suspended(),
+                    WriteOutcome::IsActuallyFile => self.on_sync_error(
+                        child,
+                        &sys::Error::from_code(E::EAGAIN, sys::Tag::write),
+                    ),
+                    WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
+                };
             }
             // The caller is inside the enqueuing child's trampoline, so the
             // error completion is returned, not `Yield::run` from here.

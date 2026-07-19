@@ -306,7 +306,7 @@ test("framing field in trailers is rejected before a pipelined follow-up is serv
   socket.on("close", () => resolve(wire));
   const response = await promise;
   expect(response).toContain("x-cerr: HPE_INVALID_CONTENT_LENGTH");
-  expect(response).not.toContain("content-length\":\"5\"");
+  expect(response).not.toContain('content-length":"5"');
   expect(response).not.toContain("u=/after");
   expect(paths).toEqual(["/a"]);
 });

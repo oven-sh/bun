@@ -1278,10 +1278,13 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   });
 
   // An inline terminal must not keep the event loop alive after its subprocess
-  // exits: on_process_exit drives the reader to EOF and unrefs both polls, so a
-  // script that never calls terminal.close() still exits. Regression for #33882
-  // which deferred the reader's EOF to a later poll tick. POSIX-only: Windows
-  // delivers EOF via close_pseudoconsole off-thread and was not affected.
+  // exits: on_process_exit drives the reader to EOF and unrefs both polls on
+  // POSIX (drain_and_close_slave_fd) and unrefs them on Windows
+  // (unref_after_inline_child_exit), so a script that never calls
+  // terminal.close() still exits. Regression for #33882 which deferred the
+  // reader's EOF to a later poll tick. POSIX-only assertions: on Windows EOF
+  // arrives asynchronously once conhost self-exits, so the exit callback may
+  // not have fired by the time child.exited resolves.
   test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1353,9 +1356,35 @@ describe.concurrent("Bun.spawn with terminal option", () => {
       // The exit callback fires on reader EOF: on Windows that is conhost closing
       // the output pipe from its IoThread; on POSIX it is drain_and_close_slave_fd.
       expect(outputAtExit).toContain("LAST-FRAME");
+      // After EOF conhost has exited; resize() must keep its no-throw contract
+      // (ResizePseudoConsole would fail on the broken signal pipe).
+      expect(() => proc.terminal!.resize(100, 40)).not.toThrow();
     } finally {
       proc.terminal?.close();
     }
+  });
+
+  // Cross-platform loop-exit check: after an inline terminal's child exits,
+  // nothing else in the inner script refs the event loop. POSIX drains to EOF
+  // synchronously; Windows unrefs the reader and conhost self-exits. Either way
+  // the inner process must not hang.
+  test("process exits after inline-terminal child exits without terminal.close()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await Bun.spawn([process.execPath, "-e", "process.stdout.write('ok')"], {
+           env: process.env,
+           terminal: { data() {}, exit() {} },
+         }).exited;`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   // https://github.com/oven-sh/bun/issues/33187

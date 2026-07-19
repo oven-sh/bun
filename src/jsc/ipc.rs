@@ -51,37 +51,81 @@ use bun_uws;
 /// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
 /// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
 /// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
+///
+/// The `worker`/`cb`/`callbacks`/`messages` fields back the child-side
+/// process singleton only. The primary side stores the same state in the
+/// `Subprocess` wrapper's WriteBarrier slots so a worker's object graph is not
+/// pinned by a GC root (see `node_cluster_binding`).
 pub struct InternalMsgHolder {
     pub seq: i32,
 
-    // TODO: move this to an Array or a JS Object or something which doesn't
-    // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, crate::StrongOptional>,
+    /// JS null-prototype object keyed by stringified seq. One root regardless
+    /// of how many acks are in flight. Lazily created.
+    pub callbacks: crate::StrongOptional,
     pub worker: crate::StrongOptional,
     pub cb: crate::StrongOptional,
-    pub messages: Vec<crate::StrongOptional>,
+    /// JS Array of messages that arrived before the listener was installed.
+    /// Lazily created.
+    pub messages: crate::StrongOptional,
 }
 
 impl Default for InternalMsgHolder {
     fn default() -> Self {
         Self {
             seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
+            callbacks: crate::StrongOptional::empty(),
             worker: crate::StrongOptional::empty(),
             cb: crate::StrongOptional::empty(),
-            messages: Vec::new(),
+            messages: crate::StrongOptional::empty(),
         }
     }
 }
 
 impl InternalMsgHolder {
+    /// Prefixed so the key is never an array index; `putDirect` asserts on
+    /// numeric-string property names.
+    #[inline]
+    fn seq_key(buf: &mut [u8; 13], seq: i32) -> &[u8] {
+        bun_core::fmt::buf_print_infallible(buf, format_args!("s{seq}"))
+    }
+
+    /// Store `callback` under `seq` on the given JS callbacks object.
+    pub fn put_callback(&self, map: JSValue, global: &JSGlobalObject, seq: i32, callback: JSValue) {
+        let mut buf = [0u8; 13];
+        map.put(global, Self::seq_key(&mut buf, seq), callback);
+    }
+
+    /// Remove and return the callback stored under `seq` on the given JS
+    /// callbacks object, or `None` when absent.
+    pub fn take_callback(
+        &self,
+        map: JSValue,
+        global: &JSGlobalObject,
+        seq: i32,
+    ) -> JsResult<Option<JSValue>> {
+        let mut buf = [0u8; 13];
+        let key = Self::seq_key(&mut buf, seq);
+        let Some(cb) = map.get(global, key)? else {
+            return Ok(None);
+        };
+        map.delete_property(global, key);
+        Ok(Some(cb))
+    }
+
     pub fn is_ready(&self) -> bool {
         self.worker.has() && self.cb.has()
     }
 
-    pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
-        self.messages
-            .push(crate::StrongOptional::create(message, global));
+    pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let arr = match self.messages.get() {
+            Some(a) => a,
+            None => {
+                let a = JSValue::create_empty_array(global, 0)?;
+                self.messages.set(global, a);
+                a
+            }
+        };
+        arr.push(global, message)
     }
 
     pub fn dispatch(
@@ -93,8 +137,7 @@ impl InternalMsgHolder {
         if !self.is_ready() {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
-            self.enqueue(message, global);
-            return Ok(());
+            return self.enqueue(message, global);
         }
         self.dispatch_unsafe(message, handle, global)
     }
@@ -113,20 +156,11 @@ impl InternalMsgHolder {
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
                 let ack = p.to_int32();
-                // Note: peek the JSValue first (ending the immutable borrow),
-                // then swap_remove (which drops the Strong).
-                let entry = self.callbacks.get(&ack).map(|s| s.get());
-                if let Some(callback_opt) = entry {
-                    if let Some(callback) = callback_opt {
-                        self.callbacks.swap_remove(&ack);
-                        event_loop.run_callback(
-                            callback,
-                            global,
-                            self.worker.get().unwrap(),
-                            &[message, handle],
-                        );
+                if let Some(map) = self.callbacks.get() {
+                    if let Some(callback) = self.take_callback(map, global, ack)? {
+                        event_loop.run_callback(callback, global, worker, &[message, handle]);
+                        return Ok(());
                     }
-                    return Ok(());
                 }
             }
         }
@@ -136,28 +170,28 @@ impl InternalMsgHolder {
 
     pub fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
+        let Some(messages) = self.messages.try_swap() else {
+            return Ok(());
+        };
+        let _keep = crate::EnsureStillAlive(messages);
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
+        // listener which can re-enter via a fresh `&mut Self` and write
+        // `self.cb` / `self.worker` / `self.callbacks`. Launder so each
+        // iteration re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
-        for strong in messages {
-            if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
+        let len = messages.get_length(global)? as u32;
+        for i in 0..len {
+            let message = messages.get_index(global, i)?;
+            if message.is_undefined_or_null() {
+                continue;
             }
-            // strong drops here (== `strong.deinit()`)
+            // SAFETY: `this` is still live across re-entry — the IPC
+            // dispatcher is owned by the Subprocess/Worker which outlives
+            // this `flush` frame; `&mut *this` is the unique mutable view
+            // for this call.
+            unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
         }
-        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
         Ok(())
     }
 
@@ -903,6 +937,12 @@ impl SendQueue {
         // `owner` is set in `init()` / by the embedder before first use and
         // never null afterward.
         unsafe { &*self.owner }
+    }
+
+    /// The owning Subprocess's JS wrapper, or `ZERO` for the VM-side owner.
+    #[inline]
+    pub fn owner_this_jsvalue(&self) -> JSValue {
+        self.owner_ref().this_jsvalue()
     }
 
     pub fn init(mode: Mode, owner: *mut dyn SendQueueOwner, socket: SocketUnion) -> Self {

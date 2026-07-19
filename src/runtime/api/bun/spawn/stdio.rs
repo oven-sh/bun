@@ -568,7 +568,12 @@ impl Stdio {
 
             // Copy into native memory so the async pipe writer owns the bytes
             // outright (no GC root required while draining stdin).
-            *out_stdio = Stdio::OwnedBuffer(bytes.to_vec());
+            let mut owned = Vec::new();
+            if owned.try_reserve_exact(bytes.len()).is_err() {
+                return Err(global.throw_out_of_memory());
+            }
+            owned.extend_from_slice(bytes);
+            *out_stdio = Stdio::OwnedBuffer(owned);
             return Ok(());
         }
 

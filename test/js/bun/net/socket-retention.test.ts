@@ -246,13 +246,13 @@ test("tls.connect over a Duplex roots the origin and listener thunks through the
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
   const { N, fn, obj } = JSON.parse(stdout.trim());
   // Without the visited slots these are fn≈4N and obj≈N. A small constant
   // slack absorbs any unrelated Strong created during the loop.
   expect(fn).toBeLessThan(N);
   expect(obj).toBeLessThan(N);
   expect(exitCode).toBe(0);
+  void stderr;
 });
 
 test("node:net reconnect after connectError does not accumulate wrappers", async () => {

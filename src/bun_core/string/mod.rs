@@ -1193,13 +1193,12 @@ impl From<&str> for String {
         Self::from(ZigString::from_bytes(s.as_bytes()))
     }
 }
-impl From<&[u16]> for String {
-    /// `&[u16]` arm — `ZigString::from16_slice` (sets UTF-16 + global bits).
-    #[inline]
-    fn from(s: &[u16]) -> Self {
-        Self::from(ZigString::from16_slice(s))
-    }
-}
+// There is deliberately no `From<&[u16]> for String` arm: the Zig dispatch
+// routed `[]const u16` through `ZigString.from16Slice`, which claims the
+// buffer is owned by the default (global) allocator — a contract a safe
+// `From` over a borrowed slice cannot uphold (oven-sh/bun#31968). Callers
+// choose explicitly: `ZigString::init_utf16` to borrow, or the unsafe
+// `ZigString::from16_slice` to transfer ownership.
 /// `WTFStringImpl` arm of `bun.String.init` — wrap an existing
 /// `*WTFStringImplStruct` without touching its refcount.
 impl From<WTFStringImpl> for String {
@@ -1494,16 +1493,55 @@ impl ZigString {
 
     /// `ZigString.from16Slice` — wraps a globally-allocated UTF-16 buffer
     /// (sets both the 16-bit and global ptr-tags).
+    ///
+    /// # Safety
+    /// `slice` must describe a live allocation from the default (global)
+    /// allocator, and the global tag transfers ownership of it: whoever
+    /// consumes the tag (`Zig::toString*` adoption on the C++ side, or
+    /// [`deinit_global`](Self::deinit_global)) frees the buffer via the
+    /// default allocator. The caller must neither free the buffer itself nor
+    /// use it after hand-off.
+    ///
+    /// Regression guard for oven-sh/bun#31968 — this used to compile as safe
+    /// Rust and marked a `Vec`-owned buffer as globally owned:
+    /// ```compile_fail
+    /// use bun_core::ZigString;
+    /// let backing = vec![b'a' as u16];
+    /// let string = ZigString::from16_slice(&backing); // E0133: call to unsafe function
+    /// ```
     #[inline]
-    pub fn from16_slice(slice: &[u16]) -> Self {
-        Self::from16(slice.as_ptr(), slice.len())
+    pub unsafe fn from16_slice(slice: &[u16]) -> Self {
+        // SAFETY: forwarded contract — caller guarantees `slice` is a live
+        // default-allocator allocation whose ownership transfers.
+        unsafe { Self::from16(slice.as_ptr(), slice.len()) }
     }
 
     /// `ZigString.from16` — globally-allocated memory only.
-    /// Marks UTF-16 + global; caller must ensure the buffer was allocated by
-    /// `bun.default_allocator` (mimalloc) since `deinitGlobal` will free it.
+    /// Marks UTF-16 + global.
+    ///
+    /// # Safety
+    /// `ptr` must point to `len` UTF-16 code units in a live allocation from
+    /// the default (global) allocator, and the global tag transfers ownership
+    /// of it: whoever consumes the tag (`Zig::toString*` adoption on the C++
+    /// side, or [`deinit_global`](Self::deinit_global)) frees the buffer via
+    /// the default allocator. The caller must neither free the buffer itself
+    /// nor use it after hand-off.
     #[inline]
-    pub fn from16(ptr: *const u16, len: usize) -> Self {
+    pub unsafe fn from16(ptr: *const u16, len: usize) -> Self {
+        // `ZigString.assertGlobal` — debug probe that the buffer really came
+        // from mimalloc (skipped under ASAN, where the default allocator is
+        // libc's).
+        if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && len != 0 {
+            // SAFETY: both probes accept arbitrary pointer values.
+            let owned = unsafe {
+                bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast())
+                    || bun_alloc::mimalloc::mi_check_owned(ptr.cast())
+            };
+            assert!(
+                owned,
+                "ZigString::from16: buffer was not allocated by the default allocator"
+            );
+        }
         let mut z = Self::from_tagged_ptr(ptr.cast(), len);
         z.mark_utf16();
         z.mark_global();
@@ -1734,12 +1772,32 @@ impl ZigString {
         }
     }
 
+    /// `ZigString.deinitGlobal` — free the backing buffer via the default
+    /// (global) allocator.
+    ///
+    /// # Safety
+    /// The backing buffer must be a live allocation from the default (global)
+    /// allocator (e.g. produced by [`from16`](Self::from16) with its contract
+    /// upheld) and must not be used again afterwards. `ZigString` is `Copy`,
+    /// so every copy of `self` dangles after this call.
+    ///
+    /// ```compile_fail
+    /// use bun_core::ZigString;
+    /// let string = ZigString::EMPTY;
+    /// string.deinit_global(); // E0133: call to unsafe function
+    /// ```
     #[inline]
-    pub fn deinit_global(&self) {
-        // SAFETY: caller guarantees `slice()` was allocated by the default (global) allocator.
+    pub unsafe fn deinit_global(&self) {
+        // Free the stored (untagged) pointer directly: `slice()` debug-asserts
+        // on UTF-16 strings and substitutes a static empty slice for len == 0,
+        // and globally-tagged strings are usually UTF-16.
+        // SAFETY: caller guarantees the buffer is a live default-allocator
+        // allocation.
         unsafe {
             bun_alloc::default_alloc::free(
-                self.slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
+                Self::untagged(self.tagged_ptr())
+                    .cast_mut()
+                    .cast::<core::ffi::c_void>(),
             )
         };
     }

@@ -422,7 +422,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring;
+                let outstring;
                 if let Some(utf16) = utf16_bytes {
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
@@ -431,8 +431,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // be a UAF + double-free, so `utf16` must never be freed
                     // locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    outstring = ZigString::from16_slice(&utf16);
-                    outstring.mark_global();
+                    // SAFETY: the buffer is a live default-allocator
+                    // allocation from `to_utf16_alloc`, and `ManuallyDrop`
+                    // keeps this function from freeing it — C++ is the sole
+                    // owner after `did_receive_text` returns.
+                    outstring = unsafe { ZigString::from16_slice(&utf16) };
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {

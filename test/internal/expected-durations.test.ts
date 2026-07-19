@@ -43,17 +43,22 @@ describe("test/expected-durations.json", () => {
   });
 
   test("every entry is {lane: non-negative ms}", () => {
-    const lanes = Object.keys(table._meta.lanes);
-    for (const [, entry] of entries) {
-      expect(typeof entry).toBe("object");
+    const lanes = new Set(Object.keys(table._meta.lanes));
+    const bad: string[] = [];
+    for (const [key, entry] of entries) {
+      if (entry === null || typeof entry !== "object") {
+        bad.push(`${key}: not an object`);
+        continue;
+      }
       const entryLanes = Object.keys(entry);
-      expect(entryLanes.length).toBeGreaterThan(0);
+      if (entryLanes.length === 0) bad.push(`${key}: no lanes`);
       for (const lane of entryLanes) {
-        expect(lanes).toContain(lane);
-        expect(entry[lane]).toBeNumber();
-        expect(entry[lane]).toBeGreaterThanOrEqual(0);
+        if (!lanes.has(lane)) bad.push(`${key}.${lane}: undeclared lane`);
+        const ms = entry[lane];
+        if (typeof ms !== "number" || !(ms >= 0)) bad.push(`${key}.${lane}: ${ms}`);
       }
     }
+    expect(bad).toEqual([]);
     // Loose lower bound: the runner currently shards ~5k files.
     expect(entries.length).toBeGreaterThan(3000);
   });

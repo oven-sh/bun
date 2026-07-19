@@ -298,6 +298,7 @@ class InspectorCDPAdapter {
               doNotPauseOnExceptionsAndMuteConsole: params.silent,
               returnByValue: params.returnByValue,
               generatePreview: params.generatePreview,
+              emulateUserGesture: params.userGesture,
               awaitPromise: params.awaitPromise,
             },
             id,

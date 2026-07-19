@@ -441,6 +441,13 @@ private:
 
 const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
 
+JSObject* createEmptyProcessEnvMap(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    return JSProcessEnvMap::create(vm, structure);
+}
+
 // ============================================================================
 // worker_threads SHARE_ENV
 //

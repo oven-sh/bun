@@ -196,6 +196,7 @@ pub enum Tag {
     ValkeyConnectionTimeout,
     ValkeyConnectionReconnect,
     SubprocessTimeout,
+    TerminalPendingClose,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,

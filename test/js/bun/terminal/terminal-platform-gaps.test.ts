@@ -29,18 +29,10 @@ async function runInTerminal(
   const readyMarker = opts.readyMarker ?? "READY";
   const decoder = new TextDecoder();
 
-  // Keep the child alive until we've seen `done()` (we kill it below). On
-  // Windows Server 2019's ConPTY, a child that writes and immediately exits
-  // races conhost's render thread: ClosePseudoConsole (fired on subprocess
-  // exit) can tear conhost down before it emits the child's last write, so
-  // the data callback never sees it. With the child held open conhost renders
-  // on its next tick and the output arrives deterministically.
-  const script = `setInterval(()=>{},1e9);${childScript}`;
-
   // Use an inline terminal so the child becomes the session leader on POSIX
   // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
   const proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [bunExe(), "-e", childScript],
     env: bunEnv,
     terminal: {
       cols: opts.cols ?? 80,

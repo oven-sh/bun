@@ -1061,6 +1061,16 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
                 .timeout_callback())
         }
+        #[cfg(windows)]
+        EventLoopTimerTag::TerminalPendingClose => {
+            timer_arm!(
+                crate::api::bun_terminal_body::Terminal,
+                event_loop_timer,
+                |c, _now, _vm| (*c).on_pending_close_timer()
+            )
+        }
+        #[cfg(not(windows))]
+        EventLoopTimerTag::TerminalPendingClose => unreachable!(),
         EventLoopTimerTag::DevServerSweepSourceMaps => {
             // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
             // the store inside.

@@ -172,11 +172,19 @@ pub struct Terminal {
     /// going raw never makes another terminal's setRawMode a no-op.
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
+
+    /// Windows: data-quiescence timer for the inline-terminal child-exit path;
+    /// see `close_pseudoconsole_after_quiescence`.
+    #[cfg(windows)]
+    pub(crate) event_loop_timer: JsCell<crate::timer::EventLoopTimer>,
 }
+
+#[cfg(windows)]
+bun_event_loop::impl_timer_owner!(Terminal; from_timer_ptr => event_loop_timer);
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
@@ -188,6 +196,10 @@ bitflags::bitflags! {
         /// reuse. Windows: first exit's ClosePseudoConsole would kill a second
         /// child. POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
+        /// Windows: the inline-spawned child has exited and `event_loop_timer`
+        /// is counting down to `close_pseudoconsole`; `on_read_chunk` re-arms
+        /// it on every chunk so the close lands after the pipe goes quiet.
+        const PENDING_CLOSE  = 1 << 8;
     }
 }
 
@@ -472,6 +484,10 @@ impl Terminal {
             writer_has_buffered: Cell::new(false),
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
+            #[cfg(windows)]
+            event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
+                crate::timer::EventLoopTimerTag::TerminalPendingClose,
+            )),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
@@ -744,6 +760,70 @@ impl Terminal {
         if let Some(hpcon) = self.hpcon.take() {
             self.close_pseudoconsole_off_thread(hpcon);
         }
+    }
+
+    /// Windows inline-terminal child-exit path. Conhost renders the client's
+    /// output on its own thread and only then writes the VT diff to our pipe,
+    /// so calling `ClosePseudoConsole` immediately after the child exits can
+    /// tear conhost down before that render runs on older Windows and the last
+    /// write never reaches `on_read_chunk` (microsoft/terminal#1810). Follow
+    /// node-pty's `FLUSH_DATA_INTERVAL`: arm a quiescence timer, re-arm it on
+    /// every received chunk, and close the pseudoconsole once the output pipe
+    /// has been silent for `PENDING_CLOSE_QUIESCENCE_MS`.
+    #[cfg(windows)]
+    pub(crate) fn close_pseudoconsole_after_quiescence(&self) {
+        let flags = self.flags.get();
+        if flags.intersects(Flags::CLOSED | Flags::READER_DONE | Flags::PENDING_CLOSE)
+            || self.hpcon.get().is_none()
+        {
+            self.close_pseudoconsole();
+            return;
+        }
+        self.mark_inline_spawned();
+        self.update_flags(|f| f.insert(Flags::PENDING_CLOSE));
+        self.arm_pending_close_timer();
+    }
+
+    #[cfg(windows)]
+    fn arm_pending_close_timer(&self) {
+        use crate::timer::{ElTimespec, EventLoopTimerState};
+        let all = crate::jsc_hooks::timer_all_mut();
+        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            all.remove(self.event_loop_timer.as_ptr());
+        }
+        let next = bun_core::timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
+            PENDING_CLOSE_QUIESCENCE_MS,
+        );
+        self.event_loop_timer.with_mut(|t| {
+            t.next = ElTimespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
+        });
+        all.insert(self.event_loop_timer.as_ptr());
+    }
+
+    #[cfg(windows)]
+    fn cancel_pending_close_timer(&self) {
+        use crate::timer::EventLoopTimerState;
+        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all_mut().remove(self.event_loop_timer.as_ptr());
+        }
+        self.update_flags(|f| f.remove(Flags::PENDING_CLOSE));
+    }
+
+    /// Quiescence timer fired: no ConPTY output for `PENDING_CLOSE_QUIESCENCE_MS`
+    /// after the inline child exited, so conhost has nothing left to render.
+    #[cfg(windows)]
+    pub(crate) fn on_pending_close_timer(&self) {
+        self.event_loop_timer
+            .with_mut(|t| t.state = crate::timer::EventLoopTimerState::FIRED);
+        if !self.flags.get().contains(Flags::PENDING_CLOSE) {
+            return;
+        }
+        self.update_flags(|f| f.remove(Flags::PENDING_CLOSE));
+        self.close_pseudoconsole();
     }
 
     /// On Windows < 11 24H2, ClosePseudoConsole blocks until the output pipe is
@@ -1150,6 +1230,12 @@ fn create_overlapped_pipe_pair(
 
 #[cfg(windows)]
 static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
+
+/// How long the ConPTY output pipe must be silent after the inline child
+/// exited before we call `ClosePseudoConsole`. Matches node-pty's
+/// `FLUSH_DATA_INTERVAL` (microsoft/node-pty windowsPtyAgent.ts).
+#[cfg(windows)]
+const PENDING_CLOSE_QUIESCENCE_MS: i64 = 1000;
 
 #[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
@@ -1673,6 +1759,9 @@ impl Terminal {
         }
         self.update_flags(|f| f.insert(Flags::CLOSED));
 
+        #[cfg(windows)]
+        self.cancel_pending_close_timer();
+
         // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback
         // touches only `flags`/`ref_count` (separate `Cell`s), never `writer`.
@@ -1787,6 +1876,8 @@ impl Terminal {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;
         }
+        #[cfg(windows)]
+        self.cancel_pending_close_timer();
         self.update_flags(|f| {
             f.insert(Flags::READER_DONE);
             f.remove(Flags::CONNECTED);
@@ -1840,6 +1931,11 @@ impl Terminal {
 
         if self.flags.get().contains(Flags::FINALIZED) {
             return true;
+        }
+
+        #[cfg(windows)]
+        if self.flags.get().contains(Flags::PENDING_CLOSE) {
+            self.arm_pending_close_timer();
         }
 
         // First data received - upgrade to strong ref (connected)

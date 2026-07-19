@@ -1,4 +1,4 @@
-use core::fmt::Arguments;
+use core::fmt::{Arguments, Write as _};
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -465,12 +465,62 @@ impl<'a> CssModuleReference<'a> {
     }
 }
 
-/// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
-/// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
-/// the *same* hasher without depending on `bun_css`. Re-export here so
-/// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path.
-#[inline]
+struct WyhashWriter<'a>(&'a mut bun_wyhash::Wyhash11);
+
+impl core::fmt::Write for WyhashWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.update(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// Formats the arguments into the legacy Wyhash11 algorithm and encodes its
+/// low 32 bits as unpadded base64url. This output is embedded in generated CSS
+/// names and dependency placeholders, so the algorithm and byte order are
+/// compatibility-sensitive.
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
-    bun_base64::wyhash_url_safe(bump, args, at_start)
+    let mut hasher = bun_wyhash::Wyhash11::init(0);
+    WyhashWriter(&mut hasher)
+        .write_fmt(args)
+        .expect("infallible: WyhashWriter::write_str always succeeds");
+
+    let hash_bytes = (hasher.final_() as u32).to_le_bytes();
+    let encoded_len = bun_base64::url_safe_encode_len(&hash_bytes);
+    let encoded_start = usize::from(at_start);
+    let output = bump.alloc_slice_fill_default(encoded_start + encoded_len);
+    let written = bun_base64::encode_url_safe(&mut output[encoded_start..], &hash_bytes);
+    debug_assert_eq!(written, encoded_len);
+
+    if at_start && output[encoded_start].is_ascii_digit() {
+        output[0] = b'_';
+        &output[..encoded_start + written]
+    } else {
+        &output[encoded_start..encoded_start + written]
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    #[test]
+    fn formatted_fragments_match_one_shot_hash() {
+        const INPUT: &[u8] = b"0123456789abcdefghijklmnopqrstu_more-than-one-wyhash-block";
+
+        let bump = Bump::new();
+        let actual = hash(
+            &bump,
+            format_args!(
+                "{}_{}",
+                bstr::BStr::new(b"0123456789abcdefghijklmnopqrstu"),
+                bstr::BStr::new(b"more-than-one-wyhash-block")
+            ),
+            false,
+        );
+
+        let hash_bytes = (bun_wyhash::Wyhash11::hash(0, INPUT) as u32).to_le_bytes();
+        let mut expected = [0; 6];
+        let written = bun_base64::encode_url_safe(&mut expected, &hash_bytes);
+        assert_eq!(actual, &expected[..written]);
+    }
 }

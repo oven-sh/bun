@@ -2436,7 +2436,7 @@ impl<'a> LinkerContext<'a> {
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
+                        let path_hash = ::bun_css::css_modules::hash(
                             &scratch,
                             // use path relative to cwd for determinism
                             format_args!("{}", bstr::BStr::new(&source.path.pretty)),

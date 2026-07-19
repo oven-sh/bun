@@ -24,8 +24,3 @@ thiserror.workspace = true
 
 bun_simdutf_sys.workspace = true
 bun_collections.workspace = true
-# `wyhash_url_safe` (CSS-modules / dependency placeholder hasher) — leaf crates,
-# no cycle.
-bun_wyhash.workspace = true
-bumpalo.workspace = true
-bun_alloc.workspace = true

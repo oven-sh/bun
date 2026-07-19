@@ -242,12 +242,9 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
- "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_simdutf_sys",
- "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",

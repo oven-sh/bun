@@ -2,10 +2,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
-// JS/TS/TOML parse diagnostics reported columns in Unicode codepoints while
-// runtime stack traces (JSC), CSS diagnostics, and the source-map spec all
-// count UTF-16 code units. An astral-plane character before the error shifted
-// the column by one per character relative to every other channel.
+// JS/TS/TOML parse diagnostics must count columns in UTF-16 code units, the
+// same convention as runtime stack traces (JSC), CSS diagnostics, and the
+// source-map spec.
 
 async function buildPosition(
   filename: string,
@@ -121,10 +120,9 @@ async function lineTextWindow(source: string): Promise<{ stdout: string; stderr:
 }
 
 test.concurrent("long non-ASCII line's lineText window covers the error token", async () => {
-  // 120 copies of U+00E9 (2 UTF-8 bytes, 1 UTF-16 unit each) then ` ]`: 242
-  // source bytes, `]` at byte 241 / column 122. The long-line window is sliced
-  // in bytes; indexing it by the column put the window at bytes 82..202 which
-  // dropped the error token entirely.
+  // 120 copies of U+00E9 (2 UTF-8 bytes, 1 UTF-16 unit each) then ` ]`:
+  // 242 source bytes, `]` at byte 241 / column 122. The window is a byte
+  // slice, so indexing it by column missed the token on non-ASCII lines.
   expect(await lineTextWindow(Buffer.alloc(240, "\u00E9").toString() + " ]")).toEqual({
     stdout: `{"column":122,"hasToken":true,"chars":[" ","]","\u00E9"]}`,
     stderr: "",
@@ -134,8 +132,7 @@ test.concurrent("long non-ASCII line's lineText window covers the error token", 
 
 test.concurrent("long non-ASCII line's lineText window does not split a UTF-8 sequence", async () => {
   // `]` at byte 160 of a 321-byte line: the window is applied, and its
-  // bounds are snapped to UTF-8 char boundaries. Indexing by column landed
-  // on a continuation byte and garbled the decoded text.
+  // bounds are snapped to UTF-8 char boundaries.
   const half = Buffer.alloc(160, "\u00E9").toString();
   expect(await lineTextWindow(half + "]" + half)).toEqual({
     stdout: `{"column":81,"hasToken":true,"chars":["]","\u00E9"]}`,

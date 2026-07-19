@@ -14,7 +14,7 @@ import path from "node:path";
 // and the "redundant-looking" include is an easy target for cleanup. Keep the
 // dependency explicit.
 test("SDK shims that use fixed-width integer types include <cstdint>", () => {
-  const bindingsDir = path.resolve(import.meta.dir, "..", "..", "src", "jsc", "bindings");
+  const bindingsDir = path.resolve(import.meta.dir, "..", "..", "..", "src", "jsc", "bindings");
   const shims = readdirSync(bindingsDir).filter(name => name.endsWith("_shim.cpp"));
   expect(shims.length).toBeGreaterThan(0);
 

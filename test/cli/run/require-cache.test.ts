@@ -124,28 +124,19 @@ describe.concurrent("require.cache", () => {
           function bust() {
             delete require.cache[path];
           }
-          // Floor over rounds spanning the 100ms sweep rate limit; one
-          // gc() + immediate read races mimalloc's idle sweep.
-          async function settledRss() {
-            let min = Infinity;
-            for (let i = 0; i < 5; i++) {
-              gc(true);
-              await Bun.sleep(50);
-              min = Math.min(min, process.memoryUsage.rss());
-            }
-            return min;
-          }
 
           for (let i = 0; i < 100; i++) {
             await import(path);
             bust();
           }
-          const baseline = await settledRss();
+          gc(true);
+          const baseline = process.memoryUsage.rss();
           for (let i = 0; i < 400; i++) {
             await import(path);
             bust(path);
           }
-          const rss = await settledRss();
+          gc(true);
+          const rss = process.memoryUsage.rss();
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
@@ -182,35 +173,29 @@ describe.concurrent("require.cache", () => {
           function bust() {
             delete require.cache[path];
           }
-          // Floor over rounds spanning the 100ms sweep rate limit; one
-          // gc() + immediate read races mimalloc's idle sweep.
-          async function settledRss() {
-            let min = Infinity;
-            for (let i = 0; i < 5; i++) {
-              gc(true);
-              await Bun.sleep(50);
-              min = Math.min(min, process.memoryUsage.rss());
-            }
-            return min;
-          }
 
-          for (let i = 0; i < 50; i++) {
+          // Same warmup and measured rounds: after #34009 mimalloc's working
+          // set for this loop settles after ~200-250 iterations, so a 50-iter
+          // warmup captures baseline below the plateau.
+          for (let i = 0; i < 250; i++) {
             await import(path);
             bust();
           }
-          const baseline = await settledRss();
+          gc(true);
+          const baseline = process.memoryUsage.rss();
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
-          const rss = await settledRss();
+          gc(true);
+          const rss = process.memoryUsage.rss();
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
           if (diff > ${isASAN ? 320 : 128} * 1024 * 1024) {
             // Bun v1.1.21 reported 423 MB here on macoS arm64.
-            // Bun v1.4.0 (#34009, JSC uses mimalloc) plateaus at ~65 MB on
-            // macOS 26 arm64 and stays flat for 1000+ further iterations.
+            // Bun v1.4.0 (#34009) plateaus ~200 MB with heapSize flat
+            // (allocator retention); leaking the source is ~290 MB/250 iters.
             throw new Error("Memory leak detected");
           }
 

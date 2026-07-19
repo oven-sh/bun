@@ -320,35 +320,24 @@ describe("Bun.build", () => {
   });
 
   test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
-    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot; once the
-    // owner is unreachable the sourcemap must be collectable in the same cycle.
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
+    // visitChildren); it must not also be held by a Strong root.
     using dir = tempDir("build-artifact-sourcemap-gc", {
       "index.js": "export const x = 1;\n",
       "run.js": `
-        const weak = { entry: null, map: null };
-        async function build() {
-          const result = await Bun.build({
-            entrypoints: ["./index.js"],
-            sourcemap: "external",
-            outdir: ".",
-          });
-          const entry = result.outputs[0];
-          const map = result.outputs[1];
-          if (entry.sourcemap !== map) throw new Error("expected entry.sourcemap === map");
-          if (!Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"))
-            throw new Error("Bun.inspect(entry) lost the sourcemap");
-          weak.entry = new WeakRef(entry);
-          weak.map = new WeakRef(map);
-        }
-        await build();
-        for (let i = 0; i < 20; i++) {
-          Bun.gc(true);
-          await new Promise(r => setImmediate(r));
-          const e = weak.entry.deref();
-          const m = weak.map.deref();
-          console.log("gc " + i + " entry=" + (e ? "alive" : "dead") + " map=" + (m ? "alive" : "dead"));
-          if (!e && !m) break;
-        }
+        const { heapStats } = require("bun:jsc");
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          sourcemap: "external",
+          outdir: ".",
+        });
+        const entry = result.outputs[0];
+        const map = result.outputs[1];
+        console.log(JSON.stringify({
+          sourcemapIsMap: entry.sourcemap === map,
+          inspectShowsSourcemap: Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"),
+          protectedBuildArtifact: heapStats().protectedObjectTypeCounts.BuildArtifact ?? 0,
+        }));
       `,
     });
     await using proc = Bun.spawn({
@@ -360,11 +349,11 @@ describe("Bun.build", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const lines = stdout.trim().split("\n");
-    expect(lines.length).toBeGreaterThan(0);
-    expect(lines.at(-1)).toContain("entry=dead map=dead");
-    // The sourcemap must not survive a GC that collects its owner.
-    expect(lines.filter(l => l.includes("entry=dead map=alive"))).toEqual([]);
+    expect(JSON.parse(stdout)).toEqual({
+      sourcemapIsMap: true,
+      inspectShowsSourcemap: true,
+      protectedBuildArtifact: 0,
+    });
     expect(exitCode).toBe(0);
   });
 

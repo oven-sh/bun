@@ -202,9 +202,12 @@ pub fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::int4 | types::Tag::int4_array => {
-                // coerce::<i32> saturates on overflow, which silently stores the
-                // wrong value. Range-check via i64 so an out-of-range value
-                // surfaces as an error instead.
+                // coerce::<i32> saturates on overflow (and maps NaN to 0), which
+                // silently stores the wrong value. Range-check via i64 so an
+                // out-of-range or non-finite value surfaces as an error instead.
+                if value.get_number().is_some_and(|n| n.is_nan()) {
+                    return Err(AnyPostgresError::Overflow);
+                }
                 let n = value.coerce::<i64>(global).map_err(js_error_to_postgres)?;
                 let n = i32::try_from(n).map_err(|_| AnyPostgresError::Overflow)?;
                 let l = writer.length()?;

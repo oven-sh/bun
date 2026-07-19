@@ -26,16 +26,19 @@ import {
 const INT4 = 23;
 
 // Read the first parameter value out of a Bind body as a 4-byte big-endian
-// i32, or null if the value length is not 4 (text format / NULL).
+// i32, or null if the body is short / the value length is not 4.
 function bindFirstInt4(body: Buffer): number | null {
+  if (body.length < 2) return null;
   let o = body.indexOf(0) + 1; // portal name
   o = body.indexOf(0, o) + 1; // statement name
+  if (o <= 0 || o + 2 > body.length) return null;
   const nFmt = body.readInt16BE(o);
   o += 2 + 2 * nFmt; // format codes
   o += 2; // nParams
+  if (o + 4 > body.length) return null;
   const len = body.readInt32BE(o);
   o += 4;
-  return len === 4 ? body.readInt32BE(o) : null;
+  return len === 4 && o + 4 <= body.length ? body.readInt32BE(o) : null;
 }
 
 // Capture the value Bun bound for $1 on the most recent Bind. `undefined` means
@@ -99,6 +102,7 @@ const overflowing = [
   { label: "Number.MAX_SAFE_INTEGER", value: Number.MAX_SAFE_INTEGER },
   { label: "Infinity", value: Infinity },
   { label: "-Infinity", value: -Infinity },
+  { label: "NaN", value: NaN },
 ];
 
 test.each(overflowing)("binding $label to an int4 parameter rejects instead of saturating", async ({ value }) => {
@@ -125,4 +129,38 @@ test("binding INT32_MAX / INT32_MIN to an int4 parameter still works", async () 
 test("binding 0 to an int4 parameter still works", async () => {
   await bind(0);
   expect(lastBoundInt4).toBe(0);
+});
+
+// write_bind streams into the connection's write_buffer directly; erroring out
+// mid-serialize used to leave a partial 'B…' frontend message in the buffer,
+// which the auto-flusher then shipped to the server ahead of the next query's
+// Parse on the same pooled connection.
+test("a follow-up query on the same connection still works after an int4 overflow rejection", async () => {
+  await using sql = new SQL({
+    adapter: "postgres",
+    hostname: "127.0.0.1",
+    port,
+    username: "u",
+    database: "db",
+    tls: false,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  let error: any;
+  try {
+    await sql`SELECT ${2 ** 32 + 1}::int4 AS n`.values();
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code ?? error?.message).toMatch(/ERR_POSTGRES_OVERFLOW|Overflow/);
+
+  // Any partial Bind bytes that were flushed would reach the server before the
+  // next Parse, and the mock handler would see a leading 0x42 'B' frame whose
+  // declared length (00 00 00 00) swallows nothing, so the follow-up Parse
+  // would never be answered and this await would reject or hang.
+  lastBoundInt4 = undefined;
+  await sql`SELECT ${7}::int4 AS n`.values();
+  expect(lastBoundInt4).toBe(7);
 });

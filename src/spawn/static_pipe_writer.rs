@@ -60,6 +60,29 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
 pub type IOWriter<P> = BufferedWriter<StaticPipeWriter<P>>;
 pub type Poll<P> = IOWriter<P>;
 
+/// Poll-dispatch entry for the `STATIC_PIPE_WRITER` tags. Holds an extra
+/// intrusive ref across `on_poll` so the drained/error callbacks (which may
+/// drop the last external owner and release `start()`'s +1) cannot free the
+/// allocation while `on_poll`'s borrow is still on the stack.
+///
+/// # Safety
+/// `writer` must be the live `*mut Poll<P>` stored as the FilePoll owner.
+#[cfg(not(windows))]
+pub unsafe fn on_poll<P: StaticPipeWriterProcess>(writer: *mut Poll<P>, size_hint: isize, hup: bool) {
+    use bun_io::pipe_writer::PosixPipeWriter;
+    // SAFETY: caller contract; `parent` is the backref set via `set_parent`.
+    let parent = unsafe { (*writer).parent }
+        .expect("StaticPipeWriter writer.parent unset")
+        .as_mut_ptr();
+    // SAFETY: intrusive refcount bump via raw pointer; `parent` is live.
+    unsafe { RefCount::<StaticPipeWriter<P>>::ref_(parent) };
+    // SAFETY: exclusive for this dispatch; the keepalive above keeps the
+    // allocation live past this call even if `on_poll` drops every other ref.
+    unsafe { (*writer).on_poll(size_hint, hup) };
+    // SAFETY: matches the `ref_` above; may free the allocation.
+    unsafe { RefCount::<StaticPipeWriter<P>>::deref(parent) };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedWriter parent vtable — wires bun_io callbacks to inherent methods
 // ──────────────────────────────────────────────────────────────────────────

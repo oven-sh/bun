@@ -701,12 +701,31 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         }
 
         poll_tag::FILE_SINK => poll_arm!(FileSinkPoll),
-        poll_tag::STATIC_PIPE_WRITER => poll_arm!(StaticPipeWriterPoll<Subprocess<'_>>),
+        poll_tag::STATIC_PIPE_WRITER => poll_arm!(StaticPipeWriterPoll<Subprocess<'_>>, |h| {
+            // SAFETY: tag matched; `h` is the live owner set at `FilePoll::init`.
+            unsafe { bun_spawn::static_pipe_writer::on_poll(h, size_or_offset as isize, hup) }
+        }),
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
-            poll_arm!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>)
+            poll_arm!(
+                StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>,
+                |h| {
+                    // SAFETY: tag matched; `h` is the live owner set at `FilePoll::init`.
+                    unsafe {
+                        bun_spawn::static_pipe_writer::on_poll(h, size_or_offset as isize, hup)
+                    }
+                }
+            )
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>)
+            poll_arm!(
+                StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>,
+                |h| {
+                    // SAFETY: tag matched; `h` is the live owner set at `FilePoll::init`.
+                    unsafe {
+                        bun_spawn::static_pipe_writer::on_poll(h, size_or_offset as isize, hup)
+                    }
+                }
+            )
         }
         // `bun.shell.Interpreter.IOWriter.Poll`
         poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {

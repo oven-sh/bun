@@ -571,6 +571,35 @@ test.concurrent.each([
   expect(second.exitCode).toBe(0);
 });
 
+test.concurrent(
+  "bun install terminates when a file: folder dependency declares a workspace:. self-reference",
+  async () => {
+    // https://github.com/oven-sh/bun/issues/25202
+    // Same hoist cycle as the migration cases above, reached without a foreign lockfile:
+    // `bun i ../dir1` resolves `foo: workspace:.` inside the folder package to the folder
+    // package itself, so the hoist builder re-enqueued its own subtree forever.
+    const testDir = tempDirWithFiles("install-folder-self-workspace", {
+      "dir1/package.json": JSON.stringify({ name: "test", version: "1.0.0", devDependencies: { foo: "workspace:." } }),
+      "dir2/package.json": JSON.stringify({ name: "consumer", dependencies: { test: "file:../dir1" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: join(testDir, "dir2"),
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 30_000,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Saved lockfile");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(join(testDir, "dir2", "bun.lock"))).toBeTrue();
+  },
+);
+
 test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency", async () => {
   // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
   // same way the npm one did. pnpm records them for any `packages:` entry whose manifest

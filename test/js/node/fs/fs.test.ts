@@ -4165,11 +4165,19 @@ describe("utimesSync", () => {
     const stats = fs.statSync(tmp);
     expect(stats.atime.getTime()).toBe(-1500);
     expect(stats.mtime.getTime()).toBe(-1500);
+
+    // rem_euclid rounds to exactly 1.0 here; must not produce tv_nsec == 1e9 (EINVAL)
+    fs.utimesSync(tmp, "-1e-17", "-1e-17");
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
   });
 
   it("treats negative number timestamps as the current time", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
+
+    // known-old precondition so the assertion below proves the call did something
+    fs.utimesSync(tmp, 0, 0);
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
 
     // fs timestamp granularity can be coarser than Date.now()
     const before = Date.now() - 1000;

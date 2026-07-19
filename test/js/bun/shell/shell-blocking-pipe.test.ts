@@ -68,12 +68,17 @@ test.skipIf(isWindows)("builtin redirect to a named pipe larger than the pipe bu
     reader.on("data", chunk => {
       received += chunk;
     });
-    reader.on("end", resolve);
+    reader.on("close", resolve);
     reader.on("error", reject);
   });
 
-  const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-  await drained;
+  // If the child exits non-zero before (or without) opening the fifo, tear
+  // down the reader so `drained` settles instead of waiting for EOF forever.
+  const exited = proc.exited.then(code => {
+    if (code !== 0) reader.destroy();
+    return code;
+  });
+  const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), exited, drained]);
 
   expect(stderr).toBe("");
   expect(stdout).toBe("");

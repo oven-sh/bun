@@ -300,7 +300,11 @@ pub(super) mod lib_info {
             // Registration failed: the machport callback will never fire.
             // Return the poll slot and complete the request with an error so
             // the promise rejects instead of hanging forever.
-            let _ = err;
+            bun_output::scoped_log!(
+                GetAddrInfoRequest,
+                "machport register_with_fd failed: {}",
+                err
+            );
             poll.deinit();
             // SAFETY: `request` is the live heap-allocated request; no other
             // owner exists (the poll was never registered).

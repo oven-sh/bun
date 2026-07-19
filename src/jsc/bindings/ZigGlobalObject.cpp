@@ -21,6 +21,11 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/HeapIterationScope.h"
+#include "JavaScriptCore/SubspaceInlines.h"
+#include "JavaScriptCore/MarkedBlockInlines.h"
+#include "JavaScriptCore/DateInstance.h"
+#include "JavaScriptCore/DateInstanceCache.h"
 #include "JavaScriptCore/DeferGCInlines.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/InitializeThreading.h"
@@ -3324,7 +3329,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        vm.dateCache.resetIfNecessarySlow();
+        Bun::resetDateCacheForTimeZoneChange(vm);
         return true;
     }
 
@@ -4177,6 +4182,26 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
+
+namespace Bun {
+
+void resetDateCacheForTimeZoneChange(JSC::VM& vm)
+{
+    vm.dateCache.resetIfNecessarySlow();
+    // DateInstance holds its own RefPtr<DateInstanceData>; the reset above does
+    // not reach it. Poison the local-time cache key so both the C++ and the
+    // DFG/FTL fast paths miss and recompute under the new zone.
+    JSC::HeapIterationScope iterationScope(vm.heap);
+    vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
+        auto* instance = static_cast<JSC::DateInstance*>(cell);
+        auto* dataSlot = std::bit_cast<RefPtr<JSC::DateInstanceData>*>(
+            std::bit_cast<char*>(instance) + JSC::DateInstance::offsetOfData());
+        if (JSC::DateInstanceData* data = dataSlot->get())
+            data->m_gregorianDateTimeCachedForMS = JSC::PNaN;
+    });
+}
+
+} // namespace Bun
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented, (JSGlobalObject * leixcalGlobalObject, CallFrame* callFrame))
 {

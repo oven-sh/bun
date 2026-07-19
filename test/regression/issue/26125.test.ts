@@ -50,14 +50,8 @@ describe("GitHub issue #26125: mTLS client certificate switching", () => {
         const cn = peerCert?.subject?.CN || "unknown";
         clientCNs.push(cn);
 
-        // Wait for the request before responding, like a real HTTP server.
-        // The client does not transmit the request until the custom
-        // checkServerIdentity callback approves the certificate, and rejects
-        // any data that arrives before then.
-        socket.once("data", () => {
-          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
-          socket.end();
-        });
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+        socket.end();
       },
     );
 

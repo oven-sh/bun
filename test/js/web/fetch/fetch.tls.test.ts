@@ -257,6 +257,172 @@ describe.concurrent("fetch-tls", () => {
     });
   }
 
+  // A TLS peer is free to transmit application data as soon as the handshake
+  // completes. fetch() holds back the request until the JS checkServerIdentity
+  // callback approves the certificate, so the server's response can arrive
+  // before the request is written. The socket is paused while parked so those
+  // early bytes are processed only after the callback approves, not rejected
+  // as UnexpectedData.
+  it("fetch with checkServerIdentity accepts a response that arrives before the request is written", async () => {
+    const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      // Write the response immediately, without waiting for a request.
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      // Repeat to cover the race between the JS-thread verdict and the peer's
+      // write; a single attempt can land in either order.
+      for (let i = 0; i < 10; i++) {
+        let called = false;
+        const res = await fetch(`https://127.0.0.1:${port}/`, {
+          keepalive: false,
+          tls: {
+            ca: validTls.cert,
+            checkServerIdentity() {
+              called = true;
+              return undefined;
+            },
+          },
+        });
+        expect(await res.text()).toBe("OK");
+        expect(res.status).toBe(200);
+        expect(called).toBe(true);
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("fetch with checkServerIdentity follows a redirect that arrives before the request is written", async () => {
+    const target = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmoved");
+        socket.end();
+      });
+    });
+    let redirectPort = 0;
+    const redirector = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.write(
+        `HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:${redirectPort}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+      );
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        target.on("error", reject);
+        target.listen(0, "127.0.0.1", () => resolve());
+      });
+      redirectPort = (target.address() as import("node:net").AddressInfo).port;
+      await new Promise<void>((resolve, reject) => {
+        redirector.on("error", reject);
+        redirector.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (redirector.address() as import("node:net").AddressInfo).port;
+
+      for (let i = 0; i < 5; i++) {
+        const seen: string[] = [];
+        const res = await fetch(`https://127.0.0.1:${port}/`, {
+          keepalive: false,
+          tls: {
+            ca: validTls.cert,
+            checkServerIdentity(hostname: string) {
+              seen.push(hostname);
+              return undefined;
+            },
+          },
+        });
+        expect(await res.text()).toBe("moved");
+        expect(res.status).toBe(200);
+        expect(seen).toEqual(["127.0.0.1", "127.0.0.1"]);
+      }
+    } finally {
+      redirector.close();
+      target.close();
+    }
+  });
+
+  // A 3xx from a peer whose certificate the pinning callback rejects must
+  // never result in a connection to the Location target: the buffered 302 is
+  // only processed after the verdict, and a reject tears down the connection
+  // before that.
+  it("fetch with checkServerIdentity never connects to the redirect target when the peer's certificate is rejected", async () => {
+    let targetConnections = 0;
+    const target = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      targetConnections++;
+      socket.end();
+    });
+    let redirectPort = 0;
+    const redirector = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.write(
+        `HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:${redirectPort}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+      );
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        target.on("error", reject);
+        target.listen(0, "127.0.0.1", () => resolve());
+      });
+      redirectPort = (target.address() as import("node:net").AddressInfo).port;
+      await new Promise<void>((resolve, reject) => {
+        redirector.on("error", reject);
+        redirector.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (redirector.address() as import("node:net").AddressInfo).port;
+
+      for (let i = 0; i < 5; i++) {
+        let err: unknown;
+        try {
+          await fetch(`https://127.0.0.1:${port}/`, {
+            keepalive: false,
+            tls: { ca: validTls.cert, checkServerIdentity: () => new Error("pinned") },
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toBe("pinned");
+      }
+      expect(targetConnections).toBe(0);
+    } finally {
+      redirector.close();
+      target.close();
+    }
+  });
+
+  it("fetch with checkServerIdentity reports ECONNRESET for a truncated early response", async () => {
+    const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort");
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      let err: unknown;
+      try {
+        await fetch(`https://127.0.0.1:${port}/`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity: () => undefined },
+        }).then(res => res.text());
+      } catch (e) {
+        err = e;
+      }
+      expect((err as NodeJS.ErrnoException)?.code).toBe("ECONNRESET");
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with self-sign tls should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
@@ -524,7 +690,6 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {
@@ -541,7 +706,7 @@ describe.concurrent("fetch-tls", () => {
     const THRESHOLD = 150 * (isASAN ? 2 : 1); // ASAN can be very slow, so we need to increase the threshold for it
 
     try {
-      await fetch(server.url, {
+      await fetch(`https://localhost:${server.port}/`, {
         signal: AbortSignal.timeout(TIMEOUT),
         tls: { ca: validTls.cert },
       }).then(res => res.text());

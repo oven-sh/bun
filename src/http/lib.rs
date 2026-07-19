@@ -309,6 +309,11 @@ pub static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> = bun_core::RacyCell::n
 
 const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 
+/// Bound on `response_message_buffer` growth while accumulating response
+/// headers (and early data parked for `checkServerIdentity`). Generous
+/// fixed cap, independent of the request-side `--max-http-header-size` knob.
+pub(crate) const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+
 /// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
 /// did not process the request, so re-dispatch from the top. Only reached
 /// for `.bytes` bodies (replayable).
@@ -1729,6 +1734,12 @@ impl<'a> HTTPClient<'a> {
                         // `HTTPThread::schedule_cert_check_resume` on success,
                         // or schedules a shutdown on failure.
                         self.state.flags.is_waiting_for_cert_check = true;
+                        // Pause reads so application data and close_notify that
+                        // arrive while parked stay in the kernel / SSL buffer
+                        // until the verdict lands; `resume_after_cert_check`
+                        // un-pauses. Runs from `on_handshake` so the socket is
+                        // open.
+                        let _ = socket.pause_stream();
 
                         // we inform the user that the cert is invalid
                         let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -3582,7 +3593,21 @@ impl<'a> HTTPClient<'a> {
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
         self.state.flags.is_waiting_for_cert_check = false;
+        let _ = socket.resume_stream();
         self.on_writable::<true, IS_SSL>(socket);
+        // `on_writable` → `close_and_fail` may free the AsyncHTTP that embeds
+        // `*self`; the socket handle outlives the client.
+        if socket.is_closed() {
+            return;
+        }
+        // Replay application data the peer sent while parked (buffered by
+        // `on_data` / `ProxyTunnel::on_data` when it shared the recv buffer
+        // with the handshake flight) via `handle_on_data_headers`, which
+        // consumes `response_message_buffer` when `incoming_data` is empty.
+        if !self.state.response_message_buffer.list.is_empty() {
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);
+        }
     }
 
     pub fn close_and_fail<const IS_SSL: bool>(
@@ -3718,13 +3743,6 @@ impl<'a> HTTPClient<'a> {
             ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
-                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                    // request-side knob (Node `--max-http-header-size`); reusing
-                    // it here rejects legitimate responses with large
-                    // `Location`/`Set-Cookie` headers. The intent is to bound
-                    // `response_message_buffer` growth, so use a generous fixed
-                    // cap independent of that knob.
-                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
                     if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(
                             crate::Error::ResponseHeadersTooLarge,
@@ -3910,13 +3928,20 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // While parked waiting for the JS `checkServerIdentity` verdict, no
-        // request has been written, so any data is unexpected. Must stay below
-        // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
-        // records must keep reaching the SSLWrapper while parked.
+        // Parked for the JS `checkServerIdentity` verdict: a TLS peer may
+        // transmit as soon as the handshake completes, so buffer early bytes
+        // for `resume_after_cert_check` to replay. Must stay below the
+        // proxy_tunnel dispatch above so a tunneled target's raw
+        // inner-TLS records still reach the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            self.state.pending_response = None;
-            self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
+            if self.state.response_message_buffer.list.len() + incoming_data.len()
+                > MAX_RESPONSE_HEADER_BUFFER
+            {
+                self.close_and_fail::<IS_SSL>(crate::Error::ResponseHeadersTooLarge, socket);
+                return;
+            }
+            let _ = self.state.response_message_buffer.append(incoming_data);
+            self.set_timeout(&socket);
             return;
         }
 

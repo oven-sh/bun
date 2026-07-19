@@ -75,7 +75,11 @@ impl Which {
                     had_write_err = true;
                 }
             }
-            return Builtin::done(interp, cmd, if had_not_found || had_write_err { 1 } else { 0 });
+            return Builtin::done(
+                interp,
+                cmd,
+                if had_not_found || had_write_err { 1 } else { 0 },
+            );
         }
 
         Self::state_mut(interp, cmd).state = State::MultiArgs {

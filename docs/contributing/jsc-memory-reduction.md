@@ -318,3 +318,27 @@ Measured: `JSON.parse` of `{"m":"GET","s":"ok","t":"json"}` 100 000 times create
 **Change:** add an `AtomString` fast path to `jsString(VM&, ...)` (`JSString.h:985-1030`) that, when the incoming `StringImpl` is already atomic, indexes a `KeyAtomStringCache`-shaped array by `impl->existingHash() % capacity` and returns the cached `JSString*` on a pointer-equal hit. Atom strings already carry a computed hash, so the lookup is one masked index and one pointer compare; no hashing, no locking. The cache is per-`VM`, holds raw `JSString*`, and is cleared on every GC the same way the existing caches are (`KeyAtomStringCache::clear()` from `Heap::finalize`).
 
 **Effect:** eliminates duplicate `JSString` wrappers for repeated atom values returned from native code (`Request.method`, header lookups, URL component getters, enum-like string returns). 16 B per avoided duplicate; no JIT involvement; no behaviour change (returning an identical `JSString*` is unobservable since strings compare by value).
+
+### RAMification
+
+RAMification (JetStream2 subtests, peak footprint) is dominated by how many inline cells get materialized back to `StringImpl`. The first pass regressed UniPoker by +28% and string-unpack-code by +10% because `.slice()`/`.match()`/`.codePointAt()`/`obj[s]` on an inline string each called `resolveInline()`, allocating a throwaway `StringImpl` that the baseline rope-substring path avoids (it shares the base's buffer via `substringSharingImpl`).
+
+Fixes: `jsSubstringOfResolved` copies inline bytes directly into a fresh inline cell; `stringProtoFuncCodePointAt` reads from cell bytes for inline input; DFG/FTL `StringCodePointAt` on a monomorphic-inline profile skips `ResolveRope`; `toIdentifier`/`toAtomString`/`toExistingAtomString` resolve directly to the `AtomStringImpl` (`resolveInlineToAtomString`), skipping the intermediate non-atom impl; `jsMapHashImpl` hashes inline bytes without resolving; `JSStringJoiner` atomizes inline elements instead of plain-resolving.
+
+`InlineStringCache`: a 512-slot direct-mapped `JSString*` array on `VM`, keyed by the inline fiber word. `createInline8/16` consult it first, so repeated short content returns the same cell. Cleared in `Heap::finalize` alongside `KeyAtomStringCache`.
+
+With those landed: UniPoker neutral, string-unpack-code -2%, typescript/Babylon/chai/uglify-js -3% to -15%. pdfjs (+6%) and espree (+5%) still regress because `JSValue::toWTFString` / `JSString::value()` is called ~1M times on inline input per run; those callers want a `String`, not a `StringView`, and do not yet have inline fast paths.
+
+A 32-byte `JSBigInlineString` (covering 8-23 Latin-1 / 4-11 UTF-16) was tried and reverted: it regressed the RAMification geomean by ~3% because the 8-15 char range, where most parser tokens land, grew from 24- to 32-byte cells, and the 16-23 range is too rare in JetStream to compensate.
+
+## Change Set 6: Inline Fiber Words as Property Keys
+
+Property names are `AtomStringImpl*`: `PropertyName` wraps a `UniquedStringImpl*`, `Identifier` owns a `RefPtr<UniquedStringImpl>`, structure transitions key on `UniquedStringImpl*`, and GetById/PutById inline caches compare the cached impl pointer. Atoms are pointer-identity = content-identity.
+
+The inline encoding has the same property: `encodeInline8("foo")` is a single `uintptr_t` that is globally content-unique. It can serve as a property key directly, with no `AtomStringImpl` and no atom-table lookup, for every name of 2-7 Latin-1 characters.
+
+**Change:** make `UniquedStringImpl*` slots in `PropertyName`, `PropertyTable`, `StructureTransitionTable`, and the inline-cache stubs accept either a real pointer (low 3 bits clear) or an inline fiber word (`(word & 3) == 2`). Both compare by `==` on the `uintptr_t`; both hash by the low bits of the word (fiber words already spread payload across the word, so `word >> 8` is a usable index). `Identifier::fromString(VM&, span<Latin1>)` encodes short inputs as a fiber word and returns an `Identifier` holding that word in place of a `RefPtr`. `PropertyName::uid()` returns the tagged `uintptr_t`; callers that dereference it (`impl->length()`, `impl->is8Bit()`, `impl->hash()`) go through accessor shims that branch on the tag.
+
+**Effect:** short property names (`x`, `id`, `type`, `name`, `data`, `length`, `value`) never touch the atom table. Structure transitions and IC comparisons for those names become one immediate compare. The atom table shrinks by the identifier tail. This moves Speedometer (DOM property names are overwhelmingly short) more than it moves JetStream.
+
+**Touch points:** `Identifier.h`/`PropertyName.h` tagging; `PropertyTable` hash; `StructureTransitionTable` key type; `GetByIdVariant`/`PutByIdVariant` key storage; LLInt `get_by_id` / baseline `JITGetByIdGenerator` / DFG `compileGetById` / FTL `compileGetById` immediate-compare paths; every `uid()->...` dereference in `runtime/`.

@@ -131,6 +131,12 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 l @ (8 | 12) => {
                     let data = reader.read(l as usize)?;
                     let time = Time::from_data(&data)?;
+                    // MySQL TIME is capped at +/-838:59:59 (days<=34). days is a raw
+                    // wire u32, so without this guard a hostile server can wrap
+                    // days*24 below and yield a silently wrong string.
+                    if time.days > 34 || time.hours > 23 || time.minutes > 59 || time.seconds > 59 {
+                        return Err(crate::Error::InvalidBinaryValue);
+                    }
 
                     let total_hours: u32 = time.hours as u32 + time.days * 24;
                     // -838:59:59 to 838:59:59 is valid (it only store seconds)

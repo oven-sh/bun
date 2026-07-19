@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -802,6 +803,130 @@ describe("mock()", () => {
     }
 
     expect(bar()()).toBe(true);
+  });
+
+  describe("constructing a mock", () => {
+    test("new mock() returns a new object and records the invocation", () => {
+      const fn = jest.fn();
+      const instance = new fn(1, 2);
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+      expect(fn.mock.calls).toEqual([[1, 2]]);
+      expect(fn.mock.instances).toHaveLength(1);
+      expect(fn.mock.instances[0]).toBe(instance);
+      expect(fn.mock.contexts[0]).toBe(instance);
+      expect(fn.mock.results).toEqual([{ type: "return", value: undefined }]);
+    });
+
+    test("Reflect.construct(mock) returns a new object", () => {
+      const fn = jest.fn();
+      const instance = Reflect.construct(fn, []);
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+      expect(fn.mock.instances[0]).toBe(instance);
+    });
+
+    test("the implementation runs with the new instance as this", () => {
+      const fn = jest.fn(function (x) {
+        this.x = x;
+        return 42;
+      });
+      const instance = new fn(5);
+      expect(instance.x).toBe(5);
+      // a primitive return value is discarded in favor of the new instance
+      expect(fn.mock.results).toEqual([{ type: "return", value: 42 }]);
+    });
+
+    test("an object returned from the implementation wins", () => {
+      const obj = { replaced: true };
+      const fn = jest.fn(() => obj);
+      expect(new fn()).toBe(obj);
+    });
+
+    test("mockReturnValue: object wins, primitive falls back to the instance", () => {
+      const obj = { replaced: true };
+      const fn = jest.fn();
+      fn.mockReturnValueOnce(obj).mockReturnValue(1);
+      expect(new fn()).toBe(obj);
+      const instance = new fn();
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBe(obj);
+    });
+
+    test("mock.prototype is used for the new instance", () => {
+      const fn = jest.fn();
+      fn.prototype = {
+        kind: "mocked",
+      };
+      const instance = new fn();
+      expect(instance instanceof fn).toBe(true);
+      expect(instance.kind).toBe("mocked");
+    });
+
+    test("Reflect.construct uses newTarget.prototype", () => {
+      function Target() {}
+      Target.prototype.tag = "target";
+      const fn = jest.fn();
+      const instance = Reflect.construct(fn, [], Target);
+      expect(instance.tag).toBe("target");
+      expect(fn.mock.instances[0]).toBe(instance);
+    });
+
+    test("newTarget.prototype that is a primitive falls back to Object.prototype", () => {
+      function Target() {}
+      Target.prototype = 1;
+      const fn = jest.fn();
+      const instance = Reflect.construct(fn, [], Target);
+      expect(Object.getPrototypeOf(instance)).toBe(Object.prototype);
+    });
+
+    if (isBun) {
+      test("cross-realm newTarget with a primitive prototype uses the newTarget realm's Object.prototype", () => {
+        const ctx = vm.createContext({});
+        const Target = vm.runInContext("(function Target() {})", ctx);
+        const otherObjectPrototype = vm.runInContext("Object.prototype", ctx);
+        Target.prototype = 1;
+        const fn = jest.fn();
+        const instance = Reflect.construct(fn, [], Target);
+        expect(Object.getPrototypeOf(instance)).toBe(otherObjectPrototype);
+        expect(Object.getPrototypeOf(instance)).not.toBe(Object.prototype);
+      });
+    }
+
+    test("a throwing implementation propagates and is recorded", () => {
+      const fn = jest.fn(() => {
+        throw new Error("boom");
+      });
+      expect(() => new fn()).toThrow("boom");
+      expect(fn.mock.results[0].type).toBe("throw");
+    });
+
+    test("constructing a spy returns a new object", () => {
+      const obj = {
+        method() {},
+      };
+      const spy = spyOn(obj, "method");
+      const instance = new obj.method();
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+      expect(spy.mock.instances[0]).toBe(instance);
+    });
+
+    test("instances is pushed on every invocation", () => {
+      const fn = jest.fn();
+      fn();
+      const instance = new fn();
+      expect(fn.mock.calls).toHaveLength(2);
+      expect(fn.mock.instances).toHaveLength(2);
+      expect(fn.mock.instances[0]).toBe(undefined);
+      expect(fn.mock.instances[1]).toBe(instance);
+      expect(fn.mock.contexts).toEqual(fn.mock.instances);
+
+      const obj = { m: jest.fn() };
+      obj.m();
+      expect(obj.m.mock.instances).toEqual([obj]);
+      expect(obj.m.mock.contexts).toEqual([obj]);
+    });
   });
 });
 

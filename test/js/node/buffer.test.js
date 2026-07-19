@@ -196,7 +196,9 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
         expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
-        expect(new isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+        // a native construct handler must never return a primitive
+        expect(() => new isAscii(new Buffer("abc"))).toThrow(TypeError);
+        expect(() => Reflect.construct(isAscii, [new Buffer("abc")])).toThrow(TypeError);
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
       });
@@ -206,6 +208,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isUtf8(new Buffer("What did the 🦊 say?"))).toBeTrue();
         expect(isUtf8(new Buffer([129, 129, 129]))).toBeFalse();
+        expect(() => new isUtf8(new Buffer("abc"))).toThrow(TypeError);
+        expect(() => Reflect.construct(isUtf8, [new Buffer("abc")])).toThrow(TypeError);
 
         expect(isUtf8(new Buffer("abc").buffer)).toBeTrue();
         expect(isAscii(new Buffer("").buffer)).toBeTrue();

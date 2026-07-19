@@ -305,6 +305,23 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+/**
+ * `requestOCSP` is honored on every transport backed by a real socket, but TLS
+ * over a generic Duplex stream (and Windows named pipes) runs on the SSLWrapper
+ * engine, whose private memory BIO leaves the native status callback with no
+ * socket to dispatch 'OCSPResponse' on. Asking for a staple we could never hand
+ * back would be the silent no-op this option already suffered from, so say so.
+ */
+let warnedOCSPUnsupported = false;
+function applyRequestOCSP(socket) {
+  if (socket.requestOCSP?.() !== false || warnedOCSPUnsupported) return;
+  warnedOCSPUnsupported = true;
+  process.emitWarning(
+    "requestOCSP is ignored for TLS over a Duplex stream or a named pipe: no OCSP response will be requested or delivered",
+    "BunTLSWarning",
+  );
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -653,6 +670,63 @@ function onSNIResolution(state, err, context) {
   }
 }
 
+// --- 'OCSPRequest' dispatch helpers (hoisted: no per-handshake closures) ---
+
+let isArrayBufferView;
+
+// Normalizes a non-Error rejection (cb(true), cb("reason"), throw true): the
+// native dispatch recognizes Error returns as the abort signal, and a literal
+// `true` would collide with the handshake-suspension sentinel.
+function toOCSPError(err) {
+  return err instanceof Error ? err : Object.assign(new Error("OCSPRequest error"), { reason: err });
+}
+
+// Node's `callback(err)` destroys the connection, which on a server socket that
+// never reached 'secureConnection' surfaces as 'tlsClientError'. Going through
+// destroy(err) here instead would emit 'error' on a socket that has no listener
+// yet, i.e. an uncaught exception.
+function failOCSPConnection(socketHandle, err) {
+  const self = socketHandle?.data;
+  if (!self || self._hadError) return;
+  self._hadError = true;
+  self.emit("_tlsError", err);
+  self.server?.emit("tlsClientError", err, self);
+  self.destroy();
+}
+
+// The completion callback an 'OCSPRequest' listener is handed. Synchronous
+// resolutions are carried by ocspRequest's return value; asynchronous ones
+// complete the parked handshake via resumeOCSP.
+// https://nodejs.org/api/tls.html#event-ocsprequest
+function onOCSPResolution(state, err, response) {
+  if (state.settled) return; // the callback must resolve exactly once
+  state.settled = true;
+  const { socketHandle } = state;
+  // Node's `if (response)` gate: any falsy response means "nothing to staple".
+  // A truthy non-Buffer is rejected the way Node's native setOCSPResponse would
+  // (THROW_AND_RETURN_IF_NOT_BUFFER), only routed through 'tlsClientError'
+  // instead of landing as an uncaught exception in the listener's call stack.
+  if (!err && response) {
+    isArrayBufferView ??= require("node:util/types").isArrayBufferView;
+    if (!isArrayBufferView(response)) {
+      err = $ERR_INVALID_ARG_TYPE("response", ["Buffer", "TypedArray", "DataView"], response);
+    }
+  }
+  if (err) {
+    state.failed = toOCSPError(err);
+    failOCSPConnection(socketHandle, state.failed);
+    return;
+  }
+  state.response = response || undefined;
+  if (!state.suspended) return; // synchronous resolution - ocspRequest's return carries it
+  // A response the TLS layer refuses to stage leaves the handshake parked, so
+  // drop the connection rather than complete it without the staple.
+  if (socketHandle?.resumeOCSP(state.response) === false) {
+    state.failed = new Error("Failed to attach the OCSP response to the TLS connection");
+    failOCSPConnection(socketHandle, state.failed);
+  }
+}
+
 const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
@@ -754,6 +828,39 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       return failed;
     }
     return state.selected;
+  },
+  ocspRequest(server, socketHandle, certificate, issuer) {
+    // The client asked for a stapled OCSP response. Returns what this
+    // handshake should staple:
+    //   - a Buffer (the listener answered synchronously)
+    //   - undefined to staple nothing (no listener, or callback(null, null))
+    //   - `true` to SUSPEND the handshake until `socketHandle.resumeOCSP(...)`
+    //   - an Error: the listener reported one and the connection was destroyed
+    if (!(server?.listenerCount?.("OCSPRequest") > 0)) return undefined;
+    const state = {
+      socketHandle,
+      response: undefined,
+      failed: undefined,
+      settled: false,
+      suspended: false,
+    };
+    try {
+      server.emit("OCSPRequest", certificate, issuer, onOCSPResolution.bind(null, state));
+    } catch (err) {
+      state.settled = true;
+      state.failed = toOCSPError(err);
+      failOCSPConnection(socketHandle, state.failed);
+    }
+    const { failed } = state;
+    if (failed !== undefined) return failed;
+    if (!state.settled) {
+      // Asynchronous listener. Without a connection handle the suspension
+      // could never be resumed - staple nothing in that (unexpected) case.
+      if (!socketHandle) return undefined;
+      state.suspended = true;
+      return true;
+    }
+    return state.response;
   },
   close(socket, err) {
     $debug("Bun.Server close");
@@ -1087,6 +1194,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         if (session) {
           self.setSession(session);
         }
+        // Node's TLSSocket._start: requestOCSP is applied to the handle before
+        // the handshake is kicked off. `open` runs before the native side
+        // drives the first ClientHello, which is the window this needs.
+        if (options.requestOCSP) {
+          applyRequestOCSP(socket);
+        }
       }
     }
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
@@ -1241,6 +1354,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       return;
     }
 
+    // A listener that ran from inside the handshake (an 'OCSPResponse' handler
+    // rejecting the staple) destroyed the socket. Node's handle is gone by then
+    // and the connection is never established, so nothing else is emitted.
+    if (self.destroyed) return;
+
     self._securePending = false;
     self.secureConnecting = false;
     // ECONNRESET and protocol-level failures returned above, so reaching here
@@ -1322,10 +1440,31 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
 };
 
+// The server's answer to `requestOCSP` (null when it stapled nothing), delivered
+// from inside the handshake the way Node's status callback is, so a listener that
+// rejects the staple can still destroy the socket before the session is established.
+function ocspResponse(socket, response) {
+  const { self } = socket.data;
+  if (!self) return;
+  self.emit("OCSPResponse", response);
+}
+const SocketHandlers2WithOCSP = { ...SocketHandlers2, ocspResponse };
+
+// Only a client that asked for a staple can ever receive one, so a connection
+// without `requestOCSP` never registers the dispatch.
+function clientHandlersFor(self) {
+  const handlers = self[khandlers];
+  if (!self[bunTLSConnectOptions]?.requestOCSP) return handlers;
+  return handlers === SocketHandlers2 ? SocketHandlers2WithOCSP : { ...handlers, ocspResponse };
+}
+
 // The same table minus the per-connection callback members: a listener whose
 // config has neither handler never registers the native SNI/ALPN dispatches,
 // so a server without an SNICallback or ALPNCallback does not pay a JS
-// round-trip from inside the handshake for them.
+// round-trip from inside the handshake for them. `ocspRequest` stays on every
+// table - it only runs for a ClientHello that asked for stapling (so a server
+// pays nothing until a client opts in), and Node decides per connection
+// whether any 'OCSPRequest' listener exists.
 const { serverName: _serverNameHandler, alpnCallback: _alpnCallbackHandler, ...ServerHandlersNoSNI } = ServerHandlers;
 // Partial tables so a server with exactly one of the callbacks only registers
 // that dispatch (the other would be a per-handshake JS round-trip that always
@@ -1391,7 +1530,7 @@ function kConnectTcp(self, addressType, req, address, port) {
     allowHalfOpen: true,
     tls: req.tls,
     data: { self, req },
-    socket: self[khandlers],
+    socket: clientHandlersFor(self),
   });
 }
 
@@ -1404,7 +1543,7 @@ function kConnectPipe(self, req, address) {
     allowHalfOpen: true,
     tls: req.tls,
     data: { self, req },
-    socket: self[khandlers],
+    socket: clientHandlersFor(self),
   });
 }
 
@@ -1823,7 +1962,7 @@ Socket.prototype.connect = function connect(...args) {
           const [result, events] = upgradeDuplexToTLS(connection, {
             data: { self: this, req: { oncomplete: afterConnect } },
             tls,
-            socket: this[khandlers],
+            socket: clientHandlersFor(this),
           });
           connection.on("data", events[0]);
           connection.on("end", events[1]);
@@ -1839,7 +1978,7 @@ Socket.prototype.connect = function connect(...args) {
             const result = upgradeTLSDeferred(socket, {
               data: { self: this, req: { oncomplete: afterConnect } },
               tls,
-              socket: this[khandlers],
+              socket: clientHandlersFor(this),
               isServer: false,
             });
             if (result) {
@@ -1873,7 +2012,7 @@ Socket.prototype.connect = function connect(...args) {
                 const [result, events] = upgradeDuplexToTLS(connection, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
-                  socket: this[khandlers],
+                  socket: clientHandlersFor(this),
                 });
                 connection.on("data", events[0]);
                 connection.on("end", events[1]);
@@ -1885,7 +2024,7 @@ Socket.prototype.connect = function connect(...args) {
                 const result = upgradeTLSDeferred(socket, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
-                  socket: this[khandlers],
+                  socket: clientHandlersFor(this),
                   isServer: false,
                 });
                 if (result) {

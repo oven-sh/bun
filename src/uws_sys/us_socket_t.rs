@@ -204,6 +204,25 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
+    /// Server-side: stage the DER OCSP response this connection staples.
+    /// BoringSSL copies the bytes. Returns false when they were rejected.
+    pub fn set_ocsp_response(&mut self, response: &[u8]) -> bool {
+        // SAFETY: `response` is valid for `response.len()` bytes for the call;
+        // BoringSSL copies it.
+        unsafe { c::us_socket_set_ocsp_response(self, response.as_ptr(), response.len()) != 0 }
+    }
+
+    /// Resume a handshake suspended by an asynchronous `'OCSPRequest'` handler.
+    pub fn ocsp_resolve(&mut self) {
+        c::us_socket_ocsp_resolve(self);
+    }
+
+    /// Client-side: request a stapled OCSP response, which arrives through the
+    /// `us_dispatch_ocsp_response` hook. Must run before the ClientHello.
+    pub fn request_ocsp_stapling(&mut self) {
+        c::us_socket_request_ocsp_stapling(self);
+    }
+
     /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
     pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
         if !self.is_tls() {
@@ -511,6 +530,14 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
+        // SAFETY (unsafe fn): `response` must be readable for `length` bytes.
+        pub(super) fn us_socket_set_ocsp_response(
+            s: &mut us_socket_t,
+            response: *const u8,
+            length: usize,
+        ) -> c_int;
+        pub(super) safe fn us_socket_ocsp_resolve(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_request_ocsp_stapling(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,

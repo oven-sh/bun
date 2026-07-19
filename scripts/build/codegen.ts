@@ -18,19 +18,22 @@
  *
  * Several scripts emit MORE files than they report:
  *   - bindgen.ts emits Generated<Name>.h per namespace (only .cpp declared)
- *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
  *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
  *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
  *
- * It WORKS because:
+ * It mostly WORKS because:
  *   1. The declared .cpp outputs guarantee the step runs before compile
  *   2. Compilation emits .d depfiles that track the .h files for NEXT build
  *   3. PCH order-depends on ALL codegen outputs; every cxx() waits on PCH
  *      → all codegen completes before any compile, undeclared .h exist
  *
- * Fixing properly (declaring all outputs) would require patching the
- * src/codegen/ scripts to report everything — changing contract with
- * existing tooling.
+ * "for NEXT build" is the hole, and it bites whenever a header changes while
+ * the .cpp that includes it does not: ninja settled the build plan before the
+ * header was rewritten, so the object keeps the layout it was last compiled
+ * against. For a struct shared with Rust that links a binary which memcpys past
+ * the end of the other side's stack slot. bindgenv2 therefore declares its
+ * headers (list-outputs reports them); the rest remain undeclared, and should
+ * follow when someone touches them.
  */
 
 import { spawnSync } from "node:child_process";
@@ -840,11 +843,22 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
+  // Declare the headers, not just the sources. A dictionary gaining a field
+  // grows `Generated<Name>.h` while leaving the `Generated<Other>.cpp` that
+  // embeds it textually identical — ninja settles the build plan before the
+  // codegen edge rewrites the header, so the object keeps the layout it was last
+  // compiled against and the depfile only catches up on the NEXT build. For a
+  // struct shared with Rust that links a binary whose C++ side memcpys past the
+  // end of the Rust side's stack slot. Derived from the sources rather than
+  // taken on faith from list-outputs: every bindgenv2 type that emits a .cpp
+  // emits the matching .h, and the declaration is what keeps the build sound.
+  const declaredOutputs = [...new Set([...allOutputs, ...cppOutputs.map(p => p.replace(/\.cpp$/, ".h"))])];
+
   n.build({
-    outputs: allOutputs,
+    outputs: declaredOutputs,
     rule: "codegen",
     inputs: [script, ...sources.bindgenV2, ...sources.bindgenV2Internal],
     orderOnlyInputs: [dirStamp],
@@ -861,7 +875,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(...allOutputs);
+  o.all.push(...declaredOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
 }
 

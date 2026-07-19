@@ -135,6 +135,9 @@ extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_con
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
 extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
+/* `length < 0` means the server stapled nothing (Node emits 'OCSPResponse'
+ * with null in that case). Runs from inside the handshake. */
+extern void us_dispatch_ocsp_response(us_socket_r s, const unsigned char *data, int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
@@ -433,6 +436,9 @@ struct us_listen_socket_t {
    * in-flight handshake only (the caller does not cache it), or NULL to fall
    * through to the default context. */
   struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
+  /* Server-side 'OCSPRequest' dispatch; NULL when the owning server has no
+   * handler. Runs from cert_cb, once per handshake that asked for stapling. */
+  void (*on_ocsp_request)(struct us_listen_socket_t *, struct us_socket_t *socket, int *abort_handshake);
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;

@@ -113,6 +113,17 @@ impl ListenSocket {
     ) {
         us_listen_socket_on_server_name(self, cb)
     }
+
+    /// Registers the server-side `'OCSPRequest'` dispatch. The callback reports
+    /// back through its `*mut c_int` out-param: 0 = done, 1 = errored (the
+    /// handler destroyed the socket), 2 = asynchronous (suspend the handshake
+    /// until `us_socket_t::ocsp_resolve`).
+    pub fn on_ocsp_request(
+        &mut self,
+        cb: extern "C" fn(*mut ListenSocket, *mut us_socket_t, *mut c_int),
+    ) {
+        us_listen_socket_on_ocsp_request(self, cb)
+    }
 }
 
 // This file IS the *_sys crate, so externs live here.
@@ -138,5 +149,9 @@ unsafe extern "C" {
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+    );
+    safe fn us_listen_socket_on_ocsp_request(
+        ls: &mut ListenSocket,
+        cb: extern "C" fn(*mut ListenSocket, *mut us_socket_t, *mut c_int),
     );
 }

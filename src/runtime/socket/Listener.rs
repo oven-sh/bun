@@ -519,6 +519,15 @@ impl Listener {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
                 bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
             }
+            // Register the 'OCSPRequest' dispatch when the JS config provided an
+            // `ocspRequest` handler. `us_cert_cb` only reaches it for handshakes
+            // whose ClientHello asked for stapling, so a server that never
+            // staples pays nothing.
+            if !this_ref.handlers.on_ocsp_request().is_empty() {
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
+                bun_opaque::opaque_deref_mut(listen_socket)
+                    .on_ocsp_request(us_dispatch_ocsp_request);
+            }
         }
 
         let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
@@ -1902,4 +1911,119 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         unsafe { *abort_handshake = 1 };
     }
     core::ptr::null_mut()
+}
+
+/// `openssl.c`'s `us_cert_cb` calls this once per server handshake whose
+/// ClientHello asked for OCSP stapling, on listeners that registered an
+/// `ocspRequest` handler. The JS handler emits `'OCSPRequest'` with the
+/// connection's certificate and issuer (DER) and reports back:
+///   - a `Buffer`/TypedArray -> staple it on this handshake
+///   - `undefined`/`null`/`false` -> staple nothing (no listeners, or the
+///     handler answered `callback(null, null)`)
+///   - `true` -> the handler is asynchronous; suspend the handshake until
+///     `handle.resumeOCSP(...)` (`*abort_handshake = 2`)
+///   - anything else (an Error) -> the handler reported one and destroyed the
+///     socket; abort (`*abort_handshake = 1`)
+///
+/// # Safety
+/// `ls` is a live listen socket whose accept-group ext holds a `*mut Listener`,
+/// and `socket` is the live accepted socket processing this ClientHello.
+/// JS-thread only.
+pub(crate) extern "C" fn us_dispatch_ocsp_request(
+    ls: *mut uws_sys::ListenSocket,
+    socket: *mut uws_sys::us_socket_t,
+    abort_handshake: *mut core::ffi::c_int,
+) {
+    jsc::mark_binding!();
+    if ls.is_null() || socket.is_null() {
+        return;
+    }
+    // The accept group's ext holds the owning `*mut Listener` for the lifetime
+    // of the listen socket. S008: `ListenSocket` is an `opaque_ffi!` ZST.
+    let listener_ptr: *mut Listener = bun_opaque::opaque_deref_mut(ls).group().owner::<Listener>();
+    if listener_ptr.is_null() {
+        return;
+    }
+    // SAFETY: see above - the listen socket keeps the `Listener` alive for the
+    // duration of this synchronous handshake dispatch.
+    let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
+    let handlers = &listener.handlers;
+    if handlers.vm.is_shutting_down() {
+        return;
+    }
+    let callback = handlers.on_ocsp_request();
+    if callback.is_empty() {
+        return;
+    }
+    let global = handlers.global_object;
+
+    // Reports the outcome to `us_cert_cb` through its out-parameter: 1 = abort,
+    // 2 = suspend. 0 (the initial value) is "proceed".
+    let report = |outcome: core::ffi::c_int| {
+        if !abort_handshake.is_null() {
+            // SAFETY: the C caller passes a live out-parameter for the duration
+            // of this synchronous dispatch.
+            unsafe { *abort_handshake = outcome };
+        }
+    };
+
+    // The accepted socket processing this ClientHello: its JS wrapper carries
+    // the owning node:tls socket and is the resume handle an asynchronous
+    // handler uses (`handle.resumeOCSP(...)`).
+    let s_ref = uws_sys::us_socket_t::opaque_mut(socket);
+    if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
+        return;
+    }
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        return;
+    };
+    let socket_handle = tls.get_this_value(&global);
+
+    let (certificate, issuer) = match tls.ocsp_certificates(&global) {
+        Ok(pair) => pair,
+        Err(err) => {
+            // Clear the exception before unwinding into BoringSSL, and drop the
+            // connection rather than silently serving it without the staple the
+            // client asked for.
+            global.take_exception(err);
+            report(1);
+            return;
+        }
+    };
+
+    let this_value = listener
+        .strong_data
+        .get()
+        .get()
+        .unwrap_or(JSValue::UNDEFINED);
+    let result = match callback.call(
+        &global,
+        this_value,
+        &[this_value, socket_handle, certificate, issuer],
+    ) {
+        Ok(v) => v,
+        Err(err) => global.take_exception(err),
+    };
+
+    if result.is_boolean() {
+        if result.to_boolean() {
+            report(2);
+        }
+        return;
+    }
+    if result.is_undefined_or_null() {
+        return;
+    }
+    if let Some(buffer) = result.as_array_buffer(&global) {
+        let bytes = buffer.byte_slice();
+        // `set_ocsp_response` fails on a socket the handler destroyed while it
+        // ran, and on bytes BoringSSL rejects; either way there is nothing left
+        // to serve, so abort instead of finishing the handshake unstapled.
+        if !bytes.is_empty() && !tls.socket.get().set_ocsp_response(bytes) {
+            report(1);
+        }
+        return;
+    }
+    // An Error (or any other shape): the JS side already destroyed the socket.
+    report(1);
 }

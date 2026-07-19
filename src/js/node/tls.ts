@@ -731,6 +731,7 @@ const ksecureContext = Symbol("ksecureContext");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
+const krequestOCSP = Symbol("requestOCSP");
 
 const buntls = Symbol.for("::buntls::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
@@ -758,6 +759,7 @@ function TLSSocket(socket?, options?) {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
   this.authorizationError = null;
   this[krenegotiationDisabled] = undefined;
+  this[krequestOCSP] = false;
   this.encrypted = true;
 
   const isNetSocketOrDuplex = socket instanceof Duplex;
@@ -779,6 +781,10 @@ function TLSSocket(socket?, options?) {
   // behave like Node. Accepted sockets set this again in onconnection.
   const isServer = !!options.isServer;
   this.isServer = isServer;
+
+  // Client-only: ask the server for a stapled OCSP response (Node ignores it on
+  // the server side, where the event is driven by the ClientHello instead).
+  this[krequestOCSP] = !isServer && !!options.requestOCSP;
 
   // A custom SNICallback must be a function — but Node only validates it on the
   // server side (it is meaningless for a client), inside the isServer branch.
@@ -1100,6 +1106,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     // of rebuilding from raw cert/key bytes.
     secureContext: ctx?.context,
     servername,
+    requestOCSP: this[krequestOCSP],
   };
 };
 

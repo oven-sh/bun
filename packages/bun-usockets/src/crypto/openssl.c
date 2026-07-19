@@ -148,6 +148,10 @@ long us_ssl_ctx_live_count(void) {
  *     SSL_CTX is shared and can outlive any one listener, so storing ls as the
  *     CTX-level servername_arg is a UAF after listener close (and overwritten
  *     on multi-listen).
+ *   - us_ssl_ocsp_pending_idx (SSL): per-connection async-'OCSPRequest'
+ *     suspension state, malloc'd only when a handler answers asynchronously.
+ *   - us_ssl_loop_bio_idx (SSL): marks the SSLs whose BIO pair is the loop's
+ *     shared one, i.e. the ones a callback may recover `loop_ssl_data` from.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
  * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
@@ -165,6 +169,14 @@ static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
+/* Per-connection async-OCSP suspension state (cert_cb pause). */
+static int us_ssl_ocsp_pending_idx = -1;
+/* Marks an SSL whose BIO pair is the loop's shared one (set in
+ * us_internal_ssl_attach, the only place that installs it). A callback may only
+ * recover `loop_ssl_data` from `BIO_get_data(SSL_get_wbio(ssl))` when it is set:
+ * SSLs driven by the Rust SSLWrapper (TLS-over-duplex, HTTP proxy tunnels) own a
+ * private memory BIO whose data is something else entirely. */
+static int us_ssl_loop_bio_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
 /* Set (to a non-NULL marker) only on SSLs attached to a real us_socket_t via
  * us_internal_ssl_attach. The new-session callback uses it to ignore SSLs
@@ -206,6 +218,22 @@ static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   if (!st) return;
   if (st->resolved_ctx) SSL_CTX_free(st->resolved_ctx);
   us_free(st);
+}
+
+/* Async 'OCSPRequest' suspension state, hung off the SSL via ex_data.
+ * Allocated the first time the JS handler answers "pending"; freed with the
+ * SSL. The response bytes themselves never live here - the resolution calls
+ * SSL_set_ocsp_response() on the in-flight SSL (which copies) before
+ * us_socket_ocsp_resolve() re-drives the handshake. */
+struct us_ssl_ocsp_pending_t {
+  /* 0 = none, 1 = waiting for the JS resolution, 2 = resolved */
+  int state;
+};
+
+static void us_ssl_ocsp_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                     int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) us_free(ptr);
 }
 
 struct us_ssl_reneg_state_t {
@@ -373,6 +401,8 @@ static void us_ex_idx_init(void) {
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
+  us_ssl_ocsp_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_ocsp_pending_free);
+  us_ssl_loop_bio_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
@@ -465,6 +495,8 @@ static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
 extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
 static void ssl_update_handshake(struct us_socket_t *s);
+static int us_cert_cb(SSL *ssl, void *arg);
+static int us_ocsp_status_cb(SSL *ssl, void *arg);
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
  * The same shared mem-BIO pair is reused for every SSL* on a loop. The write
@@ -904,6 +936,16 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  /* Server-side 'OCSPRequest' dispatch. Registered on every context (not only
+   * the ones a listener with a handler ends up using) because SSL_set_SSL_CTX
+   * re-derives the per-connection CERT from the SNI-selected context, and
+   * cert_cb travels with the CERT. us_cert_cb short-circuits unless the
+   * connection is a server handshake whose listener registered a handler and
+   * whose ClientHello asked for stapling. */
+  SSL_CTX_set_cert_cb(ssl_context, us_cert_cb, NULL);
+  /* Client-side 'OCSPResponse' dispatch; only fires for a connection that
+   * enabled stapling (us_socket_request_ocsp_stapling). */
+  SSL_CTX_set_tlsext_status_cb(ssl_context, us_ocsp_status_cb);
   /* Honor explicit minVersion/maxVersion (Node's secureProtocol/min/maxVersion);
    * default to a TLS1.2 floor when no minimum is requested. */
   SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);
@@ -1292,6 +1334,10 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   SSL_set_bio(ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
   BIO_up_ref(loop_ssl_data->shared_rbio);
   BIO_up_ref(loop_ssl_data->shared_wbio);
+  /* This SSL's write BIO now carries `loop_ssl_data`; callbacks that reach for
+   * it through BIO_get_data gate on this marker. */
+  us_ex_idx_ensure();
+  SSL_set_ex_data(ssl, us_ssl_loop_bio_idx, (void *)1);
 
   /* renegotiation: ssl_renegotiate_explicit lets us bound it on the client
    * (issues #6197/#5363); never on the server (DoS vector). */
@@ -1711,10 +1757,11 @@ static void ssl_update_handshake(struct us_socket_t *s) {
 
   if (result <= 0) {
     int err = SSL_get_error(s_ssl(s), result);
-    if (err == SSL_ERROR_PENDING_CERTIFICATE) {
-      /* Suspended by an async SNICallback: stay in HANDSHAKE_PENDING with no
-       * poll re-arm; us_socket_sni_resolve() re-drives the handshake when the
-       * JS resolution arrives. */
+    if (err == SSL_ERROR_PENDING_CERTIFICATE || err == SSL_ERROR_WANT_X509_LOOKUP) {
+      /* Suspended by an async SNICallback (select_certificate_cb retry) or an
+       * async 'OCSPRequest' handler (cert_cb pause): stay in HANDSHAKE_PENDING
+       * with no poll re-arm; us_socket_sni_resolve() / us_socket_ocsp_resolve()
+       * re-drive the handshake when the JS resolution arrives. */
       s->ssl_handshake_state = HANDSHAKE_PENDING;
       return;
     }
@@ -1918,13 +1965,15 @@ restart:
 
     if (just_read <= 0) {
       int err = SSL_get_error(s_ssl(s), just_read);
-      /* SSL_ERROR_PENDING_CERTIFICATE: the handshake is suspended waiting for
-       * an async SNICallback (us_select_cert_cb returned retry). Treat it
-       * like WANT_READ - stop the read loop, deliver whatever was decrypted,
-       * and park the socket; us_socket_sni_resolve() re-drives the handshake
-       * when the JS resolution arrives. */
+      /* SSL_ERROR_PENDING_CERTIFICATE / SSL_ERROR_WANT_X509_LOOKUP: the
+       * handshake is suspended waiting for an async SNICallback
+       * (us_select_cert_cb returned retry) or an async 'OCSPRequest' handler
+       * (us_cert_cb paused). Treat both like WANT_READ - stop the read loop,
+       * deliver whatever was decrypted, and park the socket;
+       * us_socket_sni_resolve() / us_socket_ocsp_resolve() re-drive the
+       * handshake when the JS resolution arrives. */
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
-          err != SSL_ERROR_PENDING_CERTIFICATE) {
+          err != SSL_ERROR_PENDING_CERTIFICATE && err != SSL_ERROR_WANT_X509_LOOKUP) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
@@ -2278,6 +2327,144 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
   ssl_set_loop_data(s);
   ssl_update_handshake(s);
+}
+
+/* ── OCSP stapling ───────────────────────────────────────────────────────── */
+
+/* Server-side: stage the DER OCSP response this connection staples. Must run
+ * before the Certificate message is built; BoringSSL copies the bytes. */
+int us_socket_set_ocsp_response(struct us_socket_t *s, const unsigned char *response,
+                                size_t length) {
+  if (!s || !s->ssl || !s_ssl(s) || !response || !length) return 0;
+  return SSL_set_ocsp_response(s_ssl(s), response, length) == 1;
+}
+
+/* Client-side: ask the server for a stapled OCSP response. Must run before the
+ * ClientHello goes out (the JS `open` dispatch, which precedes the first
+ * ssl_update_handshake). */
+void us_socket_request_ocsp_stapling(struct us_socket_t *s) {
+  if (!s || !s->ssl || !s_ssl(s)) return;
+  SSL_enable_ocsp_stapling(s_ssl(s));
+}
+
+/* BoringSSL's legacy OpenSSL OCSP callback. Its contract depends on the role:
+ *
+ * On a client it stands in for OpenSSL's status callback and fires right after
+ * the server's certificate is verified, before the client sends its own flight
+ * - the point Node emits 'OCSPResponse' from, so a listener that rejects the
+ * staple can still abort the handshake by destroying the socket. Returning one
+ * accepts the response (Node always does; the listener has no say in the return
+ * value).
+ *
+ * On a server it fires after cert_cb, where us_cert_cb already staged any
+ * response; SSL_TLSEXT_ERR_OK just lets the staple through. */
+static int us_ocsp_status_cb(SSL *ssl, void *arg) {
+  (void)arg;
+  if (!ssl) return SSL_TLSEXT_ERR_OK;
+  if (SSL_is_server(ssl)) return SSL_TLSEXT_ERR_OK;
+
+  /* Bun's HTTP client enables stapling on every connection it opens (it mimics
+   * a browser's ClientHello), including proxy tunnels whose SSL is driven by the
+   * Rust SSLWrapper over a private memory BIO. Reading `loop_ssl_data` out of
+   * that BIO would be a wild pointer, so only SSLs that us_internal_ssl_attach
+   * gave the loop's shared pair may do it. */
+  if (us_ssl_loop_bio_idx < 0 || !SSL_get_ex_data(ssl, us_ssl_loop_bio_idx)) return 1;
+  struct loop_ssl_data *lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
+  struct us_socket_t *s = lsd ? lsd->ssl_socket : NULL;
+  /* Only Bun.connect / node:tls sockets surface an 'OCSPResponse' event; the
+   * HTTP client's own sockets have nowhere to deliver one. */
+  if (!s || us_socket_kind(s) != BUN_SOCKET_KIND_BUN_SOCKET_TLS) return 1;
+
+  const unsigned char *response = NULL;
+  size_t length = 0;
+  SSL_get0_ocsp_response(ssl, &response, &length);
+  if (length > INT_MAX) return 1;
+
+  void *saved_loop_state[5];
+  us_internal_ssl_loop_state_save(ssl, saved_loop_state);
+  us_dispatch_ocsp_response(s, response, response ? (int)length : -1);
+  us_internal_ssl_loop_state_restore(saved_loop_state);
+  return 1;
+}
+
+/* Resume a handshake suspended by an asynchronous 'OCSPRequest' handler. The
+ * response (if any) was already staged with us_socket_set_ocsp_response; a
+ * handler that reported an error destroys the socket from JS instead of
+ * resuming. No-op when the socket already closed or was never suspended. */
+void us_socket_ocsp_resolve(struct us_socket_t *s) {
+  if (!s || us_socket_is_closed(s) || !s->ssl || !s_ssl(s)) return;
+  if (us_ssl_ocsp_pending_idx < 0) return;
+  struct us_ssl_ocsp_pending_t *pending = SSL_get_ex_data(s_ssl(s), us_ssl_ocsp_pending_idx);
+  if (!pending || pending->state != 1) return; /* late/duplicate resolution */
+  pending->state = 2;
+  /* Re-drive the handshake; cert_cb re-fires and consumes the state. */
+  ssl_set_loop_data(s);
+  ssl_update_handshake(s);
+}
+
+/* BoringSSL's cert_cb: the last hook that runs after the ClientHello
+ * extensions are parsed (so SSL_get_tlsext_status_type is meaningful) and
+ * after select_certificate_cb's SSL_set_SSL_CTX (which would otherwise discard
+ * a response staged against the old CERT), and the only server-side hook that
+ * can pause the handshake (rv < 0 -> SSL_ERROR_WANT_X509_LOOKUP). */
+static int us_cert_cb(SSL *ssl, void *arg) {
+  (void)arg;
+  if (!ssl || !SSL_is_server(ssl)) return 1;
+  if (us_ssl_listener_ex_idx < 0 || us_ssl_ocsp_pending_idx < 0) return 1;
+
+  struct us_ssl_ocsp_pending_t *pending = SSL_get_ex_data(ssl, us_ssl_ocsp_pending_idx);
+  if (pending) {
+    /* Re-entry after a suspension: 1 = still waiting, 2 = the resolution
+     * already staged its response (or chose not to staple). */
+    if (pending->state == 1) return -1;
+    if (pending->state == 2) {
+      pending->state = 0;
+      return 1;
+    }
+  }
+
+  /* Nothing to do unless this ClientHello carried status_request. */
+  if (SSL_get_tlsext_status_type(ssl) != TLSEXT_STATUSTYPE_ocsp) return 1;
+
+  struct us_listen_socket_t *ls =
+      (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
+  if (!ls || !ls->on_ocsp_request) return 1;
+
+  struct loop_ssl_data *cb_lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
+  struct us_socket_t *cb_socket = cb_lsd ? cb_lsd->ssl_socket : NULL;
+  if (!cb_socket) return 1;
+
+  void *saved_loop_state[5];
+  us_internal_ssl_loop_state_save(ssl, saved_loop_state);
+  int abort_handshake = 0;
+  ls->on_ocsp_request(ls, cb_socket, &abort_handshake);
+  us_internal_ssl_loop_state_restore(saved_loop_state);
+
+  if (abort_handshake == 1) {
+    /* The handler reported an error: it destroyed the socket from JS, so the
+     * handshake has nothing left to drive. */
+    return 0;
+  }
+  if (abort_handshake == 2) {
+    /* Asynchronous handler: suspend until us_socket_ocsp_resolve(). With no
+     * state to resume through there is nothing to suspend on, so proceed
+     * without a staple rather than park the handshake forever. */
+    if (!pending) {
+      pending = us_calloc(1, sizeof(*pending));
+      if (!pending) return 1;
+      SSL_set_ex_data(ssl, us_ssl_ocsp_pending_idx, pending);
+    }
+    pending->state = 1;
+    return -1;
+  }
+  /* Synchronous handler: the response (if any) is already staged. */
+  return 1;
+}
+
+void us_listen_socket_on_ocsp_request(struct us_listen_socket_t *ls,
+                                      void (*cb)(struct us_listen_socket_t *,
+                                                 struct us_socket_t *, int *)) {
+  ls->on_ocsp_request = cb;
 }
 
 void us_internal_ssl_handshake_abort(struct us_socket_t *s) {

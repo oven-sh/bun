@@ -53,9 +53,17 @@ function toZigNamespace(name: string): string {
   return result;
 }
 
+// Headers are declared alongside the sources even though nothing `#include`s
+// them from ninja's point of view. A header whose dependent .cpp is textually
+// unchanged (a dictionary gaining a field grows `Generated<Name>.h` but not the
+// `Generated<Other>.cpp` that embeds it) would otherwise only be noticed on the
+// NEXT build, linking an object compiled against the old struct layout. For a
+// struct that crosses the C++/Rust FFI boundary that is a memory-corrupting
+// build, not a stale one.
 function listOutputs(): void {
   const outputs: string[] = [];
   for (const type of getNamedExports()) {
+    if (type.hasCppHeader) outputs.push(cppHeaderPath(type));
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));

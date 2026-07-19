@@ -1965,6 +1965,55 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
+    /// The server's stapled OCSP response (`None` when it stapled nothing),
+    /// delivered from inside the client handshake.
+    ///
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_session`:
+    /// the JS listener may destroy this socket, which is the documented way to
+    /// reject a staple. Returns nothing: the caller unwinds straight into
+    /// BoringSSL's handshake, so every exception is consumed here rather than
+    /// left pending.
+    pub fn on_ocsp_response(this: bun_ptr::ThisPtr<Self>, response: Option<&[u8]>) {
+        jsc::mark_binding!();
+        if this.socket.get().is_detached() {
+            return;
+        }
+        if !this.has_handlers() {
+            return;
+        }
+        let handlers = this.get_handlers();
+        if handlers.vm.is_shutting_down() {
+            return;
+        }
+        let callback = handlers.on_ocsp_response();
+        if callback.is_empty() {
+            return;
+        }
+        let scope = handlers.enter();
+        let global = handlers.global_object;
+        let this_value = this.get_this_value(&global);
+        let response_value = match response {
+            Some(bytes) => match jsc::ArrayBuffer::create_buffer(&global, bytes) {
+                Ok(buffer) => buffer,
+                Err(err) => {
+                    let err_value = global.take_exception(err);
+                    let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+                    this.exit_scope(scope);
+                    return;
+                }
+            },
+            None => JSValue::NULL,
+        };
+        let result = match callback.call(&global, this_value, &[this_value, response_value]) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+        if let Some(err_value) = result.to_error() {
+            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+        }
+        this.exit_scope(scope);
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_close(
         this: bun_ptr::ThisPtr<Self>,
@@ -3715,6 +3764,34 @@ impl<const SSL: bool> NewSocket<SSL> {
             tls_socket_functions::get_tls_ticket(Self::as_tls(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
+        }
+    }
+    /// `(certificateDER, issuerDER)` for the certificate this server connection
+    /// is about to send - the arguments Node's `'OCSPRequest'` listener takes.
+    /// Either slot is `undefined` when it cannot be resolved.
+    pub(crate) fn ocsp_certificates(&self, g: &JSGlobalObject) -> JsResult<(JSValue, JSValue)> {
+        if !SSL {
+            return Ok((JSValue::UNDEFINED, JSValue::UNDEFINED));
+        }
+        let Some(ssl_ptr) = self.socket.get().ssl() else {
+            return Ok((JSValue::UNDEFINED, JSValue::UNDEFINED));
+        };
+        tls_socket_functions::ocsp_certificates(ssl_ptr, g)
+    }
+    #[bun_jsc::host_fn(method)]
+    pub fn request_ocsp(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        if SSL {
+            tls_socket_functions::request_ocsp(Self::as_tls(this), g, f)
+        } else {
+            Ok(JSValue::FALSE)
+        }
+    }
+    #[bun_jsc::host_fn(method)]
+    pub fn resume_ocsp(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        if SSL {
+            tls_socket_functions::resume_ocsp(Self::as_tls(this), g, f)
+        } else {
+            Ok(JSValue::TRUE)
         }
     }
     #[bun_jsc::host_fn(method)]

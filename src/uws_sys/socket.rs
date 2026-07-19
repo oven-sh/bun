@@ -566,6 +566,38 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Server-side: stage the DER OCSP response this connection staples.
+    pub fn set_ocsp_response(&self, response: &[u8]) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_ocsp_response(response),
+            _ => false,
+        }
+    }
+
+    /// Resume a handshake suspended by an asynchronous `'OCSPRequest'` handler.
+    pub fn ocsp_resolve(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).ocsp_resolve();
+        }
+    }
+
+    /// Client-side: request a stapled OCSP response from the server. Returns
+    /// false when the transport cannot carry one: TLS over a generic JS `Duplex`
+    /// and Windows named pipes run on the SSLWrapper engine, whose private memory
+    /// BIO gives `us_ocsp_status_cb` no socket to dispatch `'OCSPResponse'` on
+    /// (hence its `us_ssl_loop_bio_idx` gate). Putting `status_request` on the
+    /// wire and then dropping the answer would be worse than not asking, so the
+    /// caller reports the limitation instead.
+    pub fn request_ocsp_stapling(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                sock(s).request_ocsp_stapling();
+                true
+            }
+            _ => false,
+        }
+    }
+
     // ── TLS ─────────────────────────────────────────────────────────────────
 
     /// Kick TLS open (ClientHello / accept) on an already-connected socket.

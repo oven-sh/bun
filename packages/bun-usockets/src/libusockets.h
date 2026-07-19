@@ -417,6 +417,26 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
 
+/* ── OCSP stapling ───────────────────────────────────────────────────────── */
+/* Registers the server-side 'OCSPRequest' dispatch. It runs once per handshake
+ * whose ClientHello carried status_request, and reports back through
+ * `abort_handshake`: 0 = done (any response was staged with
+ * us_socket_set_ocsp_response), 1 = the handler errored and destroyed the
+ * socket, 2 = the handler is asynchronous, suspend until
+ * us_socket_ocsp_resolve(). */
+void us_listen_socket_on_ocsp_request(struct us_listen_socket_t *ls,
+    void (*cb)(struct us_listen_socket_t *, struct us_socket_t *socket, int *abort_handshake))
+    nonnull_fn_decl;
+/* Server-side: stage the DER response this connection staples. Returns 0 when
+ * the bytes were rejected. */
+int us_socket_set_ocsp_response(us_socket_r s, const unsigned char *response, size_t length);
+/* Resume a handshake suspended by an async 'OCSPRequest' handler. Safe to call
+ * after the socket closed (no-op). */
+void us_socket_ocsp_resolve(us_socket_r s);
+/* Client-side: request a stapled response, which arrives through the
+ * `us_dispatch_ocsp_response` hook. Must run before the ClientHello. */
+void us_socket_request_ocsp_stapling(us_socket_r s);
+
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
  * us_connecting_socket_t* (DNS / happy-eyeballs in flight, *is_connecting=0).

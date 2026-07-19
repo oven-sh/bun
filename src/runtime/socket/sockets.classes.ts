@@ -121,6 +121,14 @@ function generate(ssl) {
         fn: "resumeSNI",
         length: 2,
       },
+      requestOCSP: {
+        fn: "requestOCSP",
+        length: 0,
+      },
+      resumeOCSP: {
+        fn: "resumeOCSP",
+        length: 1,
+      },
       setKeepAlive: {
         fn: "setKeepAlive",
         length: 2,

@@ -358,6 +358,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
     ls->sni = NULL;
     ls->on_server_name = NULL;
+    ls->on_ocsp_request = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
 

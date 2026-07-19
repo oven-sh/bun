@@ -157,6 +157,12 @@ impl Handlers {
     pub fn on_alpn_callback(&self) -> JSValue {
         self.cell.on_alpn_callback()
     }
+    pub fn on_ocsp_request(&self) -> JSValue {
+        self.cell.on_ocsp_request()
+    }
+    pub fn on_ocsp_response(&self) -> JSValue {
+        self.cell.on_ocsp_response()
+    }
 
     /// Drops the `open` callback for every holder of this `Handlers` — a client
     /// socket does this after its first TLS handshake so renegotiations do not
@@ -368,6 +374,8 @@ impl Handlers {
         let on_keylog = validated_callback!(on_keylog, "onKeylog");
         let on_server_name = validated_callback!(on_server_name, "onServerName");
         let on_alpn_callback = validated_callback!(on_alpn_callback, "onALPNCallback");
+        let on_ocsp_request = validated_callback!(on_ocsp_request, "onOCSPRequest");
+        let on_ocsp_response = validated_callback!(on_ocsp_response, "onOCSPResponse");
 
         if on_data.is_empty() && on_writable.is_empty() {
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -389,6 +397,8 @@ impl Handlers {
             on_keylog,
             on_server_name,
             on_alpn_callback,
+            on_ocsp_request,
+            on_ocsp_response,
         ])
     }
 

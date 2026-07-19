@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
@@ -404,6 +404,121 @@ describe("spawn()", () => {
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
     });
+
+    it("an unknown stdio string throws ERR_INVALID_ARG_VALUE", () => {
+      expect(() => spawn(bunExe(), ["-v"], { stdio: "bogus" as any })).toThrow({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'stdio' is invalid. Received 'bogus'",
+      });
+      expect(() => spawnSync(bunExe(), ["-v"], { stdio: "bogus" as any })).toThrow({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'stdio' is invalid. Received 'bogus'",
+      });
+    });
+
+    it("stdio that is neither a string nor an array throws ERR_INVALID_ARG_VALUE", () => {
+      expect(() => spawn(bunExe(), ["-v"], { stdio: 5 as any })).toThrow({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'stdio' is invalid. Received 5",
+      });
+      expect(() => spawnSync(bunExe(), ["-v"], { stdio: 5 as any })).toThrow({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'stdio' is invalid. Received 5",
+      });
+    });
+  });
+});
+
+describe("spawn() failure lifecycle", () => {
+  // Node reports the negative errno of a spawn that never ran as the child's
+  // exit code, emits no `exit`, and closes with a null signal.
+  async function lifecycleOf(child: ChildProcess) {
+    const events: string[] = [];
+    let error: any;
+    let whenErrored: any;
+    child.on("error", e => {
+      error = e;
+      events.push("error");
+      whenErrored = { exitCode: child.exitCode, signalCode: child.signalCode };
+    });
+    child.on("exit", () => events.push("exit"));
+    const closeArgs: unknown[] = await new Promise(resolve => {
+      child.on("close", (...args) => {
+        events.push("close");
+        resolve(args);
+      });
+    });
+    return {
+      error,
+      summary: {
+        events,
+        whenErrored,
+        closeArgs,
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        killed: child.killed,
+      },
+    };
+  }
+
+  it("ENOENT", async () => {
+    const { error, summary } = await lifecycleOf(spawn("bun-definitely-not-a-real-binary"));
+
+    expect(error.code).toBe("ENOENT");
+    expect(error.errno).toBeLessThan(0);
+    expect(summary).toEqual({
+      events: ["error", "close"],
+      whenErrored: { exitCode: error.errno, signalCode: null },
+      closeArgs: [error.errno, null],
+      exitCode: error.errno,
+      signalCode: null,
+      killed: false,
+    });
+  });
+
+  it.if(!isWindows)("EACCES", async () => {
+    using dir = tempDir("child-process-eacces", { "not-executable.sh": "#!/bin/sh\necho hi\n" });
+    const file = path.join(String(dir), "not-executable.sh");
+    fs.chmodSync(file, 0o644);
+
+    const { error, summary } = await lifecycleOf(spawn(file));
+
+    expect(error.code).toBe("EACCES");
+    expect(error.errno).toBeLessThan(0);
+    expect(summary).toEqual({
+      events: ["error", "close"],
+      whenErrored: { exitCode: error.errno, signalCode: null },
+      closeArgs: [error.errno, null],
+      exitCode: error.errno,
+      signalCode: null,
+      killed: false,
+    });
+  });
+
+  // `close` only fires once every stdio stream has closed, so materializing the
+  // streams of a failed spawn must not leave it unfired.
+  it.each([
+    ["default stdio", undefined],
+    ["an extra pipe", ["pipe", "pipe", "pipe", "pipe"]],
+  ])("close still fires after the stdio streams are materialized (%s)", async (_label, stdio) => {
+    const child = spawn("bun-definitely-not-a-real-binary", [], { stdio } as any);
+    void child.stdin;
+    void child.stdout;
+    void child.stderr;
+    void child.stdio;
+
+    const { error, summary } = await lifecycleOf(child);
+
+    expect(error.code).toBe("ENOENT");
+    expect(error.errno).toBeLessThan(0);
+    expect(summary).toEqual({
+      events: ["error", "close"],
+      whenErrored: { exitCode: error.errno, signalCode: null },
+      closeArgs: [error.errno, null],
+      exitCode: error.errno,
+      signalCode: null,
+      killed: false,
+    });
   });
 
   it.skipIf(isWindows)(
@@ -498,6 +613,34 @@ describe("spawnSync()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
+  });
+
+  // `output` is 1:1 with the stdio array, null for every slot the parent does
+  // not read from.
+  it("output has one entry per stdio slot", () => {
+    const result = spawnSync(bunExe(), ["-e", `process.stdout.write("out"); process.stderr.write("err")`], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe", "ignore", "ignore"],
+    });
+
+    expect({
+      output: result.output.map(entry => (entry === null ? null : entry.toString())),
+      stdout: result.stdout?.toString(),
+      stderr: result.stderr?.toString(),
+      status: result.status,
+    }).toEqual({
+      output: [null, "out", "err", null, null],
+      stdout: "out",
+      stderr: "err",
+      status: 0,
+    });
+  });
+
+  it("output has three entries for the default stdio", () => {
+    const result = spawnSync(bunExe(), ["-e", `process.stdout.write("out")`], { env: bunEnv });
+
+    expect(result.output.map(entry => (entry === null ? null : entry.toString()))).toEqual([null, "out", ""]);
+    expect(result.status).toBe(0);
   });
 
   it.if(isLinux)("detached: true starts the child in a new process group", () => {

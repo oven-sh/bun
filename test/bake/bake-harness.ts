@@ -40,15 +40,6 @@ const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
   : () => {};
 
 /**
- * Can be set in fast development environments to improve iteration time.
- * In CI/Windows it appears that sometimes these tests dont wait enough
- * for things to happen, so the extra delay reduces flakiness.
- *
- * Needs much more investigation.
- */
-const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
-
-/**
  * Set to `ALL` to run all stress tests for 10 minutes each.
  * Set to a filter to run a specific filter for 10 minutes.
  */
@@ -333,10 +324,6 @@ export class Dev extends EventEmitter {
         } else if (wantsHmrEvent) {
           await Promise.race([seenFiles.promise]);
         }
-        if (!fastBatches) {
-          // Wait an extra delay to avoid double-triggering events.
-          await Bun.sleep(300);
-        }
 
         dev.off("watch_synchronization", onSeenFiles);
 
@@ -468,8 +455,7 @@ export class Dev extends EventEmitter {
       function cleanupAndResolve() {
         verboseSynchronization("Cleaning up and resolving");
         cleanup();
-        if (fastBatches) resolve();
-        else setTimeout(resolve, 250);
+        resolve();
       }
       function onPanic() {
         cleanup();

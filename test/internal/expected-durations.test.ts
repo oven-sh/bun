@@ -28,13 +28,18 @@ describe("test/expected-durations.json", () => {
     expect(bad).toEqual([]);
   });
 
-  test("covers the parallel-safe phase", () => {
+  test("covers the parallel-safe phase and clamps its spans", () => {
     // js/{node,bun}/test/parallel/ run N-wide and log without a `--- ` group
     // prefix; a parser that only matches `--- [N/M]` drops ~3k entries here.
     const parallelSafe = entries.filter(
       ([k]) => k.startsWith("js/node/test/parallel/") || k.startsWith("js/bun/test/parallel/"),
     );
     expect(parallelSafe.length).toBeGreaterThan(1000);
+    // Concurrent-phase spans are inter-dispatch gaps; without the clamp the
+    // last-dispatched file on each shard absorbs the tail drain / a sibling's
+    // retry backoff and reads as multiple seconds for a ~50 ms test.
+    const unclamped = parallelSafe.filter(([, e]) => Object.values(e).some(ms => ms > 500)).map(([k]) => k);
+    expect(unclamped).toEqual([]);
   });
 
   test("every entry is {lane: non-negative ms}", () => {

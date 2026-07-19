@@ -4,9 +4,9 @@
  * Regenerate test/expected-durations.json from recent Buildkite runs.
  *
  * The file maps each test path (relative to test/, forward slashes) to its
- * median wall-clock ms on the release and asan linux-x64 lanes.
- * runner.node.mjs uses it to bin-pack test files across --max-shards so every
- * shard does roughly the same amount of work instead of `index % shards`.
+ * median per-lane cost in ms (see `lanes` below). runner.node.mjs uses it
+ * to bin-pack test files across --max-shards so every shard does roughly
+ * the same amount of work instead of `index % shards`.
  *
  * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
@@ -65,34 +65,40 @@ const api = async path => {
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
 // prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
-// prints the bare form. For that concurrent phase the gap is an inter-*start*
-// delta, not wall clock, so individual values undercount heavy outliers while
-// the phase sum (and therefore LPT balance) is preserved.
+// prints the bare form. For that concurrent phase the gap is an inter-dispatch
+// delta, not wall clock; we clamp it so the last-dispatched file on each shard
+// does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
 function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
   let path = null;
   let start = null;
+  let concurrent = false;
+  const emit = ts => {
+    if (path === null || start === null || ts === null) return;
+    out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
+  };
   for (let line of lines) {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
     const ts = m ? Number(m[1]) : null;
     const text = m ? m[2] : line;
-    const hdr = /^(?:--- )?\[\d+\/\d+\] (.+)$/.exec(text);
+    const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
-      if (path !== null && start !== null && ts !== null) out.push([path, ts - start]);
+      emit(ts);
       // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
       // paths; treat them as a delimiter so the preceding span closes cleanly.
-      const title = hdr[1].trim();
+      const title = hdr[2].trim();
       const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;
+      concurrent = isPath && !hdr[1];
       continue;
     }
     if (/^--- (?:End\b|Running \d+ parallel-safe)/.test(text)) {
-      if (path !== null && start !== null && ts !== null) out.push([path, ts - start]);
-      path = null;
-      start = null;
+      emit(ts);
+      path = start = null;
+      concurrent = false;
     }
   }
   return out;

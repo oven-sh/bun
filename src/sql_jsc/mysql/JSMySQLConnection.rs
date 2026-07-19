@@ -605,6 +605,11 @@ impl JSMySQLConnection {
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
         js::onclose_set_cached(js_value, global_object, on_close);
+        js::cached_structures_set_cached(
+            js_value,
+            global_object,
+            JSValue::create_empty_array(global_object, 0)?,
+        );
 
         Ok(js_value)
     }
@@ -686,6 +691,18 @@ impl JSMySQLConnection {
             return js::queries_get_cached(value).unwrap_or(JSValue::UNDEFINED);
         }
         JSValue::UNDEFINED
+    }
+
+    /// Append a freshly-built result-row `Structure` to this wrapper's
+    /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
+    /// of via a per-statement `Strong` handle.
+    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) {
+        let global = &self.global_object;
+        if let Some(array) = js::cached_structures_get_cached(this_value)
+            && array.push(global, structure).is_err()
+        {
+            global.clear_exception_except_termination();
+        }
     }
 
     #[inline]
@@ -821,9 +838,13 @@ impl JSMySQLConnection {
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
             ResultMode::Objects => self.js_value.get().try_get().map(|value| {
-                let cs = statement.structure(value, &self.global_object);
+                let (cs, new_structure) = statement.structure(value, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                ParentRef::new(cs)
+                let cs = ParentRef::new(cs);
+                if let Some(new_structure) = new_structure {
+                    self.add_cached_structure(value, new_structure);
+                }
+                cs
             }),
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,

@@ -1298,6 +1298,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
+    js::cached_structures_set_cached(
+        js_value,
+        global_object,
+        JSValue::create_empty_array(global_object, 0)?,
+    );
     bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
@@ -2367,6 +2372,19 @@ impl PostgresSQLConnection {
         js::queries_get_cached(js_value).unwrap_or(JSValue::UNDEFINED)
     }
 
+    /// Append a freshly-built result-row `Structure` to this wrapper's
+    /// `m_cachedStructures` array so GC traces it via `visitChildren` instead
+    /// of via a per-statement `Strong` handle.
+    fn add_cached_structure(&self, this_value: JSValue, structure: JSValue) {
+        debug_assert!(!this_value.is_empty());
+        let global = self.global();
+        if let Some(array) = js::cached_structures_get_cached(this_value)
+            && array.push(global, structure).is_err()
+        {
+            global.clear_exception_except_termination();
+        }
+    }
+
     // `message_type` is a runtime arg; the match
     // below still monomorphizes per-Context and the branch is trivially predictable.
     // `reader` is taken by-value as a `NewReaderWrap<&mut Context>`
@@ -2408,10 +2426,14 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
-                        let cs = statement.structure(owner, self.global());
-                        structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                        cached_structure = Some(ParentRef::new(cs));
+                        if let Some(owner) = self.js_value.get().try_get() {
+                            let (cs, new_structure) = statement.structure(owner, self.global());
+                            structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
+                            cached_structure = Some(ParentRef::new(cs));
+                            if let Some(new_structure) = new_structure {
+                                self.add_cached_structure(owner, new_structure);
+                            }
+                        }
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure

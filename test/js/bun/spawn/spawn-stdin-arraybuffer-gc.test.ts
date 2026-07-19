@@ -51,8 +51,7 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
         }
 
         console.log(JSON.stringify({
-          protectedBefore,
-          protectedDuring,
+          protectedDelta: protectedDuring - protectedBefore,
           liveDuring,
         }));
       `;
@@ -64,15 +63,16 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`fixture failed (exit ${exitCode}):\n${stderr}\n${stdout}`);
 
-      expect(stderr).toBe("");
-      const { protectedBefore, protectedDuring, liveDuring } = JSON.parse(stdout.trim());
-      // No Strong root is taken for the copied stdin bytes.
-      expect(protectedDuring).toBe(protectedBefore);
-      // No internal JSC Uint8Array is allocated for the copy (the user passed a
-      // plain ArrayBuffer, so any Uint8Array here is an internal allocation).
-      expect(liveDuring).toBe(0);
-      expect(exitCode).toBe(0);
+      // No Strong root is taken for the copied stdin bytes (protectedDelta 0),
+      // and no internal JSC Uint8Array is allocated for the copy (the user
+      // passed a plain ArrayBuffer, so liveDuring counts only Bun-internal
+      // Uint8Arrays).
+      expect(JSON.parse(stdout.trim())).toEqual({
+        protectedDelta: 0,
+        liveDuring: 0,
+      });
     });
   }
 });
@@ -144,9 +144,9 @@ describe("Bun.spawn stdin: ArrayBuffer bytes reach the child intact", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      if (exitCode !== 0) throw new Error(`fixture failed (exit ${exitCode}):\n${stderr}\n${stdout}`);
+
       expect(JSON.parse(stdout.trim())).toEqual(expected);
-      expect(exitCode).toBe(0);
     });
   }
 });

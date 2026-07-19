@@ -1380,10 +1380,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 break 'brk HttpResult::Success;
                             }
 
-                            nhr.promise.set(core::mem::replace(
-                                &mut strong_promise,
-                                jsc::StrongOptional::empty(),
-                            ));
+                            node_http_response::js::promise_set_cached(strong_self, global, result);
+                            nhr.flags
+                                .set(nhr.flags.get() | NhrFlags::HAS_HANDLER_PROMISE);
                             // `#[host_fn(export = …)]` emits its
                             // C-ABI shim as `__jsc_host_<fn>`; the export name
                             // is link-only.

@@ -111,3 +111,100 @@ test("'connection' and 'clientError' callbacks survive GC", async () => {
     server.close();
   }
 });
+
+test.concurrent(
+  "async handler's returned promise is traced via the response wrapper, not a per-request Strong",
+  async () => {
+    // Each async node:http request used to store the handler's pending promise
+    // in a JSC::Strong on the native struct. Strong handles are GC roots that
+    // heapStats().protectedObjectTypeCounts walks, so with N in-flight async
+    // requests the Promise count there grew by N. The promise now lives in the
+    // wrapper's WriteBarrier m_promise slot instead: still reachable (the
+    // socket's Strong on the wrapper keeps it alive), just not a root. Runs in
+    // a subprocess so the heapStats snapshot starts from a clean baseline.
+    const src = /* js */ `
+      const http = require("node:http");
+      const { heapStats } = require("bun:jsc");
+
+      process.on("uncaughtException", () => {});
+
+      const N = 64;
+      const deferreds = [];
+      let resolveInflight;
+      const inflight = new Promise(r => (resolveInflight = r));
+
+      const server = http.createServer(async (req, res) => {
+        const d = Promise.withResolvers();
+        deferreds.push(d);
+        if (deferreds.length === N) resolveInflight();
+        await d.promise;
+        res.end("ok");
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        const port = server.address().port;
+        const before = heapStats().protectedObjectTypeCounts.Promise ?? 0;
+
+        const received = [];
+        const closeResolvers = [];
+        const closed = Array.from({ length: N }, (_, i) => new Promise(r => (closeResolvers[i] = r)));
+        await Promise.all(Array.from({ length: N }, (_, j) =>
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port,
+            socket: {
+              open(sock) {
+                sock.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n");
+              },
+              data(sock, buf) { received[j] = (received[j] ?? "") + buf.toString(); },
+              close() { closeResolvers[j](); },
+              error() {},
+            },
+          }),
+        ));
+        await inflight;
+
+        // GC while every handler is parked on its await: the wrapper (rooted by
+        // the server socket) must keep the promise reachable via m_promise.
+        Bun.gc(true);
+        const during = heapStats().protectedObjectTypeCounts.Promise ?? 0;
+
+        // release and verify every response completes (proves the slot held on)
+        for (const d of deferreds) d.resolve();
+        await Promise.all(closed);
+        const after = heapStats().protectedObjectTypeCounts.Promise ?? 0;
+
+        const statuses = received.map(r => r.split("\\r\\n")[0]);
+        console.log(JSON.stringify({
+          N,
+          allOk: statuses.length === N && statuses.every(s => s === "HTTP/1.1 200 OK"),
+          promiseRootsDuring: during - before,
+          promiseRootsAfter: after - before,
+        }));
+        process.exit(0);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const parsed = JSON.parse(stdout.trim() || "null");
+    expect({ parsed, stderr, exitCode }).toEqual({
+      parsed: {
+        N: 64,
+        allOk: true,
+        promiseRootsDuring: expect.any(Number),
+        promiseRootsAfter: expect.any(Number),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    // A handful of unrelated Strong<Promise> may come and go; what matters is
+    // the count does not scale with N. With the per-request Strong the delta
+    // was >= N; with the traced slot it is a small constant.
+    expect(parsed.promiseRootsDuring).toBeLessThan(parsed.N / 2);
+    expect(parsed.promiseRootsAfter).toBeLessThan(parsed.N / 2);
+  },
+  isASAN ? 30_000 : 15_000,
+);

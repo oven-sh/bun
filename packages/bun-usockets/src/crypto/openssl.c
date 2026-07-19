@@ -896,6 +896,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   ERR_clear_error();
 
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
+  if (!ssl_context) Bun__outOfMemory();
   atomic_fetch_add(&ssl_ctx_live, 1);
   /* Register the live-count free_func first thing so every exit (including
    * build_fail) balances. The packed reneg policy reuses the same slot. */
@@ -1273,6 +1274,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   SSL *ssl = SSL_new(ctx);
+  if (!ssl) Bun__outOfMemory();
   /* Only Bun.connect / node:tls sockets surface the 'session' event; tagging
    * just those keeps the new-session callback a no-op for every other TLS
    * consumer (fetch, Bun.serve, postgres, websockets) instead of serializing
@@ -1280,8 +1282,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   /* The listener's own kind is always 0; the kind it assigns to accepted
    * sockets lives in accept_kind and may not have been copied onto `s` yet
    * when its SSL is initialized. */
-  if (ssl && (us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
-              (listener && listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS))) {
+  if (us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
+      (listener && listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS)) {
     /* The very first TLS attach in a process can be a client connection, and
      * nothing on that path has registered the ex_data indices yet - using the
      * still--1 index would make CRYPTO_set_ex_data grow its slot array toward

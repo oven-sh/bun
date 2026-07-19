@@ -2120,6 +2120,10 @@ where
         // scope (including the `?` below) once `cookies_to_write` drops.
         let mut cookies_to_write = upgrader.cookies.take();
 
+        // Mark upgraded before the 101 write so any error below cannot make the
+        // caller render a response over already-emitted bytes (issue #1339).
+        upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
+
         // Write status, custom headers, and cookies in one place
         if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
             resp.write_status(b"101 Switching Protocols");
@@ -2139,9 +2143,6 @@ where
             }
         }
 
-        // --- After this point, do not throw an exception
-        // See https://github.com/oven-sh/bun/issues/1339
-        upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
         let signal = upgrader.signal.take();
         upgrader.resp = None;
         request.request_context = AnyRequestContext::NULL;

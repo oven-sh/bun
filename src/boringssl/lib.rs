@@ -176,7 +176,9 @@ pub fn init_client() -> *mut boring::SSL {
             .0
             .as_ptr();
 
-        let ssl = boring::SSL_new(ctx);
+        let ssl = ptr::NonNull::new(boring::SSL_new(ctx))
+            .expect("SSL_new")
+            .as_ptr();
         boring::SSL_set_connect_state(ssl);
 
         ssl

@@ -585,6 +585,10 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         do {
             rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
         } while (IS_EINTR(rc));
+        /* MOD invariant: the fd was ADDed by us_poll_start_rc on this epoll, so
+         * MOD cannot fail for resource reasons (ENOSPC is ADD-only); rc != 0
+         * means the fd was closed behind the poll's back, a lifetime bug. */
+        US_ASSERT(rc == 0);
 #else
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif

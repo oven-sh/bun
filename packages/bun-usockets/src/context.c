@@ -26,13 +26,6 @@
 #endif
 #define CONCURRENT_CONNECTIONS 4
 
-#if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
-#include <assert.h>
-#define US_ASSERT(x) assert(x)
-#else
-#define US_ASSERT(x) ((void)0)
-#endif
-
 // clang-format off
 
 /* Forward-declared so this file does not depend on OpenSSL headers. */

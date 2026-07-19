@@ -4155,7 +4155,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  // TODO: make this work on Windows
+  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
   it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");

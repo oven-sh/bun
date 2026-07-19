@@ -3066,6 +3066,30 @@ test("stdin redirect from a Uint8Array sends the bytes captured when the command
   expect(result.exitCode).toBe(0);
 }, 60_000);
 
+describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {
+  // A spawned command reading stdin (cat) must see EOF when the redirect
+  // source is an empty ArrayBuffer/TypedArray, same as an empty Blob.
+  const cases: Array<[string, ArrayBufferLike | ArrayBufferView | Blob]> = [
+    ["ArrayBuffer(0)", new ArrayBuffer(0)],
+    ["Uint8Array(0)", new Uint8Array(0)],
+    ["Buffer.alloc(0)", Buffer.alloc(0)],
+    ["DataView(0)", new DataView(new ArrayBuffer(0))],
+    ["SharedArrayBuffer(0)", new SharedArrayBuffer(0)],
+    ["Uint8Array(64).subarray(3, 3)", new Uint8Array(64).subarray(3, 3)],
+    ["Blob([])", new Blob([])],
+  ];
+  test.concurrent.each(cases)("%s", async (_name, input) => {
+    const result = await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${input}`
+      .env(bunEnv)
+      .nothrow();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop

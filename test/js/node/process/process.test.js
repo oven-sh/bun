@@ -631,6 +631,67 @@ describe.concurrent(() => {
       expect(exitCode).toBe(0);
     });
 
+    it("is skipped after a fatal uncaught exception", async () => {
+      // Node's fatal-exception path is effectively process.exit(1); 'beforeExit'
+      // is only emitted on a natural drain, never for conditions causing
+      // explicit termination.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("still fires when an uncaughtException listener handled the throw", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", e => console.log("caught", e.message));
+           process.on("beforeExit", c => console.log("beforeExit", c));
+           process.on("exit", c => console.log("exit", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("caught boom\nbeforeExit 0\nexit 0\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a throw from an exit listener after a fatal throw still stops subsequent exit listeners", async () => {
+      // Skipping the beforeExit dispatch also skips the call that arms
+      // exit_on_uncaught_exception; on_before_exit() arms it itself so a throw
+      // from 'exit' still short-circuits the remaining listeners like Node.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", c => { console.log("first", c); throw new Error("b"); });
+           process.on("exit", c => console.log("second", c));
+           setTimeout(() => { throw new Error("boom"); }, 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("first 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
     it("exits 1, not 7, when an exit listener also throws and nothing handles it", async () => {
       await using proc = Bun.spawn({
         cmd: [

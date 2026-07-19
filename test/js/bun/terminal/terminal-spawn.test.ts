@@ -188,7 +188,7 @@ describe("Bun.Terminal subprocess integration", () => {
     // Windows Server 2019: inline terminals ClosePseudoConsole on child exit,
     // which races conhost's render thread and drops a fast child's output ~50%
     // of runs. Keep the child attached until the marker is observed.
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "console.log('inline-terminal'); setInterval(()=>{},1e9)"],
       env: bunEnv,
       terminal: {

@@ -847,6 +847,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
+    // source-tree lints and build-script unit tests that never touch the built
+    // binary; run in .github/workflows/source-lints.yml instead
+    args.push("--exclude=internal/source-lints");
   }
 
   const depends = [];

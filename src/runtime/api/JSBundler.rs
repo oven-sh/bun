@@ -1861,7 +1861,8 @@ pub use js_bundler::Plugin;
 pub use js_bundler::PluginJscExt;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
-/// `loader/path/hash/output_kind/sourcemap`.
+/// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
+/// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct BuildArtifact {
     pub blob: Blob,
@@ -1869,7 +1870,6 @@ pub struct BuildArtifact {
     pub path: Box<[u8]>,
     pub hash: u64,
     pub output_kind: OutputKind,
-    pub sourcemap: bun_jsc::StrongOptional,
 }
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
@@ -2000,12 +2000,16 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_source_map(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        this.sourcemap.get().unwrap_or(JSValue::NULL)
+    pub fn get_source_map(_this: &Self, _global: &JSGlobalObject) -> JSValue {
+        // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
+        // by `on_complete`); the C++ getter returns that slot before calling
+        // here, so reaching this means no sourcemap was assigned.
+        JSValue::NULL
     }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
+        this_value: JSValue,
         formatter: &mut F,
         writer: &mut W,
     ) -> core::fmt::Result
@@ -2103,13 +2107,19 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                if let Some(sourcemap) = self.sourcemap.get().and_then(|v| v.as_::<BuildArtifact>())
+                let sourcemap_value =
+                    crate::generated_classes::js_BuildArtifact::sourcemap_get_cached(this_value);
+                if let Some(sourcemap) =
+                    sourcemap_value.and_then(|v| v.as_::<BuildArtifact>().map(|p| (v, p)))
                 {
                     // SAFETY: `as_` returned a non-null wrapper-owned pointer;
                     // `write_format` is `&self` so a shared borrow is sound
                     // even if `sourcemap` aliases `self`.
-                    unsafe { &*sourcemap }
-                        .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                    unsafe { &*sourcemap.1 }.write_format::<F, W, ENABLE_ANSI_COLORS>(
+                        sourcemap.0,
+                        formatter,
+                        writer,
+                    )?;
                 } else {
                     write!(
                         writer,

@@ -319,6 +319,59 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot; once the
+    // owner is unreachable the sourcemap must be collectable in the same cycle.
+    using dir = tempDir("build-artifact-sourcemap-gc", {
+      "index.js": "export const x = 1;\n",
+      "run.js": `
+        const weak = { entry: null, map: null };
+        async function build() {
+          const result = await Bun.build({
+            entrypoints: ["./index.js"],
+            sourcemap: "external",
+            outdir: ".",
+          });
+          const entry = result.outputs[0];
+          const map = result.outputs[1];
+          if (entry.sourcemap !== map) throw new Error("expected entry.sourcemap === map");
+          if (!Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"))
+            throw new Error("Bun.inspect(entry) lost the sourcemap");
+          weak.entry = new WeakRef(entry);
+          weak.map = new WeakRef(map);
+        }
+        await build();
+        for (let i = 0; i < 20; i++) {
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+          const e = weak.entry.deref();
+          const m = weak.map.deref();
+          console.log("gc " + i + " entry=" + (e ? "alive" : "dead") + " map=" + (m ? "alive" : "dead"));
+          if (!e && !m) break;
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.at(-1)).toContain("entry=dead map=dead");
+    // The sourcemap must not survive a GC that collects its owner.
+    expect(lines.filter(l => l.includes("entry=dead map=alive"))).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   // test("BuildArtifact properties splitting", async () => {
   //   Bun.gc(true);
   //   const x = await Bun.build({

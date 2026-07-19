@@ -154,7 +154,10 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
                 m
             }
         };
-        ipc_data.internal_msg_queue.get().put_callback(map, global, this_seq, callback);
+        ipc_data
+            .internal_msg_queue
+            .get()
+            .put_callback(map, global, this_seq, callback);
         if let Some(h) = &mut native_handle {
             h.cluster_seq = Some(this_seq);
         }
@@ -239,8 +242,10 @@ pub(crate) fn handle_internal_message_primary(
         if !p.is_undefined() {
             let ack = p.to_int32();
             if let Some(map) = subprocess_js::ipc_ack_callbacks_get_cached(this_jsvalue) {
-                if let Some(callback) =
-                    ipc_data.internal_msg_queue.get().take_callback(map, global, ack)?
+                if let Some(callback) = ipc_data
+                    .internal_msg_queue
+                    .get()
+                    .take_callback(map, global, ack)?
                 {
                     event_loop.run_callback(
                         subprocess.context,

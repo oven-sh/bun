@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
+use super::throw;
 use super::{Expect, get_signature};
 
 pub(crate) fn to_have_nth_returned_with(
@@ -72,39 +73,36 @@ pub(crate) fn to_have_nth_returned_with(
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if this.flags.get().not() {
-        return this.throw(
+        return throw!(
+            this,
             global,
             get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),
-            format_args!(
-                "\n\nExpected mock function not to have returned on call {}: <green>{}<r>\nBut it did.\n",
-                n,
-                expected.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected mock function not to have returned on call {}: <green>{}<r>\nBut it did.\n",
+            n,
+            expected.to_fmt(&mut formatter),
         );
     }
 
     if !nth_call_exists {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nThe mock function was called {} time{}, but call {} was requested.\n",
-                calls_count,
-                if calls_count == 1 { "" } else { "s" },
-                n,
-            ),
+            "\n\nThe mock function was called {} time{}, but call {} was requested.\n",
+            calls_count,
+            if calls_count == 1 { "" } else { "s" },
+            n,
         );
     }
 
     if nth_call_threw {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nCall {} threw an error: <red>{}<r>\n",
-                n,
-                nth_error_value.to_fmt(&mut formatter),
-            ),
+            "\n\nCall {} threw an error: <red>{}<r>\n",
+            n,
+            nth_error_value.to_fmt(&mut formatter),
         );
     }
 
@@ -118,21 +116,21 @@ pub(crate) fn to_have_nth_returned_with(
             global_this: Some(global),
             not: false,
         };
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nCall {}:\n{}\n", n, diff_format),
+            "\n\nCall {}:\n{}\n", n, diff_format,
         );
     }
 
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nCall {}:\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-            n,
-            expected.to_fmt(&mut formatter),
-            nth_return_value.to_fmt(&mut formatter2),
-        ),
+        "\n\nCall {}:\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
+        n,
+        expected.to_fmt(&mut formatter),
+        nth_return_value.to_fmt(&mut formatter2),
     )
 }

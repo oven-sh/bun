@@ -45,6 +45,19 @@ describe("randomUUIDv7", () => {
     expect(firstBreak).toBe(-1);
   });
 
+  test("default path is monotonic", () => {
+    // No explicit timestamp: the RFC 9562 §6.2 clamp must keep Date.now()-driven
+    // calls strictly increasing regardless of how many land in one millisecond.
+    let prev = "";
+    let firstBreak = -1;
+    for (let i = 0; i < 10000; i++) {
+      const u = Bun.randomUUIDv7();
+      if (i > 0 && u <= prev && firstBreak === -1) firstBreak = i;
+      prev = u;
+    }
+    expect(firstBreak).toBe(-1);
+  });
+
   describe("timestamp range validation", () => {
     test.each([
       ["2**48", 2 ** 48],
@@ -76,7 +89,7 @@ describe("randomUUIDv7", () => {
     });
 
     test("accepts 2**48 - 1 (max 48-bit value)", async () => {
-      // Subprocess: 2**48-1 would park the process-global timestamp at year 10889.
+      // Subprocess: keep the explicit-timestamp counter state isolated.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -128,9 +141,9 @@ describe("randomUUIDv7", () => {
     });
   });
 
-  // The remaining tests pass far-future timestamps. UUID_V7_LAST_TIMESTAMP is a
-  // process-global that never moves backward, so run each in a fresh subprocess
-  // to avoid leaving the test process parked in the year 2100+.
+  // The remaining tests pass explicit timestamps far from now. Explicit calls
+  // track their own counter state, so run each in a fresh subprocess to keep
+  // that state isolated across tests.
 
   test("custom timestamp", async () => {
     await using proc = Bun.spawn({
@@ -154,18 +167,25 @@ describe("randomUUIDv7", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("older explicit timestamps do not move UUIDs backward", async () => {
+  test("explicit timestamp is encoded verbatim", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          const latest = Bun.randomUUIDv7("hex", 4_500_000_000_000);
-          const stale  = Bun.randomUUIDv7("hex", 1);
+          const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+          // Prior default call must not cause a later explicit past timestamp
+          // to be clamped to now.
+          Bun.randomUUIDv7();
+          const past = 1625097600000; // 2021-07-01T00:00:00.000Z
+          // A second explicit call at a different, older timestamp must also be
+          // encoded verbatim (explicit calls never clamp to the previous one).
+          const older = 1;
           console.log(JSON.stringify({
-            increasing: stale > latest,
-            latestPrefix: latest.slice(0, 13),
-            stalePrefix:  stale.slice(0, 13),
+            hex:    tsOf(Bun.randomUUIDv7("hex", past)),
+            single: tsOf(Bun.randomUUIDv7(past)),
+            date:   tsOf(Bun.randomUUIDv7("hex", new Date(past))),
+            older:  tsOf(Bun.randomUUIDv7("hex", older)),
           }));
         `,
       ],
@@ -175,10 +195,36 @@ describe("randomUUIDv7", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      increasing: true,
-      latestPrefix: "0417bce6-c800",
-      stalePrefix: "0417bce6-c800",
+      hex: 1625097600000,
+      single: 1625097600000,
+      date: 1625097600000,
+      older: 1,
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test("explicit timestamp does not rebase later default calls", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+          // One far-future explicit call must not move the default path's
+          // monotonic state; subsequent default calls still encode ~now.
+          Bun.randomUUIDv7("hex", Date.now() + 86_400_000);
+          console.log(tsOf(Bun.randomUUIDv7()) - Date.now());
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On the regression this is ~86_400_000. A 60s bound absorbs clock-source
+    // jitter between JS Date.now() and the native millisecond clock on Windows.
+    const skew = Number(stdout.trim());
+    expect(Math.abs(skew)).toBeLessThan(60_000);
     expect(exitCode).toBe(0);
   });
 

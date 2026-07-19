@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -59,24 +60,22 @@ pub(crate) fn to_be_instance_of(
         // `expected_line`/`received_line` are inlined here because Rust `concat!`
         // only accepts literals (and `format_args!` needs a literal anyway).
         let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected constructor: not <green>{}<r>\nReceived value: <red>{}<r>\n",
-                expected_fmt, value_fmt,
-            ),
+            "\n\nExpected constructor: not <green>{}<r>\nReceived value: <red>{}<r>\n",
+            expected_fmt, value_fmt,
         );
     }
 
     let signature = get_signature("toBeInstanceOf", "<green>expected<r>", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nExpected constructor: <green>{}<r>\nReceived value: <red>{}<r>\n",
-            expected_fmt, value_fmt,
-        ),
+        "\n\nExpected constructor: <green>{}<r>\nReceived value: <red>{}<r>\n",
+        expected_fmt, value_fmt,
     )
     })();
     this.post_match(global);

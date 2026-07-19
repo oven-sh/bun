@@ -629,7 +629,7 @@ impl NodeHTTPResponse {
             self.body_read_state.set(BodyReadState::Done);
 
             if had_ref {
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(this_value);
             }
         }
     }
@@ -681,7 +681,10 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn mark_request_as_done(&self) {
+    /// `js_this` follows the `clear_pending_pinned_write` convention: the
+    /// wrapper cell handed in by C++ on terminal paths where
+    /// `get_this_value()` is already ZERO (abort), or ZERO to look it up.
+    fn mark_request_as_done(&self, js_this: JSValue) {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
         // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
@@ -703,7 +706,11 @@ impl NodeHTTPResponse {
         }
 
         let vm = vm_get();
-        let this_value = self.get_this_value();
+        let this_value = if js_this.is_empty() {
+            self.get_this_value()
+        } else {
+            js_this
+        };
         if had_async_promise && !this_value.is_empty() {
             js::promise_set_cached(this_value, vm.global(), JSValue::ZERO);
         }
@@ -725,10 +732,10 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    pub(crate) fn mark_request_as_done_if_necessary(&self) {
+    pub(crate) fn mark_request_as_done_if_necessary(&self, js_this: JSValue) {
         if self.flags.get().contains(Flags::IS_REQUEST_PENDING) && !self.should_request_be_pending()
         {
-            self.mark_request_as_done();
+            self.mark_request_as_done(js_this);
         }
     }
 
@@ -1263,7 +1270,7 @@ impl NodeHTTPResponse {
                 // `clear_on_data_callback` reached from `mark_request_as_done`
                 // can't touch the dead socket.
                 self.raw_response.set(None);
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(js_value);
             }
             return;
         }
@@ -1313,7 +1320,7 @@ impl NodeHTTPResponse {
         // ref when the JS wrapper has already finalized; nothing between them
         // reads `raw_response`, so clearing first avoids a post-destroy write.
         if EVENT == AbortEvent::Abort {
-            self.mark_request_as_done_if_necessary();
+            self.mark_request_as_done_if_necessary(js_this);
             self.raw_response.set(None);
         }
         self.deref();
@@ -1445,7 +1452,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
-        self.mark_request_as_done_if_necessary();
+        self.mark_request_as_done_if_necessary(JSValue::ZERO);
     }
 }
 
@@ -1465,8 +1472,8 @@ pub(crate) fn node_http_request_on_resolve(
     let had_promise = this.flags.get().contains(Flags::HAS_HANDLER_PROMISE);
     if had_promise {
         this.update_flags(|f| f.remove(Flags::HAS_HANDLER_PROMISE));
-        js::promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
     }
+    js::promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
     // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), this_jsvalue);
 
@@ -1510,8 +1517,8 @@ pub(crate) fn node_http_request_on_reject(
     let had_promise = this.flags.get().contains(Flags::HAS_HANDLER_PROMISE);
     if had_promise {
         this.update_flags(|f| f.remove(Flags::HAS_HANDLER_PROMISE));
-        js::promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
     }
+    js::promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
     this.maybe_stop_reading_body(bun_vm_mut(global_object), this_jsvalue);
 
     // defer this.deref(); — moved to tail.
@@ -1596,7 +1603,7 @@ impl NodeHTTPResponse {
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(JSValue::ZERO);
             }
         }
     }
@@ -1683,7 +1690,7 @@ impl NodeHTTPResponse {
         if last {
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(this_value);
             }
             self.deref();
         }

@@ -126,18 +126,18 @@ test.concurrent(
       const http = require("node:http");
       const { heapStats } = require("bun:jsc");
 
-      process.on("uncaughtException", () => {});
-
-      const N = 64;
-      const deferreds = [];
-      let resolveInflight;
-      const inflight = new Promise(r => (resolveInflight = r));
+      const N = 16;
+      const ABORT_FROM = 8;
+      let hits = 0;
+      const deferreds = Array.from({ length: N }, () => Promise.withResolvers());
+      const serverSawClose = Array.from({ length: N }, () => Promise.withResolvers());
+      const inflight = Promise.withResolvers();
 
       const server = http.createServer(async (req, res) => {
-        const d = Promise.withResolvers();
-        deferreds.push(d);
-        if (deferreds.length === N) resolveInflight();
-        await d.promise;
+        const j = Number(req.url.slice(1));
+        res.once("close", serverSawClose[j].resolve);
+        if (++hits === N) inflight.resolve();
+        await deferreds[j].promise;
         res.end("ok");
       });
       server.listen(0, "127.0.0.1", async () => {
@@ -147,36 +147,45 @@ test.concurrent(
         const received = [];
         const closeResolvers = [];
         const closed = Array.from({ length: N }, (_, i) => new Promise(r => (closeResolvers[i] = r)));
-        await Promise.all(Array.from({ length: N }, (_, j) =>
+        const sockets = await Promise.all(Array.from({ length: N }, (_, j) =>
           Bun.connect({
             hostname: "127.0.0.1",
             port,
             socket: {
               open(sock) {
-                sock.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n");
+                sock.write("GET /" + j + " HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n");
               },
               data(sock, buf) { received[j] = (received[j] ?? "") + buf.toString(); },
               close() { closeResolvers[j](); },
               error() {},
+              connectError(_, err) { closeResolvers[j](err); },
             },
           }),
         ));
-        await inflight;
+        await inflight.promise;
 
         // GC while every handler is parked on its await: the wrapper (rooted by
         // the server socket) must keep the promise reachable via m_promise.
         Bun.gc(true);
         const during = heapStats().protectedObjectTypeCounts.Promise ?? 0;
 
-        // release and verify every response completes (proves the slot held on)
+        // Abort the tail while their handlers are still parked so the abort
+        // path threads the wrapper cell into mark_request_as_done and clears
+        // the slot there, then release every handler so the head's on_resolve
+        // runs with the flag still set and the tail's runs with it cleared.
+        for (let i = ABORT_FROM; i < N; i++) sockets[i].end();
+        await Promise.all(serverSawClose.slice(ABORT_FROM).map(d => d.promise));
+
         for (const d of deferreds) d.resolve();
         await Promise.all(closed);
+        Bun.gc(true);
         const after = heapStats().protectedObjectTypeCounts.Promise ?? 0;
 
-        const statuses = received.map(r => r.split("\\r\\n")[0]);
+        const statuses = received.slice(0, ABORT_FROM).map(r => (r ?? "").split("\\r\\n")[0]);
         console.log(JSON.stringify({
           N,
-          allOk: statuses.length === N && statuses.every(s => s === "HTTP/1.1 200 OK"),
+          okResponses: statuses.filter(s => s === "HTTP/1.1 200 OK").length,
+          abortedGotNoBytes: received.slice(ABORT_FROM).every(r => r === undefined),
           promiseRootsDuring: during - before,
           promiseRootsAfter: after - before,
         }));
@@ -192,8 +201,9 @@ test.concurrent(
     const parsed = JSON.parse(stdout.trim() || "null");
     expect({ parsed, stderr, exitCode }).toEqual({
       parsed: {
-        N: 64,
-        allOk: true,
+        N: 16,
+        okResponses: 8,
+        abortedGotNoBytes: true,
         promiseRootsDuring: expect.any(Number),
         promiseRootsAfter: expect.any(Number),
       },
@@ -206,5 +216,4 @@ test.concurrent(
     expect(parsed.promiseRootsDuring).toBeLessThan(parsed.N / 2);
     expect(parsed.promiseRootsAfter).toBeLessThan(parsed.N / 2);
   },
-  isASAN ? 30_000 : 15_000,
 );

@@ -1609,7 +1609,7 @@ impl JSValkeyClient {
             )?;
             // `on_valkey_close()` consumes the socket ref; hand it over so it
             // isn't released twice.
-            core::mem::forget(socket_ref);
+            socket_ref.forget();
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
@@ -1650,7 +1650,7 @@ impl JSValkeyClient {
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
-        core::mem::forget(socket_ref);
+        socket_ref.forget();
         Ok(())
     }
 

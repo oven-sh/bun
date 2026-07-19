@@ -32,38 +32,41 @@ async function buildColumn(bytes: number[]): Promise<{ stdout: string; stderr: s
 }
 
 test.concurrent("lone 0xF0 byte reports column 2, not 3, and does not panic", async () => {
-  const { stdout, stderr, exitCode } = await buildColumn([0xf0]);
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("overflow");
   // One byte in the file: the parse error at EOF is column 2. Previously the
-  // wrapped line-start made this column 3 (or panicked on overflow-checks).
-  expect(stdout).toBe(`{"line":1,"column":2}`);
-  expect(exitCode).toBe(0);
+  // wrapped line-start made this column 3 (release) or aborted the process
+  // (overflow-checked debug); either failure shows up in this diff.
+  expect(await buildColumn([0xf0])).toEqual({
+    stdout: `{"line":1,"column":2}`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("three stray 0xF0 bytes report column 4, not 7", async () => {
-  const { stdout, stderr, exitCode } = await buildColumn([0xf0, 0xf0, 0xf0]);
-  expect(stderr).not.toContain("panic");
-  expect(stdout).toBe(`{"line":1,"column":4}`);
-  expect(exitCode).toBe(0);
+  expect(await buildColumn([0xf0, 0xf0, 0xf0])).toEqual({
+    stdout: `{"line":1,"column":4}`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("stray 0xF0 on a non-first line does not skew the column", async () => {
   // "a{}\n" puts the stray byte at the start of line 2 where the true line
   // start is non-zero, exercising the same bookkeeping without the position-0
   // edge case.
-  const prefix = [...Buffer.from("a{}\n")];
-  const { stdout, stderr, exitCode } = await buildColumn([...prefix, 0xf0]);
-  expect(stderr).not.toContain("panic");
-  expect(stdout).toBe(`{"line":2,"column":2}`);
-  expect(exitCode).toBe(0);
+  expect(await buildColumn([...Buffer.from("a{}\n"), 0xf0])).toEqual({
+    stdout: `{"line":2,"column":2}`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("valid 4-byte UTF-8 still counts as two UTF-16 columns", async () => {
   // U+1F600 GRINNING FACE: a well-formed 4-byte sequence is a surrogate pair in
   // UTF-16, so EOF after it is column 3. This must not regress.
-  const { stdout, stderr, exitCode } = await buildColumn([0xf0, 0x9f, 0x98, 0x80]);
-  expect(stderr).not.toContain("panic");
-  expect(stdout).toBe(`{"line":1,"column":3}`);
-  expect(exitCode).toBe(0);
+  expect(await buildColumn([0xf0, 0x9f, 0x98, 0x80])).toEqual({
+    stdout: `{"line":1,"column":3}`,
+    stderr: "",
+    exitCode: 0,
+  });
 });

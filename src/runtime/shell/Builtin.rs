@@ -875,11 +875,23 @@ impl Builtin {
         // mirroring the async `on_io_writer_chunk` error path.
         let exit_code = match (exit_code, Self::of_mut(interp, cmd).write_err.take()) {
             (0, Some(e)) => {
-                if Self::of(interp, cmd).stderr.needs_io().is_none() {
-                    let msg =
-                        Self::task_error_to_string(interp, cmd, Self::kind_of(interp, cmd), &e)
-                            .to_vec();
-                    let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, &msg);
+                let msg = Self::task_error_to_string(interp, cmd, Self::kind_of(interp, cmd), &e)
+                    .to_vec();
+                match &Self::of(interp, cmd).stderr {
+                    // An fd stderr would need an async enqueue, but per-builtin
+                    // `on_io_writer_chunk` state machines have already advanced
+                    // past the point that can handle a completion. Tee the
+                    // message into the JS-side capture buffer so `r.stderr`
+                    // carries the diagnostic; the terminal write is skipped.
+                    BuiltinIO::Fd(fd) => {
+                        // SAFETY: see `OutFd::captured_mut`.
+                        if let Some(buf) = unsafe { fd.captured_mut() } {
+                            buf.extend_from_slice(&msg);
+                        }
+                    }
+                    _ => {
+                        let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, &msg);
+                    }
                 }
                 1
             }
@@ -929,7 +941,10 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
+    /// Returns `Err(ENOSPC)` when an ArrayBuffer target cannot hold all of
+    /// `buf` (after writing what fits); the error is also latched on the
+    /// [`Builtin`] so [`Builtin::done`] fails the command even when the
+    /// caller discards the result.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub fn write_no_io(
         interp: &Interpreter,

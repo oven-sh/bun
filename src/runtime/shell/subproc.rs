@@ -2226,7 +2226,7 @@ impl PipeReader {
                 } else if me.buffered_output.overflowed() {
                     Some(
                         bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::write)
-                            .to_system_error(),
+                            .to_shell_system_error(),
                     )
                 } else {
                     None

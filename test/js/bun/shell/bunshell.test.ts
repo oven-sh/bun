@@ -491,6 +491,17 @@ describe("bunshell", () => {
       });
     });
 
+    test("builtin: without .quiet() the diagnostic still reaches r.stderr", async () => {
+      // Default stderr is an fd teeing to the terminal + `r.stderr`; `done()`
+      // tees the message into the capture buffer synchronously.
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf}`;
+      expect({ stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        stderr: "echo: No space left on device\n",
+        exitCode: 1,
+      });
+    });
+
     test("builtin: exact fit succeeds", async () => {
       const buf = Buffer.alloc(12);
       const r = await $`echo hello world > ${buf}`.quiet();

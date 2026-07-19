@@ -986,7 +986,10 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            if self.exit_code.unwrap_or(0) == 0 {
+                self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            }
+            e.deref();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1022,7 +1025,10 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            if self.exit_code.unwrap_or(0) == 0 {
+                self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            }
+            e.deref();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {

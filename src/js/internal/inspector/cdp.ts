@@ -101,10 +101,18 @@ class InspectorCDPAdapter {
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
+  // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
+  #nodeRuntimeEnabled = false;
+  #isWaitingForDebugger: () => boolean;
 
-  constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
+  constructor(
+    writeToBackend: (message: string) => void,
+    writeToClient: (message: string) => void,
+    isWaitingForDebugger: () => boolean = () => false,
+  ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
+    this.#isWaitingForDebugger = isWaitingForDebugger;
   }
 
   handleClientMessage(message: string): void {
@@ -486,6 +494,10 @@ class InspectorCDPAdapter {
       case "Runtime.setAsyncCallStackDepth":
       case "Profiler.enable":
       case "Profiler.disable":
+      // Accepted and ignored: JSC's sampling interval is not configurable.
+      // Nothing can observe the difference, since Profiler.start has no
+      // translation and is rejected as unknown.
+      case "Profiler.setSamplingInterval":
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
       case "Network.enable":
@@ -499,9 +511,23 @@ class InspectorCDPAdapter {
       case "Target.setRemoteLocations":
       case "NodeWorker.enable":
       case "NodeWorker.disable":
-      case "NodeRuntime.enable":
-      case "NodeRuntime.disable":
       case "NodeRuntime.notifyWhenWaitingForDisconnect":
+        this.#replyToClient(id, {});
+        return;
+
+      case "NodeRuntime.enable":
+        // Node's RuntimeAgent::enable announces the wait, if there is one,
+        // before the reply, and does so again on every re-enable. Clients
+        // (--inspect-brk launchers, Node's own test helper) block on it.
+        this.#nodeRuntimeEnabled = true;
+        if (this.#isWaitingForDebugger()) {
+          this.#emitToClient("NodeRuntime.waitingForDebugger", {});
+        }
+        this.#replyToClient(id, {});
+        return;
+
+      case "NodeRuntime.disable":
+        this.#nodeRuntimeEnabled = false;
         this.#replyToClient(id, {});
         return;
 
@@ -627,6 +653,15 @@ class InspectorCDPAdapter {
 
       case "Console.messageAdded":
         this.#translateConsoleMessage(params.message || {});
+        return;
+
+      case "Bun.waitingForDebugger":
+        // Synthesized by the inspected thread when it starts waiting for a
+        // frontend, mirroring Node's RuntimeAgent::setWaitingForDebugger:
+        // announce it to a session that already enabled the domain.
+        if (this.#nodeRuntimeEnabled) {
+          this.#emitToClient("NodeRuntime.waitingForDebugger", {});
+        }
         return;
 
       default:

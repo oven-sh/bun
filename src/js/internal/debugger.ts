@@ -94,6 +94,9 @@ type CreateBackendFn = (
   executionContextId: number,
   refEventLoop: boolean,
   receive: (...messages: string[]) => void,
+  // Marks a connection whose frontend speaks CDP, so the inspected thread can
+  // send it events only InspectorCDPAdapter understands.
+  isCDP?: boolean,
 ) => unknown;
 
 // CDP translation is only needed for node:inspector servers, so load it lazily.
@@ -113,7 +116,10 @@ export default function (
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
   enableNodeCDP: boolean,
+  isWaitingForDebuggerFor: (executionContextId: number) => boolean,
 ): void {
+  // Per context: a waiting worker must not answer for the main thread.
+  const isWaitingForDebugger = () => isWaitingForDebuggerFor(executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -170,7 +176,7 @@ export default function (
           // start a new server on this already-running debugger thread and
           // report its URL back.
           try {
-            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
+            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true, false, isWaitingForDebugger);
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
             reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
@@ -193,6 +199,7 @@ export default function (
             adapter = new (cdpAdapterConstructor())(
               (backendMessage: string) => void sessionBackend?.write(backendMessage),
               () => {},
+              isWaitingForDebugger,
             );
             sessionAdapter = adapter;
             sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
@@ -206,7 +213,7 @@ export default function (
     };
 
     try {
-      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
+      debug = new Debugger(executionContextId, url, createBackend, send, close, true, false, isWaitingForDebugger);
     } catch (error) {
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
@@ -221,7 +228,7 @@ export default function (
 
   let debug: Debugger | undefined;
   try {
-    debug = new Debugger(executionContextId, url, createBackend, send, close, false, enableNodeCDP);
+    debug = new Debugger(executionContextId, url, createBackend, send, close, false, enableNodeCDP, isWaitingForDebugger);
   } catch (error) {
     exit("Failed to start inspector:\n", error);
   }
@@ -296,7 +303,7 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
-  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
+  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void, isCDP?: boolean) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
@@ -304,6 +311,8 @@ class Debugger {
   // serving the V8 CDP. The JSC-protocol pathname above is unaffected.
   #cdpPathname?: string;
   #enableNodeCDP = false;
+  // Reads the inspected context's wait-for-frontend state; see cdp.ts.
+  #isWaitingForDebugger: () => boolean;
   #server?: WebSocketServer;
   // Secondary loopback listener; see #listen().
   #loopbackServer?: WebSocketServer;
@@ -316,11 +325,13 @@ class Debugger {
     close: () => void,
     isNodeInspector: boolean = false,
     enableNodeCDP: boolean = false,
+    isWaitingForDebugger: () => boolean = () => false,
   ) {
     this.#nodeInspector = isNodeInspector;
     this.#enableNodeCDP = enableNodeCDP;
-    this.#createBackend = (refEventLoop, receive) => {
-      const backend = createBackend(executionContextId, refEventLoop, receive);
+    this.#isWaitingForDebugger = isWaitingForDebugger;
+    this.#createBackend = (refEventLoop, receive, isCDP = false) => {
+      const backend = createBackend(executionContextId, refEventLoop, receive, isCDP);
       return {
         write: (message: string | string[]) => {
           send.$call(backend, message);
@@ -386,7 +397,7 @@ class Debugger {
   // A backend connection that is not tied to a WebSocket client, used for
   // commands forwarded from the in-process inspector.Session.
   createSessionBackend(receive: (...messages: string[]) => void): Backend {
-    return this.#createBackend(true, receive);
+    return this.#createBackend(true, receive, true);
   }
 
   #listen(): void {
@@ -619,14 +630,19 @@ class Debugger {
       // alive — Node exits with a debugger attached — so never ref the event
       // loop for these connections (the `true` argument means "do not ref").
       let adapter: any;
-      const backend = this.#createBackend(true, (...messages: string[]) => {
-        for (const message of messages) {
-          adapter.handleBackendMessage(message);
-        }
-      });
+      const backend = this.#createBackend(
+        true,
+        (...messages: string[]) => {
+          for (const message of messages) {
+            adapter.handleBackendMessage(message);
+          }
+        },
+        true,
+      );
       adapter = new (cdpAdapterConstructor())(
         (message: string) => void backend.write(message),
         (message: string) => void client.write(message),
+        this.#isWaitingForDebugger,
       );
 
       data.client = client;

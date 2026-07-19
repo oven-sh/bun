@@ -160,6 +160,7 @@ impl Default for Debugger {
 // out-param. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
+    safe fn BunDebugger__notifyWaitingForDebugger(ctx_id: u32);
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
@@ -174,6 +175,12 @@ unsafe extern "C" {
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
+/// Script execution context of the thread currently blocked waiting for a
+/// frontend (`--inspect-brk`, `--inspect-wait`, `inspector.waitForDebugger()`),
+/// or 0 when none is. Contexts are what inspector connections are keyed by, so
+/// a waiting worker must not answer for the main thread. Read from the debugger
+/// thread to answer `NodeRuntime.enable`, hence atomic.
+static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
 
 impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
@@ -203,8 +210,16 @@ impl Debugger {
             return;
         }
         let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
-        // Reset `must_block_until_connected` on every exit path.
+        // Reset `must_block_until_connected` on every exit path. The wait is
+        // over once this returns, including the `Wait::Shortly` timeout, so
+        // clear the flag `NodeRuntime.enable` reads here too.
         let _reset = scopeguard::guard((), |()| {
+            let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+                ctx_id,
+                0,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
             if let Some(d) = this.debugger_mut() {
                 d.must_block_until_connected = false;
             }
@@ -414,6 +429,10 @@ impl Debugger {
         if dbg.wait_for_connection != Wait::Off {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected = true;
+            // Armed here, before the debugger thread can accept a frontend, so
+            // a client that attaches immediately still sees the waiting state.
+            // No broadcast: no connection can exist yet.
+            WAITING_FOR_DEBUGGER_CONTEXT.store(dbg.script_execution_context_id, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -668,6 +687,15 @@ pub fn wait_for_node_inspector_connection() {
         }
         dbg.must_block_until_connected = true;
     }
+    // A frontend may already be attached with the NodeRuntime domain enabled
+    // (inspector.open() then waitForDebugger()); Node announces the new wait to
+    // it, so tell the debugger thread before blocking.
+    let ctx_id = match this.debugger.as_deref() {
+        Some(d) => d.script_execution_context_id,
+        None => 0,
+    };
+    WAITING_FOR_DEBUGGER_CONTEXT.store(ctx_id, Ordering::Relaxed);
+    BunDebugger__notifyWaitingForDebugger(ctx_id);
     Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
 
@@ -679,11 +707,26 @@ pub fn abandon_node_inspector_wait() {
     let Some(dbg) = VirtualMachine::get().debugger_mut() else {
         return;
     };
+    let ctx_id = dbg.script_execution_context_id;
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.must_block_until_connected = false;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
     }
+    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+        ctx_id,
+        0,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
+}
+
+/// Answers `NodeRuntime.enable` on the debugger thread: Node emits
+/// `NodeRuntime.waitingForDebugger` from that command exactly while the
+/// inspected thread is blocked waiting for a frontend.
+// HOST_EXPORT(Debugger__isWaitingForDebugger, c)
+pub fn is_waiting_for_debugger(ctx_id: u32) -> bool {
+    ctx_id != 0 && WAITING_FOR_DEBUGGER_CONTEXT.load(Ordering::Relaxed) == ctx_id
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)
@@ -695,11 +738,20 @@ pub fn did_connect() {
     let Some(dbg) = this.debugger.as_deref_mut() else {
         return;
     };
+    let ctx_id = dbg.script_execution_context_id;
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop_mut().wakeup();
     }
+    // Matches Node's runIfWaitingForDebugger -> unsetWaitingForDebugger: the
+    // wait is resolved, so NodeRuntime.enable must stop announcing it.
+    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+        ctx_id,
+        0,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

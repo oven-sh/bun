@@ -495,6 +495,10 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
+    // This connection's frontend speaks CDP through InspectorCDPAdapter, so it
+    // is the only kind that understands the synthetic Bun.* events below.
+    bool isNodeCDP = false;
+
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;
@@ -661,6 +665,26 @@ extern "C" void BunDebugger__willHotReload()
     });
 }
 
+// A context started waiting for a frontend (inspector.waitForDebugger()).
+// Mirrors Node's RuntimeAgent::setWaitingForDebugger; the adapter decides
+// whether to forward it, since NodeRuntime `enabled` is per session.
+extern "C" void BunDebugger__notifyWaitingForDebugger(uint32_t scriptId)
+{
+    if (debuggerScriptExecutionContext == nullptr) {
+        return;
+    }
+
+    debuggerScriptExecutionContext->postTaskConcurrently([scriptId](ScriptExecutionContext& context) {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        // Only this context's frontends: another context may be running fine.
+        for (auto* connection : inspectorConnections->get(static_cast<ScriptExecutionContextIdentifier>(scriptId))) {
+            if (connection->isNodeCDP) {
+                connection->sendMessageToFrontend("{\"method\":\"Bun.waitingForDebugger\"}"_s);
+            }
+        }
+    });
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
@@ -686,6 +710,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         inspectorConnections->set(targetContext->identifier(), connections);
     }
     connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
+    connection->isNodeCDP = callFrame->argument(3).toBoolean(globalObject);
     connection->connect();
 
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
@@ -923,6 +948,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" bool Debugger__isWaitingForDebugger(uint32_t scriptId);
+
+// Reads an inspected context's wait-for-frontend state from the debugger
+// thread, for NodeRuntime.enable in internal/inspector/cdp.ts.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsWaitingForDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(Debugger__isWaitingForDebugger(callFrame->argument(0).toUInt32(globalObject))));
+}
+
 extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector, bool enableNodeCDP)
 {
     if (!debuggerScriptExecutionContext)
@@ -950,6 +984,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
     arguments.append(jsBoolean(enableNodeCDP));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("isWaitingForDebugger"_s), jsFunctionIsWaitingForDebugger, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

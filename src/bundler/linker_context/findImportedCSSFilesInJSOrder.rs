@@ -3,9 +3,7 @@ use bun_alloc::Arena;
 use bun_ast::ImportRecord;
 use bun_collections::VecExt;
 
-use crate::options::Loader;
 use crate::{Index, LinkerContext};
-use bun_ast::PartList;
 use bun_collections::DynamicBitSet as BitSet;
 
 /// JavaScript modules are traversed in depth-first postorder. This is the
@@ -37,26 +35,34 @@ pub fn find_imported_css_files_in_js_order(
     let all_loaders = this.parse_graph().input_files.items_loader();
     let all_parts = this.graph.ast.items_parts();
 
-    // Nested `fn` item so the visitor can recurse directly.
-    #[allow(clippy::too_many_arguments)]
-    fn visit(
-        c: &LinkerContext,
-        import_records: &[bun_ast::import_record::List<'_>],
-        parts: &[PartList<'_>],
-        loaders: &[Loader],
-        visits: &mut BitSet,
-        o: &mut Vec<Index>,
-        source_index: Index,
-        is_css: bool,
-    ) {
-        if visits.is_set(source_index.get() as usize) {
-            return;
+    // Explicit-stack DFS (was per-edge recursive). `Enter` pushes
+    // successors in discovery order then reverses the tail so `Leave`
+    // fires in the same depth-first postorder the recursion produced.
+    #[derive(Copy, Clone)]
+    enum Frame {
+        Enter(Index),
+        Leave(Index),
+    }
+    let mut stack: Vec<Frame> = vec![Frame::Enter(entry_point)];
+
+    while let Some(frame) = stack.pop() {
+        let source_index = match frame {
+            Frame::Leave(source_index) => {
+                order.push(source_index);
+                continue;
+            }
+            Frame::Enter(source_index) => source_index,
+        };
+
+        if visited.is_set(source_index.get() as usize) {
+            continue;
         }
-        visits.set(source_index.get() as usize);
+        visited.set(source_index.get() as usize);
 
-        let records: &[ImportRecord] = import_records[source_index.get() as usize].as_slice();
-        let p = &parts[source_index.get() as usize];
+        let records: &[ImportRecord] = all_import_records[source_index.get() as usize].as_slice();
+        let p = &all_parts[source_index.get() as usize];
 
+        let mark = stack.len();
         // Iterate over each part in the file in order
         for part in p.as_slice() {
             // Traverse any files imported by this part. Note that CommonJS calls
@@ -67,38 +73,21 @@ pub fn find_imported_css_files_in_js_order(
             // this is the only way to do it.
             for &import_record_index in part.import_record_indices.slice() {
                 let record = &records[import_record_index as usize];
-                if record.source_index.is_valid() {
-                    visit(
-                        c,
-                        import_records,
-                        parts,
-                        loaders,
-                        visits,
-                        o,
-                        record.source_index,
-                        loaders[record.source_index.get() as usize].is_css(),
-                    );
+                if record.source_index.is_valid()
+                    && !visited.is_set(record.source_index.get() as usize)
+                {
+                    stack.push(Frame::Enter(record.source_index));
                 }
             }
         }
-
-        if is_css && source_index.is_valid() {
-            // bun.handleOom(o.append(temp, source_index)) — Rust Vec uses global arena.
-            o.push(source_index);
+        // Only CSS files contribute to `order`; skip the `Leave` for
+        // everything else. The entry point was always visited with
+        // `is_css = false` in the recursive form.
+        if source_index != entry_point && all_loaders[source_index.get() as usize].is_css() {
+            stack.push(Frame::Leave(source_index));
         }
+        stack[mark..].reverse();
     }
-
-    // Include all files reachable from the entry point
-    visit(
-        this,
-        all_import_records,
-        all_parts,
-        all_loaders,
-        &mut visited,
-        &mut order,
-        entry_point,
-        false,
-    );
 
     order
 }

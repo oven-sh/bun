@@ -151,7 +151,7 @@ impl OutputFileList {
         let index = self.index_for_chunk();
         debug_assert!(
             index < self.index_for_sourcemaps_and_bytecode.unwrap_or(u32::MAX),
-            "index ({}) \\< index_for_sourcemaps_and_bytecode ({})",
+            "index ({}) < index_for_sourcemaps_and_bytecode ({})",
             index,
             self.index_for_sourcemaps_and_bytecode.unwrap_or(u32::MAX),
         );
@@ -169,7 +169,7 @@ impl OutputFileList {
         };
         debug_assert!(
             index < self.additional_output_files_start,
-            "index ({}) \\< additional_output_files_start ({})",
+            "index ({}) < additional_output_files_start ({})",
             index,
             self.additional_output_files_start,
         );
@@ -185,7 +185,7 @@ impl OutputFileList {
         debug_assert!(
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0)
                 <= self.additional_output_files_start,
-            "index_for_sourcemaps_and_bytecode ({}) \\< additional_output_files_start ({})",
+            "index_for_sourcemaps_and_bytecode ({}) <= additional_output_files_start ({})",
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0),
             self.additional_output_files_start,
         );

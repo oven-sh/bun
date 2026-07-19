@@ -159,3 +159,38 @@ test.each(accepted)("binding $name to timestamptz encodes the exact microsecond 
   expect(err).toBeUndefined();
   expect(sent).toBe((ms - POSTGRES_EPOCH_MS) * 1000n);
 });
+
+// An encode-time failure in write_bind must not leave a half-written Bind
+// frame in the connection's write buffer: the next query on the same pooled
+// connection must see a clean wire, not desynced protocol bytes.
+test("a query after a rejected bind on the same connection still works", async () => {
+  bound = undefined;
+  const sql = new SQL({
+    adapter: "postgres",
+    hostname: "127.0.0.1",
+    port,
+    username: "u",
+    database: "db",
+    tls: false,
+    max: 1,
+    prepare: true,
+    connectionTimeout: 1,
+  });
+  try {
+    // Both values are Date objects so they share one prepared statement; the
+    // second execute reuses it on the same connection.
+    let err: any;
+    try {
+      await sql`select ${new Date(NaN)}`;
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_OUT_OF_RANGE");
+    expect(bound).toBeUndefined();
+    // Second query on the same (max:1) connection must succeed and encode 0.
+    await sql`select ${new Date(0)}`;
+    expect(bound?.length === 8 ? bound.readBigInt64BE(0) : undefined).toBe(-POSTGRES_EPOCH_MS * 1000n);
+  } finally {
+    await sql.close({ timeout: 0 }).catch(() => {});
+  }
+});

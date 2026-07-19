@@ -57,7 +57,7 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     if !double_value.is_finite() {
         return Err(global_object
             .err_out_of_range(format_args!(
-                "timestamp value must be a finite number of milliseconds"
+                "timestamp value {double_value} is not a finite number of milliseconds"
             ))
             .throw());
     }

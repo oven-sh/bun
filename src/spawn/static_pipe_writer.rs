@@ -68,7 +68,11 @@ pub type Poll<P> = IOWriter<P>;
 /// # Safety
 /// `writer` must be the live `*mut Poll<P>` stored as the FilePoll owner.
 #[cfg(not(windows))]
-pub unsafe fn on_poll<P: StaticPipeWriterProcess>(writer: *mut Poll<P>, size_hint: isize, hup: bool) {
+pub unsafe fn on_poll<P: StaticPipeWriterProcess>(
+    writer: *mut Poll<P>,
+    size_hint: isize,
+    hup: bool,
+) {
     use bun_io::pipe_writer::PosixPipeWriter;
     // SAFETY: caller contract; `parent` is the backref set via `set_parent`.
     let parent = unsafe { (*writer).parent }

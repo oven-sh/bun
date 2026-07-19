@@ -62,10 +62,12 @@ const api = async path => {
   }
 };
 
-// Per-file wall clock is derived from the APC timestamps Buildkite injects
-// into log lines (ESC `_bk;t=<ms>` BEL) bracketing each `[N/M] <path>` header
-// the runner prints. Serial tests prefix that with `--- `; the parallel-safe
-// phase (runner.node.mjs) prints the bare form since those run concurrently.
+// Per-file cost is the gap between the APC timestamps Buildkite injects into
+// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
+// prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
+// prints the bare form. For that concurrent phase the gap is an inter-*start*
+// delta, not wall clock, so individual values undercount heavy outliers while
+// the phase sum (and therefore LPT balance) is preserved.
 function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);

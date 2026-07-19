@@ -915,6 +915,13 @@ describe("fs.promises.watch", () => {
     expect(ret).toBeInstanceOf(Promise);
     expect(await ret).toEqual({ value: undefined, done: true });
     expect(await it.next()).toEqual({ value: undefined, done: true });
+
+    const it2 = fs.promises.watch(root)[Symbol.asyncIterator]();
+    const err = new Error("boom");
+    const thrown = it2.throw(err);
+    expect(thrown).toBeInstanceOf(Promise);
+    await expect(thrown).rejects.toBe(err);
+    expect(await it2.next()).toEqual({ value: undefined, done: true });
   });
 
   test("concurrent next() calls both resolve", async () => {

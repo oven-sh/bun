@@ -329,7 +329,12 @@ validate("node_modules/is-number", "1.0.0");
 // lol: workspace whose folder name differs from its package name. Its `^2.0.0` no-deps
 // conflicts with the `1.0.1` pinned two levels deep under the aliased two-range-deps; bun
 // hoists 2.0.0 to the root and preserves the pinned 1.0.1 at its nested path.
-mustExist("node_modules/lol/package.json");
+test("node_modules/lol links to packages/lol-package", () => {
+  if (!cwd) throw new Error("install failed");
+  expect(fs.realpathSync(path.join(cwd, "node_modules", "lol"))).toBe(
+    fs.realpathSync(path.join(cwd, "packages", "lol-package")),
+  );
+});
 validate("node_modules/no-deps", "2.0.0");
 validate("packages/second/node_modules/body-parser/node_modules/no-deps", "1.0.1");
 mustNotExist("packages/lol-package/node_modules/no-deps");

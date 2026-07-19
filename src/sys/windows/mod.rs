@@ -3986,6 +3986,7 @@ pub unsafe fn GetFinalPathNameByHandleW(
     let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
     const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
     if out.len() <= PFX.len() {
+        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
         return 0;
     }
     let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {

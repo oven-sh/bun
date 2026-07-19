@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import * as v8 from "node:v8";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -981,5 +982,77 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+// The wire reader must enforce the same validation as the public constructor for
+// Bun's host tags; otherwise crafted bytes can manufacture objects in states no
+// JS constructor can reach. The X509Certificate tag with a zero-length DER used
+// to produce a JSX509Certificate with m_x509 == nullptr; .publicKey on that
+// instance wraps a null EVP_PKEY in a KeyObject, and key.equals(key) SEGFAULTs.
+describe("deserializing crafted host-tag records", () => {
+  // JSC wire header (version 14) + X509Certificate host tag (253) + u32 length.
+  const x509Record = (der: number[]) => Buffer.from([14, 0, 0, 0, 253, ...intLE(der.length), ...der]);
+  function intLE(n: number) {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n);
+    return [...b];
+  }
+
+  test("an X509Certificate record with empty DER is rejected and cannot yield a null-key KeyObject", async () => {
+    // Runs in a subprocess because the pre-fix build SEGFAULTs on key.equals(key),
+    // which would take the test runner down with it.
+    const childScript = `
+      const { deserialize } = require("bun:jsc");
+      const v8 = require("node:v8");
+      const payload = Buffer.from(process.argv[1], "base64");
+      const out = [];
+      for (const [entry, de] of [["bun:jsc", deserialize], ["node:v8", b => v8.deserialize(Buffer.from(b))]]) {
+        try {
+          const cert = de(payload);
+          // Pre-fix: cert is an X509Certificate with m_x509 == null. .publicKey hands out a
+          // KeyObject over a null EVP_PKEY; key.equals(key) dereferences it and SEGFAULTs.
+          const key = cert.publicKey;
+          out.push({ entry, threw: false, keyType: key?.type, equals: key.equals(key) });
+        } catch (e) {
+          out.push({ entry, threw: true, name: e?.name, message: e?.message });
+        }
+      }
+      process.stdout.write(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childScript, x509Record([]).toString("base64")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const rejection = { threw: true, name: "TypeError", message: "Unable to deserialize data." };
+    expect({ stdout: stdout ? JSON.parse(stdout) : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: [
+        { entry: "bun:jsc", ...rejection },
+        { entry: "node:v8", ...rejection },
+      ],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.each([
+    ["bun:jsc deserialize", deserialize],
+    ["v8.deserialize", v8.deserialize],
+  ])("%s: an X509Certificate record with undecodable DER is rejected", (_, fn) => {
+    expect(() => fn(x509Record([0xde, 0xad, 0xbe, 0xef]))).toThrow("Unable to deserialize data.");
+  });
+
+  test("a real X509Certificate still round-trips and its .publicKey is usable", () => {
+    const original = new X509Certificate(tls.cert);
+    const cloned = v8.deserialize(v8.serialize(original));
+    expect(cloned).toBeInstanceOf(X509Certificate);
+    expect(cloned.fingerprint256).toBe(original.fingerprint256);
+    const key = cloned.publicKey;
+    expect(key).toBeInstanceOf(KeyObject);
+    expect(key.type).toBe("public");
+    expect(key.equals(original.publicKey)).toBe(true);
   });
 });

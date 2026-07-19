@@ -799,6 +799,130 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
+  // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
+  // and no client library normalizes it away.
+  function hpackBlock(pairs: [string, string][]): Buffer {
+    return Buffer.concat(pairs.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
+  }
+
+  async function probe(
+    headers: [string, string][],
+    opts?: http2.ServerOptions,
+  ): Promise<{ dispatched: boolean; frames: Frame[] }> {
+    const srv = http2.createServer(opts ?? {});
+    srv.on("sessionError", () => {});
+    let dispatched = false;
+    srv.on("stream", stream => {
+      dispatched = true;
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end();
+      } catch {}
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const srvPort = (srv.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(srvPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, hpackBlock(headers));
+      // PING as a barrier: by the time the ACK (or a GOAWAY/close) arrives, the server has
+      // fully processed the HEADERS above.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await Promise.race([
+        c.waitFor(f => (f.type === FrameType.PING && (f.flags & 1) !== 0) || f.type === FrameType.GOAWAY),
+        c.waitClosed(),
+      ]);
+      return { dispatched, frames: c.frames.slice() };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function expectStreamProtocolError({ dispatched, frames }: { dispatched: boolean; frames: Frame[] }) {
+    expect(dispatched).toBe(false);
+    const rst = frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+    expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+    expect(frames.find(f => f.type === FrameType.HEADERS && f.streamId === 1)).toBeUndefined();
+  }
+
+  test.each([
+    ["empty :path", [[":method", "GET"], [":scheme", "http"], [":path", ""], [":authority", "localhost"]]],
+    ["empty :method", [[":method", ""], [":scheme", "http"], [":path", "/"], [":authority", "localhost"]]],
+    ["empty :scheme", [[":method", "GET"], [":scheme", ""], [":path", "/"], [":authority", "localhost"]]],
+    ["empty :authority", [[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", ""]]],
+    ["missing :path", [[":method", "GET"], [":scheme", "http"], [":authority", "localhost"]]],
+    ["missing :method", [[":scheme", "http"], [":path", "/"], [":authority", "localhost"]]],
+    ["missing :scheme", [[":method", "GET"], [":path", "/"], [":authority", "localhost"]]],
+    ["no :authority or host", [[":method", "GET"], [":scheme", "http"], [":path", "/"]]],
+    ["CONNECT with :path", [[":method", "CONNECT"], [":authority", "localhost"], [":path", "/"]]],
+    ["CONNECT with :scheme", [[":method", "CONNECT"], [":authority", "localhost"], [":scheme", "http"]]],
+    ["CONNECT without :authority", [[":method", "CONNECT"]]],
+  ] as const)("a request with %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
+    expectStreamProtocolError(await probe(headers as [string, string][]));
+  });
+
+  test.each([
+    [":protocol on non-CONNECT", [[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", "localhost"], [":protocol", "websocket"]]],
+    ["extended CONNECT without :scheme", [[":method", "CONNECT"], [":protocol", "websocket"], [":path", "/"], [":authority", "localhost"]]],
+    ["extended CONNECT without :path", [[":method", "CONNECT"], [":protocol", "websocket"], [":scheme", "http"], [":authority", "localhost"]]],
+    ["extended CONNECT without :authority", [[":method", "CONNECT"], [":protocol", "websocket"], [":scheme", "http"], [":path", "/"]]],
+    ["extended CONNECT with empty :path", [[":method", "CONNECT"], [":protocol", "websocket"], [":scheme", "http"], [":path", ""], [":authority", "localhost"]]],
+  ] as const)("with enableConnectProtocol: %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
+    expectStreamProtocolError(await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }));
+  });
+
+  test("a valid request block is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "GET"],
+      [":scheme", "http"],
+      [":path", "/"],
+      [":authority", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("a request with a host header in place of :authority is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "GET"],
+      [":scheme", "http"],
+      [":path", "/"],
+      ["host", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("a plain CONNECT with only :authority is dispatched", async () => {
+    const { dispatched, frames } = await probe([
+      [":method", "CONNECT"],
+      [":authority", "localhost"],
+    ]);
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+
+  test("an extended CONNECT (:protocol) with :scheme/:path/:authority is dispatched", async () => {
+    const { dispatched, frames } = await probe(
+      [
+        [":method", "CONNECT"],
+        [":protocol", "websocket"],
+        [":scheme", "http"],
+        [":path", "/"],
+        [":authority", "localhost"],
+      ],
+      { settings: { enableConnectProtocol: true } },
+    );
+    expect(dispatched).toBe(true);
+    expect(frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+  });
+});
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;

@@ -2617,7 +2617,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         RETURN_IF_EXCEPTION(scope, false);
         auto cmp = JSBigInt::compare(value, roundTrip);
         if (cmp != JSBigInt::ComparisonResult::Equal) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind"_s);
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind."_s);
             return false;
         }
         r = sqlite3_bind_int64(m_stmt, index, iv);
@@ -2631,7 +2631,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         r = sqlite3_bind_blob64(m_stmt, index, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT);
     } else {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-            makeString("Provided value cannot be bound to SQLite parameter "_s, index));
+            makeString("Provided value cannot be bound to SQLite parameter "_s, index, '.'));
         return false;
     }
     if (r != SQLITE_OK) {

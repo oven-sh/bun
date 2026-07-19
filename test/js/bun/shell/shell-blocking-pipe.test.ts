@@ -80,14 +80,14 @@ test.skipIf(isWindows)("builtin redirect to a named pipe larger than the pipe bu
   });
   const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), exited, drained]);
 
+  // Surface the panic text first; exact-empty stderr is not asserted
+  // (ASAN/debug lanes may emit benign noise).
+  if (exitCode !== 0) throw new Error(`child exited ${exitCode}:\n${stderr}`);
   const expected = Buffer.alloc(200_000, "bun!").toString() + "\n";
-  // Combined object so stderr shows in the failure diff; exact-empty stderr is
-  // not asserted separately (ASAN/debug lanes may emit benign noise).
   expect({ stdout, receivedLen: received.length, exitCode }).toEqual({
     stdout: "",
     receivedLen: expected.length,
     exitCode: 0,
   });
-  if (exitCode !== 0) throw new Error(`child failed:\n${stderr}`);
   expect(received).toBe(expected);
 });

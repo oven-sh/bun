@@ -1125,3 +1125,27 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
 });
+
+test("scanSync/scan with globalThis receiver does not crash", async () => {
+  const script = `
+    for (const fn of ["scanSync", "scan"]) {
+      try {
+        new Bun.Glob("x")[fn].call(globalThis, 512);
+      } catch (e) {
+        console.log(fn + ": " + e.constructor.name);
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "scanSync: TypeError\nscan: TypeError",
+    stderr: expect.not.stringContaining("ASSERTION FAILED"),
+    exitCode: 0,
+    signalCode: null,
+  });
+});

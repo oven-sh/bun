@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -524,7 +526,10 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
+      // Bind the IPv4 loopback explicitly: `hostname: "localhost"` binds ::1
+      // only on some hosts while fetch connects to 127.0.0.1, failing with
+      // ConnectionRefused before the timeout under test can ever fire.
+      hostname: "127.0.0.1",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {
@@ -668,6 +673,87 @@ describe.concurrent("fetch-tls", () => {
       const stderr = await proc.stderr.text();
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
+    }
+  });
+
+  // A TLS protocol-level failure (the peer answers the ClientHello with bytes
+  // that are not a TLS record) must surface as a TLS handshake error, not as
+  // ConnectionRefused (which is what a dead/refusing endpoint reports) and not
+  // as a certificate verification error. The three failure classes must be
+  // distinguishable regardless of whether a CONNECT proxy is in the path.
+  it("reports a TLS handshake error (not ConnectionRefused or a certificate error) when the peer speaks non-TLS, with and without a CONNECT proxy", async () => {
+    const garbage = Buffer.alloc(480, "GARBAGE NOT TLS ");
+
+    // CONNECT proxy that answers 200 then feeds garbage into the tunnel.
+    const proxy = net.createServer(cs => {
+      cs.on("error", () => {});
+      let buf = "";
+      cs.on("data", d => {
+        buf += d;
+        if (buf.includes("\r\n\r\n") && buf.startsWith("CONNECT")) {
+          cs.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          cs.write(garbage);
+          buf = "";
+        }
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+
+    // Direct TCP server that answers any bytes (the ClientHello) with garbage.
+    const direct = net.createServer(s => {
+      s.on("error", () => {});
+      s.on("data", () => s.write(garbage));
+    });
+    direct.listen(0, "127.0.0.1");
+    await once(direct, "listening");
+
+    try {
+      const proxyPort = (proxy.address() as net.AddressInfo).port;
+      const directPort = (direct.address() as net.AddressInfo).port;
+
+      // Spawn a subprocess with proxy-bypass env cleared so the explicit
+      // `proxy:` option is honored for loopback targets regardless of the
+      // ambient environment. Port 1 (tcpmux) is the refused-connection control.
+      const fixture = `
+        const probe = async (url, proxy) => {
+          try { await fetch(url, proxy ? { proxy } : {}); return "RESOLVED"; }
+          catch (e) { return e?.code ?? "NO_CODE"; }
+        };
+        const [tunnelGarbage, proxyRefused, directGarbage] = await Promise.all([
+          probe("https://127.0.0.1:1/x", "http://127.0.0.1:${proxyPort}"),
+          probe("https://127.0.0.1:1/x", "http://127.0.0.1:1"),
+          probe("https://127.0.0.1:${directPort}/x"),
+        ]);
+        console.log(JSON.stringify({ tunnelGarbage, proxyRefused, directGarbage }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...bunEnv,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+        result: {
+          tunnelGarbage: "ERR_TLS_HANDSHAKE_FAILED",
+          proxyRefused: "ConnectionRefused",
+          directGarbage: "ERR_TLS_HANDSHAKE_FAILED",
+        },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      proxy.close();
+      direct.close();
     }
   });
 });

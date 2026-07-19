@@ -90,10 +90,6 @@ function depromise<T>(_promise: Promise<T>): T {
   const enc = new TextEncoder();
   proc.stdin.write(enc.encode(" world!"));
   enc.encodeInto(" world!", {} as any as Uint8Array);
-  // Bun-specific overloads
-  // these fail when lib.dom.d.ts is present
-  enc.encodeInto(" world!", new Uint32Array(124));
-  enc.encodeInto(" world!", {} as any as DataView);
 
   // send buffered data
   await proc.stdin.flush();

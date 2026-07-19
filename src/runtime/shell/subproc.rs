@@ -526,11 +526,14 @@ impl ShellSubprocess {
             let mut subproc = unsafe { bun_core::heap::take(this) };
             for r in [&mut subproc.stdout, &mut subproc.stderr] {
                 if let Readable::Pipe(pipe) = r {
-                    // `start()` failed before any reader callback registered,
-                    // so the `Arc` is expected to be uniquely held. Write
-                    // unconditionally rather than via
-                    // `Arc::get_mut`, which would silently skip the state
-                    // transition if a future change bumped the strong count.
+                    // `start_pipe_reader` drops its local keepalive before
+                    // returning, so this slot's `Arc` is uniquely held here
+                    // even when stdout already started and only stderr's
+                    // start failed (the registered poll owns a raw pointer,
+                    // not a strong ref). Write unconditionally rather than
+                    // via `Arc::get_mut`, which would silently skip the
+                    // state transition if a future change bumped the strong
+                    // count.
                     debug_assert_eq!(Arc::strong_count(pipe), 1);
                     // SAFETY: single-threaded shell; no other borrow live.
                     let p = unsafe { &mut *Arc::as_ptr(pipe).cast_mut() };

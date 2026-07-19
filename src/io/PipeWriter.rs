@@ -177,8 +177,7 @@ pub trait PosixPipeWriter {
 
     /// Re-derives the slice from `self.get_buffer()` each iteration.
     /// `try_write` only needs `&self`, so the shared borrow of the buffer
-    /// coexists with it, and the `&mut self` for `on_error` is taken after
-    /// the temporary slice borrow has ended — no raw-pointer escape needed.
+    /// coexists with it.
     fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
@@ -193,10 +192,8 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            // `try_write` takes `&self`; re-fetching the buffer here keeps the
-            // shared borrow scoped to this statement so the `&mut self` for
-            // `on_error` below is unencumbered. `try_write` does not mutate
-            // `self`, so `get_buffer()` is stable across iterations.
+            // `try_write` takes `&self` and does not mutate it, so
+            // `get_buffer()` is stable across iterations.
             let attempt = self.try_write(force_sync, &self.get_buffer()[drained..limit]);
             match attempt {
                 WriteResult::Pending(pending) => {
@@ -207,12 +204,11 @@ pub trait PosixPipeWriter {
                     drained += amt;
                 }
                 WriteResult::Err(err) => {
-                    if drained > 0 {
-                        self.on_error(err);
-                        return WriteResult::Wrote(drained);
-                    } else {
-                        return WriteResult::Err(err);
-                    }
+                    // Let `on_poll` dispatch `on_error` (its `Err` arm is
+                    // the terminal one). Returning `Wrote(drained)` would
+                    // make `on_poll` call `on_write` on a writer whose
+                    // `on_error` may have already freed the parent.
+                    return WriteResult::Err(err);
                 }
                 WriteResult::Done(amt) => {
                     drained += amt;
@@ -278,6 +274,15 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
+    /// Bump the parent's strong refcount so `this` (and its intrusive writer
+    /// field) stays live across a re-entrant callback.
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn ref_(this: *mut Self);
+    /// Drop a strong ref taken by `ref_`. May free `this`.
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn deref(this: *mut Self);
 }
 
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
@@ -402,9 +407,16 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     fn _on_error(&mut self, err: sys::Error) {
         debug_assert!(!err.is_retry());
 
+        // `Parent::on_error` may drop the last external strong ref to the
+        // parent (and so free `*self` as an intrusive field). Pin it with an
+        // extra ref so `close()` and its `on_close` dispatch stay live.
+        let parent = self.parent();
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::ref_(parent) };
         self.parent_on_error(err);
-
         self.close();
+        // SAFETY: matches the `ref_` above; may free `*self`.
+        unsafe { Parent::deref(parent) };
     }
 
     pub fn get_force_sync(&self) -> bool {
@@ -457,7 +469,16 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let loop_ = self.parent_event_loop().loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
+                // Same shape as `_on_error`: pin the parent, dispatch the
+                // error, then close so `on_close` runs and the fd/owner ref
+                // are released.
+                let parent = self.parent();
+                // SAFETY: type invariant — set-once parent backref outlives writer.
+                unsafe { Parent::ref_(parent) };
                 self.parent_on_error(err);
+                self.close();
+                // SAFETY: matches the `ref_` above; may free `*self`.
+                unsafe { Parent::deref(parent) };
             }
             sys::Result::Ok(()) => {}
         }
@@ -625,6 +646,15 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
+    /// Bump the parent's strong refcount so `this` (and its intrusive writer
+    /// field) stays live across a re-entrant callback.
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn ref_(this: *mut Self);
+    /// Drop a strong ref taken by `ref_`. May free `this`.
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn deref(this: *mut Self);
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -765,9 +795,17 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.is_done = true;
         self.outgoing.reset();
 
+        // `Parent::on_error` may drop the last external strong ref to the
+        // parent (and so free `*self` as an intrusive field). Pin it with an
+        // extra ref so `close()` and its `on_close` dispatch stay live.
+        let parent = self.parent();
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        unsafe { Parent::on_error(self.parent(), err) };
+        unsafe { Parent::ref_(parent) };
+        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+        unsafe { Parent::on_error(parent, err) };
         self.close();
+        // SAFETY: matches the `ref_` above; may free `*self`.
+        unsafe { Parent::deref(parent) };
     }
 
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
@@ -830,11 +868,17 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 // ASM-verified PROVEN_CACHED on the `self.close()` path's
                 // field reads. Launder so `close()` sees fresh state.
                 let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+                let parent = Self::r(this).parent();
+                // `Parent::on_error` may also drop the last external strong
+                // ref to the parent (`FileSink::on_error` → promise reject →
+                // user callback), freeing `*this`. Pin it so `close()` runs.
                 // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(Self::r(this).parent(), err) };
-                // `this` is still live (parent owns this writer; an on_error
-                // handler may end/detach but never frees mid-call).
+                unsafe { Parent::ref_(parent) };
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(parent, err) };
                 Self::r(this).close();
+                // SAFETY: matches the `ref_` above; may free `*this`.
+                unsafe { Parent::deref(parent) };
             }
             sys::Result::Ok(()) => {}
         }
@@ -2672,6 +2716,20 @@ macro_rules! impl_streaming_writer_parent {
                 #[allow(unused_unsafe)]
                 unsafe { $uws }
             }
+            #[inline]
+            unsafe fn ref_(this: *mut Self) {
+                // SAFETY: see on_write. Intrusive refcount bump.
+                let $ref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $ref_ };
+            }
+            #[inline]
+            unsafe fn deref(this: *mut Self) {
+                // SAFETY: see on_write. May free `this`.
+                let $deref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $deref };
+            }
         }
 
         #[cfg(windows)]
@@ -2800,6 +2858,20 @@ macro_rules! impl_buffered_writer_parent {
                 let $el_this = this;
                 #[allow(unused_unsafe)]
                 unsafe { $el }
+            }
+            #[inline]
+            unsafe fn ref_(this: *mut Self) {
+                // SAFETY: see on_write. Intrusive refcount bump.
+                let $ref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $ref_ };
+            }
+            #[inline]
+            unsafe fn deref(this: *mut Self) {
+                // SAFETY: see on_write. May free `this`.
+                let $deref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $deref };
             }
         }
 

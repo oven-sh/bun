@@ -2258,7 +2258,10 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
     } catch (err) {
       failure = err;
     }
-    if (failure !== undefined && !child.todoFlag && !child.skipped) {
+    // Check the child's own options.todo, not the inherited todoFlag: a subtest
+    // that threw must still fail a {todo:true} parent so bun:test reports Todo
+    // (failure rolls up), not FailBecauseTodoPassed (parent body "passed").
+    if (failure !== undefined && !child.options.todo && !child.skipped) {
       parent.failedSubtests++;
       parent.firstSubtestError ??= failure;
     }

@@ -66,11 +66,10 @@ describe("isArray + Proxy crash fixes", () => {
   });
 
   test("new Bun.CookieMap does not crash with Proxy-wrapped array", () => {
-    // Before: debug assertion in jsCast<JSArray*>. Now: falls through to record path,
-    // which enumerates via the proxy's [[OwnPropertyKeys]] trap. A transparent Proxy
-    // over [] exposes the array's own "length" key, so the map has that single entry.
+    // Before: debug assertion in jsCast<JSArray*>. Now: falls through to record path.
+    // A Proxy wrapping [] has no own enumerable string keys, so this yields an empty map.
     const map = new Bun.CookieMap(new Proxy([], {}));
-    expect([...map.entries()]).toEqual([["length", "0"]]);
+    expect(map.size).toBe(0);
   });
 
   test("expect.arrayContaining does not crash with Proxy receiver", () => {

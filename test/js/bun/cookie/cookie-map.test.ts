@@ -253,6 +253,15 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     }).toThrow("ownKeys trap");
   });
 
+  test("CookieMap from object skips non-enumerable own keys", () => {
+    const obj = { a: "1" };
+    Object.defineProperty(obj, "hidden", { value: "x", enumerable: false });
+    expect([...new Bun.CookieMap(obj).entries()]).toEqual([["a", "1"]]);
+
+    // A transparent Proxy over [] only exposes the non-enumerable "length".
+    expect(new Bun.CookieMap(new Proxy([], {})).size).toBe(0);
+  });
+
   test("can create CookieMap from array pairs", () => {
     const map = new Bun.CookieMap([
       ["name", "value"],

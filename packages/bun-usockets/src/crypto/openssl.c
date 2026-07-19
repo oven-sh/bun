@@ -2234,8 +2234,11 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
       ERR_clear_error();
       s->ssl_fatal_error = 1;
     }
-    us_internal_socket_raw_shutdown(s);
   }
+  /* RECEIVED_SHUTDOWN brought us here, so the TLS shutdown is complete; FIN the
+   * TCP write side so the poll type becomes SHUT_DOWN and the loop's
+   * is_shut_down eof branch can close once both halves are done. */
+  us_internal_socket_raw_shutdown(s);
 }
 
 /* Resume a handshake suspended by an async SNICallback. `ctx` (may be NULL =

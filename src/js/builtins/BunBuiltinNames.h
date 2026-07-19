@@ -200,6 +200,7 @@ using namespace JSC;
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \
+    macro(webStreamControllerError) \
     macro(writable) \
     macro(writableType) \
     macro(write) \

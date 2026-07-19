@@ -1589,6 +1589,68 @@ describe("deno_task", () => {
       .exitCode(1)
       .runAsTest("zero arguments after re-direct");
 
+    describe("multiple arguments after re-direct (ambiguous)", () => {
+      // bash: `*.txt: ambiguous redirect`, exit 1, tree unchanged.
+      // Previously bun concatenated the matched names into one bogus path.
+      TestBuilder.command`echo hi > *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching multiple files");
+
+      TestBuilder.command`echo hi >> *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest(">> glob matching multiple files");
+
+      TestBuilder.command`cat < *.txt`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr(s => {
+          expect(s).toContain("ambiguous redirect");
+          expect(s).not.toContain("a1.txt");
+          expect(s).not.toContain("b2.txt");
+        })
+        .exitCode(1)
+        .runAsTest("< glob matching multiple files");
+
+      TestBuilder.command`echo hi > {a,b}.txt; ls`
+        .ensureTempDir()
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout("")
+        .runAsTest("> brace expansion producing multiple words");
+
+      TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log("hi")' > *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr(s => expect(s).toContain("ambiguous redirect"))
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching multiple files (subprocess)");
+
+      // Control: a glob that matches exactly one file redirects to it.
+      TestBuilder.command`echo hi > a1*`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .exitCode(0)
+        .fileEquals("a1.txt", "hi\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching a single file writes to it");
+    });
+
     TestBuilder.command`echo foo bar > file.txt; cat < file.txt`
       .ensureTempDir()
       .stdout("foo bar\n")
@@ -3045,6 +3107,30 @@ test("stdin redirect from a Uint8Array sends the bytes captured when the command
   expect(JSON.parse(result.stdout.toString())).toEqual({ total: SIZE, a: SIZE, other: 0 });
   expect(result.exitCode).toBe(0);
 }, 60_000);
+
+describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {
+  // A spawned command reading stdin (cat) must see EOF when the redirect
+  // source is an empty ArrayBuffer/TypedArray, same as an empty Blob.
+  const cases: Array<[string, ArrayBufferLike | ArrayBufferView | Blob]> = [
+    ["ArrayBuffer(0)", new ArrayBuffer(0)],
+    ["Uint8Array(0)", new Uint8Array(0)],
+    ["Buffer.alloc(0)", Buffer.alloc(0)],
+    ["DataView(0)", new DataView(new ArrayBuffer(0))],
+    ["SharedArrayBuffer(0)", new SharedArrayBuffer(0)],
+    ["Uint8Array(64).subarray(3, 3)", new Uint8Array(64).subarray(3, 3)],
+    ["Blob([])", new Blob([])],
+  ];
+  test.concurrent.each(cases)("%s", async (_name, input) => {
+    const result = await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${input}`
+      .env(bunEnv)
+      .nothrow();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
 
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and

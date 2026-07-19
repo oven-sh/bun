@@ -83,12 +83,15 @@ fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
 /// subsequent `count -= 1`).
 #[inline(always)]
 fn shift_down_one<T>(slice: &mut [T]) {
-    if slice.len() <= 1 {
+    let len = slice.len();
+    if len <= 1 {
         return;
     }
+    let p = slice.as_mut_ptr();
     // SAFETY: src `[1..len)` and dst `[0..len-1)` are both in-bounds of
-    // `slice`; `ptr::copy` handles the overlap.
-    unsafe { ptr::copy(slice.as_ptr().add(1), slice.as_mut_ptr(), slice.len() - 1) };
+    // `slice`; `ptr::copy` handles the overlap. Both pointers derive from one
+    // `as_mut_ptr()` so the src tag is not invalidated by a later Unique retag.
+    unsafe { ptr::copy(p.add(1), p, len - 1) };
 }
 
 #[cfg(debug_assertions)]
@@ -276,9 +279,9 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // this copy overlaps
             let count = self.count;
             let head = self.head;
-            let buf = self.buf.as_mut_slice();
+            let buf = self.buf.as_mut_slice().as_mut_ptr();
             // SAFETY: src/dst within same allocation; ptr::copy is memmove.
-            unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
+            unsafe { ptr::copy(buf.add(head), buf, count) };
             self.head = 0;
         } else {
             // Stable Rust cannot size a stack array by `size_of::<T>()`, so use
@@ -299,19 +302,15 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             while self.head != 0 {
                 let n = self.head.min(tmp_len);
                 let m = buf_len - n;
-                let buf = self.buf.as_mut_slice();
+                let buf = self.buf.as_mut_slice().as_mut_ptr();
                 // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
                 // `n * size_of::<T>()` raw bytes (no `T` typed access through
                 // the 1-aligned scratch). The buf→buf shift overlaps, so use
                 // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
                 unsafe {
-                    ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
-                    ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
-                    ptr::copy_nonoverlapping(
-                        tmp_ptr,
-                        buf.as_mut_ptr().add(m).cast::<u8>(),
-                        n * t_size,
-                    );
+                    ptr::copy_nonoverlapping(buf.cast::<u8>(), tmp_ptr, n * t_size);
+                    ptr::copy(buf.add(n), buf, m);
+                    ptr::copy_nonoverlapping(tmp_ptr, buf.add(m).cast::<u8>(), n * t_size);
                 }
                 self.head -= n;
             }
@@ -822,6 +821,29 @@ mod tests {
     use super::*;
 
     type DynFifoU8 = LinearFifo<u8, DynamicBuffer<u8>>;
+
+    // Drives `realign()` down its wrapped-rotation branch (the `else` arm with
+    // the tmp scratch loop). Growing a wrapped Dynamic fifo is the only path
+    // that reaches it: write 8, read 6, write 5 leaves head=6 count=7 in an
+    // 8-slot buffer, then a further write forces a grow → realign.
+    #[test]
+    fn realign_wrapped_rotation_preserves_contents() {
+        let mut fifo = DynFifoU8::init();
+        fifo.write(b"abcdefgh").unwrap();
+        for _ in 0..6 {
+            fifo.read_item().unwrap();
+        }
+        fifo.write(b"ijklm").unwrap();
+        assert_eq!(fifo.buf_len(), 8);
+        assert!(fifo.buf_len() - fifo.head < fifo.count, "must be wrapped");
+
+        fifo.write(b"nop").unwrap();
+
+        assert_eq!(fifo.head, 0);
+        let mut out = [0u8; 16];
+        let n = fifo.read(&mut out);
+        assert_eq!(&out[..n], b"ghijklmnop");
+    }
 
     #[test]
     fn discard_zero_from_empty_buffer_should_not_error_on_overflow() {

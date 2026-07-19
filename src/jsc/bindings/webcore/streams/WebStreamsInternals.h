@@ -181,6 +181,11 @@ void resolveStreamClosedPromise(JSC::VM&, JSWritableStream*); // userJS: no — 
 void rejectStreamClosedPromise(JSC::VM&, JSReadableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
 void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
 
+// `$webStreamControllerError` — node:stream's addAbortSignal() erroring a WHATWG stream, i.e.
+// what `controller.error(e)` does, including its no-op once the stream left readable/writable.
+void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
+void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
+
 // THE ONE SANCTIONED CATCH of the subsystem. Returns the thrown value after
 // clearExceptionExceptTermination(); returns the EMPTY JSValue if the exception is a VM
 // termination (which the caller must propagate, never consume). Never call bare

@@ -89,8 +89,11 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
-#define MAX_INT52 9007199254740991
+// Smallest and largest values representable as a signed 32-bit integer.
+#define MIN_INT32 -2147483648
+#define MAX_INT32 2147483647
+// Number.MAX_SAFE_INTEGER: the largest integer a double holds exactly.
+#define MAX_SAFE_INTEGER 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
 // if any but not all are set this value is a double precision number.
@@ -349,11 +352,11 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val < MAX_INT52) {
+  if (val <= MAX_SAFE_INTEGER) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
@@ -361,11 +364,11 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+  if (val >= MIN_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val >= -MAX_INT52 && val <= MAX_INT52) {
+  if (val >= -MAX_SAFE_INTEGER && val <= MAX_SAFE_INTEGER) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 

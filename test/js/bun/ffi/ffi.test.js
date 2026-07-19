@@ -1,7 +1,8 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, rmSync } from "fs";
+import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { platform } from "os";
+import { join } from "path";
 
 import {
   dlopen as _dlopen,
@@ -1122,4 +1123,92 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+// FFI.h boxes a native integer as a JS int32 whenever it fits in one, so 2 ** 31
+// and Number.MAX_SAFE_INTEGER are the values that pick the wrong branch.
+describe.skipIf(isFFIUnavailable)("integer boxing at the int32 boundary", () => {
+  const u32Values = [0, 1, 2147483647, 2147483648, 2147483649, 4294967294, 4294967295];
+  const i64Values = [-9007199254740991, -2147483649, -2147483648, -1, 0, 2147483647, 2147483648, 9007199254740991];
+  const u64Values = [0, 2147483647, 2147483648, 2147483649, 9007199254740990, 9007199254740991];
+
+  // A callback's arguments are boxed by the same macros as a function's return
+  // value, and this needs no external C compiler, so it covers Windows too.
+  it.each([
+    ["u32", u32Values],
+    ["i64_fast", i64Values],
+    ["u64_fast", u64Values],
+  ])("passes %s callback arguments to JavaScript unchanged", (type, values) => {
+    const received = [];
+    const callback = new JSCallback(value => void received.push(value), { args: [type], returns: "void" });
+    const call = CFunction({ ptr: callback.ptr, args: [type], returns: "void" });
+    try {
+      for (const value of values) call(value);
+    } finally {
+      call.close();
+      callback.close();
+    }
+    expect(received).toEqual(values);
+  });
+
+  // `cc -shared -fPIC` is a POSIX invocation; the callback cases above are what
+  // cover Windows.
+  const compiler = isWindows ? undefined : (Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang"));
+
+  describe.skipIf(!compiler)("returns", () => {
+    let dir;
+    let lib;
+
+    beforeAll(async () => {
+      dir = tempDirWithFiles("ffi-int32-boundary", {
+        "echo.c": [
+          "#include <stdint.h>",
+          "uint32_t echo_u32(uint32_t value) { return value; }",
+          "int64_t echo_i64(int64_t value) { return value; }",
+          "uint64_t echo_u64(uint64_t value) { return value; }",
+        ].join("\n"),
+      });
+
+      const library = join(dir, `libecho.${suffix}`);
+      await using compile = Bun.spawn({
+        cmd: [compiler, "-shared", "-fPIC", "-o", library, "echo.c"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        compile.stdout.text(),
+        compile.stderr.text(),
+        compile.exited,
+      ]);
+      // Only the exit code decides: a toolchain is free to warn on stderr.
+      if (exitCode !== 0) {
+        throw new Error(`${compiler} exited with ${exitCode} building echo.c\n${stdout}${stderr}`);
+      }
+
+      lib = _dlopen(library, {
+        echo_u32: { args: ["u32"], returns: "u32" },
+        echo_i64: { args: ["i64_fast"], returns: "i64_fast" },
+        echo_u64: { args: ["u64_fast"], returns: "u64_fast" },
+      });
+    });
+
+    afterAll(() => {
+      lib?.close();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("uint32_t", () => {
+      expect(u32Values.map(value => lib.symbols.echo_u32(value))).toEqual(u32Values);
+    });
+
+    it("int64_t", () => {
+      expect(i64Values.map(value => lib.symbols.echo_i64(value))).toEqual(i64Values);
+    });
+
+    it("uint64_t", () => {
+      expect(u64Values.map(value => lib.symbols.echo_u64(value))).toEqual(u64Values);
+    });
+  });
 });

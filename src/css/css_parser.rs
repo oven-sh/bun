@@ -9,7 +9,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_ast::Log;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-use bun_collections::{ArrayHashMap, MapEntry, VecExt};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -133,7 +133,7 @@ pub use crate::PrintErr;
 
 #[cold]
 #[inline(never)]
-pub fn oom(_e: bun_core::Error) -> ! {
+pub fn oom(_e: crate::Error) -> ! {
     bun_core::out_of_memory();
 }
 
@@ -2369,6 +2369,7 @@ impl CssRef {
     }
 }
 
+#[derive(Default)]
 pub struct LocalEntry {
     pub ref_: CssRef,
     pub loc: bun_ast::Loc,
@@ -2378,7 +2379,7 @@ pub struct LocalEntry {
 /// ref. We use this ref as a layer of indirection during the bundling stage
 /// because we don't know the final generated class names for local scope
 /// until print time.
-pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
+pub type LocalScope = StringArrayHashMap<LocalEntry>;
 /// Local symbol renaming results go here
 pub type LocalsResultsMap = ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
@@ -3406,7 +3407,7 @@ impl<'a> Parser<'a> {
         }
 
         let extra = self.extra.as_deref_mut().unwrap();
-        // Split borrows so the vacant arm can grow `symbols` while
+        // Split borrows so the miss arm can grow `symbols` while
         // `local_scope` is borrowed by the entry.
         let symbols = &mut extra.symbols;
         let local_scope = &mut extra.local_scope;
@@ -3419,29 +3420,28 @@ impl<'a> Parser<'a> {
         // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
         let name_static: &'static [u8] = unsafe { src_str(name) };
 
-        let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
-            MapEntry::Vacant(v) => {
-                let inner_index = u32::try_from(symbols.len()).unwrap();
-                symbols.push(bun_ast::Symbol {
-                    kind: bun_ast::SymbolKind::LocalCss,
-                    original_name: name_static.into(),
-                    ..Default::default()
-                });
-                v.insert(LocalEntry {
-                    ref_: CssRef::new(inner_index, tag),
-                    loc,
-                })
+        // Borrowed probe so a repeated class/id name doesn't box a fresh key
+        // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
+        let gop = local_scope.get_or_put(name).expect("unreachable");
+        let entry = gop.value_ptr;
+        if gop.found_existing {
+            let prev_tag = entry.ref_.tag();
+            if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
+                entry.loc = loc;
+                entry.ref_.set_tag(prev_tag | tag);
             }
-            MapEntry::Occupied(o) => {
-                let e = o.into_mut();
-                let prev_tag = e.ref_.tag();
-                if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
-                    e.loc = loc;
-                    e.ref_.set_tag(prev_tag | tag);
-                }
-                e
-            }
-        };
+        } else {
+            let inner_index = u32::try_from(symbols.len()).unwrap();
+            symbols.push(bun_ast::Symbol {
+                kind: bun_ast::SymbolKind::LocalCss,
+                original_name: name_static.into(),
+                ..Default::default()
+            });
+            *entry = LocalEntry {
+                ref_: CssRef::new(inner_index, tag),
+                loc,
+            };
+        }
 
         entry.ref_.to_real_ref(source_index)
     }

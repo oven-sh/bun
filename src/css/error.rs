@@ -69,10 +69,9 @@ impl<T: fmt::Display> Err<T> {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
-        use bun_core::OrWriteFailed as _;
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "{}", self.kind).or_write_failed()?;
+        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::Error::WriteFailed)?;
 
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Err,
@@ -490,7 +489,6 @@ pub enum MinifyErr {
     minify_err,
 }
 bun_core::impl_tag_error!(MinifyErr);
-bun_core::named_error_set!(MinifyErr);
 
 pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 

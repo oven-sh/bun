@@ -127,6 +127,10 @@ pub enum Callback {
 #[derive(Default, Clone, Copy)]
 pub struct DedupeMapEntry {
     pub is_required: bool,
+    /// Set once the download/extract for this task id has terminally failed so a
+    /// later `enqueue_*_for_download` can observe the failure instead of
+    /// re-scheduling the entire network task (and its retry cycle) a second time.
+    pub failed: bool,
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
@@ -266,7 +270,14 @@ impl NetworkTask {
                     // SAFETY: see the `on_chunk` call above — `stream` is
                     // live and `on_chunk` takes `*mut Self` per its
                     // freely-aliasing contract.
-                    unsafe { TarballStream::on_chunk(stream, chunk, true, result.fail) };
+                    unsafe {
+                        TarballStream::on_chunk(
+                            stream,
+                            chunk,
+                            true,
+                            result.fail.map(crate::Error::from),
+                        )
+                    };
                     // Do NOT touch `this` — or anything it owns — after
                     // this point: `on_chunk(…, true, …)` sets `closed` and
                     // schedules a drain that may reach `finish()` on a
@@ -385,16 +396,16 @@ pub enum ForManifestError {
     InvalidURL,
 }
 bun_core::oom_from_alloc!(ForManifestError);
-impl From<ForManifestError> for bun_core::Error {
+impl From<ForManifestError> for crate::Error {
     fn from(e: ForManifestError) -> Self {
         match e {
-            ForManifestError::OutOfMemory => bun_core::err!(OutOfMemory),
-            ForManifestError::InvalidURL => bun_core::err!(InvalidURL),
+            ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
     }
 }
-impl PartialEq<bun_core::Error> for ForManifestError {
-    fn eq(&self, other: &bun_core::Error) -> bool {
+impl PartialEq<crate::Error> for ForManifestError {
+    fn eq(&self, other: &crate::Error) -> bool {
         <&'static str>::from(self) == other.name()
     }
 }
@@ -702,18 +713,24 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
+    /// Returned by `enqueue_*_for_download` when the dedupe map already records
+    /// a terminal failure for this task id. Callers handle it silently (the
+    /// original failure was already reported) and advance their own bookkeeping.
+    #[error("TarballFailedToDownload")]
+    AlreadyFailed,
 }
 bun_core::oom_from_alloc!(ForTarballError);
-impl From<ForTarballError> for bun_core::Error {
+impl From<ForTarballError> for crate::Error {
     fn from(e: ForTarballError) -> Self {
         match e {
-            ForTarballError::OutOfMemory => bun_core::err!(OutOfMemory),
-            ForTarballError::InvalidURL => bun_core::err!(InvalidURL),
+            ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForTarballError::InvalidURL => crate::Error::InvalidURL,
+            ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
         }
     }
 }
-impl PartialEq<bun_core::Error> for ForTarballError {
-    fn eq(&self, other: &bun_core::Error) -> bool {
+impl PartialEq<crate::Error> for ForTarballError {
+    fn eq(&self, other: &crate::Error) -> bool {
         <&'static str>::from(self) == other.name()
     }
 }

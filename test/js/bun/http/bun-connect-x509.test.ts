@@ -23,6 +23,42 @@ describe("bun.connect", () => {
     expect(x509.checkHost("example.com")).toBe("example.com");
   });
 
+  test("should have peer x509 certificate on an unauthorized connection kept via rejectUnauthorized: false", async () => {
+    const defer = Promise.withResolvers<Socket>();
+    using listener = await Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      tls: harness.tls,
+      socket: {
+        open(socket: Socket) {},
+        close() {},
+        handshake() {},
+        data() {},
+        drain() {},
+      },
+    });
+    using client = await Bun.connect({
+      hostname: listener.hostname,
+      port: listener.port,
+      // No ca: the peer is NOT verified, but the connection is kept.
+      tls: { rejectUnauthorized: false },
+      socket: {
+        open(socket: Socket) {},
+        close() {},
+        handshake(socket: Socket) {
+          defer.resolve(socket);
+        },
+        data() {},
+        drain() {},
+      },
+    });
+    void client;
+    const socket = await defer.promise;
+    expect(socket.authorized).toBe(false);
+    const peerX509: import("node:crypto").X509Certificate = socket.getPeerX509Certificate();
+    expect(peerX509.checkHost("localhost")).toBe("localhost");
+  });
+
   test("should have x509 certificate", async () => {
     const defer = Promise.withResolvers<Socket>();
     const listener = await Bun.listen({
@@ -44,7 +80,7 @@ describe("bun.connect", () => {
     await Bun.connect({
       hostname: listener.hostname,
       port: listener.port,
-      tls: harness.tls,
+      tls: { ...harness.tls, ca: harness.tls.cert },
       socket: {
         open(socket: Socket) {},
         close() {},

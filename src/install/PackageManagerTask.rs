@@ -34,7 +34,7 @@ pub struct Task<'a> {
     pub log: Log,
     pub id: Id,
     /// default: `None`
-    pub err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
     /// `None` only in `uninit()`; every scheduled task overwrites it.
     pub package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
@@ -277,7 +277,8 @@ impl<'a> Task<'a> {
                         let err = network
                             .response
                             .fail
-                            .unwrap_or_else(|| bun_core::err!("HTTPError"));
+                            .map(crate::Error::from)
+                            .unwrap_or(crate::Error::HTTPError);
                         this.log.add_error_fmt(
                             None,
                             Loc::EMPTY,
@@ -428,7 +429,7 @@ impl<'a> Task<'a> {
                                 Err(err) => {
                                     // Exit early if git checked and could
                                     // not find the repository, skip ssh
-                                    if err == bun_core::err!("RepositoryNotFound") {
+                                    if err == crate::Error::RepositoryNotFound {
                                         this.err = Some(err);
                                         this.status = Status::Fail;
                                         this.data = Data {
@@ -592,7 +593,7 @@ fn read_and_extract(
     tarball_path: &[u8],
     normalize: bool,
     log: &mut Log,
-) -> Result<ExtractData, bun_core::Error> {
+) -> crate::Result<ExtractData> {
     let bytes = if normalize {
         // Resolves
         // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`

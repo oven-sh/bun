@@ -22,13 +22,13 @@ impl Signature {
 
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
-    // Errors are collapsed into the crate-wide `bun_core::Error` currency.
+    // Errors are collapsed into the crate-wide `crate::Error` currency.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
         array_value: JSValue,
         columns: JSValue,
-    ) -> Result<Signature, bun_core::Error> {
+    ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_mysql;
         use crate::shared::query_binding_iterator::QueryBindingIterator;
 
@@ -74,7 +74,7 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(bun_core::err!("InvalidQueryBinding"));
+            return Err(crate::Error::InvalidQueryBinding);
         }
 
         Ok(Signature {

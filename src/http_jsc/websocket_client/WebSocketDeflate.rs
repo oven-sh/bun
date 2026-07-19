@@ -104,10 +104,8 @@ pub enum CompressError {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(DecompressError, CompressError);
-
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> Result<Box<Self>, bun_core::Error> {
+    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         let compress_stream = zlib::DeflateEncoder::new(
@@ -116,12 +114,12 @@ impl PerMessageDeflate {
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
         )
-        .map_err(|_| bun_core::err!("DeflateInitFailed"))?;
+        .map_err(|_| crate::Error::DeflateInitFailed)?;
 
         // Initialize decompressor (inflate)
         let decompress_stream =
             zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-                .map_err(|_| bun_core::err!("InflateInitFailed"))?;
+                .map_err(|_| crate::Error::InflateInitFailed)?;
 
         Ok(Box::new(Self {
             params,
@@ -166,6 +164,7 @@ impl PerMessageDeflate {
         in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
 
         let mut remaining = in_with_trailer.as_slice();
+        let mut saw_stream_end = false;
         loop {
             let (consumed, rc) = self.decompress_stream.step(
                 remaining,
@@ -181,6 +180,7 @@ impl PerMessageDeflate {
             }
 
             if rc == zlib::ReturnCode::StreamEnd {
+                saw_stream_end = true;
                 break;
             }
             if rc != zlib::ReturnCode::Ok {
@@ -196,7 +196,11 @@ impl PerMessageDeflate {
             }
         }
 
-        if self.params.server_no_context_takeover == 1 {
+        // RFC 7692 §7.2.3: a sender may end a DEFLATE stream with BFINAL=1 and
+        // begin a fresh one for the next message. Without a reset here the
+        // finished inflater returns Z_STREAM_END with 0 bytes on every later
+        // message, silently delivering empty payloads.
+        if saw_stream_end || self.params.server_no_context_takeover == 1 {
             self.decompress_stream.reset();
         }
 

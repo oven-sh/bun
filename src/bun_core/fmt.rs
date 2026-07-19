@@ -753,10 +753,10 @@ pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
 
 impl crate::io::Write for SliceCursor<'_> {
     #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
         let end = self.at + bytes.len();
         if end > self.buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
@@ -995,10 +995,10 @@ impl core::fmt::Display for InvalidCharacter {
     }
 }
 impl core::error::Error for InvalidCharacter {}
-impl From<InvalidCharacter> for crate::Error {
+impl From<InvalidCharacter> for crate::CrateError {
     #[inline]
     fn from(_: InvalidCharacter) -> Self {
-        crate::Error::from_name("InvalidCharacter")
+        crate::CrateError::InvalidCharacter
     }
 }
 
@@ -1234,7 +1234,7 @@ pub struct FormatValidIdentifier<'a> {
 
 impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::js_lexer;
+        use crate::string::lexer as js_lexer;
 
         let mut iterator = strings::CodepointIterator::init(self.name);
         let mut cursor = strings::Cursor::default();
@@ -1248,11 +1248,11 @@ impl Display for FormatValidIdentifier<'_> {
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer::is_identifier_start(cursor.c);
+        needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
+                if !js_lexer::is_identifier_continue(cursor.c as u32) {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -1274,7 +1274,7 @@ impl Display for FormatValidIdentifier<'_> {
             cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
+                if js_lexer::is_identifier_continue(cursor.c as u32) {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;
@@ -2360,13 +2360,13 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 pub fn format_ip<'a>(
     address: &impl Display,
     into: &'a mut [u8],
-) -> Result<&'a mut [u8], crate::Error> {
+) -> crate::CrateResult<&'a mut [u8]> {
     // The `Display` form includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut into[..]);
-    write!(cursor, "{}", address).map_err(|_| crate::err!("NoSpaceLeft"))?;
+    write!(cursor, "{}", address).map_err(|_| crate::CrateError::NoSpaceLeft)?;
     let written = cursor.position() as usize;
 
     // Reshaped for borrowck — compute (start, end) offsets against `into`
@@ -2384,6 +2384,12 @@ pub fn format_ip<'a>(
     if start < end && into[start] == b'[' && into[end - 1] == b']' {
         start += 1;
         end -= 1;
+    }
+    // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
+    // in6_addr and never includes the zone identifier; the scope is exposed
+    // separately (e.g. `scopeid` in os.networkInterfaces()).
+    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+        end = start + percent;
     }
     Ok(&mut into[start..end])
 }

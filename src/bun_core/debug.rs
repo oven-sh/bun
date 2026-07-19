@@ -275,6 +275,13 @@ pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 /// trace is returned rather than an empty one — a noisier trace beats none.
 #[inline(never)]
 pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -> usize {
+    // Miri can neither execute `frame_address`'s inline asm nor follow the
+    // frame-pointer chain it returns. An empty trace keeps the debug-only
+    // `StoredTrace` captures on the refcount paths interpretable. `cfg!` rather
+    // than `#[cfg]` so the walk below stays compiled (and `PC_OFFSET` live).
+    if cfg!(miri) {
+        return 0;
+    }
     #[cfg(windows)]
     let n = {
         let cap = out.len().min(u16::MAX as usize) as u32;

@@ -3,7 +3,6 @@ use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
-use bun_core::{self, err};
 
 use super::evp;
 
@@ -50,7 +49,7 @@ impl HMAC {
         unsafe { boringssl::HMAC_size(&raw const self.ctx) }
     }
 
-    pub fn copy(&mut self) -> Result<Box<HMAC>, bun_core::Error> {
+    pub fn copy(&mut self) -> crate::Result<Box<HMAC>> {
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
         unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
@@ -60,7 +59,7 @@ impl HMAC {
         if unsafe { boringssl::HMAC_CTX_copy(&raw mut ctx, &raw const self.ctx) } != 1 {
             // SAFETY: ctx was initialized by HMAC_CTX_init.
             unsafe { boringssl::HMAC_CTX_cleanup(&raw mut ctx) };
-            return Err(err!("BoringSSLError"));
+            return Err(crate::Error::BoringSSLError);
         }
         Ok(Box::new(HMAC {
             ctx,

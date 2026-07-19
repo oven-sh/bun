@@ -13,9 +13,6 @@ The repository includes a Nix flake as an alternative to installing dependencies
 
 ```bash
 nix develop
-# or explicitly use the pure shell
-# nix develop .#pure
-export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
 bun bd
 ```
 
@@ -157,7 +154,7 @@ export PATH="$PATH:/usr/lib/llvm21/bin"
 
 ## Building Bun
 
-After cloning the repository, run the following command to build. This can take a while: it clones submodules and builds dependencies.
+After cloning the repository, run the following command to build. This can take a while: it downloads and builds dependencies.
 
 ```bash
 bun run build
@@ -280,8 +277,9 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
-# Check out the commit hash specified in WEBKIT_VERSION in scripts/build/deps/webkit.ts
-git -C vendor/WebKit checkout <commit_hash>
+# Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
+# (a commit sha or an autobuild-* release tag; this handles both)
+bun sync-webkit-source
 
 # Build bun with the local JSC build — this automatically configures and builds JSC
 bun run build:local
@@ -299,7 +297,7 @@ The WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build with VSCode, run the `C/C++: Select a Configuration` command so IntelliSense finds the debug headers.
 
-If you make changes to Bun's [WebKit fork](https://github.com/oven-sh/WebKit), you also have to change `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts` to point to your commit hash.
+If you make changes to Bun's [WebKit fork](https://github.com/oven-sh/WebKit), you also have to change `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts` to point to your commit hash or release tag.
 
 ## Troubleshooting
 
@@ -311,7 +309,7 @@ If you make changes to Bun's [WebKit fork](https://github.com/oven-sh/WebKit), y
 
 Clang uses `libstdc++`, the C++ standard library implementation provided by the GNU Compiler Collection (GCC), by default. Clang can link against `libc++` instead, but that requires explicitly passing the `-stdlib` flag.
 
-Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. As a result, running `make setup` may fail with the following error:
+Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. As a result, running `bun run build` may fail with the following error:
 
 ```txt
 fatal error: 'span' file not found
@@ -319,7 +317,7 @@ fatal error: 'span' file not found
          ^~~~~~
 ```
 
-The issue may also surface when first running `bun setup`, with Clang unable to compile a simple program:
+The issue may also surface when first running `bun run build`, with Clang unable to compile a simple program:
 
 ```txt
 The C++ compiler
@@ -369,7 +367,7 @@ xcode-select --install
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, enable dynamic linking with:
 
 ```bash
-bun run build -DUSE_STATIC_LIBATOMIC=OFF
+bun run build --static-libatomic=off
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

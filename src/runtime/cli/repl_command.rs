@@ -32,7 +32,7 @@ pub(crate) struct ReplCommand;
 
 impl ReplCommand {
     #[cold]
-    pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), crate::Error> {
         // Initialize the REPL
         let mut repl = Repl::init();
         // `defer repl.deinit()` → handled by Drop
@@ -44,7 +44,7 @@ impl ReplCommand {
     fn boot_repl_vm<'r>(
         ctx: Command::Context<'_>,
         repl: &mut Repl<'r>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
             Arguments::load_config_path(

@@ -44,7 +44,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
 
   // Assert that the lockfile has the correct permissions
-  const file = await open(join(packageDir, "bun.lockb"), "r");
+  await using file = await open(join(packageDir, "bun.lockb"), "r");
   const stat = await file.stat();
 
   // in unix, 0o755 == 33261

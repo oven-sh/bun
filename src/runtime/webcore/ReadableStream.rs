@@ -1121,17 +1121,7 @@ impl<C: SourceContext> NewSource<C> {
             streams::Result::TemporaryAndDone(_)
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
-                let value = JSValue::TRUE;
-                // SAFETY: flags is a JS object passed from builtin JS; index 0 is writable.
-                unsafe {
-                    jsc::c_api::JSObjectSetPropertyAtIndex(
-                        std::ptr::from_ref::<JSGlobalObject>(global_this).cast_mut(),
-                        flags.as_object_ref(),
-                        0,
-                        value.as_object_ref(),
-                        core::ptr::null_mut(),
-                    );
-                }
+                flags.put_index(global_this, 0, JSValue::TRUE)?;
                 result.to_js(global_this)
             }
             _ => result.to_js(global_this),

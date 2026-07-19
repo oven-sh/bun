@@ -2,6 +2,7 @@
 #include "WebStreamsInternals.h"
 
 #include "AbortController.h"
+#include "ErrorCode.h"
 #include "JSAbortController.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -35,7 +36,7 @@ static void clearPendingAbortRequest(JSWritableStream* stream)
 
 // SetUpWritableStreamDefaultController, minus reacting to the start result. The algorithm
 // slots and the size algorithm were already populated on `controller` by the caller.
-static void setUpWritableStreamDefaultControllerBeforeStart(JSC::VM& vm, JSGlobalObject* globalObject, JSWritableStream* stream, JSWritableStreamDefaultController* controller, double highWaterMark)
+static void setUpWritableStreamDefaultControllerBeforeStart(JSC::VM& vm, JSGlobalObject* globalObject, JSWritableStream* __restrict stream, JSWritableStreamDefaultController* __restrict controller, double highWaterMark)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -231,7 +232,7 @@ JSPromise* writableStreamClose(JSGlobalObject* globalObject, JSWritableStream* s
 
     WritableStreamState state = stream->m_state;
     if (state == WritableStreamState::Closed || state == WritableStreamState::Errored)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createTypeError(globalObject, "Cannot close a WritableStream that is closed or errored"_s)));
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a WritableStream that is closed or errored"_s)));
     ASSERT(state == WritableStreamState::Writable || state == WritableStreamState::Erroring);
     ASSERT(!writableStreamCloseQueuedOrInFlight(stream));
 
@@ -240,7 +241,9 @@ JSPromise* writableStreamClose(JSGlobalObject* globalObject, JSWritableStream* s
 
     auto* writer = stream->m_writer.get();
     if (writer && stream->m_backpressure && state == WritableStreamState::Writable) {
-        resolvePromise(globalObject, writer->m_readyPromise.get(), jsUndefined());
+        // Materialize-then-resolve so a later `.ready` read sees fulfilled even when the lazy
+        // slot was null (close() does not clear [[backpressure]]).
+        resolvePromise(globalObject, writer->readyPromise(globalObject), jsUndefined());
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     writableStreamDefaultControllerClose(globalObject, stream->m_controller.get());
@@ -271,13 +274,24 @@ void writableStreamDealWithRejection(JSGlobalObject* globalObject, JSWritableStr
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (stream->m_state == WritableStreamState::Writable) {
+    const WritableStreamState state = stream->m_state;
+    if (state == WritableStreamState::Writable) {
         writableStreamStartErroring(globalObject, stream, error);
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
-    ASSERT(stream->m_state == WritableStreamState::Erroring);
+    ASSERT(state == WritableStreamState::Erroring);
     RELEASE_AND_RETURN(scope, writableStreamFinishErroring(globalObject, stream));
+}
+
+// `$webStreamControllerError` — see the ReadableStream overload in ReadableStreamOperations.cpp.
+// Mirrors WritableStreamDefaultController.prototype.error, which is what Node's
+// addAbortSignal() holds a bound reference to.
+void webStreamControllerError(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue error)
+{
+    if (stream->m_state != WritableStreamState::Writable)
+        return;
+    writableStreamDefaultControllerError(globalObject, stream->m_controller.get(), error);
 }
 
 void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue reason)
@@ -287,7 +301,7 @@ void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream*
 
     ASSERT(!stream->m_storedError);
     ASSERT(stream->m_state == WritableStreamState::Writable);
-    auto* controller = stream->m_controller.get();
+    const auto* controller = stream->m_controller.get();
     ASSERT(controller);
 
     stream->m_state = WritableStreamState::Erroring;
@@ -308,6 +322,7 @@ void writableStreamFinishErroring(JSGlobalObject* globalObject, JSWritableStream
     ASSERT(stream->m_state == WritableStreamState::Erroring);
     ASSERT(!writableStreamHasOperationMarkedInFlight(stream));
     stream->m_state = WritableStreamState::Errored;
+    rejectStreamClosedPromise(vm, stream, stream->m_storedError.get());
 
     auto* controller = stream->m_controller.get();
     controller->errorSteps();
@@ -387,6 +402,7 @@ void writableStreamFinishInFlightClose(JSGlobalObject* globalObject, JSWritableS
         }
     }
     stream->m_state = WritableStreamState::Closed;
+    resolveStreamClosedPromise(vm, stream);
     if (auto* writer = stream->m_writer.get()) {
         resolvePromise(globalObject, writer->m_closedPromise.get(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
@@ -465,9 +481,9 @@ void writableStreamUpdateBackpressure(JSGlobalObject* globalObject, JSWritableSt
     auto* writer = stream->m_writer.get();
     if (writer && backpressure != stream->m_backpressure) {
         if (backpressure)
-            writer->m_readyPromise.set(vm, writer, JSPromise::create(vm, globalObject->promiseStructure()));
-        else {
-            resolvePromise(globalObject, writer->m_readyPromise.get(), jsUndefined());
+            writer->m_readyPromise.clear();
+        else if (auto* ready = writer->m_readyPromise.get()) {
+            resolvePromise(globalObject, ready, jsUndefined());
             RETURN_IF_EXCEPTION(scope, );
         }
     }
@@ -507,13 +523,14 @@ void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSGlobalObject* glob
     RETURN_IF_EXCEPTION(scope, );
 
     JSValue startResult = jsUndefined();
-    if (underlyingSinkDict.start) {
+    const JSValue start = underlyingSinkDict.start;
+    if (start) {
         MarkedArgumentBuffer args;
         args.append(controller);
         ASSERT(!args.hasOverflowed());
-        auto callData = JSC::getCallData(underlyingSinkDict.start);
+        auto callData = JSC::getCallData(start);
         ASSERT(callData.type != CallData::Type::None);
-        startResult = JSC::call(globalObject, underlyingSinkDict.start, callData, underlyingSink, args);
+        startResult = JSC::call(globalObject, start, callData, underlyingSink, args);
         RETURN_IF_EXCEPTION(scope, );
     }
     RELEASE_AND_RETURN(scope, reactToWritableControllerStart(vm, globalObject, controller, startResult));

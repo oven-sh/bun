@@ -666,6 +666,47 @@ it("dlopen throws an error instead of returning it", () => {
   expect(err).toBeTruthy();
 });
 
+// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
+const isFFIUnavailable = isWindows && isArm64;
+
+// Windows: dlopen must accept paths with non-ASCII characters. Previously the
+// path was handed to LoadLibraryA as UTF-8, which the OS decodes as the system
+// ANSI codepage, so any non-ASCII byte mangled the path.
+it.skipIf(!isWindows || isFFIUnavailable)("dlopen accepts non-ASCII library paths on Windows", async () => {
+  const fixture = `
+    const { dlopen, FFIType } = require("bun:ffi");
+    const { mkdirSync, copyFileSync } = require("node:fs");
+    const { join } = require("node:path");
+
+    const src = join(process.env.SystemRoot || "C:\\\\Windows", "System32", "version.dll");
+    const results = {};
+    for (const name of ["caf\\u00e9", "\\u65e5\\u672c\\u8a9e"]) {
+      const dir = join(process.env.FIXTURE_DIR, "bun-ffi-" + name);
+      mkdirSync(dir, { recursive: true });
+      const dll = join(dir, "version.dll");
+      copyFileSync(src, dll);
+      const lib = dlopen(dll, {
+        GetFileVersionInfoSizeW: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+      });
+      results[name] = typeof lib.symbols.GetFileVersionInfoSizeW;
+      lib.close();
+    }
+    console.log(JSON.stringify(results));
+  `;
+  using dir = tempDir("ffi-dlopen-unicode", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, FIXTURE_DIR: String(dir) },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ results, stderr, exitCode }).toMatchObject({
+    results: { "caf\u00e9": "function", "\u65e5\u672c\u8a9e": "function" },
+    exitCode: 0,
+  });
+});
+
 it('suffix does not start with a "."', () => {
   expect(suffix).not.toMatch(/^\./);
 });
@@ -676,9 +717,6 @@ it(".ptr is not leaked", () => {
     expect(fn.ptr).toBeUndefined();
   }
 });
-
-// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
-const isFFIUnavailable = isWindows && isArm64;
 
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.

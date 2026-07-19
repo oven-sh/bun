@@ -90,7 +90,7 @@ pub fn write_request(
     client: &mut HTTPClient,
     stream: &mut Stream,
     request: &picohttp::Request<'_>,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // `encode_scratch` would be borrowed mutably
     // alongside `&mut *session` below; pull the Vec out, push it back at the end.
     let mut encoded = core::mem::take(&mut session.encode_scratch);
@@ -399,7 +399,7 @@ pub(crate) fn encode_header(
     name: &[u8],
     value: &[u8],
     never_index: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let required = encoded.len() + name.len() + value.len() + 32;
     encoded.reserve(required.saturating_sub(encoded.len()));
     let len = encoded.len();
@@ -410,7 +410,7 @@ pub(crate) fn encode_header(
     let written = session
         .hpack
         .encode(name, value, never_index, buf, len)
-        .map_err(|e| bun_core::err!(from e))?;
+        .map_err(crate::Error::from)?;
     // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
     unsafe { bun_core::vec::commit_spare(encoded, written) };
     Ok(())

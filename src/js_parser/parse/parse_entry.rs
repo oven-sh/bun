@@ -3,9 +3,10 @@ use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
+use crate::Error;
 use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core;
 use bun_core::strings;
-use bun_core::{self, Error, err};
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
@@ -449,7 +450,7 @@ impl<'a> Parser<'a> {
         match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(_) => {}
             Err(e) => {
-                if e == err!("StackOverflow") {
+                if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -699,7 +700,7 @@ impl<'a> Parser<'a> {
                     let _ = m.write_format(Output::writer(), true);
                 }
             }
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
@@ -824,7 +825,7 @@ impl<'a> Parser<'a> {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
-                if e == err!("StackOverflow") {
+                if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -833,7 +834,7 @@ impl<'a> Parser<'a> {
                     );
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 return Err(e);
@@ -848,7 +849,7 @@ impl<'a> Parser<'a> {
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // A second guard dropped at end of `_parse` restores the previous action.
@@ -1110,7 +1111,7 @@ impl<'a> Parser<'a> {
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.

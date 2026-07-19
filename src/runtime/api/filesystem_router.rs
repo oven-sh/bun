@@ -597,6 +597,13 @@ impl FileSystemRouter {
             };
         }
 
+        // URLPath::parse strips byte 0 and the route table is keyed without the
+        // leading slash, so "Xtop" would match "/top". The URL branch above and
+        // the empty-input normalisation both yield '/'-prefixed paths already.
+        if path.slice().first() != Some(&b'/') {
+            return Ok(JSValue::NULL);
+        }
+
         // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
         // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` Box that stores
         // `route`. Borrowck can't see that the allocation travels with the borrow, so we
@@ -611,7 +618,7 @@ impl FileSystemRouter {
             Err(err) => {
                 return Err(global_this.throw(format_args!(
                     "{} parsing path: {}",
-                    bun_core::Error::from(err).name(),
+                    bun_url::Error::from(err).name(),
                     bstr::BStr::new(path.slice())
                 )));
             }

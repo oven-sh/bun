@@ -1,7 +1,0 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::strings;
-use super::Expect;
-
-pub(crate) fn to_include(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    this.run_string_affix_matcher(global, frame, "toInclude", "include", strings::contains)
-}

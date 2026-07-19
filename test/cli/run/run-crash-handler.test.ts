@@ -4,6 +4,11 @@ import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harn
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
+// CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
+// deliberate crashes must not upload there or the runner pins them on the
+// next unrelated failing test as "crash reported" and blocks its retries.
+const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
@@ -13,7 +18,7 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
-      env: bunEnv,
+      env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     // The panic header goes to stderr; the symbolized frames are printed by
@@ -58,7 +63,7 @@ test.if(isPosix)(
         // spawning llvm-symbolizer, which can take tens of seconds.
         "--debug-crash-handler-use-trace-string",
       ],
-      env: bunEnv,
+      env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -101,7 +106,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
         approach,
         "--debug-crash-handler-use-trace-string",
       ],
-      env: bunEnv,
+      env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

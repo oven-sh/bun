@@ -4,6 +4,7 @@
 #include "WebStreamsInternals.h"
 
 #include "JSReadableStream.h"
+#include "JSWritableStream.h"
 
 #include "BunClientData.h"
 #include "JSDOMConvertNumbers.h"
@@ -72,10 +73,9 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
     return !buffer.isDetached() && buffer.isDetachable();
 }
 
-// spec TransferArrayBuffer(O) at the impl level: detach O (and every view over it) and
-// return a fresh ArrayBuffer over the same block. No JSArrayBuffer wrapper is created —
-// callers hand out views over the impl, and JSC materializes a wrapper only if user code
-// reads `.buffer`.
+// spec TransferArrayBuffer(O) = ArrayBufferCopyAndDetach(O, undefined, fixed-length):
+// resizability must NOT survive the transfer, or a later user resize() invalidates every
+// byte length the byte controller recorded. No JSArrayBuffer wrapper cell is created.
 RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
 {
     auto& vm = getVM(globalObject);
@@ -84,6 +84,19 @@ RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, J
     if (!buffer.isDetachable()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot transfer an ArrayBuffer that is not detachable"_s);
         return nullptr;
+    }
+    if (buffer.isResizableNonShared()) [[unlikely]] {
+        // Same shape as JSC's arrayBufferCopyAndDetach FixedLength slow path: copy into a
+        // fixed-length block, then detach the original.
+        RefPtr<JSC::ArrayBuffer> copy = JSC::ArrayBuffer::tryCreate(buffer.span());
+        if (!copy) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        JSC::ArrayBufferContents droppedContents;
+        bool detached = buffer.transferTo(vm, droppedContents);
+        ASSERT_UNUSED(detached, detached);
+        return copy;
     }
     JSC::ArrayBufferContents contents;
     bool transferred = buffer.transferTo(vm, contents);
@@ -256,9 +269,13 @@ StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, J
     JSValue snapshot = stream->m_asyncContext.get();
     if (!snapshot || snapshot.isUndefinedOrNull())
         return;
-    m_asyncContextData = globalObject->m_asyncContextData.get();
-    m_previous = m_asyncContextData->getInternalField(0);
-    m_asyncContextData->putInternalField(m_vm, 0, snapshot);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue current = asyncContextData->getInternalField(0);
+    m_asyncContextData = asyncContextData;
+    m_previous = current;
+    if (snapshot == current)
+        return;
+    asyncContextData->putInternalField(m_vm, 0, snapshot);
 }
 
 StreamAsyncContextScope::~StreamAsyncContextScope()
@@ -348,11 +365,106 @@ void markPromiseAsHandled(VM&, JSPromise* promise)
     promise->markAsHandled();
 }
 
+// The stream-level closed promise. The Pending guard makes every settle site unconditionally
+// safe: a terminal transition can only run once, but the promise may already have been created
+// in a terminal state by webStreamClosedPromise().
+template<typename Stream>
+static void resolveClosedPromise(VM& vm, Stream* stream)
+{
+    auto* promise = stream->m_closedPromise.get();
+    if (!promise || promise->status() != JSPromise::Status::Pending)
+        return;
+    // Always undefined: a primitive resolution skips the `then` lookup.
+    promise->fulfill(vm, jsUndefined());
+}
+
+template<typename Stream>
+static void rejectClosedPromise(VM& vm, Stream* stream, JSValue error)
+{
+    auto* promise = stream->m_closedPromise.get();
+    if (!promise || promise->status() != JSPromise::Status::Pending)
+        return;
+    // Nothing is obliged to observe this promise, so it must never report as unhandled.
+    promise->rejectAsHandled(vm, error);
+}
+
+void resolveStreamClosedPromise(VM& vm, JSReadableStream* stream)
+{
+    resolveClosedPromise(vm, stream);
+}
+
+void resolveStreamClosedPromise(VM& vm, JSWritableStream* stream)
+{
+    resolveClosedPromise(vm, stream);
+}
+
+void rejectStreamClosedPromise(VM& vm, JSReadableStream* stream, JSValue error)
+{
+    rejectClosedPromise(vm, stream, error);
+}
+
+void rejectStreamClosedPromise(VM& vm, JSWritableStream* stream, JSValue error)
+{
+    rejectClosedPromise(vm, stream, error);
+}
+
+JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSReadableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    if (auto* existing = stream->m_closedPromise.get())
+        return existing;
+
+    JSPromise* promise = nullptr;
+    switch (stream->m_state) {
+    case ReadableStreamState::Closed:
+        promise = promiseFulfilledWith(globalObject, jsUndefined());
+        break;
+    case ReadableStreamState::Errored: {
+        JSValue storedError = stream->m_storedError.get();
+        promise = promiseRejectedWith(globalObject, storedError ? storedError : jsUndefined());
+        promise->markAsHandled();
+        break;
+    }
+    case ReadableStreamState::Readable:
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        break;
+    }
+    stream->m_closedPromise.set(vm, stream, promise);
+    return promise;
+}
+
+JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    if (auto* existing = stream->m_closedPromise.get())
+        return existing;
+
+    JSPromise* promise = nullptr;
+    switch (stream->m_state) {
+    case WritableStreamState::Closed:
+        promise = promiseFulfilledWith(globalObject, jsUndefined());
+        break;
+    case WritableStreamState::Errored: {
+        JSValue storedError = stream->m_storedError.get();
+        promise = promiseRejectedWith(globalObject, storedError ? storedError : jsUndefined());
+        promise->markAsHandled();
+        break;
+    }
+    // Erroring is not terminal: writableStreamFinishErroring() rejects the pending promise.
+    case WritableStreamState::Writable:
+    case WritableStreamState::Erroring:
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        break;
+    }
+    stream->m_closedPromise.set(vm, stream, promise);
+    return promise;
+}
+
 // The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion
 // record" sites only. Empty return = a VM termination the caller must propagate.
 JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
 {
-    JSC::Exception* exception = catchScope.exception();
+    const JSC::Exception* exception = catchScope.exception();
     ASSERT(exception);
     JSValue thrown = exception->value();
     if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]

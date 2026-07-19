@@ -30,8 +30,10 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_reader, m_storedError, m_controller, m_nativePtr,
-    // m_directUnderlyingSource, m_asyncContext. No barrier container ⇒ no cellLock needed.
+    // m_directUnderlyingSource, m_asyncContext, m_closedPromise. No barrier container ⇒ no
+    // cellLock needed.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -46,23 +48,23 @@ public:
 
     // [[state]]
     ReadableStreamState m_state { ReadableStreamState::Readable };
-    // [[disturbed]]
-    bool m_disturbed { false };
-    // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached { false };
-    // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
-    // isReadableStreamLocked() check.
-    bool m_lockedWithoutReader { false };
-    // `$bunNativeType`: write-only today, kept for the FFI ABI.
-    int32_t m_nativeType { 0 };
-    // Set by jsFunctionTransferToNativeReadableStream.
-    bool m_transferred { false };
     // The Bun lazy-start mode; tells materializeIfNeeded() what to do.
     BunStreamMode m_bunMode { BunStreamMode::Default };
     // The tag for the ERASED m_controller below. Every switch over it is TOTAL.
     ControllerKind m_controllerKind { ControllerKind::None };
+    // [[disturbed]]
+    bool m_disturbed : 1 { false };
+    // [[Detached]] (transferable streams are not implemented; the slot exists)
+    bool m_detached : 1 { false };
+    // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
+    // isReadableStreamLocked() check.
+    bool m_lockedWithoutReader : 1 { false };
+    // Set by jsFunctionTransferToNativeReadableStream.
+    bool m_transferred : 1 { false };
     // `typeof rawHighWaterMark === "number"` at construction time.
-    bool m_bunHighWaterMarkIsNumber { false };
+    bool m_bunHighWaterMarkIsNumber : 1 { false };
+    // `$bunNativeType`: write-only today, kept for the FFI ABI.
+    int32_t m_nativeType { 0 };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;
@@ -84,6 +86,9 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_directUnderlyingSource;
     // `$asyncContext` snapshot at construction. Written once in finishCreation.
     JSC::WriteBarrier<JSC::Unknown> m_asyncContext;
+    // Settles when the stream reaches a terminal state, for observers that must not lock it
+    // (node:stream's finished()). Created on first request; empty until then.
+    JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
     // `$highWaterMark` on the STREAM (the raw strategy HWM, ToNumber'd once). NaN = unset.
     // Written by ALL FOUR constructor arms.
     double m_bunHighWaterMark { std::numeric_limits<double>::quiet_NaN() };

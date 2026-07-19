@@ -1,7 +1,7 @@
 //! HTML `FormData` parsing + JS bridge.
 
 use bun_collections::ArrayHashMap;
-use bun_core::{self, declare_scope, err, scoped_log};
+use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
@@ -130,13 +130,13 @@ impl FormData<'_> {
         global: &JSGlobalObject,
         input: &[u8],
         encoding: &Encoding,
-    ) -> Result<JSValue, bun_core::Error> {
+    ) -> crate::Result<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
                 let str = ZigString::from_utf8(strings::without_utf8_bom(input));
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
-                DOMFormData::create_from_url_query(global, &str).map_err(|_| err!("JSError"))
+                DOMFormData::create_from_url_query(global, &str).map_err(|_| crate::Error::JSError)
             }
             Encoding::Multipart(boundary) => to_js_from_multipart_data(global, input, boundary),
         }
@@ -192,8 +192,8 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
-        Err(e) if e == err!("JSError") => Err(JsError::Thrown),
-        Err(e) if e == err!("JSTerminated") => Err(JsError::Terminated),
+        Err(crate::Error::JSError) => Err(JsError::Thrown),
+        Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }
@@ -202,12 +202,12 @@ pub fn to_js_from_multipart_data(
     global: &JSGlobalObject,
     input: &[u8],
     boundary: &[u8],
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let form_data_value = DOMFormData::create(global);
     form_data_value.ensure_still_alive();
     let Some(form) = DOMFormData::from_js(form_data_value) else {
         scoped_log!(FormData, "failed to create DOMFormData.fromJS");
-        return Err(err!("failed to parse multipart data"));
+        return Err(crate::Error::FailedToParseMultipartData);
     };
 
     struct Wrapper<'a> {
@@ -226,14 +226,10 @@ pub fn to_js_from_multipart_data(
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = ZigString::init_utf8(filename_str);
 
-                // `MimeType.value` is `Cow<'static,[u8]>`, so split the two
-                // ownership cases instead of unifying through a single
-                // `&[u8]` (avoids borrowing a temporary).
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
-                    blob.content_type_allocated.set(true);
                     blob.content_type
-                        .set(bun_core::heap::into_raw(Box::<[u8]>::from(ct)).cast_const());
+                        .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
                     blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {
@@ -250,22 +246,9 @@ pub fn to_js_from_multipart_data(
                         bun_http::MimeType::sniff(value_str)
                     };
                     if let Some(mime) = mime {
-                        match mime.value {
-                            std::borrow::Cow::Borrowed(s) => {
-                                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-                                blob.content_type_was_set.set(false);
-                                blob.content_type_allocated.set(false);
-                            }
-                            std::borrow::Cow::Owned(v) => {
-                                // by_extension/sniff currently always yield Borrowed,
-                                // but handle Owned defensively to avoid a dangling ptr.
-                                blob.content_type.set(
-                                    bun_core::heap::into_raw(v.into_boxed_slice()).cast_const(),
-                                );
-                                blob.content_type_was_set.set(false);
-                                blob.content_type_allocated.set(true);
-                            }
-                        }
+                        blob.content_type
+                            .set(crate::webcore::blob::BlobContentType::from(mime));
+                        blob.content_type_was_set.set(false);
                     }
                 }
 
@@ -275,10 +258,8 @@ pub fn to_js_from_multipart_data(
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
                 );
-                // `append_blob` dupes the content type, so the copy boxed above
-                // is solely owned by this stack-local and must be released here.
+                // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
-                blob.free_content_type();
             } else {
                 let value = ZigString::init_utf8(
                     // > Each part whose `Content-Disposition` header does not
@@ -312,7 +293,7 @@ pub fn for_each_multipart_entry<C>(
     boundary: &[u8],
     ctx: &mut C,
     mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
 
@@ -322,7 +303,7 @@ pub fn for_each_multipart_entry<C>(
         // not guaranteed UTF-8, so avoid `core::fmt`.
         let need = boundary.len() + 4;
         if need > buf.len() {
-            return Err(err!("boundary is too long"));
+            return Err(crate::Error::BoundaryIsTooLong);
         }
         buf[..2].copy_from_slice(b"--");
         buf[2..2 + boundary.len()].copy_from_slice(boundary);
@@ -330,7 +311,7 @@ pub fn for_each_multipart_entry<C>(
         let final_boundary = &buf[..need];
 
         let Some(final_boundary_index) = strings::last_index_of(input, final_boundary) else {
-            return Err(err!("missing final boundary"));
+            return Err(crate::Error::MissingFinalBoundary);
         };
         slice = &slice[..final_boundary_index];
     }
@@ -349,7 +330,7 @@ pub fn for_each_multipart_entry<C>(
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
         let header_end =
-            strings::index_of(remain, b"\r\n\r\n").ok_or_else(|| err!("is missing header end"))?;
+            strings::index_of(remain, b"\r\n\r\n").ok_or(crate::Error::IsMissingHeaderEnd)?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -360,11 +341,11 @@ pub fn for_each_multipart_entry<C>(
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
-                .ok_or_else(|| err!("is missing header line end"))?;
+                .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
-            let colon = strings::index_of(line, b":")
-                .ok_or_else(|| err!("is missing header colon separator"))?;
+            let colon =
+                strings::index_of(line, b":").ok_or(crate::Error::IsMissingHeaderColonSeparator)?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {
@@ -373,14 +354,16 @@ pub fn for_each_multipart_entry<C>(
                 b""
             };
             if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
-                value = strings::trim(value, b" ");
-                if value.starts_with(b"form-data;") {
+                // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
+                // disposition type is a case-insensitive token (RFC 2183 §2).
+                value = strings::trim(value, b" \t");
+                if strings::starts_with_case_insensitive_ascii(value, b"form-data;") {
                     value = &value[b"form-data;".len()..];
-                    value = strings::trim(value, b" ");
+                    value = strings::trim(value, b" \t");
                 }
 
                 while let Some(eql_start) = strings::index_of(value, b"=") {
-                    let eql_key = strings::trim(&value[..eql_start], b" ;");
+                    let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
                     if value.starts_with(b"\"") {
                         value = &value[1..];

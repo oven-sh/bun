@@ -100,7 +100,10 @@ impl us_socket_t {
 
     /// Write that also reports a fatal (non-would-block) send error so the
     /// node:net path can fail the pending write instead of waiting forever.
-    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+    /// The second element is 0 on success, otherwise the positive errno of
+    /// the failed `send()` on POSIX, or 1 on Windows (WSA→errno mapping is
+    /// not wired up here yet).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         let mut fatal: i32 = 0;
         // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
         // (clamped to i32) and `fatal` outlives the call as the out-parameter.
@@ -112,7 +115,7 @@ impl us_socket_t {
                 &raw mut fatal,
             )
         };
-        (written, fatal != 0)
+        (written, fatal)
     }
 
     pub fn is_shutdown(&self) -> bool {
@@ -132,7 +135,7 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`.
-    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
@@ -141,14 +144,16 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
@@ -157,7 +162,9 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])

@@ -1,8 +1,14 @@
 import { dlopen, FFIType } from "bun:ffi";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+
+// Every test here owns its own process tree (its own tempDir / sh supervisor /
+// pty), so they run concurrently. That overlaps the fixed 1s "must NOT die"
+// observation windows with each other and with spawn latency; give the
+// concurrent debug/ASAN spawn load more headroom than the 5s default.
+setDefaultTimeout(30_000);
 
 // --no-orphans / BUN_FEATURE_FLAG_NO_ORPHANS / [run] noOrphans: Bun watches its
 // original ppid and exits when that process dies, even if the parent was
@@ -136,7 +142,7 @@ function reap(...pids: number[]) {
   }
 }
 
-test.skipIf(!isSupported)(
+test.concurrent.skipIf(!isSupported)(
   "without BUN_FEATURE_FLAG_NO_ORPHANS, bun is orphaned when its parent is SIGKILLed",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree(undefined);
@@ -149,18 +155,21 @@ test.skipIf(!isSupported)(
   },
 );
 
-test.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=1: bun exits when its parent is SIGKILLed", async () => {
-  const { sh, bunPid, grandchildPid } = await spawnTree("1");
-  process.kill(sh.pid!, "SIGKILL");
-  await sh.exited;
-  // kqueue NOTE_EXIT / PDEATHSIG fire effectively immediately; poll until
-  // bun is gone rather than sleeping a fixed interval.
-  const died = await waitUntilDead(bunPid, 10000);
-  reap(bunPid, grandchildPid);
-  expect(died).toBe(true);
-});
+test.concurrent.skipIf(!isSupported)(
+  "BUN_FEATURE_FLAG_NO_ORPHANS=1: bun exits when its parent is SIGKILLed",
+  async () => {
+    const { sh, bunPid, grandchildPid } = await spawnTree("1");
+    process.kill(sh.pid!, "SIGKILL");
+    await sh.exited;
+    // kqueue NOTE_EXIT / PDEATHSIG fire effectively immediately; poll until
+    // bun is gone rather than sleeping a fixed interval.
+    const died = await waitUntilDead(bunPid, 10000);
+    reap(bunPid, grandchildPid);
+    expect(died).toBe(true);
+  },
+);
 
-test.skipIf(!isSupported)(
+test.concurrent.skipIf(!isSupported)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1");
@@ -182,7 +191,7 @@ test.skipIf(!isSupported)(
 // Linux this is covered by Bun setting linux_pdeathsig on every spawn when
 // no-orphans mode is enabled (prctl in the vfork child before exec). On macOS
 // it's covered by the libproc descendant walk in the exit handler.
-test.skipIf(!isSupported)(
+test.concurrent.skipIf(!isSupported)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
@@ -200,7 +209,7 @@ test.skipIf(!isSupported)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.skipIf(!isSupported || process.getuid?.() !== 0)(
+test.concurrent.skipIf(!isSupported || process.getuid?.() !== 0)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
@@ -215,7 +224,7 @@ test.skipIf(!isSupported || process.getuid?.() !== 0)(
   },
 );
 
-test.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=0 is treated as unset", async () => {
+test.concurrent.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=0 is treated as unset", async () => {
   const { sh, bunPid, grandchildPid } = await spawnTree("0");
   process.kill(sh.pid!, "SIGKILL");
   await sh.exited;
@@ -224,27 +233,30 @@ test.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=0 is treated as unset", a
   expect(died).toBe(false);
 });
 
-test.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=1 does not fire while the parent is alive", async () => {
-  const { sh, bunPid, grandchildPid } = await spawnTree("1");
-  // Parent is alive; bun must stay alive. Poll for premature death.
-  const diedEarly = await waitUntilDead(bunPid, 1000);
-  expect(diedEarly).toBe(false);
-  process.kill(sh.pid!, "SIGKILL");
-  await sh.exited;
-  const died = await waitUntilDead(bunPid, 10000);
-  reap(bunPid, grandchildPid);
-  expect(died).toBe(true);
-});
+test.concurrent.skipIf(!isSupported)(
+  "BUN_FEATURE_FLAG_NO_ORPHANS=1 does not fire while the parent is alive",
+  async () => {
+    const { sh, bunPid, grandchildPid } = await spawnTree("1");
+    // Parent is alive; bun must stay alive. Poll for premature death.
+    const diedEarly = await waitUntilDead(bunPid, 1000);
+    expect(diedEarly).toBe(false);
+    process.kill(sh.pid!, "SIGKILL");
+    await sh.exited;
+    const died = await waitUntilDead(bunPid, 10000);
+    reap(bunPid, grandchildPid);
+    expect(died).toBe(true);
+  },
+);
 
 // Descendant cleanup must not depend on the parent-watch path. A Bun that
 // exits *cleanly* should SIGKILL its children. Same fixture, three enable()
 // call sites — env var, --no-orphans flag, bunfig.
-describe.each([
+describe.concurrent.each([
   { via: "BUN_FEATURE_FLAG_NO_ORPHANS=1", argv: [], bunfig: false, env: { BUN_FEATURE_FLAG_NO_ORPHANS: "1" } },
   { via: "--no-orphans", argv: ["--no-orphans"], bunfig: false, env: {} },
   { via: "bunfig [run] noOrphans = true", argv: [], bunfig: true, env: {} },
 ])("clean exit reaps descendants", ({ via, argv, bunfig, env: extraEnv }) => {
-  test.skipIf(!isSupported)(via, async () => {
+  test.concurrent.skipIf(!isSupported)(via, async () => {
     using dir = tempDir("no-orphans-clean-exit", {
       ...(bunfig && { "bunfig.toml": "[run]\nnoOrphans = true\n" }),
       "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,
@@ -294,7 +306,7 @@ describe.each([
 // `bun run`. Do NOT `cd ... &&` inside sh -c — that adds a subshell between sh
 // and `bun run`, so `bun run`'s ppid would survive the SIGKILL.
 const goScript = `exec /bin/sh -c 'echo "$$ $PPID"; while :; do sleep 1; done'`;
-describe.each([
+describe.concurrent.each([
   {
     label: "<script>",
     runArgs: "--silent go",
@@ -309,7 +321,7 @@ describe.each([
     },
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
-  test.skipIf(!isSupported)("bun run and the script exit", async () => {
+  test.concurrent.skipIf(!isSupported)("bun run and the script exit", async () => {
     using dir = tempDir("no-orphans-run", files);
     const env: Record<string, string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -365,7 +377,7 @@ describe.each([
 // Linux: PR_SET_CHILD_SUBREAPER claims the orphan, procfs walk finds it.
 // macOS: NoOrphansTracker's p_puniqueid spawn-graph finds it.
 const hasPerl = Bun.which("perl") != null;
-test.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isSupported || !hasPerl)(
   "bun run --no-orphans: perl setsid+double-fork daemon (no Bun in chain) is reaped",
   async () => {
     using dir = tempDir("no-orphans-perl", {
@@ -434,7 +446,7 @@ test.skipIf(!isSupported || !hasPerl)(
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isSupported || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {
@@ -505,7 +517,7 @@ test.skipIf(!isSupported || !hasPerl)(
 // on Linux the spawn side ignores the flag, so the no_orphans gate must too.
 // Regression for that gate reading the flag platform-agnostically and silently
 // dropping subreaper here, which let the setsid daemon escape.
-test.skipIf(!isLinux || !hasPerl)(
+test.concurrent.skipIf(!isLinux || !hasPerl)(
   "bun run --no-orphans (node_modules/.bin, Linux): setsid daemon is reaped despite use_execve_on_macos",
   async () => {
     const perlDaemon =
@@ -555,7 +567,7 @@ test.skipIf(!isLinux || !hasPerl)(
 // the grandchild on its own clean exit. Uses a non-Bun grandchild so the test
 // doesn't depend on env-var inheritance — proves the descendant walk runs from
 // the `bun run` process itself.
-test.skipIf(!isSupported)("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
+test.concurrent.skipIf(!isSupported)("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
   using dir = tempDir("no-orphans-run", {
     "package.json": JSON.stringify({
       name: "no-orphans-run",
@@ -602,146 +614,149 @@ test.skipIf(!isSupported)("bun run --no-orphans <script>: clean exit reaps desce
 // acquisition via O_NOCTTY-less open. The macOS path (EVFILT_SIGNAL+SIGCHLD →
 // wait4 WUNTRACED → same `JobControl.onChildStopped`) is structurally
 // identical and is type-checked by `zig build check-macos`.
-test.skipIf(!isLinux)("bun run --no-orphans on TTY: Ctrl-Z stop bridges to bun, fg resumes script", async () => {
-  // openpty + ptsname so a setsid wrapper can reopen the slave as its
-  // controlling terminal — Bun.spawn can't acquire a ctty for us.
-  const decls = {
-    openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    ptsname: { args: [FFIType.i32], returns: FFIType.cstring },
-    close: { args: [FFIType.i32], returns: FFIType.i32 },
-  } as const;
-  const lib = isMusl
-    ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", decls)
-    : {
-        symbols: {
-          ...dlopen("libutil.so.1", { openpty: decls.openpty }).symbols,
-          ...dlopen("libc.so.6", { ptsname: decls.ptsname, close: decls.close }).symbols,
-        },
-      };
+test.concurrent.skipIf(!isLinux)(
+  "bun run --no-orphans on TTY: Ctrl-Z stop bridges to bun, fg resumes script",
+  async () => {
+    // openpty + ptsname so a setsid wrapper can reopen the slave as its
+    // controlling terminal — Bun.spawn can't acquire a ctty for us.
+    const decls = {
+      openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      ptsname: { args: [FFIType.i32], returns: FFIType.cstring },
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    } as const;
+    const lib = isMusl
+      ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", decls)
+      : {
+          symbols: {
+            ...dlopen("libutil.so.1", { openpty: decls.openpty }).symbols,
+            ...dlopen("libc.so.6", { ptsname: decls.ptsname, close: decls.close }).symbols,
+          },
+        };
 
-  const m = new Int32Array(1);
-  const s = new Int32Array(1);
-  expect(lib.symbols.openpty(m, s, null, null, null)).toBe(0);
-  const master = m[0];
-  const slave = s[0];
-  const slavePath = String(lib.symbols.ptsname(master));
-  expect(slavePath).toMatch(/^\/dev\/pts\//);
+    const m = new Int32Array(1);
+    const s = new Int32Array(1);
+    expect(lib.symbols.openpty(m, s, null, null, null)).toBe(0);
+    const master = m[0];
+    const slave = s[0];
+    const slavePath = String(lib.symbols.ptsname(master));
+    expect(slavePath).toMatch(/^\/dev\/pts\//);
 
-  using dir = tempDir("no-orphans-tty", {
-    "package.json": JSON.stringify({
-      name: "p",
-      // bun run wraps this in `sh -c '<script>'`, so $$ = the sh that
-      // spawnSync/new_process_group put in its own pgroup, $PPID = bun run.
-      scripts: { go: `echo "S $$ $PPID" >"$OUT/ids"; while :; do sleep 1; done` },
-    }),
-    // setsid → reopen the slave as 0/1/2 (acquires it as ctty on Linux when
-    // the session has none) → exec bun run. bun run is now session leader,
-    // foreground pgroup of the PTY, with isatty(0)=true and tcgetpgrp(0) > 0.
-    "wrap.sh": `#!/bin/sh\n` + `exec setsid sh -c 'exec <"$1" >"$1" 2>"$1"; shift; exec "$@"' -- "$@"\n`,
-  });
-  chmodSync(`${dir}/wrap.sh`, 0o755);
-  const env: Record<string, string> = { ...bunEnv, OUT: String(dir) };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    using dir = tempDir("no-orphans-tty", {
+      "package.json": JSON.stringify({
+        name: "p",
+        // bun run wraps this in `sh -c '<script>'`, so $$ = the sh that
+        // spawnSync/new_process_group put in its own pgroup, $PPID = bun run.
+        scripts: { go: `echo "S $$ $PPID" >"$OUT/ids"; while :; do sleep 1; done` },
+      }),
+      // setsid → reopen the slave as 0/1/2 (acquires it as ctty on Linux when
+      // the session has none) → exec bun run. bun run is now session leader,
+      // foreground pgroup of the PTY, with isatty(0)=true and tcgetpgrp(0) > 0.
+      "wrap.sh": `#!/bin/sh\n` + `exec setsid sh -c 'exec <"$1" >"$1" 2>"$1"; shift; exec "$@"' -- "$@"\n`,
+    });
+    chmodSync(`${dir}/wrap.sh`, 0o755);
+    const env: Record<string, string> = { ...bunEnv, OUT: String(dir) };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
 
-  await using proc = Bun.spawn({
-    cmd: [`${dir}/wrap.sh`, slavePath, bunExe(), "run", "--no-orphans", "--silent", "go"],
-    env,
-    cwd: String(dir),
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  // The `setsid` re-exec drops `proc.pid` immediately; resolve the real
-  // `bun run` pid as the script's PPID once the script writes its ids.
-  lib.symbols.close(slave);
+    await using proc = Bun.spawn({
+      cmd: [`${dir}/wrap.sh`, slavePath, bunExe(), "run", "--no-orphans", "--silent", "go"],
+      env,
+      cwd: String(dir),
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    // The `setsid` re-exec drops `proc.pid` immediately; resolve the real
+    // `bun run` pid as the script's PPID once the script writes its ids.
+    lib.symbols.close(slave);
 
-  const procState = (pid: number) => {
-    try {
-      // /proc/<pid>/stat field 3 is the state char; field 2 (comm) can
-      // contain spaces/parens, so anchor on the closing ')'.
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
-    } catch {
-      return "X";
-    }
-  };
-  const waitState = async (pid: number, want: (s: string) => boolean, ms: number) => {
-    const deadline = Date.now() + ms;
-    while (Date.now() < deadline) {
-      if (want(procState(pid))) return true;
-      await sleep(10);
-    }
-    return want(procState(pid));
-  };
-
-  // Wait for the script to write its ids (proves bun run + spawn finished).
-  let scriptPid = 0,
-    runPid = 0;
-  {
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline) {
+    const procState = (pid: number) => {
       try {
-        const t = readFileSync(`${dir}/ids`, "utf8").match(/S (\d+) (\d+)/);
-        if (t) {
-          scriptPid = Number(t[1]);
-          runPid = Number(t[2]);
-          break;
-        }
-      } catch {}
-      await sleep(10);
-    }
-  }
-  try {
-    expect(scriptPid).toBeGreaterThan(0);
-    expect(runPid).toBeGreaterThan(0);
-    // Preconditions: script is in its own pgroup (`\) . ppid pgrp `), and is
-    // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
-    // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
-    expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
-    expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-      new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-    );
+        // /proc/<pid>/stat field 3 is the state char; field 2 (comm) can
+        // contain spaces/parens, so anchor on the closing ')'.
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+      } catch {
+        return "X";
+      }
+    };
+    const waitState = async (pid: number, want: (s: string) => boolean, ms: number) => {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        if (want(procState(pid))) return true;
+        await sleep(10);
+      }
+      return want(procState(pid));
+    };
 
-    // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
-    // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
-    // stop and runs the dance: take terminal → raise(SIGTSTP) → SIGCONT
-    // script. Here bun's *own* pgroup is orphaned (its parent — this test
-    // process — is in a different session), so the kernel discards bun's
-    // self-SIGTSTP and the dance falls straight through to SIGCONT'ing the
-    // script. Net effect: script is running again. In a real interactive
-    // shell bun's pgroup is *not* orphaned and bun stops at raise(); the
-    // shell's `fg` then SIGCONTs bun which SIGCONTs the script — same code
-    // path, just with the kernel's orphan rule short-circuiting the middle.
-    //
-    // Without WUNTRACED (the regression): the script stays 'T' forever and
-    // bun spins in poll() — `resumed` is false and the test fails.
-    for (let i = 0; i < 2; i++) {
-      process.kill(-scriptPid, "SIGTSTP");
-      // Don't assert it reached 'T' — the dance is fast enough that we may
-      // only ever observe 'S'. The post-condition is what matters.
-      await waitState(scriptPid, st => st === "T" || st === "t", 200);
-      const resumed = await waitState(scriptPid, st => st === "S" || st === "R", 3000);
-      expect({
-        round: i,
-        resumed,
-        scriptState: procState(scriptPid),
-        runState: procState(runPid),
-      }).toEqual({
-        round: i,
-        resumed: true,
-        scriptState: expect.stringMatching(/[SR]/),
-        runState: "S",
-      });
+    // Wait for the script to write its ids (proves bun run + spawn finished).
+    let scriptPid = 0,
+      runPid = 0;
+    {
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        try {
+          const t = readFileSync(`${dir}/ids`, "utf8").match(/S (\d+) (\d+)/);
+          if (t) {
+            scriptPid = Number(t[1]);
+            runPid = Number(t[2]);
+            break;
+          }
+        } catch {}
+        await sleep(10);
+      }
     }
+    try {
+      expect(scriptPid).toBeGreaterThan(0);
+      expect(runPid).toBeGreaterThan(0);
+      // Preconditions: script is in its own pgroup (`\) . ppid pgrp `), and is
+      // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
+      // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
+      expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
+      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
+        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
+      );
 
-    // Foreground pgroup is back on the script after each dance round.
-    expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-      new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-    );
-  } finally {
-    if (runPid > 0) reap(runPid);
-    if (scriptPid > 0) reap(-scriptPid, scriptPid);
-    lib.symbols.close(master);
-  }
-});
+      // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
+      // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
+      // stop and runs the dance: take terminal → raise(SIGTSTP) → SIGCONT
+      // script. Here bun's *own* pgroup is orphaned (its parent — this test
+      // process — is in a different session), so the kernel discards bun's
+      // self-SIGTSTP and the dance falls straight through to SIGCONT'ing the
+      // script. Net effect: script is running again. In a real interactive
+      // shell bun's pgroup is *not* orphaned and bun stops at raise(); the
+      // shell's `fg` then SIGCONTs bun which SIGCONTs the script — same code
+      // path, just with the kernel's orphan rule short-circuiting the middle.
+      //
+      // Without WUNTRACED (the regression): the script stays 'T' forever and
+      // bun spins in poll() — `resumed` is false and the test fails.
+      for (let i = 0; i < 2; i++) {
+        process.kill(-scriptPid, "SIGTSTP");
+        // Don't assert it reached 'T' — the dance is fast enough that we may
+        // only ever observe 'S'. The post-condition is what matters.
+        await waitState(scriptPid, st => st === "T" || st === "t", 200);
+        const resumed = await waitState(scriptPid, st => st === "S" || st === "R", 3000);
+        expect({
+          round: i,
+          resumed,
+          scriptState: procState(scriptPid),
+          runState: procState(runPid),
+        }).toEqual({
+          round: i,
+          resumed: true,
+          scriptState: expect.stringMatching(/[SR]/),
+          runState: "S",
+        });
+      }
+
+      // Foreground pgroup is back on the script after each dance round.
+      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
+        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
+      );
+    } finally {
+      if (runPid > 0) reap(runPid);
+      if (scriptPid > 0) reap(-scriptPid, scriptPid);
+      lib.symbols.close(master);
+    }
+  },
+);
 
 // Same dance, driven end-to-end through a real outer-shell stand-in so
 // `bun run` actually suspends (its pgroup is non-orphaned) and a
@@ -763,7 +778,7 @@ test.skipIf(!isLinux)("bun run --no-orphans on TTY: Ctrl-Z stop bridges to bun, 
 //      itself stopped.
 //   3. After perl `fg`s it (tcsetpgrp + SIGCONT), the script's SIGCONT
 //      handler fires — `onChildStopped` SIGCONT'd the whole script pgroup.
-test.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isSupported || !hasPerl)(
   "bun run --no-orphans on a TTY: Ctrl-Z stop observed by outer shell's waitpid(WUNTRACED), fg resumes script",
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
@@ -878,7 +893,6 @@ test.skipIf(!isSupported || !hasPerl)(
       proc.terminal?.close();
     }
   },
-  15000,
 );
 
 // `bun run --no-orphans dev &` — backgrounded on a TTY — must NOT steal the
@@ -891,7 +905,7 @@ test.skipIf(!isSupported || !hasPerl)(
 // Same perl-shell/pty rig as above, but perl never hands bun the foreground
 // (the `&` shape). After the script announces READY, perl re-reads
 // `tcgetpgrp(0)` and reports whether it's still perl's own pgroup.
-test.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isSupported || !hasPerl)(
   "bun run --no-orphans backgrounded on a TTY does not steal the foreground pgroup",
   async () => {
     using dir = tempDir("no-orphans-tty-bg", {
@@ -956,5 +970,4 @@ test.skipIf(!isSupported || !hasPerl)(
       proc.terminal?.close();
     }
   },
-  15000,
 );

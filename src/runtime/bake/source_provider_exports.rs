@@ -115,7 +115,7 @@ impl SourceProvider for DevServerSourceProvider {
         Some(unsafe { core::slice::from_raw_parts(d.ptr, d.length) })
     }
 
-    fn warn_invalid_source_map_json(&self, source_filename: &[u8], err: bun_core::Error) {
+    fn warn_invalid_source_map_json(&self, source_filename: &[u8], err: bun_sourcemap::Error) {
         bun_core::warn!(
             "Could not decode sourcemap in dev server runtime: {} - {}",
             ::bstr::BStr::new(source_filename),

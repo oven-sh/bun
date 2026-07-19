@@ -752,6 +752,13 @@ impl AllocError {
     }
 }
 
+impl core::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("OutOfMemory")
+    }
+}
+impl core::error::Error for AllocError {}
+
 /// Stamp out `impl From<AllocError> for $t { → $t::OutOfMemory }` for one or
 /// more local error enums. Expansion is byte-identical to the hand-written
 /// 3-line impls this replaces.
@@ -955,21 +962,6 @@ pub fn page_size() -> usize {
             info.dw_page_size as usize
         }
     })
-}
-
-// ── wtf (FastMalloc thread-cache release) ─────────────────────────────────
-// MOVE_DOWN from bun_jsc so bun_threading (T2) can call it without a T6 dep.
-pub mod wtf {
-    unsafe extern "C" {
-        // Defined in WebKit's WTF (linked into the final binary).
-        // No preconditions; thread-safe.
-        safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
-    }
-
-    #[inline]
-    pub fn release_fast_malloc_free_memory_for_this_thread() {
-        WTF__releaseFastMallocFreeMemoryForThisThread()
-    }
 }
 
 // ── String — TYPE_ONLY landing ─────────────────────────────────────────────
@@ -1685,8 +1677,8 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     // size-agnostic).
     unsafe {
         let len = libc::strlen(p);
-        secure_zero(p as *mut u8, len);
-        crate::default_alloc::free(p as *mut core::ffi::c_void);
+        secure_zero(p.cast::<u8>().cast_mut(), len);
+        crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
     }
 }
 

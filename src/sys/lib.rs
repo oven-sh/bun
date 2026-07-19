@@ -25,14 +25,10 @@ mod error;
 pub use error::Error;
 #[cfg(windows)]
 pub use error::ReturnCodeExt;
-// `bun_sys::Error` is the rich syscall error (errno+tag+path); `bun_core::Error`
-// is the lightweight NonZeroU16 code. They are distinct types. Downstream that
-// just wants "an error" gets the code via `From`.
-impl From<Error> for bun_core::Error {
+impl From<Error> for bun_errno::SystemErrno {
     #[inline]
-    fn from(e: Error) -> bun_core::Error {
-        // Encode as the errno's name (e.g., "ENOENT") in the interned table.
-        bun_core::Error::from_errno(e.errno as i32)
+    fn from(e: Error) -> Self {
+        bun_errno::SystemErrno::init(i64::from(e.errno)).unwrap_or(bun_errno::SystemErrno::EIO)
     }
 }
 /// The JS-facing rich error
@@ -937,10 +933,6 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-/// Re-exported here so callers
-/// that already depend on `bun_sys` (e.g. `bun_install` Windows paths) can
-/// write `bun_sys::errno_to_zig_err(..)` without also importing `bun_core`.
-pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
@@ -1320,10 +1312,12 @@ pub fn errno() -> *mut i32 {
 }
 
 /// Copy `path` into a NUL-terminated buffer.
-/// Returns `NameTooLong` if `path` contains an interior NUL.
+/// Returns `ENAMETOOLONG` if `path` contains an interior NUL.
 #[inline]
-pub fn to_posix_path(path: &[u8]) -> core::result::Result<std::ffi::CString, bun_core::Error> {
-    std::ffi::CString::new(path).map_err(|_| bun_core::err!("NameTooLong"))
+pub fn to_posix_path(
+    path: &[u8],
+) -> core::result::Result<std::ffi::CString, bun_errno::SystemErrno> {
+    std::ffi::CString::new(path).map_err(|_| bun_errno::SystemErrno::ENAMETOOLONG)
 }
 
 #[inline]
@@ -3386,14 +3380,15 @@ mod posix_impl {
     }
 
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns a process-lifetime mmap slice; caller is responsible for
-    /// `munmap`.
+    /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
+    /// `delta = offset % page_size` is the byte offset into `map` at which the
+    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<&'static mut [u8]> {
+    ) -> Maybe<(&'static mut [u8], usize)> {
         let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
@@ -3402,22 +3397,36 @@ mod posix_impl {
             let result = fstat(fd)?;
             usize::try_from(result.st_size).unwrap_or(0)
         };
+
+        // mmap requires a page-aligned file offset. Map from the aligned
+        // offset and report the delta so the caller can slice to the
+        // requested byte.
+        let page = bun_alloc::page_size();
+        let delta = offset % page;
+        let aligned_offset = offset - delta;
+
         let mut size = stat_size.saturating_sub(offset);
         if let Some(size_) = wanted_size {
             size = size.min(size_);
         }
+        // When size == 0 (offset at/past EOF or size: 0) pass 0 so mmap
+        // returns EINVAL instead of mapping the leading delta bytes.
+        let map_len = if size == 0 { 0 } else { size + delta };
 
         match mmap(
             core::ptr::null_mut(),
-            size,
+            map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags,
             fd,
-            offset as i64,
+            aligned_offset as i64,
         ) {
             Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `size` bytes.
-                Ok(unsafe { core::slice::from_raw_parts_mut(ptr, size) })
+                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
+                Ok((
+                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
+                    delta,
+                ))
             }
             Err(err) => Err(err),
         }
@@ -3763,14 +3772,138 @@ mod windows_impl {
         sys_uv::stat(path)
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        // sys_uv::fstat does `fd.uv()` which PANICS for HANDLE-backed
-        // (`FdKind::System`) Fds — i.e. the result of `openat()`. Convert
-        // via `_open_osfhandle` first (acknowledged CRT-fd leak —
-        // a leak is strictly better than a guaranteed panic).
-        let uvfd = fd
-            .make_libuv_owned()
-            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
-        sys_uv::fstat(uvfd)
+        if fd.kind() == FdKind::Uv {
+            return sys_uv::fstat(fd);
+        }
+        // HANDLE-backed (`FdKind::System`, e.g. `openat()` results): stat the
+        // HANDLE directly instead of allocating a throwaway CRT fd via
+        // `_open_osfhandle` (which cannot be `_close`d without also closing
+        // the caller's HANDLE, so it leaked a CRT slot per call).
+        fstat_handle(fd)
+    }
+    /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
+    /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a
+    /// raw HANDLE without touching the CRT fd table.
+    fn fstat_handle(fd: Fd) -> Maybe<Stat> {
+        use bun_core::S;
+        let handle = fd.native();
+        let nt_err = |rc: w::NTSTATUS| {
+            Error::new(w::translate_nt_status_to_errno(rc), Tag::fstat).with_fd(fd)
+        };
+        let mut st: Stat = bun_core::ffi::zeroed();
+
+        // Dispatch on handle type; pipes and consoles get a synthetic stat.
+        let file_type = w::GetFileType(handle);
+        if file_type == w::FILE_TYPE_PIPE {
+            st.st_mode = S::IFIFO as u64;
+            st.st_nlink = 1;
+            st.st_rdev = (w::FILE_DEVICE_NAMED_PIPE as u64) << 16;
+            st.st_ino = handle as usize as u64;
+            return Ok(st);
+        }
+        if file_type == w::FILE_TYPE_CHAR {
+            let mut mode: w::DWORD = 0;
+            // SAFETY: FFI; `handle` is a valid HANDLE, `mode` valid for write.
+            if unsafe { w::kernel32::GetConsoleMode(handle, &mut mode) } != 0 {
+                st.st_mode = S::IFCHR as u64;
+                st.st_nlink = 1;
+                st.st_rdev = (w::FILE_DEVICE_CONSOLE as u64) << 16;
+                st.st_ino = handle as usize as u64;
+                return Ok(st);
+            }
+            // Non-console char device (NUL, COM1, ...): fall through to the
+            // disk path, which special-cases `FILE_DEVICE_NULL`.
+        } else if file_type != w::FILE_TYPE_DISK {
+            return Err(Error::new(E::EBADF, Tag::fstat).with_fd(fd));
+        }
+
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+
+        let mut device_info: w::FILE_FS_DEVICE_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `handle` valid, output buffers valid for write.
+        let rc = unsafe {
+            w::ntdll::NtQueryVolumeInformationFile(
+                handle,
+                &mut io,
+                core::ptr::from_mut(&mut device_info).cast(),
+                core::mem::size_of::<w::FILE_FS_DEVICE_INFORMATION>() as u32,
+                w::FS_INFORMATION_CLASS::FileFsDeviceInformation,
+            )
+        };
+        if w::NT_ERROR(rc) {
+            return Err(nt_err(rc));
+        }
+        if device_info.DeviceType == w::FILE_DEVICE_NULL {
+            st.st_mode = (S::IFCHR | S::IRUSR | S::IWUSR) as u64;
+            st.st_mode |= (st.st_mode & 0o700) >> 3 | (st.st_mode & 0o700) >> 6;
+            st.st_nlink = 1;
+            st.st_blksize = 4096;
+            st.st_rdev = (w::FILE_DEVICE_NULL as u64) << 16;
+            return Ok(st);
+        }
+
+        let mut file_info: w::FILE_ALL_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `handle` valid, output buffers valid for write.
+        // STATUS_BUFFER_OVERFLOW (variable-length name truncated) is expected
+        // and is a warning, not an error; `NT_ERROR` excludes it.
+        let rc = unsafe {
+            w::ntdll::NtQueryInformationFile(
+                handle,
+                &mut io,
+                core::ptr::from_mut(&mut file_info).cast(),
+                core::mem::size_of::<w::FILE_ALL_INFORMATION>() as u32,
+                w::FILE_INFORMATION_CLASS::FileAllInformation,
+            )
+        };
+        if w::NT_ERROR(rc) {
+            return Err(nt_err(rc));
+        }
+
+        let mut volume_info: w::FILE_FS_VOLUME_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `handle` valid, output buffers valid for write.
+        let rc = unsafe {
+            w::ntdll::NtQueryVolumeInformationFile(
+                handle,
+                &mut io,
+                core::ptr::from_mut(&mut volume_info).cast(),
+                core::mem::size_of::<w::FILE_FS_VOLUME_INFORMATION>() as u32,
+                w::FS_INFORMATION_CLASS::FileFsVolumeInformation,
+            )
+        };
+        if rc == w::NTSTATUS::NOT_IMPLEMENTED {
+            st.st_dev = 0;
+        } else if w::NT_ERROR(rc) {
+            return Err(nt_err(rc));
+        } else {
+            st.st_dev = volume_info.VolumeSerialNumber as u64;
+        }
+
+        // libuv's `S_IFLNK` arm is gated on `do_lstat`, which is always 0 on
+        // the fstat path, so reparse points fall through to DIR-or-REG.
+        let attrs = file_info.BasicInformation.FileAttributes;
+        if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+            st.st_mode = S::IFDIR as u64;
+            st.st_size = 0;
+        } else {
+            st.st_mode = S::IFREG as u64;
+            st.st_size = file_info.StandardInformation.EndOfFile as u64;
+        }
+        if attrs & w::FILE_ATTRIBUTE_READONLY != 0 {
+            st.st_mode |= S::IRUSR as u64;
+        } else {
+            st.st_mode |= (S::IRUSR | S::IWUSR) as u64;
+        }
+        st.st_mode |= (st.st_mode & 0o700) >> 3 | (st.st_mode & 0o700) >> 6;
+
+        st.atim = w::filetime_to_timespec(file_info.BasicInformation.LastAccessTime);
+        st.mtim = w::filetime_to_timespec(file_info.BasicInformation.LastWriteTime);
+        st.ctim = w::filetime_to_timespec(file_info.BasicInformation.ChangeTime);
+        st.birthtim = w::filetime_to_timespec(file_info.BasicInformation.CreationTime);
+        st.st_ino = file_info.InternalInformation.IndexNumber as u64;
+        st.st_nlink = file_info.StandardInformation.NumberOfLinks as u64;
+        st.st_blocks = (file_info.StandardInformation.AllocationSize as u64) >> 9;
+        st.st_blksize = 4096;
+        Ok(st)
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
         sys_uv::lstat(path)
@@ -4206,24 +4339,15 @@ mod windows_impl {
         }
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        // `uv_fs_futime` takes a CRT
-        // fd, and `fd.uv()` PANICS for HANDLE-backed (`FdKind::System`) Fds.
-        // Convert via `make_libuv_owned()` first (passes uv-backed Fds through
-        // unchanged) so an `openat()` result no longer crashes.
-        let uvfd = fd
-            .make_libuv_owned()
-            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
-        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
-        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
-        let mut req = uv::fs_t::uninitialized();
-        let rc =
-            unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, uvfd.uv(), a, m, None) };
-        // fs_t has no Drop impl; uv_fs_req_cleanup
-        // must run before any return (fd-based, so no path buffer is captured,
-        // but keep the pattern uniform with utimens/lutimens below).
-        req.deinit();
-        if let Some(err) = Error::from_uv_rc(rc, Tag::futimens) {
-            return Err(err.with_fd(fd));
+        // `uv_fs_futime` takes a CRT fd (`fd.uv()` PANICS for HANDLE-backed
+        // `FdKind::System` fds); `SetFileTime` operates on the HANDLE
+        // directly. `fd.native()` yields the HANDLE for both kinds.
+        let a = w::timespec_to_filetime(atime);
+        let m = w::timespec_to_filetime(mtime);
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `a`/`m` valid for read.
+        let rc = unsafe { w::kernel32::SetFileTime(fd.native(), core::ptr::null(), &a, &m) };
+        if rc == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::futimens).with_fd(fd));
         }
         Ok(())
     }
@@ -4615,6 +4739,18 @@ pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
             len: buf.len() as bun_libuv_sys::ULONG,
             base: buf.as_mut_ptr(),
         }
+    }
+}
+
+#[inline]
+pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
+    #[cfg(unix)]
+    {
+        iov.iov_len
+    }
+    #[cfg(windows)]
+    {
+        iov.len as usize
     }
 }
 
@@ -6095,13 +6231,13 @@ unsafe impl Send for DynLib {}
 // synchronized, so `&DynLib` may be shared across threads.
 unsafe impl Sync for DynLib {}
 impl DynLib {
-    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryA(path)`.
-    pub fn open(path: &[u8]) -> core::result::Result<Self, bun_core::Error> {
+    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
+    pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
         let mut buf = bun_paths::PathBuffer::default();
         // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
         // dlopen a different library whose path is a prefix of the requested one).
         if path.len() >= buf.0.len() {
-            return Err(bun_core::err!("NameTooLong"));
+            return Err(bun_errno::SystemErrno::ENAMETOOLONG);
         }
         let len = path.len();
         buf.0[..len].copy_from_slice(path);
@@ -6110,7 +6246,7 @@ impl DynLib {
         let z = ZStr::from_buf(&buf.0[..], len);
         match dlopen(z, RTLD::LAZY) {
             Some(h) => Ok(Self { handle: h }),
-            None => Err(bun_core::err!("FileNotFound")),
+            None => Err(bun_errno::SystemErrno::ENOENT),
         }
     }
     /// `dlsym` typed lookup.
@@ -6161,7 +6297,7 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
-/// `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
+/// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
@@ -6172,8 +6308,29 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(windows)]
     {
         let _ = flags;
-        // SAFETY: filename is NUL-terminated.
-        let p = unsafe { bun_windows_sys::externs::LoadLibraryA(filename.as_ptr()) };
+        // `filename` is UTF-8; the `A` entry point would decode it as the
+        // system ANSI codepage and mangle any non-ASCII byte. Widen and use
+        // the `W` entry point like every other Windows path in this crate.
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, filename.as_bytes());
+        // Match libuv `uv_dlopen` (and Bun's own `process.dlopen`): request
+        // altered search so dependent DLLs resolve next to the loaded module.
+        // MSDN documents that flag as undefined for relative paths, so only
+        // set it when absolute; bare names keep the standard search order.
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+        let dw_flags = if bun_paths::is_absolute_windows(filename.as_bytes()) {
+            LOAD_WITH_ALTERED_SEARCH_PATH
+        } else {
+            0
+        };
+        // SAFETY: `to_w_path` NUL-terminates `wbuf`; `hFile` is reserved (NULL).
+        let p = unsafe {
+            bun_windows_sys::kernel32::LoadLibraryExW(
+                wpath.as_ptr(),
+                core::ptr::null_mut(),
+                dw_flags,
+            )
+        };
         if p.is_null() { None } else { Some(p.cast()) }
     }
 }
@@ -6302,16 +6459,14 @@ pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
 }
 /// Best-effort recursive delete of an absolute
 /// path. Routes through `Dir::delete_tree` on the parent directory.
-pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+pub fn delete_tree_absolute(path: &[u8]) -> Maybe<()> {
     let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path);
     let base = bun_paths::basename(path);
     if parent.is_empty() || base.is_empty() {
         // Nothing sensible to do (root or empty); silent success.
         return Ok(());
     }
-    let dir = open_dir_absolute(parent)
-        .map(Dir::from_fd)
-        .map_err(bun_core::Error::from)?;
+    let dir = open_dir_absolute(parent).map(Dir::from_fd)?;
     dir.delete_tree(base)
 }
 /// Windows variant skips `DELETE` access; on POSIX identical.
@@ -6396,6 +6551,9 @@ impl Default for NtCreateFileOptions {
 #[cfg(windows)]
 #[derive(Copy, Clone)]
 pub struct NormalizePathWindowsOpts {
+    /// `false` emits Win32-consumable paths for kernel32 APIs: plain (no
+    /// `\??\`) for absolute inputs, `\\?\GLOBALROOT\Device\…` for dotted or
+    /// multi-component relatives. Bare names still pass through verbatim.
     pub add_nt_prefix: bool,
 }
 #[cfg(windows)]
@@ -6407,10 +6565,64 @@ impl Default for NormalizePathWindowsOpts {
     }
 }
 
-/// `normalizePathWindows` — convert a (possibly relative) path
-/// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
-/// u16-only here; the u8 entry points pre-convert via
-/// `bun_paths::string_paths::to_nt_path` and call this with the resulting wide slice.
+/// `..`-clamp boundary from the kernel's own two answers (full NT object name
+/// minus volume-relative name), plus whether the device is an allowlisted
+/// share-rooted redirector. `None` when the names don't compose (rename race).
+#[cfg(windows)]
+fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
+    const SEP: u16 = b'\\' as u16;
+    const DEVICE: &[u8] = b"\\Device\\";
+    if vol_rel.first() != Some(&SEP)
+        || vol_rel.len() >= nt.len()
+        || !bun_core::strings::has_suffix_t(nt, vol_rel)
+    {
+        return None;
+    }
+    let device_len = nt.len() - vol_rel.len();
+    let is_device = device_len >= DEVICE.len()
+        && bun_core::strings::eql_case_insensitive_t(&nt[..DEVICE.len()], DEVICE);
+    let device_is = |name: &[u8]| {
+        let full = DEVICE.len() + name.len();
+        is_device
+            && device_len >= full
+            && bun_core::strings::eql_case_insensitive_t(&nt[DEVICE.len()..full], name)
+            && (device_len == full || nt[full] == SEP)
+    };
+    if !device_is(b"Mup") && !device_is(b"LanmanRedirector") {
+        // A raced pair can shear the boundary anywhere; only accept a real
+        // `\Device\<name…>` prefix, else the `..` clamp gets a forged depth
+        // budget. Nested device names (`HarddiskDmVolumes\…`) stay legal.
+        if !is_device || device_len == DEVICE.len() {
+            return None;
+        }
+        return Some((device_len, false));
+    }
+    // UNC volume-relative names start at `\server\share` (ntifs
+    // FileNameInformation); a missing or empty share (`\srv`, `\srv\`) →
+    // boundary unknowable. Trailing separators would fake an empty share.
+    let mut scan = vol_rel;
+    while scan.last() == Some(&SEP) {
+        scan = &scan[..scan.len() - 1];
+    }
+    if scan.is_empty() {
+        return None;
+    }
+    let component_end = |start: usize| {
+        scan[start..]
+            .iter()
+            .position(|&c| c == SEP)
+            .map_or(scan.len(), |i| start + i)
+    };
+    let server_end = component_end(1);
+    if server_end == scan.len() {
+        return None;
+    }
+    Some((device_len + component_end(server_end + 1), true))
+}
+
+/// `normalizePathWindows` — convert a (possibly relative) path into an NT
+/// object name for `NtCreateFile` against `dir_fd`: absolute inputs become
+/// `\??\C:\…`, dirfd-relative inputs resolve to absolute `\Device\…` names.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
@@ -6420,6 +6632,10 @@ pub fn normalize_path_windows<'a>(
     normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::default())
 }
 
+/// Like [`normalize_path_windows`]; `opts.add_nt_prefix = false` makes the
+/// output Win32-consumable: absolute inputs lose `\??\`, dotted or
+/// multi-component relatives become `\\?\GLOBALROOT\Device\…`, and bare names
+/// pass through verbatim (Win32 resolves those against the cwd).
 #[cfg(windows)]
 pub fn normalize_path_windows_opts<'a>(
     dir_fd: Fd,
@@ -6525,12 +6741,25 @@ pub fn normalize_path_windows_opts<'a>(
         return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
     }
 
+    // Strip a leading drive letter (`C:`) on the relative part; the bypass
+    // below still copies the original `path` verbatim.
+    let rel = if path.len() >= 2
+        && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
+        && path[1] == b':' as u16
+    {
+        &path[2..]
+    } else {
+        path
+    };
+
+    // Routing = any separator or `.`; clamp relevance = `..` resolving above
+    // the dirfd. One pass via the shared classifier.
+    let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
+    let saw_sep_or_dot = facts.has_sep || facts.has_dot;
+
     // Relative path with no separators or `.` can be passed straight through
     // to `NtCreateFile` against `RootDirectory`.
-    if !path
-        .iter()
-        .any(|&c| c == b'\\' as u16 || c == b'/' as u16 || c == b'.' as u16)
-    {
+    if !saw_sep_or_dot {
         if path.len() >= buf.len() {
             return Err(too_long());
         }
@@ -6540,59 +6769,144 @@ pub fn normalize_path_windows_opts<'a>(
         return Ok(WStr::from_buf(&buf[..], path.len()));
     }
 
-    // Otherwise: resolve `dir_fd` to its full path, join, normalize.
+    // Otherwise: resolve `dir_fd` to its NT device path, join, normalize.
+    // Win32 consumers (`add_nt_prefix = false`) get the `\\?\GLOBALROOT`
+    // spelling of the same object — no mount manager, valid for kernel32.
+    const GLOBALROOT: &[u16] = bun_core::w!("\\\\?\\GLOBALROOT");
+    let g = if opts.add_nt_prefix {
+        0
+    } else {
+        GLOBALROOT.len()
+    };
     let base_fd = if dir_fd.is_valid() {
         dir_fd.native()
     } else {
         Fd::cwd().native()
     };
     let mut base_buf = bun_paths::w_path_buffer_pool::get();
-    let base =
-        match windows::GetFinalPathNameByHandle(base_fd, Default::default(), &mut base_buf.0[..]) {
+    // `VolumeName::Nt` is answered from the handle itself (no mount-manager
+    // IOCTL), so it works under AppContainer tokens and on volumes with no
+    // DOS drive letter; the `\Device\…` result feeds `NtCreateFile` as-is.
+    let base = match windows::GetFinalPathNameByHandle(
+        base_fd,
+        bun_windows_sys::GetFinalPathNameByHandleFormat {
+            volume_name: bun_windows_sys::VolumeName::Nt,
+        },
+        &mut base_buf.0[..],
+    ) {
+        Ok(p) => p,
+        Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
+        // `E.BADFD` (errno 77 'file descriptor in bad state'),
+        // not `EBADF` (9).
+        Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+    };
+
+    // The volume boundary is only needed when `..` resolves above the dirfd:
+    // the base suffix is kernel-normalized (pure depth), so within-tree
+    // dotdots cannot reach any floor and any split yields identical output.
+    let mut share_rooted = false;
+    let mut prefix_len = if !facts.climbs_above_start {
+        base.len()
+    } else {
+        // The generic normalizer's `..` clamp knows drive/UNC roots, not
+        // device roots: copy the device prefix (the NT object name minus the
+        // volume-relative name) verbatim and normalize only the remainder.
+        let mut rel_buf = bun_paths::w_path_buffer_pool::get();
+        let vol_rel = match windows::GetFinalPathNameByHandle(
+            base_fd,
+            bun_windows_sys::GetFinalPathNameByHandleFormat {
+                volume_name: bun_windows_sys::VolumeName::None,
+            },
+            &mut rel_buf.0[..],
+        ) {
             Ok(p) => p,
-            // `E.BADFD` (errno 77 'file descriptor in bad state'),
-            // not `EBADF` (9).
+            Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
             Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
         };
+        // A mis-placed boundary would resolve `..` to the wrong file; fail
+        // loud when the two names don't compose (e.g. a rename race).
+        match nt_clamp_prefix_len(base, vol_rel) {
+            Some((len, rooted)) => {
+                share_rooted = rooted;
+                len
+            }
+            None => return Err(Error::from_code(E::BADFD, Tag::open)),
+        }
+    };
+    // The `\Device\…` name of a volume-root handle ends in `\`; keep the
+    // prefix separator-free (the join below adds exactly one).
+    while prefix_len > 0 && base[prefix_len - 1] == b'\\' as u16 {
+        prefix_len -= 1;
+    }
+    // Post-trim on purpose: false for volume-root bases (the trim shortened
+    // the prefix), whose lone-separator suffix must survive (see below).
+    let whole_base = prefix_len == base.len();
+    let mut rest = &base[prefix_len..];
+    // Volume-root handles yield a trailing `\` — trim it so `joined` below
+    // starts with exactly one separator.
+    while rest.last() == Some(&(b'\\' as u16)) {
+        rest = &rest[..rest.len() - 1];
+    }
 
-    // Strip a leading drive letter (`C:`) on the relative part.
-    let mut rel = path;
-    if rel.len() >= 2
-        && bun_paths::resolve_path::is_drive_letter_t::<u16>(rel[0])
-        && rel[1] == b':' as u16
-    {
-        rel = &rel[2..];
+    // Unknown devices may multiplex namespaces (many mounts under one device
+    // root); a `..` that would touch the clamp floor cannot be clamped safely
+    // — fail loud. Allowlisted redirectors keep the silent share-root clamp.
+    if facts.climbs_above_start && !share_rooted {
+        const DOT: u16 = b'.' as u16;
+        let is_sep = |&c: &u16| bun_paths::is_sep_any_t(c);
+        let mut depth = 0isize;
+        for component in rest.split(is_sep).chain(rel.split(is_sep)) {
+            depth += match component {
+                [] | [DOT] => 0,
+                [DOT, DOT] => -1,
+                _ => 1,
+            };
+            if depth < 0 {
+                return Err(Error::from_code(E::EINVAL, Tag::open));
+            }
+        }
     }
 
     let mut joined = bun_paths::w_path_buffer_pool::get();
-    let joined_len = base.len() + 1 + rel.len();
-    // Reserve 8 u16 for the `\??\` prefix + NUL that
-    // `normalizeStringGenericTZ` writes into `buf` (same length as `joined`).
-    if joined_len > joined.0.len().saturating_sub(8) {
+    let joined_len = rest.len() + 1 + rel.len();
+    // `buf` holds `\\?\GLOBALROOT` (Win32 output only) + the copied prefix +
+    // the normalized remainder (never longer than `joined_len`) + NUL; keep
+    // 8 u16 of headroom to stay conservative.
+    if joined_len > joined.0.len().saturating_sub(8)
+        || g + prefix_len + joined_len > buf.len().saturating_sub(8)
+    {
         return Err(too_long());
     }
-    joined.0[..base.len()].copy_from_slice(base);
-    joined.0[base.len()] = b'\\' as u16;
-    joined.0[base.len() + 1..joined_len].copy_from_slice(rel);
-    // `normalizeStringGenericTZ` with `add_nt_prefix` + `zero_terminate`. Must collapse
-    // `.`/`..` segments here: the relative input may be `"."` (e.g.
-    // `bun build entry.js` → dirname → `"."`), and the joined `…\.` is
-    // rejected by `NtCreateFile` if passed through verbatim.
-    let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+    buf[..g].copy_from_slice(&GLOBALROOT[..g]);
+    buf[g..g + prefix_len].copy_from_slice(&base[..prefix_len]);
+    joined.0[..rest.len()].copy_from_slice(rest);
+    joined.0[rest.len()] = b'\\' as u16;
+    joined.0[rest.len() + 1..joined_len].copy_from_slice(rel);
+    // `joined` starts with `\`, flooring the normalizer's `..` clamp right
+    // after the copied prefix. `.`/`..` must be collapsed here — `NtCreateFile`
+    // rejects them (e.g. `…\.` → OBJECT_NAME_NOT_FOUND).
+    let sub_len = bun_paths::resolve_path::normalize_string_generic_tz::<
         u16,
         /*ALLOW_ABOVE_ROOT*/ false,
         /*PRESERVE_TRAILING_SLASH*/ false,
         /*ZERO_TERMINATE*/ true,
-        /*ADD_NT_PREFIX*/ true,
+        /*ADD_NT_PREFIX*/ false,
     >(
         &joined.0[..joined_len],
-        buf,
+        &mut buf[g + prefix_len..],
         b'\\' as u16,
         bun_paths::is_sep_any_t::<u16>,
-    );
-    let len = norm.len();
-    // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-    Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) })
+    )
+    .len();
+    // A lone-separator suffix means `rel` collapsed to nothing: drop it for a
+    // directory-path prefix, keep it for a bare device name where it selects
+    // the root directory over the volume device.
+    if sub_len == 1 && whole_base {
+        buf[g + prefix_len] = 0;
+        return Ok(WStr::from_buf(&buf[..], g + prefix_len));
+    }
+    // ZERO_TERMINATE wrote NUL at buf[g + prefix_len + sub_len].
+    Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
 }
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
@@ -6622,6 +6936,15 @@ fn open_windows_device_path(
         return Err(Error::from_code(errno, Tag::open));
     }
     Ok(Fd::from_system(rc))
+}
+
+/// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
+/// these get `RootDirectory = null`; any other rooted string stays
+/// dirfd-relative so `NtCreateFile` rejects it (`OBJECT_PATH_SYNTAX_BAD`).
+#[cfg(windows)]
+fn is_nt_object_name(p: &[u16]) -> bool {
+    bun_core::strings::has_prefix_comptime_utf16(p, &windows::NT_OBJECT_PREFIX_U8)
+        || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
 }
 
 /// `openDirAtWindowsNtPath` — `NtCreateFile` with
@@ -6692,7 +7015,7 @@ pub fn open_dir_at_windows_nt_path(
     };
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(p) {
+        RootDirectory: if is_nt_object_name(p) {
             core::ptr::null_mut()
         } else if dir_fd.is_valid() {
             dir_fd.native()
@@ -6735,10 +7058,9 @@ pub fn open_dir_at_windows_nt_path(
     }
 }
 
-///
-/// For this function to open an absolute path, it must start with `\??\`.
-/// Otherwise you need a reference file descriptor; the "invalid_fd" file
-/// descriptor signifies that the current working directory should be used.
+/// Absolute paths (`\??\…`, `\Device\…`) must be full NT object names and
+/// open with no `RootDirectory`; relative paths resolve against `dir` (or the
+/// cwd when `dir` is the "invalid_fd" sentinel).
 #[cfg(windows)]
 pub fn open_file_at_windows_nt_path(
     dir: Fd,
@@ -6757,18 +7079,13 @@ pub fn open_file_at_windows_nt_path(
         MaximumLength: path_len_bytes,
         Buffer: p.as_ptr().cast_mut().cast::<u16>(),
     };
-    let has_nt_prefix = p.len() >= 4
-        && p[0] == b'\\' as u16
-        && p[1] == b'?' as u16
-        && p[2] == b'?' as u16
-        && p[3] == b'\\' as u16;
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
         // [ObjectName] must be a fully qualified file specification or the
-        // name of a device object, unless it is the name of a file relative
-        // to the directory specified by RootDirectory.
+        // name of a device object (`\??\…`, `\Device\…`), unless it is the
+        // name of a file relative to the directory specified by RootDirectory.
         ObjectName: &mut nt_name,
-        RootDirectory: if has_nt_prefix {
+        RootDirectory: if is_nt_object_name(p) {
             core::ptr::null_mut()
         } else if dir.is_valid() {
             dir.native()
@@ -7118,7 +7435,7 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     };
     let attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(path) {
+        RootDirectory: if is_nt_object_name(path) {
             core::ptr::null_mut()
         } else if dir.is_valid() {
             dir.native()
@@ -7144,22 +7461,16 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
             Tag::access,
         ));
     }
-    let attrs = basic_info.FileAttributes;
-    // From libuv: directories cannot be read-only.
-    // https://github.com/libuv/libuv/blob/eb5af8e3/src/win/fs.c#L2144-L2146
-    let is_dir = attrs != windows::INVALID_FILE_ATTRIBUTES
-        && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0
-        && (attrs & w::FILE_ATTRIBUTE_READONLY) == 0;
-    let is_regular = attrs != windows::INVALID_FILE_ATTRIBUTES
-        && ((attrs & w::FILE_ATTRIBUTE_DIRECTORY) == 0
-            || (attrs & w::FILE_ATTRIBUTE_READONLY) == 0);
-    if is_dir {
-        Ok(ExistsAtType::Directory)
-    } else if is_regular {
-        Ok(ExistsAtType::File)
-    } else {
-        Err(Error::from_code(E::EUNKNOWN, Tag::access))
-    }
+    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
+    // marker (OneDrive sets it) and does not affect directory-ness; only
+    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+    Ok(
+        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+            ExistsAtType::Directory
+        } else {
+            ExistsAtType::File
+        },
+    )
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
@@ -7681,7 +7992,7 @@ pub fn move_file_z_with_handle(
     filename: &ZStr,
     to_dir: Fd,
     destination: &ZStr,
-) -> core::result::Result<(), bun_core::Error> {
+) -> Maybe<()> {
     match renameat(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         Err(e) if e.get_errno() == E::EISDIR => {
@@ -7690,12 +8001,12 @@ pub fn move_file_z_with_handle(
             let _ = unsafe {
                 libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
             };
-            renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
+            renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
             // Cross-device: full `copyFileZSlowWithHandle`.
             #[cfg(unix)]
-            let st = fstat(from_handle).map_err(bun_core::Error::from)?;
+            let st = fstat(from_handle)?;
             // Unlink dest first — fixes ETXTBUSY on Linux.
             let _ = unlinkat(to_dir, destination);
             let dst = openat(
@@ -7703,8 +8014,7 @@ pub fn move_file_z_with_handle(
                 destination,
                 O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
                 0o644,
-            )
-            .map_err(bun_core::Error::from)?;
+            )?;
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Preallocation is best-effort.
@@ -7721,11 +8031,11 @@ pub fn move_file_z_with_handle(
                 let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
             }
             let _ = close(dst);
-            r.map_err(bun_core::Error::from)?;
+            r?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 
@@ -8392,26 +8702,43 @@ pub mod net {
     }
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // Minimal: print family for now; full impl in `bun_dns::address_to_string`.
-            match self.as_in4() {
-                Some(v4) => {
-                    // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
-                    // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
-                    // raw octets so both shapes resolve.
-                    // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-                    let octets: [u8; 4] =
-                        unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
-                    write!(
-                        f,
-                        "{}.{}.{}.{}:{}",
-                        octets[0],
-                        octets[1],
-                        octets[2],
-                        octets[3],
-                        u16::from_be(v4.sin_port)
-                    )
-                }
-                None => write!(f, "<addr family={}>", self.family()),
+            if let Some(v4) = self.as_in4() {
+                // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
+                // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
+                // raw octets so both shapes resolve.
+                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+                let octets: [u8; 4] =
+                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                write!(
+                    f,
+                    "{}.{}.{}.{}:{}",
+                    octets[0],
+                    octets[1],
+                    octets[2],
+                    octets[3],
+                    u16::from_be(v4.sin_port)
+                )
+            } else if let Some(v6) = self.as_in6() {
+                // `sin6_addr` is `in6_addr { s6_addr: [u8; 16] }` on every
+                // target; reinterpret as raw octets to stay independent of the
+                // wrapper struct name.
+                // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
+                let octets: [u8; 16] =
+                    unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
+                // `SocketAddrV6`'s Display emits `[addr]:port` (with `%scope`
+                // when nonzero), matching Zig's `std.net.Ip6Address.format` —
+                // the shape `bun_core::fmt::format_ip` expects to strip.
+                fmt::Display::fmt(
+                    &std::net::SocketAddrV6::new(
+                        std::net::Ipv6Addr::from(octets),
+                        u16::from_be(v6.sin6_port),
+                        u32::from_be(v6.sin6_flowinfo),
+                        v6.sin6_scope_id,
+                    ),
+                    f,
+                )
+            } else {
+                write!(f, "<addr family={}>", self.family())
             }
         }
     }
@@ -8617,11 +8944,7 @@ impl Drop for CloseOnDrop {
 pub mod make_path {
     use super::*;
     #[inline]
-    pub fn make_open_path(
-        dir: &Dir,
-        sub_path: &[u8],
-        opts: OpenDirOptions,
-    ) -> core::result::Result<Dir, bun_core::Error> {
+    pub fn make_open_path(dir: &Dir, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         dir.make_open_path(sub_path, opts)
     }
 
@@ -8629,33 +8952,30 @@ pub mod make_path {
     /// `makePath` taking `OSPathSlice`. Extends the
     /// canonical [`bun_paths::PathChar`] with the one syscall-dispatch hook.
     pub trait MakePathUnit: bun_paths::PathChar {
-        fn make_path_at(dir: Fd, sub: &[Self]) -> core::result::Result<(), bun_core::Error>;
+        fn make_path_at(dir: Fd, sub: &[Self]) -> Maybe<()>;
     }
     impl MakePathUnit for u8 {
         #[inline]
-        fn make_path_at(dir: Fd, sub: &[u8]) -> core::result::Result<(), bun_core::Error> {
-            mkdir_recursive_at(dir, sub).map_err(Into::into)
+        fn make_path_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
+            mkdir_recursive_at(dir, sub)
         }
     }
     impl MakePathUnit for u16 {
         #[inline]
-        fn make_path_at(dir: Fd, sub: &[u16]) -> core::result::Result<(), bun_core::Error> {
-            make_path_w(dir, sub).map_err(Into::into)
+        fn make_path_at(dir: Fd, sub: &[u16]) -> Maybe<()> {
+            make_path_w(dir, sub)
         }
     }
     /// `bun.makePath` — `mkdir -p` relative to `dir`, generic over path-char
     /// width so callers can pass `OSPathChar` slices unchanged.
     #[inline]
-    pub fn make_path<T: MakePathUnit>(
-        dir: &Dir,
-        sub_path: &[T],
-    ) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_path<T: MakePathUnit>(dir: &Dir, sub_path: &[T]) -> Maybe<()> {
         T::make_path_at(dir.fd, sub_path)
     }
     /// Explicit UTF-16 form (Windows). On POSIX transcodes via `make_path_w`.
     #[inline]
-    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> core::result::Result<(), bun_core::Error> {
-        make_path_w(dir.fd, sub_path).map_err(Into::into)
+    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> Maybe<()> {
+        make_path_w(dir.fd, sub_path)
     }
 }
 /// `WindowsSymlinkOptions` — Windows-only flag struct
@@ -8942,12 +9262,7 @@ pub fn exists(path: &[u8]) -> bool {
 /// delete-tree + rename); on EISDIR removes the dest dir and
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
-pub fn move_file_z(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> core::result::Result<(), bun_core::Error> {
+pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
@@ -8957,12 +9272,12 @@ pub fn move_file_z(
             let _ = unsafe {
                 libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
             };
-            renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
+            renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            move_file_z_slow(from_dir, filename, to_dir, destination).map_err(Into::into)
+            move_file_z_slow(from_dir, filename, to_dir, destination)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 /// `moveFileZSlow`: open source, unlink, copy to dest.
@@ -9397,9 +9712,9 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
 bun_core::link_impl_OutputSink! {
     Sys for () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
-        make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(Into::into),
+        make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>
-            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(Into::into),
+            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(|_| bun_core::Error::Unexpected),
         quiet_writer_from_fd(fd) => {
             let mut out = bun_core::output::QuietWriter::ZEROED;
             qw_set_fd(&mut out, fd);
@@ -9428,7 +9743,7 @@ bun_core::link_impl_OutputSink! {
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
-        read(fd, buf) => read(fd, buf).map_err(Into::into),
+        read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
     }
 }
 
@@ -9479,5 +9794,637 @@ mod owned_handle_tests {
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod normalize_path_windows_tests {
+    use super::*;
+    use bun_windows_sys::externs as w;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+
+    fn normalize(dir: Fd, path: &str) -> String {
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+        let norm = normalize_path_windows(dir, &wide(path), &mut buf.0[..]).expect(path);
+        String::from_utf16(norm.as_slice()).unwrap()
+    }
+
+    fn normalize_opts(dir: Fd, path: &str, add_nt_prefix: bool) -> String {
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+        let norm = normalize_path_windows_opts(
+            dir,
+            &wide(path),
+            &mut buf.0[..],
+            NormalizePathWindowsOpts { add_nt_prefix },
+        )
+        .expect(path);
+        String::from_utf16(norm.as_slice()).unwrap()
+    }
+
+    fn normalize_err(dir: Fd, path: &str) -> Error {
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+        match normalize_path_windows(dir, &wide(path), &mut buf.0[..]) {
+            Ok(p) => panic!(
+                "expected error for {path}, got {}",
+                String::from_utf16_lossy(p.as_slice())
+            ),
+            Err(e) => e,
+        }
+    }
+
+    /// `..` steps from `dir`'s base to the clamp floor, probed behaviorally —
+    /// device names may span multiple components (`HarddiskDmVolumes\…`), so
+    /// counting components after `\Device\` would overcount there.
+    fn floor_depth(dir: Fd) -> usize {
+        for k in 1..64 {
+            let mut buf = bun_paths::w_path_buffer_pool::get();
+            if normalize_path_windows(dir, &wide(&"..\\".repeat(k)), &mut buf.0[..]).is_err() {
+                return k - 1;
+            }
+        }
+        panic!("no clamp floor within 64 levels");
+    }
+
+    /// Open a directory handle with raw `CreateFileW` so the fixture fd does
+    /// not depend on the code under test.
+    fn open_dir_handle(path: &std::path::Path) -> Fd {
+        use std::os::windows::ffi::OsStrExt;
+        let wp: Vec<u16> = path.as_os_str().encode_wide().chain([0u16]).collect();
+        // SAFETY: `wp` is NUL-terminated and outlives the call.
+        let h = unsafe {
+            w::CreateFileW(
+                wp.as_ptr(),
+                w::GENERIC_READ,
+                FILE_SHARE,
+                core::ptr::null_mut(),
+                w::OPEN_EXISTING,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+                core::ptr::null_mut(),
+            )
+        };
+        assert_ne!(
+            h,
+            bun_windows_sys::INVALID_HANDLE_VALUE,
+            "CreateFileW {path:?}"
+        );
+        Fd::from_system(h)
+    }
+
+    /// pid-suffixed temp dir removed on drop (declare before handle guards so
+    /// handles close first).
+    struct TempTree(std::path::PathBuf);
+    impl TempTree {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("bun_sys_{name}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+    }
+    impl Drop for TempTree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn relative_resolves_to_nt_device_name() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_rel");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*dir, "a\\b");
+        assert!(got.starts_with("\\Device\\"), "{got}");
+        assert!(got.ends_with("\\a\\b"), "{got}");
+        assert!(!got.contains("\\??\\"), "{got}");
+        // `..`-free rel: exactly the base directory's NT name plus the rel.
+        assert_eq!(got, format!("{}\\a\\b", normalize(*dir, ".")));
+    }
+
+    #[test]
+    fn dotdot_resolves_into_parent() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*child, "..\\x");
+        let base = normalize(*parent, ".");
+        assert_eq!(got, format!("{base}\\x"));
+    }
+
+    #[test]
+    fn within_tree_dotdot_resolves_under_base() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_within");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Non-climbing `..` needs no clamp boundary; it resolves in place.
+        assert_eq!(normalize(*dir, "a\\..\\b"), format!("{base}\\b"));
+        // Collapsing to nothing lands exactly on the base directory (the
+        // join's lone separator is dropped).
+        assert_eq!(normalize(*dir, "sub\\.."), base);
+    }
+
+    #[test]
+    fn excess_dotdot_fails_closed_on_local_volume() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_clamp");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        let depth = floor_depth(*dir);
+        assert!(depth >= 1, "{base}");
+        // Enough `..` to cross the volume-root floor: local volumes are not
+        // share-rooted, so the walk refuses instead of clamping silently.
+        let over = format!("{}x", "..\\".repeat(depth + 1));
+        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+        // Same without a trailing component.
+        let over_only = "..\\".repeat(depth + 1);
+        assert_eq!(normalize_err(*dir, &over_only).get_errno(), E::EINVAL);
+        // Within-tree `..` (never crosses the floor) still resolves.
+        assert_eq!(normalize(*dir, "sub\\..\\ok"), format!("{base}\\ok"));
+    }
+
+    #[test]
+    fn forward_slash_dotdot_through_walk() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_fwd");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // `/` separates components exactly like `\` — lexically for the
+        // within-tree rel, and in the floor walk for the climbing one.
+        assert_eq!(normalize(*dir, "a/../b"), format!("{base}\\b"));
+        let over = format!("{}x", "../".repeat(floor_depth(*dir) + 1));
+        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+    }
+
+    #[test]
+    fn climbing_rel_with_leading_name_through_walk() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_climb_name");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        // Net-climbing despite the leading name: the walk sees +1,−1,−1,+1
+        // and stays above the floor while `..` resolves into the parent.
+        assert_eq!(
+            normalize(*child, "a\\..\\..\\x"),
+            format!("{}\\x", normalize(*parent, "."))
+        );
+        // Same shape pushed one past the floor fails closed.
+        let over = format!("a\\..\\{}x", "..\\".repeat(floor_depth(*child) + 1));
+        assert_eq!(
+            normalize_err(*child, &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
+    }
+
+    #[test]
+    fn exact_floor_dotdot_lands_on_volume_root() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_floor");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Exactly base-depth `..` lands ON the floor (allowed): the volume
+        // root DIRECTORY — the device prefix plus its lone separator.
+        let root = normalize(*dir, &"..\\".repeat(floor_depth(*dir)));
+        assert!(root.starts_with("\\Device\\"), "{root}");
+        assert!(root.ends_with('\\'), "{root}");
+        assert!(base.starts_with(&root), "{base} vs {root}");
+    }
+
+    #[test]
+    fn bare_dotdot_resolves_to_parent() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_bare_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*parent, ".");
+        assert_eq!(normalize(*child, ".."), base);
+        assert_eq!(normalize(*child, "..\\"), base);
+        // From the volume root itself, `..` crosses the floor.
+        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(normalize_err(*root, "..").get_errno(), E::EINVAL);
+    }
+
+    #[test]
+    fn dot_components_neutral_in_dotdot_rel() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dotneutral");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        // `.` and empty components cost no depth in the floor walk.
+        let got = normalize(*child, ".\\..\\\\.\\x");
+        assert_eq!(got, format!("{}\\x", normalize(*parent, ".")));
+    }
+
+    #[test]
+    fn colon_components_flow_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_colon");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Colon components survive normalization verbatim — running under
+        // debug_assertions, these ARE the no-panic proof; the invalid stream
+        // spelling is NtCreateFile's to reject at open time.
+        assert_eq!(normalize(*dir, ":\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(*dir, ":a.b"), format!("{base}\\:a.b"));
+        assert_eq!(normalize(*dir, ".\\:\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(*dir, "a\\:\\x"), format!("{base}\\a\\:\\x"));
+        // `..` collapse promoting `:` toward the front of the output.
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(normalize(*child, "..\\:\\x"), format!("{base}\\:\\x"));
+        // All the way to the clamp floor: `\:\x` directly after the device.
+        let floored = normalize(*dir, &format!("{}:\\x", "..\\".repeat(floor_depth(*dir))));
+        assert!(floored.ends_with("\\:\\x"), "{floored}");
+        assert!(
+            base.starts_with(floored.strip_suffix(":\\x").unwrap()),
+            "{floored} vs {base}"
+        );
+        // Bare ADS names (no separator or dot) still pass through verbatim.
+        assert_eq!(normalize(Fd::INVALID, ":stream"), ":stream");
+        // The emitted name opens with a clean error, not a panic.
+        assert!(
+            open_file_at_windows_a(
+                *dir,
+                b":\\x",
+                NtCreateFileOptions {
+                    access_mask: w::GENERIC_READ | w::SYNCHRONIZE,
+                    disposition: w::FILE_OPEN,
+                    options: w::FILE_SYNCHRONOUS_IO_NONALERT,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn drive_relative_dotdot_resolves_into_parent() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_drive_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        // The drive prefix of a drive-relative path is stripped; the `..`
+        // after it must still reach the clamp logic.
+        assert_eq!(normalize(*child, "C:..\\x"), normalize(*child, "..\\x"));
+    }
+
+    #[test]
+    fn dot_in_name_resolves_under_base() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dotname");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        // Dot without separator routes to fd resolution (not the bare
+        // passthrough) and needs no `..` clamp.
+        assert_eq!(
+            normalize(*dir, "a.b"),
+            format!("{}\\a.b", normalize(*dir, "."))
+        );
+    }
+
+    #[test]
+    fn dot_resolves_to_base_dir() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dot");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*dir, ".");
+        assert!(got.starts_with("\\Device\\"), "{got}");
+        assert!(!got.ends_with('\\'), "{got}");
+        let name = tree.0.file_name().unwrap().to_str().unwrap();
+        // Exact, trailing-sep-free expectation built from the parent handle.
+        let parent = scopeguard::guard(open_dir_handle(tree.0.parent().unwrap()), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(got, format!("{}\\{name}", normalize(*parent, ".")));
+    }
+
+    #[test]
+    fn bare_component_passes_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        // No separator and no `.` → passthrough, relative to RootDirectory.
+        let got = normalize(Fd::INVALID, "foo");
+        assert_eq!(got, "foo");
+    }
+
+    #[test]
+    fn absolute_branch_unchanged() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let got = normalize(Fd::INVALID, "C:\\x\\..\\y");
+        assert_eq!(got, "\\??\\C:\\y");
+    }
+
+    #[test]
+    fn clamp_prefix_len_pairs() {
+        let split_at = |nt: &str, vol_rel: &str, prefix: &str, share_rooted: bool| {
+            assert!(nt.starts_with(prefix), "{nt}");
+            assert_eq!(
+                nt_clamp_prefix_len(&wide(nt), &wide(vol_rel)),
+                Some((prefix.len(), share_rooted)),
+                "{nt} / {vol_rel}"
+            );
+        };
+        // Local volume: not share-rooted.
+        split_at(
+            "\\Device\\HarddiskVolume3\\Users\\x",
+            "\\Users\\x",
+            "\\Device\\HarddiskVolume3",
+            false,
+        );
+        // Volume root.
+        split_at(
+            "\\Device\\HarddiskVolume3\\",
+            "\\",
+            "\\Device\\HarddiskVolume3",
+            false,
+        );
+        // Nested device name (dynamic-disk volume set).
+        split_at(
+            "\\Device\\HarddiskDmVolumes\\MachineDg0\\Volume1\\dir\\f",
+            "\\dir\\f",
+            "\\Device\\HarddiskDmVolumes\\MachineDg0\\Volume1",
+            false,
+        );
+        // UNC: boundary extends past `\server\share`; share-rooted.
+        split_at(
+            "\\Device\\Mup\\srv\\share\\dir",
+            "\\srv\\share\\dir",
+            "\\Device\\Mup\\srv\\share",
+            true,
+        );
+        // Session-qualified redirector: `;…` components sit on the device
+        // side of the subtraction; the share extension follows.
+        split_at(
+            "\\Device\\Mup\\;LanmanRedirector\\;X:00000000000003e7\\srv\\share\\f",
+            "\\srv\\share\\f",
+            "\\Device\\Mup\\;LanmanRedirector\\;X:00000000000003e7\\srv\\share",
+            true,
+        );
+        // Guard failures report an unknowable boundary.
+        let fails = |nt: &str, vol_rel: &str| {
+            assert_eq!(
+                nt_clamp_prefix_len(&wide(nt), &wide(vol_rel)),
+                None,
+                "{nt} / {vol_rel}"
+            );
+        };
+        fails("\\Device\\HarddiskVolume3\\x", "x"); // no leading `\`
+        fails("\\Device\\HarddiskVolume3\\x", ""); // empty
+        fails("\\x", "\\Device\\HarddiskVolume3\\x"); // vol_rel >= nt
+        fails("\\Device\\HarddiskVolume3\\x", "\\y"); // suffix mismatch
+        fails("\\Device\\Mup\\srv", "\\srv"); // UNC server without share
+        fails("\\Device\\Mup\\srv\\", "\\srv\\"); // trailing sep, still no share
+        fails("\\Device\\Mup\\", "\\"); // redirector root
+        fails("\\Device\\HarddiskVolume3", "\\Device\\HarddiskVolume3"); // vol_rel == nt
+
+        // Rename-race forgeries must not shear the boundary above the device.
+        fails("\\Device\\HarddiskVolume4\\p", "\\HarddiskVolume4\\p"); // bare `\Device`
+        fails("\\Device\\\\x", "\\x"); // empty device name
+        split_at(
+            "\\Device\\HarddiskVolume4\\p",
+            "\\p",
+            "\\Device\\HarddiskVolume4",
+            false,
+        );
+        // Ancestor-rename shear lands DEEPER than the true device: the clamp
+        // only tightens, so the shape stays accepted (indistinguishable from
+        // nested device names); the floor walk still fails closed.
+        split_at(
+            "\\Device\\HarddiskVolume3\\a\\b\\x",
+            "\\b\\x",
+            "\\Device\\HarddiskVolume3\\a",
+            false,
+        );
+        // `share_rooted == true` is what makes the caller skip the floor walk
+        // (silent share-root clamp). A normalize-level Mup case would need a
+        // real UNC handle, so the gate's input is pinned at this unit level.
+
+        // LanmanRedirector direct (no Mup) is share-rooted too.
+        split_at(
+            "\\Device\\LanmanRedirector\\;X:0\\srv\\share\\f",
+            "\\srv\\share\\f",
+            "\\Device\\LanmanRedirector\\;X:0\\srv\\share",
+            true,
+        );
+        // Device match is ordinal case-insensitive.
+        split_at(
+            "\\device\\MUP\\srv\\share\\dir",
+            "\\srv\\share\\dir",
+            "\\device\\MUP\\srv\\share",
+            true,
+        );
+        // Trailing separator after a real share still splits after the share.
+        split_at(
+            "\\Device\\Mup\\srv\\share\\",
+            "\\srv\\share\\",
+            "\\Device\\Mup\\srv\\share",
+            true,
+        );
+        // Prefix-extension lookalike is NOT a redirector.
+        split_at("\\Device\\Mupp\\x", "\\x", "\\Device\\Mupp", false);
+    }
+
+    #[test]
+    fn win32_output_uses_globalroot() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_gr");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize_opts(*dir, "a\\b", false);
+        assert!(got.starts_with("\\\\?\\GLOBALROOT\\Device\\"), "{got}");
+        assert!(got.ends_with("\\a\\b"), "{got}");
+        // rel `.`: GLOBALROOT + base, no trailing separator.
+        assert_eq!(
+            normalize_opts(*dir, ".", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(*dir, "."))
+        );
+    }
+
+    #[test]
+    fn win32_globalroot_output_creates_directories() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_gr_mkdir");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let name = normalize_opts(*dir, ".\\fresh", false);
+        let wname: Vec<u16> = wide(&name).into_iter().chain([0u16]).collect();
+        // SAFETY: `wname` is NUL-terminated.
+        let ok = unsafe { w::CreateDirectoryW(wname.as_ptr(), core::ptr::null_mut()) };
+        assert_ne!(ok, 0, "CreateDirectoryW({name})");
+        assert!(std::fs::metadata(tree.0.join("fresh")).unwrap().is_dir());
+    }
+
+    // ── branch-review matrix ────────────────────────────────────────────
+
+    #[test]
+    fn volume_root_base_shapes() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
+            let _ = close(fd);
+        });
+        let dot = normalize(*root, ".");
+        assert!(dot.starts_with("\\Device\\"), "{dot}");
+        // The lone separator is load-bearing: `\Device\<vol>\` is the root
+        // directory, `\Device\<vol>` the volume device.
+        assert!(dot.ends_with('\\'), "{dot}");
+        // Generic across device shapes (incl. nested `HarddiskDmVolumes\…`):
+        // a child of the root carries exactly the root's prefix + its name.
+        let windows_dir =
+            scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\Windows")), |fd| {
+                let _ = close(fd);
+            });
+        assert_eq!(normalize(*windows_dir, "."), format!("{dot}Windows"));
+        assert_eq!(normalize(*root, ".\\x"), format!("{dot}x"));
+        // Any `..` from the volume root would cross the floor: fail closed.
+        assert_eq!(normalize_err(*root, "..\\x").get_errno(), E::EINVAL);
+    }
+
+    #[test]
+    fn buffer_boundary_exact_fit() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_bound");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base_len = wide(&normalize(*dir, ".")).len();
+        let rel = "a\\b";
+        // `..`-free path: prefix = whole base, `joined` = `\` + rel, and the
+        // function reserves 8 u16 of headroom.
+        let needed = base_len + 1 + rel.len() + 8;
+        let mut exact = vec![0u16; needed];
+        assert!(normalize_path_windows(*dir, &wide(rel), &mut exact[..]).is_ok());
+        let mut small = vec![0u16; needed - 1];
+        let err = match normalize_path_windows(*dir, &wide(rel), &mut small[..]) {
+            Ok(p) => panic!("expected ENAMETOOLONG, got {:?}", p.as_slice()),
+            Err(e) => e,
+        };
+        assert_eq!(err.get_errno(), E::ENAMETOOLONG);
+    }
+
+    #[test]
+    fn non_file_dirfd_fails_with_badfd() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        // A NUL-device handle is valid but has no file name, so the base
+        // query fails deterministically (no closed-handle recycling races).
+        // The compose/None-query failure arms are not constructible from a
+        // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
+        let nul_path = wide("\\\\.\\NUL\0");
+        let nul = scopeguard::guard(
+            open_windows_device_path(
+                bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
+                w::GENERIC_READ,
+                w::OPEN_EXISTING,
+                0,
+            )
+            .expect("open NUL"),
+            |fd| {
+                let _ = close(fd);
+            },
+        );
+        assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
+    }
+
+    #[test]
+    fn drive_qualified_bare_name_passes_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        // The bypass copies the ORIGINAL path (drive prefix included); only
+        // the post-strip remainder decides the routing.
+        assert_eq!(normalize(Fd::INVALID, "C:foo"), "C:foo");
+    }
+
+    #[test]
+    fn win32_globalroot_dotdot_composes() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_gr_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(
+            normalize_opts(*child, "..\\x", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(*child, "..\\x"))
+        );
+    }
+
+    #[test]
+    fn nt_object_name_opens_via_ntcreatefile() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_open");
+        std::fs::create_dir_all(tree.0.join("sub")).unwrap();
+        std::fs::write(tree.0.join("sub").join("file.txt"), b"nt object name").unwrap();
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+
+        let fd = open_file_at_windows_a(
+            *dir,
+            b"sub\\file.txt",
+            NtCreateFileOptions {
+                access_mask: w::GENERIC_READ | w::SYNCHRONIZE,
+                disposition: w::FILE_OPEN,
+                options: w::FILE_SYNCHRONOUS_IO_NONALERT,
+                ..Default::default()
+            },
+        )
+        .expect("NtCreateFile accepts the \\Device\\ object name");
+        let file = File::from_fd(fd); // Drop closes.
+        let mut content = [0u8; 64];
+        let n = file.read_all(&mut content).unwrap();
+        assert_eq!(&content[..n], b"nt object name");
+
+        let sub = scopeguard::guard(
+            open_dir_at_windows_a(*dir, b"sub\\..\\sub", WindowsOpenDirOptions::default())
+                .expect("dir opens through `..` in the NT object name"),
+            |fd| {
+                let _ = close(fd);
+            },
+        );
+        assert!(fstat(*sub).is_ok());
     }
 }

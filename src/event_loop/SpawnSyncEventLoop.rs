@@ -384,6 +384,12 @@ impl SpawnSyncEventLoop {
             self.uv_timer_mut().expect("just set").init(uv_loop);
         }
 
+        // Refresh the loop's cached clock: this loop only runs while a spawnSync call is in
+        // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be
+        // staler than the timeout, which would make the timer fire immediately.
+        // SAFETY: `uv_loop` is the live initialized loop owned by `self.uws_loop`.
+        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop) };
+
         // NOTE: `timer.data` is assigned later in `tick_with_timeout`, immediately before the
         // uws tick, so the stored `*mut Self` derives directly from that frame's live `&mut self`
         // (not from this function's reborrow, which would be invalidated on return).
@@ -446,7 +452,7 @@ impl SpawnSyncEventLoop {
         }
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
         // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration) };
+        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration, uws::NOW_NS_UNKNOWN) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]

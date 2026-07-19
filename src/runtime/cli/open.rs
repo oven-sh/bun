@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bun_core::{Global, OrWriteFailed as _};
+use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
@@ -184,7 +184,7 @@ impl Editor {
         file: &[u8],
         line: Option<&[u8]>,
         column: Option<&[u8]>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut spawned = Box::new(SpawnedEditorContext::default());
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
@@ -222,16 +222,19 @@ impl Editor {
             | Editor::Vscode
             | Editor::Webstorm
             | Editor::Intellij => {
-                cursor.write_all(file).or_write_failed()?;
+                cursor
+                    .write_all(file)
+                    .map_err(|_| crate::Error::WriteFailed)?;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
-                        write!(cursor, ":{}", bstr::BStr::new(line_)).or_write_failed()?;
+                        write!(cursor, ":{}", bstr::BStr::new(line_))
+                            .map_err(|_| crate::Error::WriteFailed)?;
 
                         if !self.is_jet_brains() {
                             if let Some(col) = column {
                                 if !col.is_empty() {
                                     write!(cursor, ":{}", bstr::BStr::new(col))
-                                        .or_write_failed()?;
+                                        .map_err(|_| crate::Error::WriteFailed)?;
                                 }
                             }
                         }
@@ -244,7 +247,9 @@ impl Editor {
                 }
             }
             Editor::Textmate => {
-                cursor.write_all(file).or_write_failed()?;
+                cursor
+                    .write_all(file)
+                    .map_err(|_| crate::Error::WriteFailed)?;
                 let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
                 // Note: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
@@ -255,11 +260,13 @@ impl Editor {
                     if !line_.is_empty() {
                         push_arg!(b"--line");
 
-                        write!(cursor, "{}", bstr::BStr::new(line_)).or_write_failed()?;
+                        write!(cursor, "{}", bstr::BStr::new(line_))
+                            .map_err(|_| crate::Error::WriteFailed)?;
 
                         if let Some(col) = column {
                             if !col.is_empty() {
-                                write!(cursor, ":{}", bstr::BStr::new(col)).or_write_failed()?;
+                                write!(cursor, ":{}", bstr::BStr::new(col))
+                                    .map_err(|_| crate::Error::WriteFailed)?;
                             }
                         }
 
@@ -280,7 +287,9 @@ impl Editor {
             }
             _ => {
                 if !file.is_empty() {
-                    cursor.write_all(file).or_write_failed()?;
+                    cursor
+                        .write_all(file)
+                        .map_err(|_| crate::Error::WriteFailed)?;
                     let pos = usize::try_from(cursor.position()).expect("int cast");
                     let file_path = &spawned.file_path_buf[0..pos];
                     push_arg!(file_path);
@@ -303,7 +312,7 @@ impl Editor {
                 // so reclaim explicitly on the spawn-failure path.
                 // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
                 drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
-                bun_core::err!("ThreadSpawnFailed")
+                crate::Error::ThreadSpawnFailed
             })?;
         Ok(())
     }
@@ -495,7 +504,7 @@ impl EditorContext {
         tmpdir: bun_sys::Fd,
         line: &[u8],
         column: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut basename_buf = [0u8; 512];
         let mut basename = bun_paths::basename(id);
         if strings::ends_with(basename, b".bun") && basename.len() < 499 {
@@ -507,7 +516,7 @@ impl EditorContext {
         // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
         let mut basename_zbuf = PathBuffer::uninit();
         let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
-        // `?` converts bun_sys::Error → bun_core::Error directly; explicit
+        // `?` converts bun_sys::Error → crate::Error directly; explicit
         // .map_err(Into::into) became ambiguous once node_os::OsError added
         // its own From<bun_sys::Error>.
         bun_sys::File::write_file(tmpdir, basename_z, blob)?;

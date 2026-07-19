@@ -281,9 +281,255 @@ pub(crate) struct OPENSSL_STACK {
 }
 
 unsafe extern "C" {
+    fn GENERAL_NAME_free(name: *mut GENERAL_NAME);
+}
+
+/// Owns one `SSL_CTX` reference; `SSL_CTX_free`s it on drop. Construct from a
+/// pointer that already carries a +1 (`SSL_CTX_new`, `SSL_CTX_up_ref`).
+pub struct OwnedSslCtx(core::ptr::NonNull<SSL_CTX>);
+
+impl OwnedSslCtx {
+    /// Takes the +1 `raw` carries; `None` when `raw` is null.
+    ///
+    /// # Safety
+    /// `raw` must be null or carry a reference the caller is giving up.
+    pub unsafe fn from_raw(raw: *mut SSL_CTX) -> Option<Self> {
+        core::ptr::NonNull::new(raw).map(Self)
+    }
+
+    pub fn as_ptr(&self) -> *mut SSL_CTX {
+        self.0.as_ptr()
+    }
+
+    /// Transfers the reference back out; the caller must free it.
+    pub fn into_raw(self) -> *mut SSL_CTX {
+        core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+}
+
+impl Drop for OwnedSslCtx {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { SSL_CTX_free(self.0.as_ptr()) }
+    }
+}
+
+/// Owns the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns for a
+/// subjectAltName extension. Frees every `GENERAL_NAME` and then the stack.
+pub struct GeneralNames(core::ptr::NonNull<struct_stack_st_GENERAL_NAME>);
+
+impl GeneralNames {
+    /// Takes ownership of a `STACK_OF(GENERAL_NAME)`; `None` when `raw` is null.
+    ///
+    /// # Safety
+    /// `raw` must be null or a stack the caller owns and does not free itself.
+    pub unsafe fn from_raw(raw: *mut c_void) -> Option<Self> {
+        core::ptr::NonNull::new(raw.cast::<struct_stack_st_GENERAL_NAME>()).map(Self)
+    }
+
+    pub fn len(&self) -> usize {
+        // SAFETY: we own a live stack; `sk_num` takes it as `const OPENSSL_STACK`.
+        unsafe { sk_num(self.0.as_ptr().cast::<OPENSSL_STACK>()) }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Borrows the `i`th entry; `None` past the end.
+    pub fn get(&self, i: usize) -> Option<&GENERAL_NAME> {
+        if i >= self.len() {
+            return None;
+        }
+        // SAFETY: `i` is in bounds and the stack outlives the borrow, which is
+        // tied to `&self`. BoringSSL owns the element until our `Drop`.
+        unsafe {
+            sk_value(self.0.as_ptr().cast::<OPENSSL_STACK>(), i)
+                .cast::<GENERAL_NAME>()
+                .as_ref()
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &GENERAL_NAME> {
+        (0..self.len()).filter_map(|i| self.get(i))
+    }
+}
+
+/// A DNS / IP / URI subjectAltName entry borrowed from a [`GeneralNames`]
+/// stack. IP entries are the raw 4- or 16-byte address octets.
+pub enum SubjectAltName<'a> {
+    Dns(&'a [u8]),
+    Ip(&'a [u8]),
+    Uri(&'a [u8]),
+}
+
+impl GeneralNames {
+    /// The stack's DNS / IP / URI entries; other name types are skipped.
+    pub fn subject_alt_names(&self) -> impl Iterator<Item = SubjectAltName<'_>> {
+        self.iter().filter_map(|name| {
+            // SAFETY: every `GeneralNames` comes from `from_raw`, whose
+            // contract requires a stack BoringSSL produced, so `name_type`
+            // selects the live union arm and the ASN1 string's `data` is
+            // readable for `length` bytes for the stack's lifetime.
+            unsafe {
+                let string: &asn1_string_st = match name.name_type {
+                    GEN_DNS => name.d.dNSName.as_ref()?,
+                    GEN_URI => name.d.uniformResourceIdentifier.as_ref()?,
+                    GEN_IPADD => name.d.ip.as_ref()?,
+                    _ => return None,
+                };
+                if string.data.is_null() {
+                    return None;
+                }
+                let bytes =
+                    core::slice::from_raw_parts(string.data, usize::try_from(string.length).ok()?);
+                Some(match name.name_type {
+                    GEN_DNS => SubjectAltName::Dns(bytes),
+                    GEN_IPADD => SubjectAltName::Ip(bytes),
+                    _ => SubjectAltName::Uri(bytes),
+                })
+            }
+        })
+    }
+}
+
+/// The certificate's subjectAltName extension.
+pub enum SanLookup {
+    Absent,
+    /// Present but not decodable as subjectAltName.
+    Invalid,
+    Names(GeneralNames),
+}
+
+impl X509 {
+    /// This certificate's subjectAltName extension.
+    pub fn subject_alt_names(&mut self) -> SanLookup {
+        // SAFETY: `self` is a live certificate (opaque, only obtainable from
+        // BoringSSL); `X509V3_EXT_d2i` returns a freshly allocated stack that
+        // `GeneralNames::from_raw` then owns and frees.
+        unsafe {
+            let x509: *mut X509 = self;
+            let index = X509_get_ext_by_NID(x509, NID_subject_alt_name, -1);
+            if index < 0 {
+                return SanLookup::Absent;
+            }
+            let Some(ext) = X509_get_ext(x509, index).as_mut() else {
+                return SanLookup::Absent;
+            };
+            if X509V3_EXT_get(ext) != X509V3_EXT_get_nid(NID_subject_alt_name) {
+                return SanLookup::Invalid;
+            }
+            match GeneralNames::from_raw(X509V3_EXT_d2i(ext)) {
+                Some(names) => SanLookup::Names(names),
+                None => SanLookup::Absent,
+            }
+        }
+    }
+
+    /// Iterates this certificate's Subject Common Names in order.
+    pub fn common_names(&mut self) -> CommonNames<'_> {
+        // SAFETY: `self` is a live certificate; a null subject yields an
+        // empty iterator.
+        let subject = unsafe { X509_get_subject_name(self) };
+        CommonNames {
+            subject,
+            last: -1,
+            _cert: core::marker::PhantomData,
+        }
+    }
+}
+
+/// Borrowing iterator over a certificate's Subject Common Names.
+pub struct CommonNames<'a> {
+    subject: *mut X509_NAME,
+    last: c_int,
+    _cert: core::marker::PhantomData<&'a mut X509>,
+}
+
+impl<'a> Iterator for CommonNames<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        if self.subject.is_null() {
+            return None;
+        }
+        // SAFETY: the subject and its entries are owned by the certificate
+        // borrowed for `'a`; every accessor is guarded against null returns
+        // and non-positive lengths.
+        unsafe {
+            loop {
+                let entry_idx = X509_NAME_get_index_by_NID(self.subject, NID_commonName, self.last);
+                if entry_idx < 0 {
+                    return None;
+                }
+                self.last = entry_idx;
+                let entry = X509_NAME_get_entry(self.subject, entry_idx);
+                if entry.is_null() {
+                    continue;
+                }
+                let data = X509_NAME_ENTRY_get_data(entry);
+                if data.is_null() {
+                    continue;
+                }
+                let cn_ptr = ASN1_STRING_get0_data(data);
+                let cn_len = ASN1_STRING_length(data);
+                if cn_ptr.is_null() || cn_len <= 0 {
+                    continue;
+                }
+                return Some(core::slice::from_raw_parts(
+                    cn_ptr,
+                    usize::try_from(cn_len).expect("int cast"),
+                ));
+            }
+        }
+    }
+}
+
+impl SSL {
+    /// The peer's leaf certificate, borrowed from this SSL's cert chain.
+    pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
+        // SAFETY: the chain and its entries are owned by this SSL and outlive
+        // the returned borrow, which is tied to `&mut self`.
+        unsafe {
+            let cert_chain = SSL_get_peer_cert_chain(self);
+            if cert_chain.is_null() {
+                return None;
+            }
+            sk_X509_value(cert_chain, 0).as_mut()
+        }
+    }
+}
+
+impl Drop for GeneralNames {
+    fn drop(&mut self) {
+        // SAFETY: `sk_pop_free_ex` invokes the callback once per element, so it
+        // gets `GENERAL_NAME_free` (per element), not a stack free.
+        unsafe {
+            sk_pop_free_ex(
+                self.0.as_ptr().cast::<OPENSSL_STACK>(),
+                Some(call_general_name_free),
+                Some(core::mem::transmute::<
+                    unsafe extern "C" fn(*mut GENERAL_NAME),
+                    unsafe extern "C" fn(*mut c_void),
+                >(GENERAL_NAME_free)),
+            )
+        }
+    }
+}
+
+/// Restores the element type erased through `OPENSSL_sk_free_func`.
+unsafe extern "C" fn call_general_name_free(free_func: OPENSSL_sk_free_func, ptr: *mut c_void) {
+    // SAFETY: `free_func` is `GENERAL_NAME_free` erased in `Drop` above; both
+    // sides are `extern "C" fn(*mut _)`, so the round-trip is ABI-sound.
+    let f: unsafe extern "C" fn(*mut GENERAL_NAME) =
+        unsafe { core::mem::transmute(free_func.expect("non-null free_func")) };
+    // SAFETY: `ptr` is an element `sk_pop_free_ex` is draining from the stack.
+    unsafe { f(ptr.cast::<GENERAL_NAME>()) }
+}
+
+unsafe extern "C" {
     fn sk_num(sk: *const OPENSSL_STACK) -> usize;
     fn sk_value(sk: *const OPENSSL_STACK, i: usize) -> *mut c_void;
-    fn sk_free(sk: *mut OPENSSL_STACK);
     fn sk_pop_free_ex(
         sk: *mut OPENSSL_STACK,
         call_free_func: OPENSSL_sk_call_free_func,
@@ -439,9 +685,6 @@ unsafe extern "C" {
 // symbol — they bottom out on the untyped `sk_*` ABI above.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Per-stack free callback type used by `sk_GENERAL_NAME_pop_free`.
-pub(crate) type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_GENERAL_NAME);
-
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
     // SAFETY: Two independent type casts, not a const→mut provenance laundering:
@@ -450,73 +693,6 @@ pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X
     //     `*mut X509` (mut→mut). Mutability originates from BoringSSL's ABI
     //     (`void *sk_value(const _STACK *, size_t)`), not from `sk`.
     unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<X509>() }
-}
-
-#[inline]
-pub unsafe fn sk_GENERAL_NAME_num(sk: *const struct_stack_st_GENERAL_NAME) -> usize {
-    // SAFETY: const→const cast between opaque aliases — `STACK_OF(GENERAL_NAME)`
-    // is the same C object as `OPENSSL_STACK`. Caller's `unsafe` contract
-    // guarantees `sk` is NULL or a live BoringSSL stack; `sk_num` accepts both.
-    unsafe { sk_num(sk.cast::<OPENSSL_STACK>()) }
-}
-
-#[inline]
-pub unsafe fn sk_GENERAL_NAME_value(
-    sk: *const struct_stack_st_GENERAL_NAME,
-    i: usize,
-) -> *mut GENERAL_NAME {
-    // SAFETY: `sk` cast is const→const between opaque stack types; the `*mut`
-    // return is narrowed from `sk_value`'s own `*mut c_void` result (C-heap
-    // provenance), not derived from `sk`. No const→mut on a single value.
-    unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<GENERAL_NAME>() }
-}
-
-#[inline]
-pub unsafe extern "C" fn sk_GENERAL_NAME_free(sk: *mut struct_stack_st_GENERAL_NAME) {
-    // SAFETY: mut→mut cast between opaque aliases of the same allocation.
-    // Caller's `unsafe` contract guarantees `sk` is NULL or an owned
-    // BoringSSL stack; `sk_free` is documented to accept both.
-    unsafe { sk_free(sk.cast::<OPENSSL_STACK>()) }
-}
-
-unsafe extern "C" fn sk_GENERAL_NAME_call_free_func(
-    free_func: OPENSSL_sk_free_func,
-    ptr: *mut c_void,
-) {
-    // SAFETY: `free_func` was originally an `sk_GENERAL_NAME_free_func` erased
-    // through `OPENSSL_sk_free_func` by `sk_GENERAL_NAME_pop_free` below; both
-    // are `extern "C" fn(*mut _)` so the pointer round-trip is ABI-sound.
-    let f: sk_GENERAL_NAME_free_func = unsafe {
-        core::mem::transmute::<unsafe extern "C" fn(*mut c_void), sk_GENERAL_NAME_free_func>(
-            free_func.expect("non-null free_func"),
-        )
-    };
-    // SAFETY: `ptr` is an element handed to this trampoline by `sk_pop_free_ex`
-    // while draining the `STACK_OF(GENERAL_NAME)` passed in below; the cast
-    // restores the typed pointer `f` was declared to accept before erasure.
-    unsafe { f(ptr.cast::<struct_stack_st_GENERAL_NAME>()) }
-}
-
-#[inline]
-pub unsafe fn sk_GENERAL_NAME_pop_free(
-    sk: *mut struct_stack_st_GENERAL_NAME,
-    free_func: sk_GENERAL_NAME_free_func,
-) {
-    // SAFETY: `sk` cast is mut→mut between opaque aliases; caller guarantees it
-    // is NULL or an owned `STACK_OF(GENERAL_NAME)`. The transmute erases
-    // `free_func`'s typed arg to `*mut c_void` — both sides are
-    // `extern "C" fn(*mut _)` so the fn-pointer reinterpret is ABI-sound, and
-    // `sk_GENERAL_NAME_call_free_func` restores the type before invoking it.
-    unsafe {
-        sk_pop_free_ex(
-            sk.cast::<OPENSSL_STACK>(),
-            Some(sk_GENERAL_NAME_call_free_func),
-            Some(core::mem::transmute::<
-                sk_GENERAL_NAME_free_func,
-                unsafe extern "C" fn(*mut c_void),
-            >(free_func)),
-        )
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -724,6 +900,12 @@ unsafe extern "C" {
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+
+    // ── RAND ─────────────────────────────────────────────────────────────
+    /// Fills `buf[0..len]` from BoringSSL's thread-local CTR-DRBG and returns 1.
+    /// In the event that sufficient random data can not be obtained, `abort`
+    /// is called. See `rand_bytes` for the safe wrapper.
+    pub(crate) fn RAND_bytes(buf: *mut u8, len: usize) -> c_int;
 
     // ── ERR ──────────────────────────────────────────────────────────────
     // Thread-local error queue — no pointer args, no preconditions.

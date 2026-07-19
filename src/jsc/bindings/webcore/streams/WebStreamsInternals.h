@@ -169,6 +169,23 @@ void markPromiseAsHandled(JSC::VM&, JSC::JSPromise*); // userJS: no — WebStrea
 // {value,done} results: use JSC::createIteratorResultObject
 // (<JavaScriptCore/IteratorOperations.h>; VM-cached structure).
 
+// The stream-level closed promise: node:stream's finished() observes a terminal state without
+// locking the stream, so it cannot use the reader's/writer's [[closedPromise]]. Created on the
+// first webStreamClosedPromise() call and cached on the cell; settled from EVERY terminal
+// transition below. Settling is a no-op when nothing ever asked for the promise, and always
+// settles with a primitive / the stored error, so none of these can run user JS or throw.
+JSC::JSPromise* webStreamClosedPromise(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no — WebStreamsMisc.cpp
+JSC::JSPromise* webStreamClosedPromise(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WebStreamsMisc.cpp
+void resolveStreamClosedPromise(JSC::VM&, JSReadableStream*); // userJS: no — WebStreamsMisc.cpp
+void resolveStreamClosedPromise(JSC::VM&, JSWritableStream*); // userJS: no — WebStreamsMisc.cpp
+void rejectStreamClosedPromise(JSC::VM&, JSReadableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
+void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
+
+// `$webStreamControllerError` — node:stream's addAbortSignal() erroring a WHATWG stream, i.e.
+// what `controller.error(e)` does, including its no-op once the stream left readable/writable.
+void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
+void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
+
 // THE ONE SANCTIONED CATCH of the subsystem. Returns the thrown value after
 // clearExceptionExceptTermination(); returns the EMPTY JSValue if the exception is a VM
 // termination (which the caller must propagate, never consume). Never call bare

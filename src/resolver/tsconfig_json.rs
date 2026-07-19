@@ -46,8 +46,8 @@ impl JsonCache {
             &bun_ast::Source,
             &mut bun_ast::Log,
             &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_core::Error>,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+        ) -> Result<bun_ast::Expr, bun_parsers::Error>,
+    ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
@@ -63,8 +63,8 @@ impl JsonCache {
         func: fn(
             &bun_ast::Source,
             &mut bun_ast::Log,
-        ) -> Result<json_parser::ParsedJson, bun_core::Error>,
-    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+        ) -> Result<json_parser::ParsedJson, bun_parsers::Error>,
+    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = func(source, &mut temp_log).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
@@ -77,7 +77,7 @@ impl JsonCache {
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
     }
 
@@ -87,7 +87,7 @@ impl JsonCache {
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_package_json)
     }
 
@@ -99,7 +99,7 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         mode: JsonMode,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
@@ -311,7 +311,7 @@ impl TSConfigJSON {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
-    ) -> Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
+    ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -702,7 +702,7 @@ impl TSConfigJSON {
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         text: &[u8],
-    ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
+    ) -> Result<Box<[Box<[u8]>]>, crate::Error> {
         if text.is_empty() {
             return Ok(Box::default());
         }

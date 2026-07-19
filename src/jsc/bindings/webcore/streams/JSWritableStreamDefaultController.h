@@ -33,6 +33,7 @@ public:
     // m_queue.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope taken by THIS
     // visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

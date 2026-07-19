@@ -388,6 +388,113 @@ describe("AbortSignal", () => {
       expect(ex.name).toBe("AbortError");
     }
   });
+
+  it("already-aborted signal returns an already-rejected promise", async () => {
+    // Fetch spec step 11: when the signal is already aborted, fetch() must
+    // return an already-rejected promise (not a pending one that settles after
+    // a round-trip to the HTTP thread).
+    {
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted");
+      controller.abort(reason);
+      const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // default reason → DOMException AbortError, identical to signal.reason
+      const controller = new AbortController();
+      controller.abort();
+      const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      const err = Bun.peek(p);
+      expect(err).toBeInstanceOf(DOMException);
+      expect((err as DOMException).name).toBe("AbortError");
+      expect(err).toBe(controller.signal.reason);
+      await p.catch(() => {});
+    }
+    {
+      // via Request input
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-req");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", { signal: controller.signal });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // AbortSignal.abort() static
+      const reason = new Error("pre-aborted-static");
+      const p = fetch("http://127.0.0.1:1/", { signal: AbortSignal.abort(reason) });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // plain-object first argument (request_init_object branch)
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-init");
+      controller.abort(reason);
+      const p = fetch({ url: "http://127.0.0.1:1/", signal: controller.signal } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request-constructor errors (spec step 4) still win over the abort:
+      // GET with a body rejects with TypeError, not the abort reason.
+      const reason = new Error("should-not-see-this");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "GET",
+        body: "x",
+        signal: AbortSignal.abort(reason),
+      } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBeInstanceOf(TypeError);
+      expect(Bun.peek(p)).not.toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request input body is consumed (step 4) before the abort (step 11).
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-bodyused");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", {
+        method: "POST",
+        body: "hello",
+        signal: controller.signal,
+      });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      expect(req.bodyUsed).toBe(true);
+      await p.catch(() => {});
+    }
+    {
+      // ReadableStream body is cancelled with the abort reason (abort-a-fetch
+      // step: "cancel request's body with error").
+      let cancelReason: unknown = "not called";
+      const stream = new ReadableStream({
+        cancel(r) {
+          cancelReason = r;
+        },
+      });
+      const reason = new Error("pre-aborted-stream");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "POST",
+        body: stream,
+        signal: AbortSignal.abort(reason),
+      });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+      expect(cancelReason).toBe(reason);
+      expect(stream.locked).toBe(false);
+    }
+  });
 });
 
 describe("Headers", () => {
@@ -2883,3 +2990,59 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/16682
+it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
+  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
+  // talks to an in-process server whose handler holds every request idle for
+  // 10s (longer than the worst-case firing window of the 1s idle timer, which
+  // is swept on uSockets' 4s tick) before responding.
+  //
+  //   - `timeout: 60_000` must override the 1s idle default and resolve.
+  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
+  //   - no `timeout` at all must still hit the 1s idle default (control that
+  //     proves the env override and the stall are both real).
+  const script = /* js */ `
+    const HOLD_MS = 10_000;
+    using server = Bun.serve({
+      port: 0,
+      // Disable Bun.serve's own request idle timeout; only the client-side
+      // idle timer under test may abort anything here.
+      idleTimeout: 0,
+      async fetch(req) {
+        const arrived = Date.now();
+        // Hold the connection idle (no bytes in either direction) until the
+        // hold window has really elapsed on the server's clock.
+        while (Date.now() - arrived < HOLD_MS) {
+          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
+        }
+        return new Response("hello");
+      },
+    });
+    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
+    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
+      get({ timeout: 60_000 }),
+      get({ timeout: 0 }),
+      get({ timeout: Infinity }),
+      get(undefined),
+    ]);
+    console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
+  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
+    withTimeout: "hello",
+    withZero: "hello",
+    withInfinity: "hello",
+  });
+  // Control: without an explicit `timeout`, the 1s idle default still aborts
+  // the stalled request.
+  expect(out.withDefault).toStartWith("ERR:");
+  expect(exitCode).toBe(0);
+}, 60_000);

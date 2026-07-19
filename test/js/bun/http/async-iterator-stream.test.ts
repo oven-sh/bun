@@ -38,20 +38,46 @@ describe.concurrent("Streaming body via", () => {
     expect(text).toBe("a");
   });
 
-  // An erroring async-iterable body also emits an internal unhandled rejection (pre-existing,
-  // matches the previous implementation), so these two assert in a subprocess.
+  // An erroring async-iterable body delivers the error to the consumer exactly once. These assert
+  // in a subprocess because a second, internal rejection would surface as an unhandledRejection.
   test("an iterator whose next() rejects and has no throw() rejects the body", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `await new Response({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("nrej")), return: () => Promise.resolve({ done: true }) }) }).text().then(() => console.log("resolved"), e => console.log("rejected", e.constructor.name, e.message)); process.exit(0);`,
+        `await new Response({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("nrej")), return: () => Promise.resolve({ done: true }) }) }).text().then(() => console.log("resolved"), e => console.log("rejected", e.constructor.name, e.message));`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("rejected Error nrej");
+    expect(stderr).not.toContain("nrej");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a throwing async generator body does not leak an unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `async function* gen() {
+          yield new Uint8Array([1, 2, 3]);
+          throw new Error("gen boom");
+        }
+        await new Response(gen()).text().then(
+          () => { throw new Error("should have rejected"); },
+          e => console.log("caught:", e.message),
+        );`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught: gen boom\n");
+    // A second, internal rejection would print the error again and exit nonzero.
+    expect(stderr).not.toContain("gen boom");
     expect(exitCode).toBe(0);
   });
 
@@ -77,13 +103,14 @@ describe.concurrent("Streaming body via", () => {
       cmd: [
         bunExe(),
         "-e",
-        `await new Response({ [Symbol.asyncIterator]: () => ({ next: async () => undefined }) }).text().then(() => console.log("resolved"), e => console.log("rejected", e.constructor.name)); process.exit(0);`,
+        `await new Response({ [Symbol.asyncIterator]: () => ({ next: async () => undefined }) }).text().then(() => console.log("resolved"), e => console.log("rejected", e.constructor.name));`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("rejected TypeError");
+    expect(stderr).not.toContain("TypeError");
     expect(exitCode).toBe(0);
   });
 

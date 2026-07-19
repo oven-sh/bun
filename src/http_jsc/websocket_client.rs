@@ -543,22 +543,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
     }
 
-    // takes a raw `*mut Self` instead of `&self` because
+    // Takes `ThisPtr<Self>` instead of `&self` because
     // `handle_without_deinit()` re-enters this very function on the same
     // allocation through its own raw back-pointer.
     //
     // There is no `socket` parameter: the dispatch thunk wraps the same
     // `us_socket_t*` that `adopt_group` stored into `self.tcp`, so the parse
     // loop reads `self.tcp` directly.
-    //
-    /// # Safety
-    /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
-    /// `heap::alloc` (see `init` / `init_with_tunnel`); no `&`/`&mut`
-    /// borrow of `*this_ptr` may be live across this call.
-    pub unsafe fn handle_data(this_ptr: *mut Self, data_: &[u8]) {
-        // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
-        // with no outstanding `&`/`&mut` borrow (uWS dispatches from userdata).
-        let this = unsafe { ThisPtr::new(this_ptr) };
+    pub fn handle_data(this: ThisPtr<Self>, data_: &[u8]) {
         // after receiving close we should ignore the data
         if this.close_received.get() {
             return;
@@ -575,7 +567,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
             // SAFETY: `initial_handler` is valid (managed by microtask queue).
             // `handle_without_deinit` re-enters `Self::handle_data` via the
-            // `adopted` raw ptr (same `heap::alloc` provenance as `this_ptr`).
+            // `adopted` raw ptr (same `heap::alloc` provenance as `this`).
             unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
@@ -707,6 +699,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 | Opcode::Close
         ) {
             return self.recv_failed(ErrorCode::UnsupportedControlFrame);
+        }
+
+        // RFC 7692 §6.1: RSV1 marks the start of a compressed message, so only
+        // the first frame of a data message may ever set it.
+        if header.compressed && !matches!(header.opcode, Opcode::Text | Opcode::Binary) {
+            return self.recv_failed(ErrorCode::UnexpectedRsv1);
         }
 
         if header.compressed && self.deflate.borrow().is_none() {
@@ -1702,8 +1700,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
-        // SAFETY: forwarded — see `handle_data`'s contract.
-        unsafe { Self::handle_data(this_ptr, data) };
+        // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
+        // with no outstanding `&`/`&mut` borrow.
+        Self::handle_data(unsafe { ThisPtr::new(this_ptr) }, data);
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
@@ -1978,10 +1977,10 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
             unsafe { !(*ws_ptr).tcp.get().is_closed() || (*ws_ptr).proxy_tunnel.get().is_some() };
         // SAFETY: `ws_ptr` is live; raw read of a `Copy` field.
         if unsafe { (*ws_ptr).outgoing_websocket.get().is_some() } && is_connected {
-            // SAFETY: `ws_ptr` carries `heap::alloc` provenance; `handle_data`
-            // takes `*mut Self` and forms its own scoped `&mut` internally. No
+            // SAFETY: `ws_ptr` carries `heap::alloc` provenance and is live; no
             // borrow of `*ws_ptr` is live in this frame across the call.
-            unsafe { WebSocket::<SSL>::handle_data(ws_ptr, &self.slice) };
+            let ws = unsafe { ThisPtr::new(ws_ptr) };
+            WebSocket::<SSL>::handle_data(ws, &self.slice);
         }
     }
 
@@ -2043,6 +2042,7 @@ pub enum ErrorCode {
     ProxyAuthenticationRequired = 34,
     ProxyConnectionRefused = 35,
     ProxyTunnelFailed = 36,
+    UnexpectedRsv1 = 37,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2150,7 +2150,8 @@ struct ParsedHeader {
     payload_len: usize,
     is_fragmented: bool,
     is_final: bool,
-    /// RSV1 on a data frame (RFC 7692 per-message deflate).
+    /// The RSV1 bit (RFC 7692 per-message deflate). Validated by the caller:
+    /// only the first frame of a data message may set it.
     compressed: bool,
     next: ReceiveState,
 }
@@ -2183,14 +2184,9 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         payload_len,
         is_fragmented: opcode == Opcode::Continue || !header.final_(),
         is_final: header.final_(),
-        compressed: is_data_frame && header.compressed(),
+        compressed: header.compressed(),
         next: ReceiveState::Fail,
     };
-
-    // RFC 7692: only the first fragment of a data message may set RSV1.
-    if !is_data_frame && opcode != Opcode::Continue && header.compressed() {
-        return parsed;
-    }
 
     // A server must not mask data frames it sends to a client.
     if header.mask() && is_data_frame {
@@ -2198,7 +2194,7 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         return parsed;
     }
 
-    // rsv2 and rsv3 must always be 0 per RFC 6455 (rsv1 is handled above).
+    // rsv2 and rsv3 must always be 0 per RFC 6455 (rsv1 is checked by the caller).
     if header.rsv() != 0 {
         return parsed;
     }

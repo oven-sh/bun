@@ -126,8 +126,6 @@ pub enum ShellIteratorError {
     // on OOM under the global mimalloc allocator.
 }
 
-bun_core::named_error_set!(ShellIteratorError);
-
 /// An argument iterator that takes a string and parses it into arguments, simulating
 /// how shells split arguments.
 pub struct ShellIterator<'a> {

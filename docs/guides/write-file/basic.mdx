@@ -13,7 +13,7 @@ await Bun.write(path, "Lorem ipsum");
 
 ---
 
-Bun resolves relative paths from the project root (the nearest directory containing a `package.json` file).
+Bun resolves relative paths from the current working directory.
 
 ```ts
 const path = "./file.txt";

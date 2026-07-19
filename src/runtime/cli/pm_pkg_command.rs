@@ -1,11 +1,12 @@
 use std::io::Write as _;
 
+use crate::Error;
 use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData, G};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{Error, Global, OrWriteFailed as _, Output, err};
+use bun_core::{Global, Output};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
@@ -225,7 +226,7 @@ impl PmPkgCommand {
                                 bstr::BStr::new(&value[..last_index]),
                                 bstr::BStr::new(&value[last_index..])
                             )
-                            .or_write_failed()?;
+                            .map_err(|_| crate::Error::WriteFailed)?;
                             results.put(key, new_value.into_boxed_slice())?;
                             continue;
                         }
@@ -233,7 +234,7 @@ impl PmPkgCommand {
                     results.put(key, value)?;
                 }
                 Err(e) => {
-                    if e == err!("InvalidPath") {
+                    if matches!(e, crate::Error::InvalidPath) {
                         if strings::index_of(key, b"[]").is_some() {
                             Output::err_generic(
                                 "Empty brackets are not valid syntax for retrieving values.",
@@ -242,7 +243,7 @@ impl PmPkgCommand {
                             Global::exit(1);
                         }
                     }
-                    if e != err!("NotFound") {
+                    if !matches!(e, crate::Error::NotFound) {
                         return Err(e);
                     }
                 }
@@ -360,7 +361,7 @@ impl PmPkgCommand {
                     }
                 }
                 Err(e) => {
-                    if e != err!("NotFound") {
+                    if !matches!(e, crate::Error::NotFound) {
                         return Err(e);
                     }
                 }
@@ -440,9 +441,9 @@ impl PmPkgCommand {
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
                 if n.value().floor() == n.value() {
-                    write!(&mut v, "{:.0}", n.value()).or_write_failed()?;
+                    write!(&mut v, "{:.0}", n.value()).map_err(|_| crate::Error::WriteFailed)?;
                 } else {
-                    write!(&mut v, "{}", n.value()).or_write_failed()?;
+                    write!(&mut v, "{}", n.value()).map_err(|_| crate::Error::WriteFailed)?;
                 }
                 Ok(v.into_boxed_slice())
             }
@@ -490,7 +491,7 @@ impl PmPkgCommand {
 
     fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
-            return Err(err!("NotFound"));
+            return Err(crate::Error::NotFound);
         }
 
         let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
@@ -503,37 +504,37 @@ impl PmPkgCommand {
                 if first_bracket > 0 {
                     let prop_name = &part[..first_bracket];
                     if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(err!("NotFound"));
+                        return Err(crate::Error::NotFound);
                     }
-                    current = current.get(prop_name).ok_or_else(|| err!("NotFound"))?;
+                    current = current.get(prop_name).ok_or(crate::Error::NotFound)?;
                     remaining_part = &part[first_bracket..];
                 }
 
                 while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
                     let bracket_end = strings::index_of(&remaining_part[bracket_start..], b"]")
-                        .ok_or_else(|| err!("InvalidPath"))?;
+                        .ok_or(crate::Error::InvalidPath)?;
                     let actual_bracket_end = bracket_start + bracket_end;
                     let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
 
                     if index_str.is_empty() {
-                        return Err(err!("InvalidPath"));
+                        return Err(crate::Error::InvalidPath);
                     }
 
                     if let Some(index) = bun_core::fmt::parse_decimal::<usize>(index_str) {
                         let ExprData::EArray(arr) = &current.data else {
-                            return Err(err!("NotFound"));
+                            return Err(crate::Error::NotFound);
                         };
 
                         if index >= arr.items.len_u32() as usize {
-                            return Err(err!("NotFound"));
+                            return Err(crate::Error::NotFound);
                         }
 
                         current = arr.items.slice()[index];
                     } else {
                         if !matches!(current.data, ExprData::EObject(_)) {
-                            return Err(err!("NotFound"));
+                            return Err(crate::Error::NotFound);
                         }
-                        current = current.get(index_str).ok_or_else(|| err!("NotFound"))?;
+                        current = current.get(index_str).ok_or(crate::Error::NotFound)?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
@@ -546,20 +547,20 @@ impl PmPkgCommand {
                     match &current.data {
                         ExprData::EArray(arr) => {
                             if index >= arr.items.len_u32() as usize {
-                                return Err(err!("NotFound"));
+                                return Err(crate::Error::NotFound);
                             }
                             current = arr.items.slice()[index];
                         }
                         ExprData::EObject(_) => {
-                            current = current.get(part).ok_or_else(|| err!("NotFound"))?;
+                            current = current.get(part).ok_or(crate::Error::NotFound)?;
                         }
-                        _ => return Err(err!("NotFound")),
+                        _ => return Err(crate::Error::NotFound),
                     }
                 } else {
                     if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(err!("NotFound"));
+                        return Err(crate::Error::NotFound);
                     }
-                    current = current.get(part).ok_or_else(|| err!("NotFound"))?;
+                    current = current.get(part).ok_or(crate::Error::NotFound)?;
                 }
             }
         }
@@ -589,13 +590,13 @@ impl PmPkgCommand {
                     let Some(bracket_end) =
                         strings::index_of(&remaining_part[bracket_start..], b"]")
                     else {
-                        return Err(err!("InvalidPath"));
+                        return Err(crate::Error::InvalidPath);
                     };
                     let actual_bracket_end = bracket_start + bracket_end;
                     let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
 
                     if index_str.is_empty() {
-                        return Err(err!("InvalidPath"));
+                        return Err(crate::Error::InvalidPath);
                     }
 
                     path_parts.push(index_str);
@@ -615,13 +616,13 @@ impl PmPkgCommand {
 
     fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
-            return Err(err!("InvalidRoot"));
+            return Err(crate::Error::InvalidRoot);
         }
 
         let path_parts = Self::parse_key_path(key)?;
 
         if path_parts.is_empty() {
-            return Err(err!("EmptyKey"));
+            return Err(crate::Error::EmptyKey);
         }
 
         if path_parts.len() == 1 {
@@ -677,7 +678,7 @@ impl PmPkgCommand {
         }
 
         if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
-            return Err(err!("ExpectedObject"));
+            return Err(crate::Error::ExpectedObject);
         }
 
         let mut nested = nested_obj.unwrap();

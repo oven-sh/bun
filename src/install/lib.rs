@@ -64,6 +64,9 @@ use core::fmt;
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub mod npm;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -74,13 +77,26 @@ pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod dependency;
-#[path = "ExternalSlice.rs"]
-pub mod external_slice;
 pub mod hosted_git_info;
 pub mod integrity;
 pub mod padding_checker;
 pub mod postinstall_optimizer;
-pub mod versioned_url;
+
+/// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
+/// so `bun_resolver` can name them without a `bun_install` dep. Re-exported
+/// here under the original `crate::external_slice` / `crate::versioned_url`
+/// paths.
+pub mod external_slice {
+    pub use bun_install_types::resolver_hooks::{
+        ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap,
+        VersionSlice,
+    };
+}
+pub mod versioned_url {
+    pub use bun_install_types::resolver_hooks::{
+        OldV2VersionedURL, VersionedURL, VersionedURLType,
+    };
+}
 
 pub mod extract_tarball;
 #[path = "lockfile.rs"]
@@ -565,7 +581,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -577,27 +593,56 @@ impl RunCommand {
 
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely that the path is absolute already
-            let argv0_z: &ZStr = if argv0.as_bytes().first() == Some(&b'/') {
-                *optional_bun_path = argv0.as_bytes();
-                argv0
-            } else if optional_bun_path.is_empty() {
-                // otherwise, ask the OS for the absolute path
-                let self_path = bun_core::self_exe_path()?;
-                if !self_path.as_bytes().is_empty() {
-                    *optional_bun_path = self_path.as_bytes();
-                    self_path
-                } else {
-                    argv0
-                }
-            } else {
-                // When argv[0] is
-                // not absolute and the caller pre-supplied a path, that path is the
-                // symlink target (NOT argv[0]).
+            // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
+            // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
+            // execve'd with `argv[0] = <BUN_NODE_DIR>/bun` — exactly the shim
+            // we're about to (re)write. Using that as the symlink target
+            // produces `<BUN_NODE_DIR>/bun -> <BUN_NODE_DIR>/bun` (self-loop),
+            // and the next `/usr/bin/env node` bails with ELOOP "Too many
+            // levels of symbolic links" (#30711). `self_exe_path()` readlinks
+            // `/proc/self/exe` (Linux) / canonicalizes `_NSGetExecutablePath`
+            // (macOS), so it always resolves to the REAL bun regardless of
+            // how the process was invoked. It's memoized via `Once`, so the
+            // cost is paid once per process.
+            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
+                // When the caller pre-supplied a path, that path is the symlink
+                // target.
                 // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
                 // self_exe_path / static literal), so `ptr[len] == 0` holds.
                 unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
+            } else {
+                // Ask the OS for the real absolute path first. Fall back to an
+                // absolute `argv[0]` only if that fails — never trust a bare
+                // `argv[0]` as the target here, because on nested `--bun` the
+                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
+                match bun_core::self_exe_path() {
+                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
+                        *optional_bun_path = self_path.as_bytes();
+                        self_path
+                    }
+                    result => {
+                        let argv0_bytes = argv0.as_bytes();
+                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                            // `self_exe_path()` failed and `argv[0]` is the shim
+                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
+                            // the target would recreate the #30711 self-loop; the
+                            // OUTER bun already planted working shims and PATH, so
+                            // leave them untouched.
+                            return Ok(());
+                        }
+                        if argv0_bytes.first() == Some(&b'/') {
+                            *optional_bun_path = argv0_bytes;
+                            argv0
+                        } else {
+                            // No usable target — propagate the OS error when we
+                            // have one, otherwise leave PATH unmodified.
+                            return match result {
+                                Err(e) => Err(e.into()),
+                                Ok(_) => Ok(()),
+                            };
+                        }
+                    }
+                }
             };
 
             #[cfg(bun_debug)]
@@ -829,7 +874,7 @@ impl RunCommand {
         env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut (), bun_core::Error> {
+    ) -> Result<*mut (), crate::Error> {
         use bun_core::Global;
 
         let args = ctx.args.clone();
@@ -1136,7 +1181,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PackageManifestError {
+pub enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,
@@ -1147,5 +1192,3 @@ pub(crate) enum PackageManifestError {
 }
 
 bun_core::impl_tag_error!(PackageManifestError);
-
-bun_core::named_error_set!(PackageManifestError);

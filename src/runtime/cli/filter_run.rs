@@ -71,7 +71,7 @@ pub(crate) struct ProcessHandle<'a> {
 }
 
 impl<'a> ProcessHandle<'a> {
-    fn start(&mut self) -> Result<(), bun_core::Error> {
+    fn start(&mut self) -> crate::Result<()> {
         // Copy the BackRef out so the `&mut State` borrow is detached from `self`.
         let mut state_ref = self.state;
         // SAFETY: state backref is valid for the lifetime of the run loop (State outlives all handles).
@@ -288,11 +288,7 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    fn read_chunk(
-        &mut self,
-        handle: &mut ProcessHandle<'a>,
-        chunk: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
             let _ = self.redraw(false);
@@ -337,7 +333,7 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), bun_core::Error> {
+    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> crate::Result<()> {
         self.remaining_scripts -= 1;
         if !self.aborted {
             for &dependent in &handle.dependents {
@@ -441,7 +437,7 @@ impl<'a> State<'a> {
         }
     }
 
-    fn redraw(&mut self, is_abort: bool) -> Result<(), bun_core::Error> {
+    fn redraw(&mut self, is_abort: bool) -> crate::Result<()> {
         if !self.pretty_output {
             return Ok(());
         }
@@ -683,7 +679,7 @@ fn windows_is_terminal() -> bool {
 
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
-) -> Result<core::convert::Infallible, bun_core::Error> {
+) -> crate::Result<core::convert::Infallible> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
     // Own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
@@ -817,7 +813,7 @@ pub(crate) fn run_scripts_with_filter(
             for part in &ctx.passthrough {
                 copy_script.push(b' ');
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
-                    crate::shell::escape_8bit::<true>(part, &mut copy_script)?;
+                    crate::shell::escape_8bit::<true, false>(part, &mut copy_script)?;
                 } else {
                     copy_script.extend_from_slice(part);
                 }
@@ -892,11 +888,11 @@ pub(crate) fn run_scripts_with_filter(
                 unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
                 fsinstance.top_level_dir,
             )
-            .ok_or_else(|| bun_core::err!("MissingShell"))?
+            .ok_or(crate::Error::MissingShell)?
         }
         #[cfg(not(unix))]
         {
-            bun_core::self_exe_path().map_err(|_| bun_core::err!("MissingShell"))?
+            bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?
         }
     };
 

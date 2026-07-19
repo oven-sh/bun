@@ -2,7 +2,8 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { Duplex, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
 describe("Readable", () => {
@@ -386,6 +387,207 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
+// An error from the underlying web stream must surface on the node Readable as an
+// 'error' event (and destroy it), not as a global unhandled rejection.
+it("Readable.fromWeb propagates web stream errors to 'error' and destroys", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        process.on("unhandledRejection", e => {
+          console.log("UNHANDLED:" + (e && e.message));
+        });
+        const web = new ReadableStream({
+          start(c) { c.enqueue(new Uint8Array([1, 2, 3])); },
+          pull() { throw new Error("boom"); },
+        });
+        const r = Readable.fromWeb(web);
+        r.on("data", d => console.log("DATA:" + d.length));
+        r.on("end", () => console.log("END"));
+        r.on("error", e => console.log("ERROR:" + e.message));
+        r.on("close", () => {
+          console.log("CLOSE errored=" + (r.errored && r.errored.message) + " destroyed=" + r.destroyed);
+        });
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: stdout.trim().split("\n"), err: stderr }).toEqual({
+    out: ["DATA:3", "ERROR:boom", "CLOSE errored=boom destroyed=true"],
+    err: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys", async () => {
+  const web = new ReadableStream({
+    start(c) {
+      c.error(new Error("start-boom"));
+    },
+  });
+  const r = Readable.fromWeb(web);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  r.on("error", resolve);
+  r.on("end", () => reject(new Error("should not end")));
+  r.resume();
+  const err = await promise;
+  expect(err.message).toBe("start-boom");
+  expect(r.destroyed).toBe(true);
+  expect(r.errored?.message).toBe("start-boom");
+});
+
+it("Readable.fromWeb piped to a Writable surfaces web stream errors on the destination", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable, Writable, pipeline } = require("node:stream");
+        process.on("unhandledRejection", e => {
+          console.log("UNHANDLED:" + (e && e.message));
+        });
+        const web = new ReadableStream({
+          start(c) { c.enqueue(new Uint8Array([1, 2, 3, 4, 5])); },
+          pull() { return Promise.reject(new Error("net-fail")); },
+        });
+        let written = 0;
+        const dest = new Writable({
+          write(chunk, enc, cb) { written += chunk.length; cb(); },
+        });
+        pipeline(Readable.fromWeb(web), dest, err => {
+          console.log("PIPELINE err=" + (err && err.message) + " written=" + written);
+        });
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: stdout.trim(), err: stderr }).toEqual({
+    out: "PIPELINE err=net-fail written=5",
+    err: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("Readable.fromWeb async iteration rejects with the web stream error", async () => {
+  const web = new ReadableStream({
+    start(c) {
+      c.enqueue(new Uint8Array([9]));
+    },
+    pull() {
+      throw new Error("iter-boom");
+    },
+  });
+  const r = Readable.fromWeb(web);
+  let err;
+  try {
+    for await (const _ of r) {
+    }
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.message).toBe("iter-boom");
+  expect(r.destroyed).toBe(true);
+});
+
+it("Readable.fromWeb destroyed before the first read cancels the web stream", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  const { promise, resolve } = Promise.withResolvers();
+  r.on("error", () => {});
+  r.on("close", resolve);
+  r.destroy(new Error("user-destroy"));
+  await promise;
+  expect(cancelReason?.message).toBe("user-destroy");
+  expect(r.destroyed).toBe(true);
+});
+
+it("Readable.fromWeb: breaking out of for-await cancels the web source with ABORT_ERR", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  let seen = 0;
+  for await (const chunk of r) {
+    seen++;
+    break;
+    void chunk;
+  }
+  await closed;
+  expect(seen).toBe(1);
+  expect({ code: cancelReason?.code, name: cancelReason?.name }).toEqual({ code: "ABORT_ERR", name: "AbortError" });
+});
+
+it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web source with that error", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  const gotData = new Promise(resolve => r.once("data", resolve));
+  const first = await gotData;
+  expect(first.length).toBe(64);
+  r.destroy(new RangeError("consumer-gone"));
+  await closed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
+it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const inner = Readable.fromWeb(web);
+  inner.on("error", () => {});
+  const innerClosed = new Promise(resolve => inner.once("close", resolve));
+  const outer = Readable.toWeb(inner);
+  const reader = outer.getReader();
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  await reader.cancel(new RangeError("consumer-gone")).catch(() => {});
+  await innerClosed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);
@@ -568,6 +770,69 @@ describe("webstreams adapters (Node v26 sync)", () => {
     await writer.write(new Uint8Array([4, 5, 6]));
   });
 
+  // Upstream: nodejs/node#62986 (fixes nodejs/node#56269, oven-sh/bun#34588) —
+  // non-object-mode Writable.toWeb must size chunks in bytes so desiredSize
+  // reflects the byte-based highWaterMark.
+  it("Writable.toWeb desiredSize is byte-based for non-object-mode writables", () => {
+    const writable = new Writable({
+      highWaterMark: 1024,
+      write(chunk, encoding, callback) {
+        // hold the write in flight so the chunk stays queued
+      },
+    });
+
+    const writer = Writable.toWeb(writable).getWriter();
+    expect(writer.desiredSize).toBe(1024);
+    void writer.write(new Uint8Array(64 * 1024));
+    // 1024 - 65536; without byte sizing this would be 1023.
+    expect(writer.desiredSize).toBe(1024 - 64 * 1024);
+  });
+
+  it("pipeTo into Writable.toWeb applies backpressure instead of buffering the whole source (#34588)", async () => {
+    const TOTAL = 20;
+    let writes = 0;
+    let writeArrived = Promise.withResolvers();
+    const writable = new Writable({
+      highWaterMark: 1024,
+      write(chunk, encoding, callback) {
+        writes++;
+        writeArrived.resolve(callback);
+      },
+    });
+
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024);
+    const source = new ReadableStream(
+      {
+        pull(controller) {
+          pulled++;
+          if (pulled > TOTAL) return controller.close();
+          controller.enqueue(chunk.slice());
+        },
+      },
+      { highWaterMark: 1, size: c => c.byteLength },
+    );
+
+    const pipe = source.pipeTo(Writable.toWeb(writable));
+
+    // Hold the first write in flight and let pending microtasks drain; with
+    // backpressure the source is only a few chunks ahead, without it the
+    // whole source (TOTAL + 1 pulls) is buffered while the sink is blocked.
+    const firstCallback = await writeArrived.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(pulled).toBeLessThanOrEqual(4);
+
+    writeArrived = Promise.withResolvers();
+    firstCallback();
+    while (writes < TOTAL) {
+      const callback = await writeArrived.promise;
+      writeArrived = Promise.withResolvers();
+      callback();
+    }
+    await pipe;
+    expect(writes).toBe(TOTAL);
+  });
+
   // Upstream: v26 newStreamWritableFromWritableStream writev done() shape —
   // a rejected chunk write during a corked writev must error the stream with
   // the original error and must not produce an unhandled rejection.
@@ -662,6 +927,34 @@ describe("webstreams adapters (Node v26 sync)", () => {
     expect(done).toBe(true);
   });
 
+  // The toWeb adapter's pull() calls resume() on the source. After 'end' and
+  // autoDestroy, Node 26's resume() is a no-op on destroyed streams, so the
+  // source is left paused / non-flowing. We narrow that guard (see the
+  // fd-slicer test below) but must still match Node's resting state here.
+  it("Readable.toWeb leaves the source paused / non-flowing after EOF", async () => {
+    const src = Readable.from([Buffer.from("a"), Buffer.from("b")], { objectMode: false });
+    const reader = Readable.toWeb(src).getReader();
+    const chunks = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    await new Promise(resolve => (src.closed ? resolve() : src.once("close", resolve)));
+    expect(Buffer.concat(chunks).toString()).toBe("ab");
+    expect({
+      readableEnded: src.readableEnded,
+      destroyed: src.destroyed,
+      readableFlowing: src.readableFlowing,
+      isPaused: src.isPaused(),
+    }).toEqual({
+      readableEnded: true,
+      destroyed: true,
+      readableFlowing: false,
+      isPaused: true,
+    });
+  });
+
   // Upstream: v26 adapters use eos(stream, { writable: false }) so a Duplex
   // readable side completes without waiting for the half-open writable side.
   it("Readable.toWeb of a half-open Duplex closes when the readable side ends", async () => {
@@ -701,9 +994,6 @@ describe("webstreams adapters (Node v26 sync)", () => {
     duplex.destroy();
   });
 
-  // Readable.fromWeb()'s pump pushes several chunks per _read(), and Readable
-  // calls _read() again as soon as push() is called. Two pumps racing on one
-  // reader used to hand back the chunks out of order.
   it("Readable.fromWeb(Readable.toWeb()) preserves chunk order", async () => {
     const src = Readable.from(["A", "B", "C", "D", "E", "F"]);
     const chunks = [];
@@ -843,6 +1133,139 @@ describe("webstreams adapters (Node v26 sync)", () => {
     expect(stdout.trim()).toBe("store:reg-ctx");
     expect(exitCode).toBe(0);
   });
+
+  // Node supports finished() on WHATWG streams since v19. It must observe the terminal state
+  // without locking the stream.
+  describe("finished() on WHATWG streams", () => {
+    it("ReadableStream that closes", async () => {
+      let close;
+      const rs = new ReadableStream({
+        start(c) {
+          close = () => c.close();
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      expect(() => finished(rs, err => resolve(err))).not.toThrow();
+      close();
+      expect(await promise).toBeUndefined();
+    });
+
+    it("ReadableStream that errors", async () => {
+      let error;
+      const rs = new ReadableStream({
+        start(c) {
+          error = e => c.error(e);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      expect(() => finished(rs, err => resolve(err))).not.toThrow();
+      error(new Error("rs-boom"));
+      const err = await promise;
+      expect(err?.message).toBe("rs-boom");
+    });
+
+    it("ReadableStream already closed", async () => {
+      const rs = new ReadableStream({
+        start(c) {
+          c.close();
+        },
+      });
+      await expect(finishedP(rs)).resolves.toBeUndefined();
+    });
+
+    it("ReadableStream already errored", async () => {
+      const rs = new ReadableStream({
+        start(c) {
+          c.error(new Error("already"));
+        },
+      });
+      await expect(finishedP(rs)).rejects.toThrow("already");
+    });
+
+    it("WritableStream that closes", async () => {
+      const ws = new WritableStream({});
+      const { promise, resolve } = Promise.withResolvers();
+      expect(() => finished(ws, err => resolve(err))).not.toThrow();
+      ws.close();
+      expect(await promise).toBeUndefined();
+    });
+
+    it("WritableStream that errors", async () => {
+      const ws = new WritableStream({});
+      const { promise, resolve } = Promise.withResolvers();
+      expect(() => finished(ws, err => resolve(err))).not.toThrow();
+      ws.abort(new Error("ws-boom"));
+      const err = await promise;
+      expect(err?.message).toBe("ws-boom");
+    });
+
+    it("WritableStream already closed", async () => {
+      const ws = new WritableStream({});
+      await ws.close();
+      await expect(finishedP(ws)).resolves.toBeUndefined();
+    });
+
+    it("WritableStream already errored", async () => {
+      const ws = new WritableStream({});
+      await ws.abort(new Error("already-ws"));
+      await expect(finishedP(ws)).rejects.toThrow("already-ws");
+    });
+
+    it("ReadableStream cancelled", async () => {
+      const rs = new ReadableStream({});
+      const { promise, resolve } = Promise.withResolvers();
+      finished(rs, err => resolve(err));
+      await rs.cancel();
+      expect(await promise).toBeUndefined();
+    });
+
+    it("does not lock the stream", async () => {
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new Uint8Array([1, 2]));
+          c.close();
+        },
+      });
+      finished(rs, () => {});
+      expect(rs.locked).toBe(false);
+      expect((await new Response(rs).arrayBuffer()).byteLength).toBe(2);
+    });
+
+    // Exercises the direct-stream close path, which writes the terminal state itself rather
+    // than going through readableStreamClose().
+    it("type: 'direct' ReadableStream consumed by a native sink (Bun.serve)", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { finished } = require("node:stream");
+            using server = Bun.serve({
+              port: 0,
+              fetch() {
+                const rs = new ReadableStream({
+                  type: "direct",
+                  pull(c) { c.write(new Uint8Array([1, 2, 3])); c.end(); },
+                });
+                finished(rs, err => console.log("FINISHED:" + (err ? err.message : "ok")));
+                return new Response(rs);
+              },
+            });
+            const ab = await fetch(server.url).then(r => r.arrayBuffer());
+            console.log("BYTES:" + ab.byteLength);
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: stdout.trim().split("\n").sort(), err: stderr }).toEqual({
+        out: ["BYTES:3", "FINISHED:ok"],
+        err: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0x80000, 0xa0000, 0xa0010]) {
@@ -944,8 +1367,59 @@ describe("node v26 stream semantics", () => {
     expect(r.read()).toBeNull();
   });
 
-  // Deliberate divergence from Node 26 (nodejs/node#62557 made pause/resume
-  // no-ops on destroyed streams): legacy Readable subclasses like fd-slicer
+  // Upstream: nodejs/node#62557 (test-stream-destroy.js).
+  it("pause() is a no-op on a destroyed stream", async () => {
+    const r = new Readable({ read() {} });
+    r.resume();
+    r.destroy();
+    const emitted = [];
+    r.on("pause", () => emitted.push("pause"));
+    expect(r.pause()).toBe(r);
+    expect(r.readableFlowing).toBe(true);
+    expect(r.isPaused()).toBe(false);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(emitted).toEqual([]);
+  });
+
+  // A completed pipe unpipes the source, and unpipe() calls source.pause().
+  // On a source that autoDestroy'd itself at 'end', that pause() must no-op so
+  // the post-pipe readable state matches a plain resume()'d stream.
+  it("a source autoDestroyed by a completed pipe stays flowing", async () => {
+    const sink = () =>
+      new Writable({
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
+    // 'unpipe' on the destination is emitted by Readable.prototype.unpipe right
+    // after it calls source.pause(), so it is the exact point to assert on.
+    const unpiped = dest => new Promise(resolve => dest.on("unpipe", resolve));
+
+    const resumed = new PassThrough();
+    resumed.resume();
+    resumed.end("x");
+
+    const pipedDest = sink();
+    const piped = new PassThrough();
+    piped.pipe(pipedDest);
+    piped.end("x");
+
+    // autoDestroy: false keeps the source alive, so unpipe() does pause it.
+    const aliveDest = sink();
+    const pipedAlive = new PassThrough({ autoDestroy: false });
+    pipedAlive.pipe(aliveDest);
+    pipedAlive.end("x");
+
+    await Promise.all([new Promise(resolve => resumed.on("close", resolve)), unpiped(pipedDest), unpiped(aliveDest)]);
+
+    const state = s => ({ readableFlowing: s.readableFlowing, isPaused: s.isPaused(), destroyed: s.destroyed });
+    expect(state(resumed)).toEqual({ readableFlowing: true, isPaused: false, destroyed: true });
+    expect(state(piped)).toEqual({ readableFlowing: true, isPaused: false, destroyed: true });
+    expect(state(pipedAlive)).toEqual({ readableFlowing: false, isPaused: true, destroyed: false });
+  });
+
+  // Deliberate divergence from Node 26 (nodejs/node#62557 also made resume() a
+  // no-op on destroyed streams): legacy Readable subclasses like fd-slicer
   // (yauzl → extract-zip → puppeteer/electron tooling) assign
   // `this.destroyed = true` via the prototype setter right before push(null).
   // With the upstream guard, a piped destination's drain can no longer resume

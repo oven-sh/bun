@@ -5,7 +5,13 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const {
+  throwOnInvalidTLSArray,
+  tlsStringToProtocolVersion,
+  secureProtocolToVersionRange,
+  processPfxOptions,
+  validateSecureProtocol,
+} = require("internal/tls");
 const {
   validateString,
   validateNumber,
@@ -306,52 +312,6 @@ const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
 // Subset of Node's configSecureContext() validations:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
-// Valid OpenSSL/BoringSSL secureProtocol method names (legacy API). Built lazily
-// so the Set is only allocated when a secureProtocol option is actually used.
-let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
-function getSecureProtocolMethods() {
-  if (!_SECURE_PROTOCOL_METHODS) {
-    _SECURE_PROTOCOL_METHODS = new Set([
-      "TLS_method",
-      "TLS_client_method",
-      "TLS_server_method",
-      "SSLv23_method",
-      "SSLv23_client_method",
-      "SSLv23_server_method",
-      "TLSv1_method",
-      "TLSv1_client_method",
-      "TLSv1_server_method",
-      "TLSv1_1_method",
-      "TLSv1_1_client_method",
-      "TLSv1_1_server_method",
-      "TLSv1_2_method",
-      "TLSv1_2_client_method",
-      "TLSv1_2_server_method",
-    ]);
-  }
-  return _SECURE_PROTOCOL_METHODS;
-}
-// Matches Node: SSLv2/SSLv3 methods are disabled, anything unrecognized is an
-// unknown method.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L100
-function invalidProtocolMethod(message) {
-  // Node throws all secureProtocol failures (SSLv2/SSLv3 disabled + unknown
-  // method) via THROW_ERR_TLS_INVALID_PROTOCOL_METHOD: a TypeError carrying the
-  // ERR_TLS_INVALID_PROTOCOL_METHOD code, varying only the message.
-  const error = new TypeError(message);
-  error.code = "ERR_TLS_INVALID_PROTOCOL_METHOD";
-  return error;
-}
-function validateSecureProtocol(secureProtocol) {
-  if (secureProtocol === undefined || secureProtocol === null) return;
-  validateString(secureProtocol, "options.secureProtocol");
-  if (secureProtocol.startsWith("SSLv2_")) throw invalidProtocolMethod("SSLv2 methods disabled");
-  if (secureProtocol.startsWith("SSLv3_")) throw invalidProtocolMethod("SSLv3 methods disabled");
-  if (!getSecureProtocolMethods().has(secureProtocol)) {
-    throw invalidProtocolMethod(`Unknown method: ${secureProtocol}`);
-  }
-}
-
 function validateSecureContextOptions(options) {
   const {
     ciphers,
@@ -447,8 +407,26 @@ function parseCertString() {
 // Node.js reads NODE_TLS_REJECT_UNAUTHORIZED lazily (per connection), so a
 // script can set it after loading the module and still have it apply.
 function rejectUnauthorizedDefault() {
-  const value = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-  return value !== "0" && value !== "false";
+  return process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
+}
+
+// Mirrors Node's getAllowUnauthorized(): warn (once) when certificate
+// verification is disabled by NODE_TLS_REJECT_UNAUTHORIZED=0.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/options.js#L204-L215
+let warnOnAllowUnauthorized = true;
+function getAllowUnauthorized() {
+  const allowUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
+
+  if (allowUnauthorized && warnOnAllowUnauthorized) {
+    warnOnAllowUnauthorized = false;
+    process.emitWarning(
+      "Setting the NODE_TLS_REJECT_UNAUTHORIZED " +
+        "environment variable to '0' makes TLS connections " +
+        "and HTTPS requests insecure by disabling " +
+        "certificate verification.",
+    );
+  }
+  return allowUnauthorized;
 }
 
 function unfqdn(host) {
@@ -621,92 +599,6 @@ const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
 // accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
 // crossing into native so `{ key: false }` etc. doesn't throw
 // ERR_INVALID_ARG_TYPE from the bindgen layer.
-// BoringSSL TLS1_x_VERSION constants (from openssl/tls1.h). The native context
-// applies these via SSL_CTX_set_min/max_proto_version.
-const TLS1_VERSION = 0x0301;
-const TLS1_1_VERSION = 0x0302;
-const TLS1_2_VERSION = 0x0303;
-const TLS1_3_VERSION = 0x0304;
-function tlsStringToProtocolVersion(v) {
-  switch (v) {
-    case "TLSv1":
-      return TLS1_VERSION;
-    case "TLSv1.1":
-      return TLS1_1_VERSION;
-    case "TLSv1.2":
-      return TLS1_2_VERSION;
-    case "TLSv1.3":
-      return TLS1_3_VERSION;
-    default:
-      return 0;
-  }
-}
-// Node's legacy secureProtocol string pins both bounds to a single version
-// (e.g. 'TLSv1_2_method'); 'TLS_method'/'SSLv23_method' leave the range open.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L120
-function secureProtocolToVersionRange(secureProtocol) {
-  if (typeof secureProtocol !== "string") return null;
-  if (
-    secureProtocol === "TLSv1_method" ||
-    secureProtocol === "TLSv1_client_method" ||
-    secureProtocol === "TLSv1_server_method"
-  )
-    return [TLS1_VERSION, TLS1_VERSION];
-  if (
-    secureProtocol === "TLSv1_1_method" ||
-    secureProtocol === "TLSv1_1_client_method" ||
-    secureProtocol === "TLSv1_1_server_method"
-  )
-    return [TLS1_1_VERSION, TLS1_1_VERSION];
-  if (
-    secureProtocol === "TLSv1_2_method" ||
-    secureProtocol === "TLSv1_2_client_method" ||
-    secureProtocol === "TLSv1_2_server_method"
-  )
-    return [TLS1_2_VERSION, TLS1_2_VERSION];
-  return null;
-}
-
-/**
- * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert/ca and fold
- * them into the regular options so every downstream consumer (the native
- * config, the multi-identity check, the CA store) sees plain key/cert/ca.
- * Returns the original object untouched when no pfx is present.
- */
-function processPfxOptions(options) {
-  if (options == null || options.pfx == null) return options;
-  const out = { ...options };
-  const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
-  const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
-  const pfxCAs = [];
-  const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
-  for (const entry of entries) {
-    let buf = entry;
-    let passphrase = out.passphrase;
-    if (entry != null && typeof entry === "object" && !Buffer.isBuffer(entry) && !$isTypedArrayView(entry)) {
-      const entryBuf = entry.buf;
-      if (entryBuf !== undefined) {
-        buf = entryBuf;
-        const entryPassphrase = entry.passphrase;
-        if (entryPassphrase !== undefined) passphrase = entryPassphrase;
-      }
-    }
-    const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
-    keys.push(parsed.key);
-    certs.push(parsed.cert);
-    // A CA bundled inside the PKCS#12 EXTENDS the trust set (Node loads it
-    // via addCACert on top of the default roots); folding it into the `ca`
-    // option would instead REPLACE the trust store and break verification
-    // against the default/NODE_EXTRA_CA_CERTS roots for pfx-only clients.
-    const parsedCA = parsed.ca;
-    if (parsedCA) pfxCAs.push(parsedCA);
-  }
-  out.key = keys.length === 1 ? keys[0] : keys;
-  out.cert = certs.length === 1 ? certs[0] : certs;
-  if (pfxCAs.length) out._pfxExtraCACerts = pfxCAs;
-  out.pfx = undefined;
-  return out;
-}
 
 function newNativeSecureContext(options, cached = true) {
   maybeWarnAboutExtraCACerts();
@@ -861,7 +753,10 @@ function TLSSocket(socket?, options?) {
   this._SNICallback = undefined;
   this.servername = undefined;
   this.authorized = false;
-  void this.authorizationError;
+  // Node initializes this to null and only replaces it with the verification
+  // error code when authorization fails:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
+  this.authorizationError = null;
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
@@ -1526,6 +1421,13 @@ function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
   const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+
+  // The TLSSocket applies the NODE_TLS_REJECT_UNAUTHORIZED default itself
+  // (rejectUnauthorizedDefault); this call exists to emit Node's one-time
+  // process warning when the env var disables verification, like Node's
+  // connect() does:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1730
+  getAllowUnauthorized();
 
   if ("checkServerIdentity" in options) {
     // Node validates whenever the key is present - an explicit `undefined`

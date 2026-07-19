@@ -135,7 +135,7 @@ typedef struct ResolvedSource {
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
-static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
+inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
@@ -160,19 +160,19 @@ typedef struct SystemError {
 typedef void* ArrayBufferSink;
 
 typedef uint8_t BunPluginTarget;
-const BunPluginTarget BunPluginTargetBun = 0;
-const BunPluginTarget BunPluginTargetBrowser = 1;
-const BunPluginTarget BunPluginTargetNode = 2;
-const BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
+inline constexpr BunPluginTarget BunPluginTargetBun = 0;
+inline constexpr BunPluginTarget BunPluginTargetBrowser = 1;
+inline constexpr BunPluginTarget BunPluginTargetNode = 2;
+inline constexpr BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
 typedef uint8_t ZigStackFrameCode;
-const ZigStackFrameCode ZigStackFrameCodeNone = 0;
-const ZigStackFrameCode ZigStackFrameCodeEval = 1;
-const ZigStackFrameCode ZigStackFrameCodeModule = 2;
-const ZigStackFrameCode ZigStackFrameCodeFunction = 3;
-const ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
-const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
-const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeNone = 0;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeEval = 1;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeModule = 2;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeFunction = 3;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeWasm = 5;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
@@ -240,69 +240,69 @@ typedef struct ZigException {
 } ZigException;
 
 typedef uint8_t JSErrorCode;
-const JSErrorCode JSErrorCodeError = 0;
-const JSErrorCode JSErrorCodeEvalError = 1;
-const JSErrorCode JSErrorCodeRangeError = 2;
-const JSErrorCode JSErrorCodeReferenceError = 3;
-const JSErrorCode JSErrorCodeSyntaxError = 4;
-const JSErrorCode JSErrorCodeTypeError = 5;
-const JSErrorCode JSErrorCodeURIError = 6;
-const JSErrorCode JSErrorCodeAggregateError = 7;
-const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
-const JSErrorCode JSErrorCodeStackOverflow = 253;
-const JSErrorCode JSErrorCodeUserErrorCode = 254;
+inline constexpr JSErrorCode JSErrorCodeError = 0;
+inline constexpr JSErrorCode JSErrorCodeEvalError = 1;
+inline constexpr JSErrorCode JSErrorCodeRangeError = 2;
+inline constexpr JSErrorCode JSErrorCodeReferenceError = 3;
+inline constexpr JSErrorCode JSErrorCodeSyntaxError = 4;
+inline constexpr JSErrorCode JSErrorCodeTypeError = 5;
+inline constexpr JSErrorCode JSErrorCodeURIError = 6;
+inline constexpr JSErrorCode JSErrorCodeAggregateError = 7;
+inline constexpr JSErrorCode JSErrorCodeOutOfMemoryError = 8;
+inline constexpr JSErrorCode JSErrorCodeStackOverflow = 253;
+inline constexpr JSErrorCode JSErrorCodeUserErrorCode = 254;
 
 // Must be kept in sync with Loader in src/options_types/schema.rs
 typedef uint8_t BunLoaderType;
-const BunLoaderType BunLoaderTypeNone = 254;
-const BunLoaderType BunLoaderTypeJSX = 1;
-const BunLoaderType BunLoaderTypeJS = 2;
-const BunLoaderType BunLoaderTypeTS = 3;
-const BunLoaderType BunLoaderTypeTSX = 4;
-const BunLoaderType BunLoaderTypeCSS = 5;
-const BunLoaderType BunLoaderTypeFILE = 6;
-const BunLoaderType BunLoaderTypeJSON = 7;
-const BunLoaderType BunLoaderTypeJSONC = 8;
-const BunLoaderType BunLoaderTypeTOML = 9;
-const BunLoaderType BunLoaderTypeWASM = 10;
-const BunLoaderType BunLoaderTypeNAPI = 11;
-const BunLoaderType BunLoaderTypeYAML = 19;
-const BunLoaderType BunLoaderTypeMD = 20;
+inline constexpr BunLoaderType BunLoaderTypeNone = 254;
+inline constexpr BunLoaderType BunLoaderTypeJSX = 1;
+inline constexpr BunLoaderType BunLoaderTypeJS = 2;
+inline constexpr BunLoaderType BunLoaderTypeTS = 3;
+inline constexpr BunLoaderType BunLoaderTypeTSX = 4;
+inline constexpr BunLoaderType BunLoaderTypeCSS = 5;
+inline constexpr BunLoaderType BunLoaderTypeFILE = 6;
+inline constexpr BunLoaderType BunLoaderTypeJSON = 7;
+inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
+inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
+inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
+inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
+inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
+inline constexpr BunLoaderType BunLoaderTypeMD = 20;
 
 #pragma mark - Stream
 
 typedef uint8_t Encoding;
-const Encoding Encoding__utf8 = 0;
-const Encoding Encoding__ucs2 = 1;
-const Encoding Encoding__utf16le = 2;
-const Encoding Encoding__latin1 = 3;
-const Encoding Encoding__ascii = 4;
-const Encoding Encoding__base64 = 5;
-const Encoding Encoding__base64url = 6;
-const Encoding Encoding__hex = 7;
-const Encoding Encoding__buffer = 8;
+inline constexpr Encoding Encoding__utf8 = 0;
+inline constexpr Encoding Encoding__ucs2 = 1;
+inline constexpr Encoding Encoding__utf16le = 2;
+inline constexpr Encoding Encoding__latin1 = 3;
+inline constexpr Encoding Encoding__ascii = 4;
+inline constexpr Encoding Encoding__base64 = 5;
+inline constexpr Encoding Encoding__base64url = 6;
+inline constexpr Encoding Encoding__hex = 7;
+inline constexpr Encoding Encoding__buffer = 8;
 
 typedef uint8_t WritableEvent;
-const WritableEvent WritableEvent__Close = 0;
-const WritableEvent WritableEvent__Drain = 1;
-const WritableEvent WritableEvent__Error = 2;
-const WritableEvent WritableEvent__Finish = 3;
-const WritableEvent WritableEvent__Pipe = 4;
-const WritableEvent WritableEvent__Unpipe = 5;
-const WritableEvent WritableEvent__Open = 6;
-const WritableEvent WritableEventUser = 254;
+inline constexpr WritableEvent WritableEvent__Close = 0;
+inline constexpr WritableEvent WritableEvent__Drain = 1;
+inline constexpr WritableEvent WritableEvent__Error = 2;
+inline constexpr WritableEvent WritableEvent__Finish = 3;
+inline constexpr WritableEvent WritableEvent__Pipe = 4;
+inline constexpr WritableEvent WritableEvent__Unpipe = 5;
+inline constexpr WritableEvent WritableEvent__Open = 6;
+inline constexpr WritableEvent WritableEventUser = 254;
 
 typedef uint8_t ReadableEvent;
 
-const ReadableEvent ReadableEvent__Close = 0;
-const ReadableEvent ReadableEvent__Data = 1;
-const ReadableEvent ReadableEvent__End = 2;
-const ReadableEvent ReadableEvent__Error = 3;
-const ReadableEvent ReadableEvent__Pause = 4;
-const ReadableEvent ReadableEvent__Readable = 5;
-const ReadableEvent ReadableEvent__Resume = 6;
-const ReadableEvent ReadableEvent__Open = 7;
-const ReadableEvent ReadableEventUser = 254;
+inline constexpr ReadableEvent ReadableEvent__Close = 0;
+inline constexpr ReadableEvent ReadableEvent__Data = 1;
+inline constexpr ReadableEvent ReadableEvent__End = 2;
+inline constexpr ReadableEvent ReadableEvent__Error = 3;
+inline constexpr ReadableEvent ReadableEvent__Pause = 4;
+inline constexpr ReadableEvent ReadableEvent__Readable = 5;
+inline constexpr ReadableEvent ReadableEvent__Resume = 6;
+inline constexpr ReadableEvent ReadableEvent__Open = 7;
+inline constexpr ReadableEvent ReadableEventUser = 254;
 
 #ifndef STRING_POINTER
 #define STRING_POINTER

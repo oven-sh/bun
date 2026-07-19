@@ -99,6 +99,30 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+describe("Expires serialization", () => {
+  // RFC 6265 expects an IMF-fixdate: "Wdy, DD Mon YYYY HH:MM:SS GMT".
+  // Date.prototype.toUTCString() produces exactly that, so the two must agree.
+  test("Expires is an IMF-fixdate matching Date.toUTCString() for every weekday", () => {
+    // 7 consecutive UTC days covers every weekday; the 9th keeps the day zero-padded.
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(Date.UTC(2031, 5, 9 + i, 4, 5, 6));
+      const cookie = new Bun.Cookie("a", "b", { expires: date });
+      expect(cookie.toString()).toBe(`a=b; Path=/; Expires=${date.toUTCString()}; SameSite=Lax`);
+    }
+  });
+
+  test("Expires=0 serializes the epoch, not the day after", () => {
+    const cookie = new Bun.Cookie("a", "b", { expires: new Date(0) });
+    expect(cookie.toString()).toBe("a=b; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax");
+  });
+
+  test("CookieMap.delete emits an IMF-fixdate epoch", () => {
+    const map = new Bun.CookieMap();
+    map.delete("gone");
+    expect(map.toSetCookieHeaders()).toEqual(["gone=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+  });
+});
+
 console.log("describe Bun.serve() cookies");
 describe("Bun.serve() cookies", () => {
   const server = Bun.serve({
@@ -181,7 +205,7 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`{}`);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "test=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
   });
@@ -238,7 +262,7 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "do_delete=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "do_delete=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
         "do_modify=FIVE; Path=/; SameSite=Lax",
       ]
     `);
@@ -352,10 +376,10 @@ test("delete cookie path option", () => {
   map.delete("d", { path: "/" });
   expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
     [
-      "a=; Path=/b; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "b=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "c=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "d=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "a=; Path=/b; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "b=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "c=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "d=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]
   `);
 });

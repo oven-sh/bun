@@ -516,7 +516,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
     len: usize,
     to_ptr: *mut u8,
     to_len: usize,
-) -> Result<usize, bun_core::Error> {
+) -> Result<usize, crate::Error> {
     if len == 0 || to_len == 0 {
         return Ok(0);
     }
@@ -639,7 +639,7 @@ pub(crate) unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: u
 pub(crate) fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u16],
     to: &mut [u8],
-) -> Result<usize, bun_core::Error> {
+) -> Result<usize, crate::Error> {
     // SAFETY: pointers/lengths come from valid, non-overlapping borrowed slices.
     unsafe {
         write_u16::<ENCODING, ALLOW_PARTIAL_WRITE>(
@@ -654,7 +654,7 @@ pub(crate) fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: 
 pub(crate) fn encode_into_from8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u8],
     to: &mut [u8],
-) -> Result<usize, bun_core::Error> {
+) -> Result<usize, crate::Error> {
     // SAFETY: pointers/lengths come from valid, non-overlapping borrowed slices.
     unsafe {
         write_u8::<ENCODING, ALLOW_PARTIAL_WRITE>(
@@ -675,7 +675,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
     len: usize,
     to: *mut u8,
     to_len: usize,
-) -> Result<usize, bun_core::Error> {
+) -> Result<usize, crate::Error> {
     if len == 0 {
         return Ok(0);
     }
@@ -949,7 +949,7 @@ fn encode_into_from16_dyn(
     input: &[u16],
     to: &mut [u8],
     encoding: Encoding,
-) -> Result<usize, bun_core::Error> {
+) -> Result<usize, crate::Error> {
     dispatch_encoding!(encoding, |E| encode_into_from16::<E, true>(input, to))
 }
 
@@ -960,20 +960,20 @@ fn encode_into_from8_dyn(
     input: &[u8],
     to: &mut [u8],
     encoding: Encoding,
-) -> Result<usize, bun_core::Error> {
+) -> Result<usize, crate::Error> {
     dispatch_encoding!(encoding, |E| encode_into_from8::<E, true>(input, to))
 }
 
 /// Extension trait — see module note above for why this lives in
 /// `bun_runtime`.
 pub trait BunStringEncode {
-    fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, bun_core::Error>;
+    fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, crate::Error>;
     fn encode(&self, enc: Encoding) -> Vec<u8>;
 }
 
 impl BunStringEncode for bun_core::String {
     /// `bun.String.encodeInto` — encode `self` into `out`. Returns bytes written.
-    fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, bun_core::Error> {
+    fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, crate::Error> {
         if self.is_utf16() {
             return encode_into_from16_dyn(self.utf16(), out, enc);
         }

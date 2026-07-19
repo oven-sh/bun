@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -34,7 +35,7 @@ pub(crate) fn to_be_array_of_size(
 
     let not = this.flags.get().not();
     let mut pass = value.js_type().is_array()
-        && i32::try_from(value.get_length(global)?).unwrap() == size.to_int32();
+        && value.get_length(global)? as i64 == size.to_int64();
 
     if not {
         pass = !pass;
@@ -48,20 +49,22 @@ pub(crate) fn to_be_array_of_size(
 
     if not {
         let signature = get_signature("toBeArrayOfSize", "", true);
-        return this.throw_fmt(
+        return throw!(
+            this,
             global,
             signature,
             concat!("\n\n", "Received: <red>{}<r>\n"),
-            format_args!("{}", received),
+            received,
         );
     }
 
     let signature = get_signature("toBeArrayOfSize", "", false);
-    this.throw_fmt(
+    throw!(
+        this,
         global,
         signature,
         concat!("\n\n", "Received: <red>{}<r>\n"),
-        format_args!("{}", received),
+        received,
     )
 }
 

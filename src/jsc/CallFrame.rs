@@ -7,9 +7,6 @@ use bun_collections::IntegerBitSet;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
 
-#[allow(deprecated)]
-use crate::c_api::JSValueRef;
-
 bun_opaque::opaque_ffi! {
     /// Call Frame for JavaScript -> Native function calls. In Bun, it is
     /// preferred to use the bindings generator instead of directly decoding
@@ -344,13 +341,6 @@ impl<'a> ArgumentsSlice<'a> {
             return None;
         }
         self.next_eat()
-    }
-
-    pub fn from(vm: &'a VirtualMachine, slice: &'a [JSValueRef]) -> ArgumentsSlice<'a> {
-        // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64).
-        let as_values =
-            unsafe { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
-        Self::init(vm, as_values)
     }
 
     pub fn init(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {

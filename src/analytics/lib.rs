@@ -464,14 +464,17 @@ pub mod generate_header {
         // macOS sendmsg_x / recvmsg_x feature gate
         // ──────────────────────────────────────────────────────────────────
 
-        // On macOS 13, tests that use sendmsg_x or recvmsg_x hang.
+        // Before macOS 15.6 (xnu-11417.140.69), recvmsg_x's soreceive_m_list()
+        // leaks the socket lock: concurrent batch-receives on one shared UDP
+        // socket deadlock the kernel and black-hole all loopback until reboot.
         #[cfg(target_os = "macos")]
-        static USE_MSGX_ON_MACOS_14_OR_LATER: OnceLock<bool> = OnceLock::new();
+        static USE_MSGX_ON_MACOS_15_6_OR_LATER: OnceLock<bool> = OnceLock::new();
 
         #[cfg(target_os = "macos")]
-        fn detect_use_msgx_on_macos_14_or_later() -> bool {
-            let version = semver::Version::parse_utf8(for_os().version);
-            version.valid && version.version.max().major >= 14
+        fn detect_use_msgx_on_macos_15_6_or_later() -> bool {
+            let parsed = semver::Version::parse_utf8(for_os().version);
+            let version = parsed.version.min();
+            parsed.valid && (version.major, version.minor) >= (15, 6)
         }
 
         #[unsafe(no_mangle)]
@@ -483,7 +486,7 @@ pub mod generate_header {
             }
             #[cfg(target_os = "macos")]
             {
-                *USE_MSGX_ON_MACOS_14_OR_LATER.get_or_init(detect_use_msgx_on_macos_14_or_later)
+                *USE_MSGX_ON_MACOS_15_6_OR_LATER.get_or_init(detect_use_msgx_on_macos_15_6_or_later)
                     as i32
             }
         }
@@ -601,3 +604,6 @@ pub use generate_header as GenerateHeader;
 
 pub mod schema;
 pub use schema::{BufReader, Reader, SchemaInt};
+
+pub mod error;
+pub use error::{Error, Result};

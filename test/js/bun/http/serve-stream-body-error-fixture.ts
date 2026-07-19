@@ -17,6 +17,10 @@ const development = process.argv[3] === "development";
 // wire. Called from the raw request's data handler below.
 let midStreamResolve: (() => void) | undefined;
 
+// Set by the cancel variants: resolved once the source's cancel() has run, so
+// the test observes any resulting rejection before declaring success.
+const cancelRan = Promise.withResolvers<void>();
+
 const sources: Record<string, () => ReadableStream> = {
   // Already errored by the time Bun.serve starts rendering the body.
   "pull-throw": () =>
@@ -69,6 +73,43 @@ const sources: Record<string, () => ReadableStream> = {
         throw new Error("boom");
       },
     }),
+  // The client aborts the download mid-stream, which makes Bun cancel the body
+  // stream; the source's cancel() then throws. That rejection belongs to a
+  // promise Bun created internally and must not surface as unhandledRejection.
+  "cancel-throw": () =>
+    new ReadableStream({
+      async pull(c) {
+        c.enqueue("chunk-a");
+        await Bun.sleep(4);
+      },
+      cancel() {
+        queueMicrotask(cancelRan.resolve);
+        throw new Error("boom");
+      },
+    }),
+  "cancel-async-reject": () =>
+    new ReadableStream({
+      async pull(c) {
+        c.enqueue("chunk-a");
+        await Bun.sleep(4);
+      },
+      async cancel() {
+        queueMicrotask(cancelRan.resolve);
+        throw new Error("boom");
+      },
+    }),
+  "cancel-byte-throw": () =>
+    new ReadableStream({
+      type: "bytes",
+      async pull(c) {
+        c.enqueue(new TextEncoder().encode("chunk-a"));
+        await Bun.sleep(4);
+      },
+      cancel() {
+        queueMicrotask(cancelRan.resolve);
+        throw new Error("boom");
+      },
+    }),
 };
 
 const source = sources[variant];
@@ -76,6 +117,7 @@ if (!source) {
   console.error(`unknown variant: ${variant}`);
   process.exit(3);
 }
+const clientAborts = variant.startsWith("cancel-");
 
 // Counting instead of relying on the default exit-on-unhandledRejection
 // policy gives the test an exact number and keeps the process alive long
@@ -102,7 +144,7 @@ await using server = Bun.serve({
 // the server closed the connection, so the test can assert on the HTTP
 // framing. A forced close (ECONNRESET) is an expected, asserted-on outcome
 // for the mid-stream variant, so socket errors are not fatal.
-function rawRequest(): Promise<string> {
+function rawRequest(abort: boolean): Promise<string> {
   const chunks: Buffer[] = [];
   return new Promise(resolve => {
     const sock = net.connect(server.port, "127.0.0.1", () => {
@@ -110,16 +152,25 @@ function rawRequest(): Promise<string> {
     });
     sock.on("data", d => {
       chunks.push(d);
-      if (Buffer.concat(chunks).includes("chunk-a")) midStreamResolve?.();
+      if (Buffer.concat(chunks).includes("chunk-a")) {
+        midStreamResolve?.();
+        // The cancel variants tear down the socket once a body chunk has
+        // provably reached the client, so the server's onAborted path fires
+        // and cancels the source while pull() is still pending.
+        if (abort) sock.resetAndDestroy();
+      }
     });
     sock.on("error", () => {});
     sock.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
   });
 }
 
-const wire = await rawRequest();
-// A second request proves the server is still accepting and answering.
-const secondWire = await rawRequest();
+const wire = await rawRequest(clientAborts);
+if (clientAborts) await cancelRan.promise;
+// A second request proves the server is still accepting and answering. For the
+// cancel variants the body stream never self-terminates, so abort that one too;
+// only the status line is asserted.
+const secondWire = await rawRequest(clientAborts);
 
 // Cycle the event loop so any stray rejected promise reaches the
 // unhandledRejection reporter before we declare success.

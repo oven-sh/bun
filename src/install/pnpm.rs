@@ -140,16 +140,14 @@ pub enum MigratePnpmLockfileError {
 
 bun_core::oom_from_alloc!(MigratePnpmLockfileError);
 
-impl From<bun_core::Error> for MigratePnpmLockfileError {
-    fn from(e: bun_core::Error) -> Self {
+impl From<crate::Error> for MigratePnpmLockfileError {
+    fn from(e: crate::Error) -> Self {
         // Preserve the known error variants; only collapse genuinely-unknown
         // tags to InvalidPnpmLockfile.
-        if e == bun_core::err!(OutOfMemory) {
-            Self::OutOfMemory
-        } else if e == bun_core::err!(DependencyLoop) {
-            Self::DependencyLoop
-        } else {
-            Self::InvalidPnpmLockfile
+        match e {
+            crate::Error::Alloc(bun_alloc::AllocError) => Self::OutOfMemory,
+            crate::Error::DependencyLoop => Self::DependencyLoop,
+            _ => Self::InvalidPnpmLockfile,
         }
     }
 }
@@ -182,8 +180,6 @@ impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigrateP
         }
     }
 }
-
-bun_core::named_error_set!(MigratePnpmLockfileError);
 
 #[inline]
 fn as_string(expr: &Expr) -> Option<&'static [u8]> {
@@ -1184,8 +1180,6 @@ pub(crate) enum ParseAppendDependenciesError {
 }
 
 bun_core::oom_from_alloc!(ParseAppendDependenciesError);
-
-bun_core::named_error_set!(ParseAppendDependenciesError);
 
 impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
     fn from(e: ParseAppendDependenciesError) -> Self {

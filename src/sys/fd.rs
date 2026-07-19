@@ -27,12 +27,11 @@ pub enum ErrorCase {
     LeakFdOnFail,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum MakeLibUvOwnedError {
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,
 }
-bun_core::named_error_set!(MakeLibUvOwnedError);
 
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
@@ -53,14 +52,14 @@ pub trait FdExt: Copy + Sized {
     /// as you see EBADF errors in unrelated places.
     fn close(self);
     /// fd function will NOT CLOSE stdin/stdout/stderr.
-    /// Use fd API to implement `node:fs` close.
     /// Prefer asserting that EBADF does not happen with `.close()`.
     fn close_allowing_bad_file_descriptor(
         self,
         return_address: Option<usize>,
     ) -> Option<sys::Error>;
     /// fd allows you to close standard io. It also returns the error.
-    /// Consider fd the raw close method.
+    /// Use fd API to implement `node:fs` close: stdio must actually close and
+    /// EBADF must surface to the caller. Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
@@ -70,7 +69,7 @@ pub trait FdExt: Copy + Sized {
         error_case: ErrorCase,
     ) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
-    fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error>;
+    fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn as_socket_fd(self) -> sys::SocketT;
 }
 
@@ -281,7 +280,7 @@ impl FdExt for Fd {
         sys::mkdir_recursive_at(self, subpath)
     }
 
-    fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error> {
+    fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()> {
         // Non-owning view: `self` is the caller's fd; we must not close it.
         sys::Dir::borrow(&self).delete_tree(subpath)
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
 import {
   mustGenerateOrderFile,
@@ -154,6 +154,49 @@ describe("order file generator", () => {
   });
 });
 
+/**
+ * CI builds with `node --experimental-strip-types scripts/build.ts`, so the
+ * workloads are spawned by node's spawnSync, not bun's. Node only delivers
+ * `input` when stdin is a pipe, and silently drops it when stdin is "ignore";
+ * bun delivers it either way, so nothing a developer runs locally notices. The
+ * interactive workloads are the only ones typed anything, and the ~2k tty and
+ * readline functions they exist to trace are unreachable without it.
+ */
+describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workload stdin", () => {
+  it("reaches the workload when the generator runs under node, as CI does", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        nodeExe()!,
+        "--experimental-strip-types",
+        join(import.meta.dir, "orderfile-workload-fixture.ts"),
+        bunExe(),
+        join(import.meta.dir, "../../../../scripts/orderfile/cli-fixture.js"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // node warns about the fixture's module type on every run, so stderr is never
+    // empty; an uncaught error is the part worth reading. It is also how this
+    // notices generate.ts growing TypeScript that node cannot strip, which would
+    // break the real build the same way.
+    const crash = /^\w*Error\b.*/m.exec(stderr)?.[0] ?? null;
+
+    // cli-fixture.js answers `name?` with the first line it is typed and counts
+    // the rest, so "read 0 lines" is what an empty stdin looks like. On a
+    // terminal it is worse: readline waits for a line that never arrives, and
+    // the workload times out instead of returning at all.
+    expect({
+      greeted: stdout.includes("hi world"),
+      read: /read (\d+) lines/.exec(stdout)?.[1],
+      crash,
+      exitCode,
+    }).toEqual({ greeted: true, read: "3", crash: null, exitCode: 0 });
+  });
+});
+
 const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
 
 async function compile(args: string[]) {
@@ -195,18 +238,22 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
     return { line: lines.at(-1), stderr, exitCode };
   }
 
-  it("runs the child on a terminal, and hands it the preload it was given", async () => {
+  it.concurrent("runs the child on a terminal, and hands it the preload it was given", async () => {
     using dir = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n" });
     const ptyrun = join(String(dir), "ptyrun");
     // Somewhere for LD_PRELOAD to point that is real but does nothing. In a
     // trace this is the page tracer, which has to load into the traced binary
     // and not into ptyrun.
     const preload = join(String(dir), "empty.so");
-    await compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]);
-    await compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]);
+    await Promise.all([
+      compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]),
+      compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]),
+    ]);
 
-    const pty = await type([ptyrun, bunExe(), "-e", probe], { PTYRUN_PRELOAD: preload });
-    const pipe = await type([bunExe(), "-e", probe], {});
+    const [pty, pipe] = await Promise.all([
+      type([ptyrun, bunExe(), "-e", probe], { PTYRUN_PRELOAD: preload }),
+      type([bunExe(), "-e", probe], {}),
+    ]);
 
     expect({ pty: pty.line, pipe: pipe.line, ptyExit: pty.exitCode, pipeExit: pipe.exitCode }).toEqual({
       pty: `true 80 ${preload} hi`,
@@ -225,7 +272,7 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
  * earliest-touched ones, which is to say the hottest.
  */
 describe.skipIf(process.platform !== "linux" || !compiler)("page tracer", () => {
-  it("keeps the pages it recorded before the traced process execs a child", async () => {
+  it.concurrent("keeps the pages it recorded before the traced process execs a child", async () => {
     using dir = tempDir("pagetrace", { "child.c": "int main(void) { return 0; }\n" });
     const root = String(dir);
     const tracer = join(root, "pagetrace.so");
@@ -233,9 +280,11 @@ describe.skipIf(process.platform !== "linux" || !compiler)("page tracer", () => 
     const child = join(root, "child");
     const trace = join(root, "trace.bin");
 
-    await compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/pagetrace.c"), "-ldl"]); // prettier-ignore
-    await compile(["-o", fixture, join(import.meta.dir, "pagetrace-fixture.c")]);
-    await compile(["-o", child, join(root, "child.c")]);
+    await Promise.all([
+      compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/pagetrace.c"), "-ldl"]), // prettier-ignore
+      compile(["-o", fixture, join(import.meta.dir, "pagetrace-fixture.c")]),
+      compile(["-o", child, join(root, "child.c")]),
+    ]);
 
     // The fixture reads 32 pages of its own .rodata, execs `child` (dynamically
     // linked, so it inherits LD_PRELOAD), then reads one more.

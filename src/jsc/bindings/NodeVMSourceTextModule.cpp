@@ -318,10 +318,13 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 {
     const unsigned length = specifiers->getArrayLength();
 
-    ASSERT(length == moduleNatives->getArrayLength());
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (length != moduleNatives->getArrayLength()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "moduleNatives"_s, moduleNatives, "must have the same length as \"specifiers\""_str);
+        return {};
+    }
 
     if (m_status != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
@@ -338,11 +341,16 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ASSERT(specifierValue.isString());
+            // getDirectIndex returns an empty JSValue for holes; empty passes
+            // isCell() with a null cell, so it must be rejected before any use.
+            if (specifierValue.isEmpty() || !specifierValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "specifiers"_str, "Array<string>"_str, specifierValue.isEmpty() ? jsUndefined() : specifierValue);
+                return {};
+            }
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            NodeVMModule* moduleNative = dynamicDowncast<NodeVMModule>(moduleNativeValue);
+            NodeVMModule* moduleNative = moduleNativeValue.isEmpty() ? nullptr : dynamicDowncast<NodeVMModule>(moduleNativeValue);
             if (!moduleNative) {
                 Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
                 return {};

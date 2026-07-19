@@ -8,6 +8,7 @@
 //! old `NewSocketHandler.configure`/`unsafeConfigure` machinery, which built
 //! the same trampolines at runtime per `us_socket_context_t`.
 
+use bun_ptr::ThisPtr;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -218,31 +219,28 @@ where
 
 // ── RawSocketEvents / RawPtrHandler ─────────────────────────────────────────
 //
-// Some consumers' handlers may free or re-enter `*Self` mid-call (refcount
-// reaching zero, `tcp.close()` synchronously dispatching `on_close`, …) and
-// therefore take `*mut Self` rather than `&mut self`. Dispatching those
-// through `PtrHandler` would form a `&mut T` argument that outlives the
-// allocation it points to (Stacked-Borrows argument-protector UB), so they
-// get a raw-pointer twin of the trait/adapter pair.
+// These handlers may free or re-enter `Self` mid-call (a JS callback closing
+// the socket, the refcount reaching zero), so they cannot take `&mut self` —
+// a `&mut` argument protector outliving the allocation is UB. They take
+// [`ThisPtr<Self>`](bun_ptr::ThisPtr) instead: `Copy + Deref`, so each field
+// access is its own short-lived shared borrow and none spans a callback.
+//
+// The ext slot stores that `ThisPtr` directly, so recovering it is safe and
+// the `unsafe` lives once, in the vtable's ext read.
 pub trait RawSocketEvents<const SSL: bool>: Sized {
     const HAS_ON_OPEN: bool = false;
 
-    unsafe fn on_open(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
-    unsafe fn on_data(_this: *mut Self, _s: NewSocketHandler<SSL>, _data: &[u8]) {}
-    unsafe fn on_writable(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
-    unsafe fn on_close(
-        _this: *mut Self,
-        _s: NewSocketHandler<SSL>,
-        _code: i32,
-        _reason: *mut c_void,
-    ) {
+    fn on_open(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) {}
+    fn on_data(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, _data: &[u8]) {}
+    fn on_writable(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) {}
+    fn on_close(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, _code: i32, _reason: *mut c_void) {
     }
-    unsafe fn on_timeout(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
-    unsafe fn on_long_timeout(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
-    unsafe fn on_end(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
-    unsafe fn on_connect_error(_this: *mut Self, _s: NewSocketHandler<SSL>, _code: i32) {}
-    unsafe fn on_handshake(
-        _this: *mut Self,
+    fn on_timeout(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) {}
+    fn on_long_timeout(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) {}
+    fn on_end(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) {}
+    fn on_connect_error(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, _code: i32) {}
+    fn on_handshake(
+        _this: ThisPtr<Self>,
         _s: NewSocketHandler<SSL>,
         _ok: i32,
         _err: bun_uws::us_bun_verify_error_t,
@@ -256,7 +254,7 @@ impl<T, const SSL: bool> VHandler for RawPtrHandler<T, SSL>
 where
     T: RawSocketEvents<SSL> + 'static,
 {
-    type Ext = Option<NonNull<T>>;
+    type Ext = Option<ThisPtr<T>>;
 
     const HAS_ON_OPEN: bool = T::HAS_ON_OPEN;
     const HAS_ON_DATA: bool = true;
@@ -271,45 +269,36 @@ where
 
     fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         let Some(this) = *ext else { return };
-        // SAFETY: ext slot holds the unique heap owner; single-threaded dispatch.
-        unsafe { T::on_open(this.as_ptr(), wrap::<SSL>(s)) };
+        T::on_open(this, wrap::<SSL>(s));
     }
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe { T::on_data(this.as_ptr(), wrap::<SSL>(s), data) };
+        T::on_data(this, wrap::<SSL>(s), data);
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe { T::on_writable(this.as_ptr(), wrap::<SSL>(s)) };
+        T::on_writable(this, wrap::<SSL>(s));
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe {
-            T::on_close(
-                this.as_ptr(),
-                wrap::<SSL>(s),
-                code,
-                reason.unwrap_or(core::ptr::null_mut()),
-            )
-        };
+        T::on_close(
+            this,
+            wrap::<SSL>(s),
+            code,
+            reason.unwrap_or(core::ptr::null_mut()),
+        );
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe { T::on_timeout(this.as_ptr(), wrap::<SSL>(s)) };
+        T::on_timeout(this, wrap::<SSL>(s));
     }
     fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe { T::on_long_timeout(this.as_ptr(), wrap::<SSL>(s)) };
+        T::on_long_timeout(this, wrap::<SSL>(s));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe { T::on_end(this.as_ptr(), wrap::<SSL>(s)) };
+        T::on_end(this, wrap::<SSL>(s));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close first, then notify — see `PtrHandler::on_connect_error`.
@@ -318,22 +307,14 @@ where
         // deref (`s` is a live socket passed by the trampoline).
         us_socket_t::opaque_mut(s).close(CloseCode::failure);
         if let Some(t) = this {
-            // SAFETY: see `on_open`.
-            unsafe { T::on_connect_error(t.as_ptr(), wrap::<SSL>(s), code) };
+            T::on_connect_error(t, wrap::<SSL>(s), code);
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<NonNull<T>>>() else {
+        let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<ThisPtr<T>>>() else {
             return;
         };
-        // SAFETY: see `on_open`.
-        unsafe {
-            T::on_connect_error(
-                this.as_ptr(),
-                NewSocketHandler::<SSL>::from_connecting(c),
-                code,
-            )
-        };
+        T::on_connect_error(this, NewSocketHandler::<SSL>::from_connecting(c), code);
     }
     fn on_handshake(
         ext: &mut Self::Ext,
@@ -342,121 +323,85 @@ where
         err: us_bun_verify_error_t,
     ) {
         let Some(this) = *ext else { return };
-        // SAFETY: see `on_open`.
-        unsafe { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, err) };
+        T::on_handshake(this, wrap::<SSL>(s), ok as i32, err);
     }
 }
 
 impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {
     const HAS_ON_OPEN: bool = true;
 
-    unsafe fn on_open(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: caller upholds the `RawSocketEvents` contract — `this` is the
-        // live unique ext-slot owner under single-threaded dispatch; `handle_*`
-        // has the same precondition on `this`.
-        unsafe { Self::handle_open(this, s) }
+    fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        Self::handle_open(this, s)
     }
-    unsafe fn on_data(this: *mut Self, s: NewSocketHandler<SSL>, data: &[u8]) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_data(this, s, data) }
+    fn on_data(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, data: &[u8]) {
+        Self::handle_data(this, s, data)
     }
-    unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_writable(this, s) }
+    fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        Self::handle_writable(this, s)
     }
-    unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_close(this, s, code, reason) }
+    fn on_close(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
+        Self::handle_close(this, s, code, reason)
     }
-    unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_timeout(this, s) }
+    fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        Self::handle_timeout(this, s)
     }
-    unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_timeout(this, s) }
+    fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        Self::handle_timeout(this, s)
     }
-    unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_end(this, s) }
+    fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        Self::handle_end(this, s)
     }
-    unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_connect_error(this, s, code) }
+    fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) {
+        Self::handle_connect_error(this, s, code)
     }
-    unsafe fn on_handshake(
-        this: *mut Self,
+    fn on_handshake(
+        this: ThisPtr<Self>,
         s: NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_handshake(this, s, ok, err) }
+        Self::handle_handshake(this, s, ok, err)
     }
 }
 
 impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> {
     // No `on_open` override — adoption of an already-connected socket.
 
-    unsafe fn on_data(this: *mut Self, _s: NewSocketHandler<SSL>, data: &[u8]) {
-        // SAFETY: caller upholds the `RawSocketEvents` contract — `this` points
-        // to the live unique ext-slot owner under single-threaded dispatch, so
-        // it is valid to forward/dereference here.
-        unsafe { Self::handle_data(this, data) }
+    fn on_data(this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) {
+        Self::handle_data(this, data)
     }
-    unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_writable(s)
-        }
+    fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        let _guard = this.ref_guard();
+        this.handle_writable(s)
     }
-    unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_close(s, code, reason)
-        }
+    fn on_close(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
+        let _guard = this.ref_guard();
+        this.handle_close(s, code, reason)
     }
-    unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_timeout(s)
-        }
+    fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        let _guard = this.ref_guard();
+        this.handle_timeout(s)
     }
-    unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_timeout(s)
-        }
+    fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        let _guard = this.ref_guard();
+        this.handle_timeout(s)
     }
-    unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_end(s)
-        }
+    fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
+        let _guard = this.ref_guard();
+        this.handle_end(s)
     }
-    unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_connect_error(s, code)
-        }
+    fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) {
+        let _guard = this.ref_guard();
+        this.handle_connect_error(s, code)
     }
-    unsafe fn on_handshake(
-        this: *mut Self,
+    fn on_handshake(
+        this: ThisPtr<Self>,
         s: NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) {
-        // SAFETY: see `on_data`.
-        unsafe {
-            let _guard = bun_ptr::ScopedRef::new(this);
-            (*this).handle_handshake(s, ok, err)
-        }
+        let _guard = this.ref_guard();
+        this.handle_handshake(s, ok, err)
     }
 }
 
@@ -556,7 +501,7 @@ impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandl
 // re-derives `&mut NewSocket` via the wrapper's `m_ptr`; a `&mut NewSocket`
 // argument formed by `PtrHandler` and protected through the dispatch frame
 // would alias that re-entrant borrow (Stacked-Borrows UB + `noalias`
-// dead-store of the re-entrant write). `RawPtrHandler` passes `*mut Self`.
+// dead-store of the re-entrant write). `RawPtrHandler` passes `ThisPtr<Self>`.
 pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
 /// Listener accept path: the ext is uninitialised at on_open time (the C accept
@@ -598,58 +543,52 @@ where
         // `Listener::listen`; the listener strictly outlives every accepted
         // socket and is read-only here.
         let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, wrap::<SSL>(s));
-        // SAFETY: `on_create` returns a freshly-boxed `NewSocket`; the `*mut`
-        // `on_*` methods hold no `&mut NewSocket` across re-entrant JS calls.
-        unsafe { api::NewSocket::on_open(ns, wrap::<SSL>(s)) };
+        api::NewSocket::on_open(ns, wrap::<SSL>(s));
     }
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to
     // the freshly stashed NewSocket.
     fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            // SAFETY: `ns` is the live heap `NewSocket` stashed by `on_create`;
-            // dispatch is single-threaded. The raw-pointer `on_*` may free it,
-            // so dispatch via `*mut` only — never form `&mut NewSocket`.
-            // Applies to every ext-slot read in this impl.
-            swallow(unsafe { api::NewSocket::on_close(ns.as_ptr(), wrap::<SSL>(s), code, reason) });
+            // `ns` is the live heap `NewSocket` stashed by `on_create`. The
+            // `on_*` handlers may free it, so they take `ThisPtr`, never `&mut`.
+            swallow(api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason));
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
-        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            // SAFETY: see `on_close_no_ext`.
-            unsafe { api::NewSocket::on_data(ns.as_ptr(), wrap::<SSL>(s), data) };
+            api::NewSocket::on_data(ns, wrap::<SSL>(s), data);
         }
     }
     fn on_writable_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            // SAFETY: see `on_close_no_ext`.
-            unsafe { api::NewSocket::on_writable(ns.as_ptr(), wrap::<SSL>(s)) };
+            api::NewSocket::on_writable(ns, wrap::<SSL>(s));
         }
     }
     fn on_end_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            // SAFETY: see `on_close_no_ext`.
-            unsafe { api::NewSocket::on_end(ns.as_ptr(), wrap::<SSL>(s)) };
+            api::NewSocket::on_end(ns, wrap::<SSL>(s));
         }
     }
     fn on_timeout_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            // SAFETY: see `on_close_no_ext`.
-            unsafe { api::NewSocket::on_timeout(ns.as_ptr(), wrap::<SSL>(s)) };
+            api::NewSocket::on_timeout(ns, wrap::<SSL>(s));
         }
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            // SAFETY: see `on_close_no_ext`.
-            swallow(unsafe {
-                api::NewSocket::on_handshake(ns.as_ptr(), wrap::<SSL>(s), ok as i32, err)
-            });
+            swallow(api::NewSocket::on_handshake(
+                ns,
+                wrap::<SSL>(s),
+                ok as i32,
+                err,
+            ));
         }
     }
 }

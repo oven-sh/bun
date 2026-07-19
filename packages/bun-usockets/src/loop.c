@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
@@ -45,6 +46,8 @@ extern const size_t Bun__lock__size;
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
 
+#ifdef LIBUS_USE_LIBUV
+
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
 // when the sweep timer is disabled, we don't need to do anything
@@ -65,14 +68,68 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
-/* The loop has 2 fallthrough polls */
+#else
+
+#define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
+
+uint64_t us_internal_monotonic_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
+}
+
+void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count++;
+    if (loop->data.sweep_timer_count == 1) {
+        loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
+        Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
+    }
+}
+
+void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count--;
+    if (loop->data.sweep_timer_count == 0) {
+        loop->data.sweep_next_tick_ns = -1;
+    }
+}
+
+long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
+    if (loop->data.sweep_next_tick_ns < 0) {
+        return -1;
+    }
+    /* Its own reading, deliberately: this bounds the poll so the sweep is not
+     * starved, and a caller's older reading would round the deadline up. */
+    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
+    return diff > 0 ? diff : 0;
+}
+
+void us_internal_sweep_if_due(struct us_loop_t *loop) {
+    if (loop->data.sweep_next_tick_ns < 0) {
+        return;
+    }
+    long long now = (long long) us_internal_monotonic_ns();
+    if (now < loop->data.sweep_next_tick_ns) {
+        return;
+    }
+    /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
+    loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
+    us_internal_timer_sweep(loop);
+}
+
+#endif
+
+
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
+#ifdef LIBUS_USE_LIBUV
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
+#else
+    loop->data.sweep_next_tick_ns = -1;
+#endif
     loop->data.sweep_timer_count = 0;
-    loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
-    loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
+    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
     /* Every read on this loop writes into recv_buf; a NULL here makes each one
      * fail with EFAULT for the life of the process. */
     if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
@@ -92,11 +149,13 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     us_internal_free_loop_ssl_data(loop);
 #endif
 
-    free(loop->data.recv_buf);
-    free(loop->data.send_buf);
+    us_free(loop->data.recv_buf);
+    us_free(loop->data.send_buf);
 
+#ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
+#endif
     us_internal_async_close(loop->data.wakeup_async);
 }
 
@@ -325,9 +384,35 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     loop->data.closed_connecting_head = NULL;
 }
 
+#ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
+    /* Escalate paused sockets whose peer FIN was deferred behind buffered
+     * data and whose peer has since reset (poll_cb consumed the only
+     * DISCONNECT report on the FIN; AFD has no event left to deliver the
+     * abort to a read-less poll). Zero cost unless such sockets exist;
+     * closing unlinks the socket, so restart the walk after each close. */
+    while (cb->loop->data.fin_deferred_count > 0) {
+        struct us_socket_t *victim = 0;
+        for (struct us_socket_group_t *g = cb->loop->data.head; g && !victim; g = g->next) {
+            for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
+                if (s->fin_deferred && !s->flags.is_closed
+                    && (us_socket_get_error(s) != 0
+                        || us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p)))) {
+                    victim = s;
+                    break;
+                }
+            }
+        }
+        if (!victim) {
+            break;
+        }
+        victim->fin_deferred = 0;
+        cb->loop->data.fin_deferred_count--;
+        us_internal_socket_close_raw(victim, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+    }
 }
+#endif
 
 __attribute__((always_inline)) long long us_loop_iteration_number(struct us_loop_t *loop) {
     return loop->data.iteration_nr;
@@ -446,6 +531,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.adopted = 0;
+                        s->flags.last_write_failed = 0;
+                        s->unclassified_send_failures = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -575,6 +662,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 size_t repeat_recv_count = 0;
+                /* Whether this dispatch's read loop delivered any bytes; see the
+                 * hung-up drain and its error handling below. */
+                int read_any = 0;
 
                 do {
                     #ifdef _WIN32
@@ -628,22 +718,36 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if(s && s->flags.adopted && s->prev) {
                             s = s->prev;
                         }
+                        read_any = 1;
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        /* Hangup or error flagged on this event (kqueue rides EV_EOF on
+                         * the final data's readable event): no further readable events
+                         * are coming, so drain the kernel buffer now no matter how
+                         * short this read was. Stopping early would let the EOF
+                         * handling below close the socket and discard whatever is
+                         * still queued (a truncated stream). recv() returning 0 or
+                         * EAGAIN ends the loop, so this is bounded by the receive
+                         * buffer. This is what the comment above always described; it
+                         * was keyed on the error flag, which kqueue does not set for
+                         * a peer FIN. */
+                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && (eof || error)) {
+                            continue;
+                        }
                         /* Stop if on_data paused us (us_socket_pause from the data
                          * handler, e.g. fetch() receive backpressure or
                          * net.Socket#pause) — keep honoring the pause instead of
                          * pulling bytes the caller asked to defer. */
                         if (
                             s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
-                            (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
+                            loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD &&
                             !us_socket_is_closed(s) && !s->flags.is_paused
                         ) {
-                            repeat_recv_count += error == 0;
+                            repeat_recv_count++;
 
                             // When not hung up, read a maximum of 10 times to avoid starving other sockets
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
@@ -675,6 +779,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         eof = 1; // lets handle EOF in the same place
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                        if (eof && read_any) {
+                            /* The hangup drain above already delivered this
+                             * connection's final data and then hit the error queued
+                             * behind its FIN (an RST from the peer tearing down right
+                             * after, often provoked by our own teardown writes). The
+                             * orderly EOF was announced and nothing readable remains:
+                             * report end-of-stream like a reader that stopped at the
+                             * FIN, not a read error. A hard error on the FIRST read of
+                             * a hung-up event (a pure RST: the kernel discards the
+                             * receive queue) still takes the error path below. */
+                            break;
+                        }
                         /* Peer-initiated TCP error (RST etc.) — go straight to
                          * raw-close. us_socket_close() would route through
                          * us_internal_ssl_close() now that s->ssl is the
@@ -693,6 +809,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
+            /* kqueue reports EV_EOF on the same readable event as a connection's
+             * final data. If the data callback paused the socket mid-burst (stream
+             * backpressure), the read loop above stopped with bytes still queued in
+             * the kernel, and acting on the hint now would end+close the socket and
+             * discard them. Defer it: resuming re-arms the poll and the EOF is
+             * re-reported once the rest has been read. Sockets we already shut down
+             * are exempt (their peer's FIN must still close them promptly below),
+             * as are error-flagged events. */
+            if (eof && s && !error && s->flags.is_paused && !us_socket_is_shut_down(s) &&
+                !us_socket_is_closed(s)) {
+                eof = 0;
+            }
             if(eof && s) {
                 if (UNLIKELY(us_socket_is_closed(s))) {
                     // Do not call on_end after the socket has been closed
@@ -754,8 +882,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
              * until we drain it explicitly. Do that here, surfacing each
              * errno via on_recv_error; the socket stays open. On other
-             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
-             * preserve close-on-error there. */
+             * platforms only a *poll* error (kqueue EV_ERROR, Windows) is
+             * still fatal below; a plain recv failure is reported the same
+             * way it is here, not treated as fatal. */
             int recv_error_surfaced = 0;
             int recv_would_block_only = 0;
             if (error) {
@@ -778,13 +907,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                 break;
                             }
                         }
-                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                        u->on_recv_error(u, ee ? ee : ECONNREFUSED, 1);
                     }
                 }
             }
-#endif
 
-            if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
+            /* An EPOLLERR with no EPOLLIN and an empty error queue still has to
+             * run the receive path: that is how a pending sk_err — an ICMP for
+             * a socket that never enabled IP_RECVERR, e.g. one adopted from an
+             * external descriptor by bsd_udp_open() and then connected — is
+             * reaped by recvmmsg and reported instead of the socket being
+             * closed below. libuv folds a bare EPOLLERR into EPOLLIN for the
+             * same reason (uv__io_poll, deps/uv/src/unix/linux.c). */
+            const int run_recv =
+                (events & LIBUS_SOCKET_READABLE) || (error && !recv_error_surfaced);
+#else
+            const int run_recv = events & LIBUS_SOCKET_READABLE;
+#endif
+            if (run_recv && !u->closed) {
 
                 do {
                     struct udp_recvbuf recvbuf;
@@ -795,15 +935,32 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {
-#if defined(__linux__)
-                                int recv_err = errno;
-                                recv_error_surfaced = 1;
-                                if (u->on_recv_error) {
-                                    u->on_recv_error(u, recv_err);
-                                }
-#else
-                                /* non-Linux: fall through and close below */
+#if defined(_WIN32)
+                                /* recvfrom's error is in WSAGetLastError(),
+                                 * not errno; keep close-on-error here. */
                                 error = 1;
+#else
+                                /* A failing recvmsg is a socket *condition* to
+                                 * report, not a fatal event. On the BSDs, which
+                                 * have no error queue, this is the ONLY way the
+                                 * kernel delivers a connected socket's ICMP
+                                 * error (so_error): Node reports it as
+                                 * `recvmsg <code>` and keeps the socket open.
+                                 * Only a genuine poll error still closes below. */
+                                int recv_err = errno;
+                                if (u->on_recv_error) {
+#if defined(__linux__)
+                                    recv_error_surfaced = 1;
+#endif
+                                    u->on_recv_error(u, recv_err, 0);
+                                } else {
+                                    /* No error handler (QUIC creates its UDP
+                                     * sockets with recv_error_cb = NULL): the
+                                     * close is the only handling this path has,
+                                     * and a persistent recv error on a still-
+                                     * readable fd must not spin the loop. */
+                                    error = 1;
+                                }
 #endif
                             }
 #if defined(__linux__)

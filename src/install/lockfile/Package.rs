@@ -116,14 +116,14 @@ fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
-) -> bun_core::Error {
+) -> crate::Error {
     let _ = bun_ast::add_error_pretty!(
         log,
         source,
         loc,
         "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
-    bun_core::err!("InvalidPackageJSON")
+    crate::Error::InvalidPackageJSON
 }
 
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
@@ -205,7 +205,7 @@ pub trait ResolverContext {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+    ) -> crate::Result<ResolutionType<u64>>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
     // Trait methods so non-git
@@ -245,7 +245,7 @@ impl ResolverContext for () {
         &mut self,
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> crate::Result<ResolutionType<u64>> {
         // The call site gates on `!IS_VOID`; return the zero value for
         // trait completeness.
         Ok(ResolutionType::default())
@@ -274,7 +274,7 @@ pub(crate) trait ResolverContextDyn {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+    ) -> crate::Result<ResolutionType<u64>>;
 
     fn resolution(&self) -> &ResolutionType<u64>;
     fn dep_id(&self) -> install::DependencyID;
@@ -306,7 +306,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> crate::Result<ResolutionType<u64>> {
         ResolverContext::resolve(self, builder, json)
     }
 
@@ -461,7 +461,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
 // site.
 impl Package<u64> {
-    pub fn clone(&self, cloner: &mut Cloner) -> Result<PackageID, bun_core::Error> {
+    pub fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
@@ -586,7 +586,7 @@ impl Package<u64> {
         // defend here as well since an error returned from `clean_with_logger`
         // is not recoverable — it aborts the install instead of re-resolving.
         if self.meta.id as usize >= package_id_mapping.len() {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
@@ -631,7 +631,7 @@ impl Package<u64> {
         pm: &mut PackageManager,
         package_json: &mut PackageJSON,
         features: Features,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> crate::Result<Self> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         let mut package = Self::default();
@@ -746,7 +746,7 @@ impl Package<u64> {
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
         features: Features,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> crate::Result<Self> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         let mut package = Self::default();
@@ -1059,7 +1059,7 @@ impl Diff {
         to: &Package,
         update_requests: Option<&[UpdateRequest]>,
         mut id_mapping: Option<&mut [PackageID]>,
-    ) -> Result<DiffSummary, bun_core::Error> {
+    ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
         // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
@@ -1679,7 +1679,7 @@ impl Package<u64> {
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         initialize_store();
         let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
@@ -1713,7 +1713,7 @@ impl Package<u64> {
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // SAFETY: `manager` points to a live `PackageManager` for the duration
         // of this call (caller passes `self as *mut _`); `lockfile` and `log`
         // are disjoint fields, and `parse_with_json` only reaches `manager`
@@ -1749,7 +1749,7 @@ impl Package<u64> {
         external_alias: ExternalString,
         version: &[u8],
         key_loc: bun_ast::Loc,
-    ) -> Result<Option<Dependency>, bun_core::Error> {
+    ) -> crate::Result<Option<Dependency>> {
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
@@ -1866,7 +1866,7 @@ impl Package<u64> {
                             bstr::BStr::new(external_alias.slice(buf)),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 };
                 let relative =
                     resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
@@ -1950,7 +1950,7 @@ impl Package<u64> {
                                 bstr::BStr::new(dependency_version.literal.slice(buf)),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     dependency_version.value.workspace = path;
@@ -2063,7 +2063,7 @@ impl Package<u64> {
                                 return Ok(None);
                             }
                         }
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     *workspace_entry.value_ptr = path;
@@ -2144,7 +2144,7 @@ impl Package<u64> {
         json: Expr,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Thin monomorphic shim: erase `R` to `dyn ResolverContextDyn` so the
         // ~960-line body below is codegen'd once. The half-dozen vtable calls
         // are noise next to the JSON walking / string-building this does.
@@ -2161,7 +2161,7 @@ impl Package<u64> {
         json: Expr,
         resolver: &mut dyn ResolverContextDyn,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         // Function-local arena for `asString` transcoding (transcoded strings
@@ -2339,7 +2339,7 @@ impl Package<u64> {
                                 "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
                                 bstr::BStr::new(group.prop)
                             );
-                            return Err(bun_core::err!("InvalidPackageJSON"));
+                            return Err(crate::Error::InvalidPackageJSON);
                         }
                         let arr = workspace_map::NamesArray::from_expr(
                             &dependencies_q.expr,
@@ -2385,7 +2385,7 @@ impl Package<u64> {
                                             "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
                                         ),
                                     );
-                                    return Err(bun_core::err!("InvalidPackageJSON"));
+                                    return Err(crate::Error::InvalidPackageJSON);
                                 }
                                 let packages_arr = workspace_map::NamesArray::from_expr(
                                     &packages_expr,
@@ -2414,7 +2414,7 @@ impl Package<u64> {
                                     "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
                                     bstr::BStr::new(group.prop)
                                 );
-                                return Err(bun_core::err!("InvalidPackageJSON"));
+                                return Err(crate::Error::InvalidPackageJSON);
                             };
 
                             string_builder.count(key);
@@ -2449,7 +2449,7 @@ impl Package<u64> {
                             bstr::BStr::new(group.prop)
                         );
                     }
-                    return Err(bun_core::err!("InvalidPackageJSON"));
+                    return Err(crate::Error::InvalidPackageJSON);
                 }
             }
         }
@@ -2836,7 +2836,7 @@ impl Package<u64> {
                                 bstr::BStr::new(&entry.name),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
@@ -3077,7 +3077,7 @@ pub mod serializer {
     pub fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
-    ) -> Result<(), bun_core::Error>
+    ) -> crate::Result<()>
     where
         // A separate `stream` and `writer` over the same buffer would be two
         // `&mut` to one object — UB regardless of access order — so both
@@ -3176,15 +3176,13 @@ pub mod serializer {
         stream: &mut Stream,
         end: usize,
         migrate_from_v2: bool,
-    ) -> Result<PackagesLoadResult<u64>, bun_core::Error> {
+    ) -> crate::Result<PackagesLoadResult<u64>> {
         type SemverIntType = u64;
         let reader = stream.reader();
 
         let list_len = reader.read_int_le::<u64>()?;
         if list_len > u32::MAX as u64 - 1 {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: list is impossibly long"
-            ));
+            return Err(crate::Error::LockfileValidationFailedListIsImpossiblyLong);
         }
 
         let input_alignment = reader.read_int_le::<u64>()?;
@@ -3195,9 +3193,7 @@ pub mod serializer {
         // *pointer* itself, i.e. pointer alignment.
         let expected_alignment = mem::align_of::<*mut u8>() as u64;
         if expected_alignment != input_alignment {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: alignment mismatch"
-            ));
+            return Err(crate::Error::LockfileValidationFailedAlignmentMismatch);
         }
 
         let field_count = reader.read_int_le::<u64>()? as usize;
@@ -3207,18 +3203,14 @@ pub mod serializer {
             // we will back-fill from each package.json
             n if n == FIELD_COUNT - 1 => {}
             _ => {
-                return Err(bun_core::err!(
-                    "Lockfile validation failed: unexpected number of package fields"
-                ));
+                return Err(crate::Error::LockfileValidationFailedUnexpectedNumberOfPackageFields);
             }
         }
 
         let begin_at = reader.read_int_le::<u64>()? as usize;
         let end_at = reader.read_int_le::<u64>()? as usize;
         if begin_at > end || end_at > end || begin_at > end_at {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: invalid package list range"
-            ));
+            return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
         }
         stream.pos = begin_at;
         list.ensure_total_capacity(list_len as usize)?;
@@ -3304,7 +3296,7 @@ pub mod serializer {
         end_at: u64,
         list: &mut List<SemverIntType>,
         needs_update: &mut bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let _n = list.len();
         let mut sliced = list.slice();
 
@@ -3339,9 +3331,7 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid resolution tag"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }
                 }
@@ -3359,9 +3349,7 @@ pub mod serializer {
                         if !matches!(raw[origin_at], 0..=2)
                             || !matches!(raw[install_script_at], 0..=2)
                         {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid package meta"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidPackageMeta);
                         }
                     }
                 }
@@ -3373,9 +3361,7 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[tag_at], 0..=4) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid bin tag"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidBinTag);
                         }
                     }
                 }
@@ -3387,9 +3373,9 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[filled_at], 0 | 1) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid package scripts"
-                            ));
+                            return Err(
+                                crate::Error::LockfileValidationFailedInvalidPackageScripts,
+                            );
                         }
                     }
                 }
@@ -3410,9 +3396,7 @@ pub mod serializer {
             } else if matches!(field, PackageField::Scripts) {
                 bytes.fill(0);
             } else {
-                return Err(bun_core::err!(
-                    "Lockfile validation failed: invalid package list range"
-                ));
+                return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
             }
         }
         Ok(())

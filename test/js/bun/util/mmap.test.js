@@ -127,6 +127,7 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
 
     expect(() => Bun.mmap(file, { offset: 100 })).toThrow("EINVAL");
     expect(() => Bun.mmap(file, { offset: 50 })).toThrow("EINVAL");
+    expect(() => Bun.mmap(file, { offset: 1, size: 0 })).toThrow("EINVAL");
   });
 
   it("mmap rejects negative offset", () => {

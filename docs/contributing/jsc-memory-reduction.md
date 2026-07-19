@@ -342,3 +342,21 @@ The inline encoding has the same property: `encodeInline8("foo")` is a single `u
 **Effect:** short property names (`x`, `id`, `type`, `name`, `data`, `length`, `value`) never touch the atom table. Structure transitions and IC comparisons for those names become one immediate compare. The atom table shrinks by the identifier tail. This moves Speedometer (DOM property names are overwhelmingly short) more than it moves JetStream.
 
 **Touch points:** `Identifier.h`/`PropertyName.h` tagging; `PropertyTable` hash; `StructureTransitionTable` key type; `GetByIdVariant`/`PutByIdVariant` key storage; LLInt `get_by_id` / baseline `JITGetByIdGenerator` / DFG `compileGetById` / FTL `compileGetById` immediate-compare paths; every `uid()->...` dereference in `runtime/`.
+
+### MakeRope Allocation Ordering
+
+FTL/DFG `compileMakeRope` allocated the 32-byte `JSRopeString` before computing child flags/length. The inline-child guard and the short-result routing added for inline strings then branched to `operationMakeRope*`, which allocates its own cell, leaving the pre-allocated rope as dead garbage. pdfjs does ~5M concats per run; every slow-path bail wasted 32 bytes.
+
+FTL now allocates after those checks. DFG drops the short-result routing (its register reuse makes deferring allocation awkward) and keeps only the inline-child correctness guard. pdfjs peak (FTL, 10 runs) 249-270 MB -> 233-244 MB.
+
+### `op_switch_string`
+
+LLInt/baseline/DFG `operationSwitchString` called `string->value()` to get a `StringImpl*` for the jump-table lookup. pdfjs was resolving ~1M inline scrutinees per run here. Case labels are parser atoms (`BytecodeGenerator.cpp:4532` asserts), so the inline path now looks up the scrutinee atom via `AtomStringImpl::lookUp(inlineBytes)`; a miss means no case matches.
+
+### Change-Set-6 Staging
+
+Stage 1 (landed): `InlineAtomCache`, a 512-slot fiber-word-keyed `RefPtr<AtomStringImpl>` array on `VM`, consulted by `Identifier::add(span<Latin1>)` and `resolveInlineToAtomString`. Repeated short names skip the atom-table hash+probe.
+
+Stage 2 (scoped, not started): `PropertyName`/`Identifier` hold the fiber word natively. Touch surface: ~35 files dereference the uid, notably `IdentifierRepHash::hash` (the single chokepoint for PropertyTable/StructureTransitionTable/SymbolTable hashing), every `RefPtr<UniquedStringImpl>` field (`HasOwnPropertyCache::Entry`, `MegamorphicCache::*Entry::m_uid`, `Structure::m_transitionPropertyName`), `CompactPointerTuple<UniquedStringImpl*,..>` in `CompactPropertyTableEntry`/`PropertyCondition`, and JIT codegen that reads `StringImpl::m_hashAndFlags` from a live uid register (`AssemblyHelpers.cpp:521/618/713`, DFG/FTL `compileCheckIdent` + HasOwnProperty paths, `InlineCacheCompiler.cpp:2395`). `CacheableIdentifier` already uses bit 0 as a tag; a fiber word stored there needs bits 0|1 set.
+
+Results at 20 commits: RAMification geomean +0.4% (peak footprint, 20 string-heavy JetStream2 subtests, 5 runs), JetStream2 score geomean -0.4% (same subset, 3 runs). Both within container noise. Individual subtests: pdfjs +5.5% score / +3% footprint, babylon-wtb +3.2% score, string-unpack-code +3.1% score / -2.8% footprint, typescript +2.8% score / -3.9% footprint.

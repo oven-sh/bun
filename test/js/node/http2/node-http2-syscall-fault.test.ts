@@ -182,7 +182,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
       // on_native_writable, not an exception the test runner can catch.
       await using proc = Bun.spawn({
         cmd: [bunExe(), path.join(import.meta.dir, "node-http2-writable-destroy-fixture.ts")],
-        env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0" },
+        env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
         stdout: "pipe",
         stderr: "pipe",
       });

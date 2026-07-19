@@ -191,7 +191,6 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 });
 

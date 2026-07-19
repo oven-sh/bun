@@ -17,8 +17,10 @@ on:
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "test/harness.ts"
+      - "test/tsconfig.json"
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
+      - ".github/actions/setup-bun/**"
   pull_request:
     paths:
       - "src/**/*.rs"
@@ -26,8 +28,10 @@ on:
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "test/harness.ts"
+      - "test/tsconfig.json"
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
+      - ".github/actions/setup-bun/**"
   merge_group:
 
 env:
@@ -44,6 +48,8 @@ jobs:
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

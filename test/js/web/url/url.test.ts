@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import { domainToASCII } from "node:url";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -331,4 +332,51 @@ describe("object URL prefix check", () => {
       signalCode: null,
     });
   }, 60_000);
+});
+
+// Unicode 16.0 UTS #46 reclassified several codepoints from "disallowed" to
+// "mapped"/"ignored"; the bundled ICU predates that. The uts46.nrm override in
+// bun_icu_decompress.cpp only applies on Linux/Windows (udata hook platforms).
+describe.skipIf(!(isLinux || isWindows))("IDNA UTS #46 Unicode 16.0 mappings", () => {
+  it("maps late-casefolded capitals instead of rejecting them", () => {
+    expect(
+      [
+        "https://\u04C0/", // CYRILLIC LETTER PALOCHKA
+        "https://\u10AC/", // GEORGIAN CAPITAL LETTER NAR
+        "https://a\u10B5/", // a + GEORGIAN CAPITAL LETTER KHAR
+        "https://\u2132/", // TURNED CAPITAL F
+        "https://\u2183/", // ROMAN NUMERAL REVERSED ONE HUNDRED
+        "https://\u1874\u10A0/", // MONGOLIAN LETTER ... + GEORGIAN CAPITAL AN
+        "https://\uA846\u3002\u2183\u0FB5\uB1AE-/", // WPT IdnaTestV2 "V3 (ignored)" case
+      ].map(href => new URL(href).hostname),
+    ).toEqual([
+      "xn--s5a",
+      "xn--3kj",
+      "xn--a-hws",
+      "xn--73g",
+      "xn--r5g",
+      "xn--h9e436h",
+      "xn--fc9a.xn----qmg097k469k",
+    ]);
+  });
+
+  it("ignores format controls reclassified in Unicode 16.0", () => {
+    expect(
+      [
+        "https://a\u180Eb/", // MONGOLIAN VOWEL SEPARATOR
+        "https://a\u2061b/", // FUNCTION APPLICATION
+        "https://a\u3164b/", // HANGUL FILLER
+      ].map(href => new URL(href).hostname),
+    ).toEqual(["ab", "ab", "ab"]);
+  });
+
+  it("node:url domainToASCII applies the same mapping", () => {
+    expect(domainToASCII("\u10AC")).toBe("xn--3kj");
+    expect(domainToASCII("\u2183")).toBe("xn--r5g");
+  });
+
+  it("still maps pre-existing UTS #46 cases", () => {
+    expect(new URL("https://M\u00FCnchen.de/").hostname).toBe("xn--mnchen-3ya.de");
+    expect(new URL("https://\u0391/").hostname).toBe("xn--mxa");
+  });
 });

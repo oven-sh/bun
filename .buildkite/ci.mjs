@@ -864,7 +864,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
     // darwin was held at 2 when builds also ran on the mac fleet (#21690).
     // Builds now cross-compile from Linux (#31303) so the fleet is test-only;
     // at 2 shards darwin x64 is the ~21 min critical path on every PR build.
-    parallelism: os === "darwin" ? 6 : os === "windows" ? 8 : 20,
+    // 5 matches the smallest test-darwin pool (aarch64 `previous`, 5 agents;
+    // aarch64 `latest` has 7, x64 has 8 per build-agent census 2026-07).
+    parallelism: os === "darwin" ? 5 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",

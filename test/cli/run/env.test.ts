@@ -633,6 +633,40 @@ describe("--env-file", () => {
   });
 });
 
+describe(".env with a UTF-8 BOM", () => {
+  // Notepad and some PowerShell redirects write EF BB BF before the first byte.
+  // Previously the BOM failed the key grammar and skip_line() silently dropped line 1.
+  const bom = "\uFEFF";
+
+  test("automatic .env load keeps the first variable", () => {
+    const dir = tempDirWithFiles("dotenv-bom", {
+      ".env": `${bom}BUNTEST_BOM_A=1\r\nBUNTEST_BOM_B=2\r\n`,
+      "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe(JSON.stringify({ A: "1", B: "2" }));
+  });
+
+  test("--env-file keeps the first variable", () => {
+    const dir = tempDirWithFiles("dotenv-bom-envfile", {
+      "with-bom.env": `${bom}BUNTEST_BOM_A=1\nBUNTEST_BOM_B=2\n`,
+      "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
+    });
+    const result = Bun.spawnSync([bunExe(), "--env-file", "with-bom.env", "index.ts"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
+    expect(result.stdout.toString("utf8").trim()).toBe(JSON.stringify({ A: "1", B: "2" }));
+  });
+
+  test("util.parseEnv strips the BOM", () => {
+    expect(parseEnv(`${bom}A=1\nB=2\n`)).toEqual({ A: "1", B: "2" });
+    expect(parseEnv(`${bom}export FOO=bar\n`)).toEqual({ FOO: "bar" });
+    expect(parseEnv(bom)).toEqual({});
+  });
+});
+
 test.if(isWindows)("environment variables are case-insensitive on Windows", () => {
   const dir = tempDirWithFiles("dotenv", {
     ".env": "FOO=bar\n",

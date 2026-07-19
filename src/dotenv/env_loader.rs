@@ -1300,7 +1300,9 @@ impl<'a> Parser<'a> {
         value_buffer.clear();
         let mut parser = Parser {
             pos: 0,
-            src,
+            // Notepad and PowerShell redirects emit a UTF-8 BOM; without this the
+            // first key fails `parse_key` and `skip_line` silently drops line 1.
+            src: strings::without_utf8_bom(src),
             value_buffer,
         };
         parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)

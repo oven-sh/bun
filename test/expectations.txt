@@ -40,14 +40,6 @@
 # linux-x64-musl matrix only; still runs everywhere else (build 63145:
 # alpine 3.23 x64 + x64-baseline only).
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
-# Same conservative-stack-scan class as above and issue #33044
-# (test-net-connect-memleak): one of N http.ClientRequest objects is never
-# finalized on alpine x64 (stuck 7/8 in an unbounded gc()+setImmediate loop)
-# after the single-prototype emit picked up #34519's copy-on-write listener
-# storage. No JS-level retention (15/15 on glibc and darwin); the extra
-# `result` local in the unified emit shifts frame layout enough for JSC's
-# conservative scanner to keep finding one stale pointer on musl x64.
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ FLAKY ] # conservative-stack-scan keeps one ClientRequest alive on musl x64 (issue #33044 class)
 
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public

@@ -231,6 +231,55 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+it("process.env coerces assigned values to strings", () => {
+  try {
+    process.env.COERCE_UNDEF = "initial";
+    process.env.COERCE_UNDEF = undefined;
+    process.env.COERCE_NUM = 42;
+    process.env.COERCE_NULL = null;
+    process.env.COERCE_BOOL = true;
+    process.env.COERCE_OBJ = { toString: () => "from-toString" };
+    process.env["4242424242"] = 55;
+    Object.defineProperty(process.env, "COERCE_DEF", {
+      value: 7,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    expect({
+      undef: process.env.COERCE_UNDEF,
+      num: process.env.COERCE_NUM,
+      null: process.env.COERCE_NULL,
+      bool: process.env.COERCE_BOOL,
+      obj: process.env.COERCE_OBJ,
+      idx: process.env["4242424242"],
+      def: process.env.COERCE_DEF,
+    }).toEqual({
+      undef: "undefined",
+      num: "42",
+      null: "null",
+      bool: "true",
+      obj: "from-toString",
+      idx: "55",
+      def: "7",
+    });
+
+    expect(() => {
+      process.env.COERCE_THROWS = {
+        toString() {
+          throw new Error("boom");
+        },
+      };
+    }).toThrow("boom");
+    expect(process.env.COERCE_THROWS).toBeUndefined();
+  } finally {
+    for (const k of ["COERCE_UNDEF", "COERCE_NUM", "COERCE_NULL", "COERCE_BOOL", "COERCE_OBJ", "COERCE_DEF", "COERCE_THROWS", "4242424242"]) {
+      delete process.env[k];
+    }
+  }
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

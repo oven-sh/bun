@@ -509,8 +509,7 @@ describe("bunshell", () => {
 
     test("subprocess: `|| rhs` runs", async () => {
       const buf = Buffer.alloc(4);
-      const r =
-        await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf} || echo write_failed`.quiet();
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf} || echo write_failed`.quiet();
       expect({ stdout: r.stdout.toString(), exitCode: r.exitCode }).toEqual({
         stdout: "write_failed\n",
         exitCode: 0,

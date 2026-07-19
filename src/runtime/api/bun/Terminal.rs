@@ -735,15 +735,16 @@ impl Terminal {
     }
 
     /// Windows analogue of `drain_and_close_slave_fd`'s tail: once the direct
-    /// child has exited, an inline terminal no longer keeps the event loop
-    /// alive. The reader stays registered, so if the child left a grandchild
-    /// attached to conhost its output still arrives while anything else keeps
-    /// the loop running; conhost self-exits (and EOF arrives) once that last
-    /// client disconnects.
+    /// child has exited the writer no longer pins the event loop. The reader
+    /// stays ref'd so the loop keeps running until conhost delivers the final
+    /// frame and EOF (which `release_pseudoconsole_reference` arranged to
+    /// happen once the last client disconnects); unreffing it here could let
+    /// the loop exit between child-exit and that asynchronous EOF.
     #[cfg(windows)]
     pub(crate) fn unref_after_inline_child_exit(&self) {
         if !self.flags.get().contains(Flags::CLOSED) {
-            self.update_ref(false);
+            let ctx = self.event_loop_handle.as_event_loop_ctx();
+            self.writer.with_mut(|w| w.update_ref(ctx, false));
         }
     }
 
@@ -1576,20 +1577,23 @@ impl Terminal {
 
         #[cfg(windows)]
         {
-            // READER_DONE ⇒ conhost has exited and the signal pipe is broken;
-            // ResizePseudoConsole would fail with ERROR_NO_DATA. Skip to match
-            // POSIX where master_fd is already INVALID on that path.
-            if !self.flags.get().contains(Flags::READER_DONE) {
-                if let Some(hpcon) = self.hpcon.get() {
-                    let size = windows::COORD {
-                        X: clamp_to_coord(new_cols),
-                        Y: clamp_to_coord(new_rows),
-                    };
-                    // SAFETY: hpcon is a valid open HPCON.
-                    let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
-                    if hr < 0 {
-                        return Err(global_object.throw(format_args!("Failed to resize terminal")));
-                    }
+            // HRESULT_FROM_WIN32(ERROR_NO_DATA | ERROR_BROKEN_PIPE): the signal
+            // pipe's read end is gone because conhost has exited. For inline
+            // terminals that can happen any time after the child disconnects
+            // (the \Reference handle is released at spawn); treat it as a
+            // no-op so resize() keeps its pre-existing no-throw behaviour in
+            // the window between child exit and reader EOF.
+            const HR_NO_DATA: i32 = 0x8007_00E8u32 as i32;
+            const HR_BROKEN_PIPE: i32 = 0x8007_006Du32 as i32;
+            if let Some(hpcon) = self.hpcon.get() {
+                let size = windows::COORD {
+                    X: clamp_to_coord(new_cols),
+                    Y: clamp_to_coord(new_rows),
+                };
+                // SAFETY: hpcon is a valid open HPCON.
+                let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
+                if hr < 0 && hr != HR_NO_DATA && hr != HR_BROKEN_PIPE {
+                    return Err(global_object.throw(format_args!("Failed to resize terminal")));
                 }
             }
         }

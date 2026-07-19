@@ -298,24 +298,27 @@ function getImageName(platform, options) {
 }
 
 /**
- * @param {number} [limit]
- * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
+ * @link https://buildkite.com/docs/pipelines/configure/retry#retry-attributes-automatic-retry-attributes
  */
 function getRetry() {
   return {
     manual: {
       permit_on_passed: true,
     },
-    // Self-heal infra deaths once instead of leaving the build failed until a
-    // human notices and clicks retry:
-    //   -1  = agent lost / process killed (box died, agent restarted)
-    //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
-    // User-canceled jobs are state=canceled, which never triggers automatic
-    // retry, so this cannot resurrect deliberately canceled builds. limit: 1
-    // caps the cost when a suite genuinely crashes with these statuses.
+    // Self-heal agent/infra loss, and only that. Conditions within one rule
+    // are ANDed, so `signal_reason` scopes each rule to the failure mode it
+    // names: `none` is an agent that dropped its connection mid-job,
+    // `agent_stop` is a graceful agent restart mid-job, `process_run_error`
+    // is the bootstrap failing before the command ever ran. A blanket
+    // `exit_status: -1` / `255` also matches `cancel`, which is what a
+    // `timeout_in_minutes` kill records, so a timed-out shard would be
+    // re-queued just to time out again on the next agent. User-canceled
+    // builds are state=canceled and never auto-retry regardless of these
+    // rules.
     automatic: [
-      { exit_status: -1, limit: 1 },
-      { exit_status: 255, limit: 1 },
+      { exit_status: -1, signal_reason: "none", limit: 1 },
+      { signal_reason: "agent_stop", limit: 2 },
+      { signal_reason: "process_run_error", limit: 1 },
     ],
   };
 }

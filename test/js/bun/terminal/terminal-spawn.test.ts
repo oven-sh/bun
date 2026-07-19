@@ -182,17 +182,27 @@ describe("Bun.Terminal subprocess integration", () => {
 
   test("Bun.spawn with inline terminal option", async () => {
     let output = "";
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const seen = Promise.withResolvers<void>();
+    const gone = Promise.withResolvers<void>();
 
+    // Windows Server 2019: inline terminals ClosePseudoConsole on child exit,
+    // which races conhost's render thread and drops a fast child's output ~50%
+    // of runs. Keep the child attached until the marker is observed.
     const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "console.log('inline-terminal')"],
+      cmd: [bunExe(), "-e", "console.log('inline-terminal'); setInterval(()=>{},1e9)"],
       env: bunEnv,
       terminal: {
         cols: 80,
         rows: 24,
         data(_term, chunk: Uint8Array) {
           output += new TextDecoder().decode(chunk);
-          if (output.includes("inline-terminal")) resolve();
+          if (output.includes("inline-terminal")) seen.resolve();
+        },
+        exit() {
+          // On a regression this fires with only ConPTY's init sequence in
+          // `output`; reject so the assertion reports instead of hanging.
+          gone.resolve();
+          seen.reject(new Error("terminal exit before data; output=" + JSON.stringify(output)));
         },
       },
     });
@@ -202,11 +212,13 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(proc.stdout).toBeNull();
     expect(proc.stderr).toBeNull();
 
-    await promise;
+    await seen.promise;
+    expect(output).toContain("inline-terminal");
+
+    proc.kill();
     await proc.exited;
     proc.terminal?.close();
-
-    expect(output).toContain("inline-terminal");
+    await gone.promise;
   });
 
   test("terminal.write reaches subprocess stdin", async () => {

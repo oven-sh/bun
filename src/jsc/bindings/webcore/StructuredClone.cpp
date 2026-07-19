@@ -151,8 +151,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
 
     // StructuredSerializeWithTransfer sets [[Detached]] on every transferable and
     // StructuredDeserializeWithTransfer creates a fresh object per transferDataHolder.
-    // Without this hop a transferred MessagePort is never detached and the caller's
-    // original port is handed straight back, so a detached port is accepted on retry.
     auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
     if (disentangled.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());

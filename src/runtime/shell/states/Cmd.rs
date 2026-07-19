@@ -749,7 +749,7 @@ impl Cmd {
                         stdio[STDIN_NO] = if bytes.is_empty() {
                             Stdio::Ignore
                         } else {
-                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
+                            Stdio::OwnedBuffer(bytes.to_vec())
                         };
                     }
                     if flags.duplicate_out() {

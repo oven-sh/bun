@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 // Child reads all of stdin via Bun.stdin (avoids node:streams so this stays
 // hermetic to spawn's stdin handling) and prints the SHA-1 of what it received.
 const catScript = "Bun.readableStreamToArrayBuffer(Bun.stdin.stream()).then(b => console.log(Bun.SHA1.hash(b, 'hex')))";
+
+// BUN_FEATURE_FLAG_DISABLE_MEMFD is Linux-only (can_use_memfd() is a constant
+// false elsewhere), so on macOS/Windows both values exercise the same path.
+const memfdMatrix = isLinux ? ["1", "0"] : ["1"];
 
 // Bun.spawn copies ArrayBuffer/TypedArray stdin into its own storage before
 // writing it to the child. That copy should live in native memory owned by the
@@ -14,7 +18,7 @@ const catScript = "Bun.readableStreamToArrayBuffer(Bun.stdin.stream()).then(b =>
 // fast path so the pipe writer actually holds the buffer across the async
 // write (otherwise the copy is flushed to a memfd synchronously and dropped).
 describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copied bytes", () => {
-  for (const disableMemfd of ["1", "0"]) {
+  for (const disableMemfd of memfdMatrix) {
     test(`BUN_FEATURE_FLAG_DISABLE_MEMFD=${disableMemfd}`, async () => {
       const fixture = /* js */ `
         const { heapStats } = require("bun:jsc");
@@ -135,7 +139,7 @@ describe("Bun.spawn stdin: ArrayBuffer bytes reach the child intact", () => {
     ]),
   );
 
-  for (const disableMemfd of ["1", "0"]) {
+  for (const disableMemfd of memfdMatrix) {
     test.concurrent(`BUN_FEATURE_FLAG_DISABLE_MEMFD=${disableMemfd}`, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],

@@ -916,6 +916,33 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(0);
 });
 
+test("EventEmitter.prototype.listenerCount", () => {
+  const ee = new EventEmitter();
+  const a = () => {};
+  const b = () => {};
+
+  expect(ee.listenerCount("x")).toBe(0);
+  expect(ee.listenerCount("x", a)).toBe(0);
+
+  ee.on("x", a);
+  expect(ee.listenerCount("x")).toBe(1);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(0);
+
+  ee.on("x", b);
+  expect(ee.listenerCount("x")).toBe(2);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(1);
+
+  ee.once("y", a);
+  expect(ee.listenerCount("y")).toBe(1);
+  expect(ee.listenerCount("y", a)).toBe(1);
+
+  // null/undefined listener arg means "count all", same as omitting it
+  expect(ee.listenerCount("x", null as any)).toBe(2);
+  expect(ee.listenerCount("x", undefined)).toBe(2);
+});
+
 test("events.listenerCount validates emitter argument", () => {
   const ee = new EventEmitter();
   ee.on("y", () => {});

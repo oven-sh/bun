@@ -1876,6 +1876,10 @@ impl Terminal {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;
         }
+        self.update_flags(|f| {
+            f.insert(Flags::READER_DONE);
+            f.remove(Flags::CONNECTED);
+        });
         #[cfg(windows)]
         {
             // Conhost may self-terminate (EOF) before the quiescence timer
@@ -1883,10 +1887,6 @@ impl Terminal {
             self.cancel_pending_close_timer();
             self.close_pseudoconsole();
         }
-        self.update_flags(|f| {
-            f.insert(Flags::READER_DONE);
-            f.remove(Flags::CONNECTED);
-        });
         // EOF from master - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {

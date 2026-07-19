@@ -446,7 +446,7 @@ for (const { body, fn } of bodyTypes) {
           },
         });
         const stream = fn(input).textStream();
-        expect(async () => {
+        await expect(async () => {
           for await (const _ of stream) {
           }
         }).toThrow("boom");
@@ -476,7 +476,7 @@ for (const { body, fn } of bodyTypes) {
           },
         });
         const stream = fn(input).textStream();
-        expect(async () => {
+        await expect(async () => {
           for await (const _ of stream) {
           }
         }).toThrow(TypeError);

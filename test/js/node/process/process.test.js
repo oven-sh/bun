@@ -249,6 +249,12 @@ it("Object.defineProperty on process.env rejects accessor and partial descriptor
   Object.defineProperty(process.env, "goo", { value: "goo", configurable: true, writable: true, enumerable: true });
   expect(process.env.goo).toBe("goo");
   delete process.env.goo;
+
+  // Node's EnvDefiner delegates to EnvSetter, which coerces to a string.
+  Object.defineProperty(process.env, "goo", { value: 42, configurable: true, writable: true, enumerable: true });
+  expect(process.env.goo).toBe("42");
+  expect(typeof process.env.goo).toBe("string");
+  delete process.env.goo;
 });
 
 it("process.env is spreadable and editable", () => {

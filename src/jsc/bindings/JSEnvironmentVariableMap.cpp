@@ -424,7 +424,12 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!throwIfInvalidEnvDescriptor(globalObject, scope, descriptor))
             return false;
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+        // Node's EnvDefiner delegates to EnvSetter, which coerces the value to a
+        // string; do the same so all three process.env variants match.
+        auto* string = descriptor.value().toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        PropertyDescriptor stringDescriptor(string, 0);
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, stringDescriptor, shouldThrow));
     }
 
 private:

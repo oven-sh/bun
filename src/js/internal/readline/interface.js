@@ -56,9 +56,9 @@ let kFirstEventParam;
 const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
-// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so
-// non-terminal readline interfaces (FileHandle#readLines, tty cursor calls)
-// stay cheap.
+// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so a bare
+// require("node:readline") for cursorTo/clearLine stays cheap. Constructing
+// an Interface always calls setupHistoryManager, so readLines() still loads it.
 let ReplHistory;
 
 const kMaxUndoRedoStackSize = 2048;

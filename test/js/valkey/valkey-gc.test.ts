@@ -80,7 +80,7 @@ test.concurrent("RedisClient survives subscribe() + close() against a server tha
       try { c.subscribe("ch" + round, () => {}).catch(() => {}); } catch {}
       try { c.close(); } catch {}
       if (round % 8 === 0) Bun.gc(false);
-      await new Promise(r => setTimeout(r, 1));
+      await new Promise(r => setImmediate(r));
     }
     server.stop(true);
     console.log("OK");

@@ -484,9 +484,13 @@ export class Dev extends EventEmitter {
           clientWaits++;
           maybeResolve();
         };
-        // A client that crashes applying the update never acks; it is dropped
-        // from connectedClients on exit, so re-check instead of hanging.
-        const exitHandler = () => maybeResolve();
+        // A client that crashes applying the update never acks; reject so the
+        // failure surfaces at the dev.write() call instead of timing out.
+        const exitHandler = (code: number | string) => {
+          cleanup();
+          const mapped = exitCodeMapStrings[code];
+          reject(new Error(`Client exited while applying hot update${mapped ? `: ${mapped}` : ` (${code})`}`));
+        };
         client.on("received-hmr-event", socketEventHandler);
         client.on("exit", exitHandler);
         disposes.add(() => {

@@ -2272,6 +2272,10 @@ impl Stream {
             client.outbound_queue_size.get()
         );
 
+        // dispatch_write_callback re-enters JS; a destroy there can drop the
+        // socket's ref and free `client` between iterations. Not during
+        // finalize: refcount is already 0 and a ref/deref would re-destroy.
+        let _keepalive = (!FINALIZING).then(|| client.keepalive());
         let mut queue = core::mem::take(&mut self.data_frame_queue);
         while let Some(item) = queue.dequeue() {
             let frame = item;
@@ -3441,6 +3445,15 @@ impl H2FrameParser {
     /// to the socket, so a multi-frame batch carries the already-corked bytes (e.g. the
     /// response HEADERS frame) in the same write.
     fn drain_cork_into(&self, out: &mut Vec<u8>) {
+        // CORK_BUFFER is thread-local across every session: only drain bytes we corked.
+        // send_data()'s multi-frame path reaches here without having called cork(), and
+        // prepending another session's corked frames to this one's batch sends them to
+        // the wrong peer. uncork() clears CORKED_H2 before calling this, so None passes.
+        if let Some(corked) = CORKED_H2.with(|c| c.get())
+            && !std::ptr::eq(corked, self.as_ctx_ptr())
+        {
+            return;
+        }
         let off = CORK_OFFSET.with(|c| c.get()) as usize;
         if off == 0 {
             return;
@@ -9585,6 +9598,10 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_writable(&self) {
+        // flush() re-enters JS (write callbacks, onStreamEnd, onWantTrailers);
+        // that JS can destroy the session and drop the socket's ref, so the
+        // keepalive must span the whole loop, not just each flush() call.
+        let _keepalive = self.keepalive();
         // flush() ends in flush_stream_queue() → write() → cork(), leaving the
         // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
         // here would let loop.c see last_write_failed==0 and disarm WRITABLE,
@@ -9601,6 +9618,9 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
+        // detach_native_socket can drop the socket's last ref (Writeonly deref),
+        // so match on_native_read/on_native_writable and hold our own +1.
+        let _keepalive = self.keepalive();
         self.detach_native_socket();
     }
 

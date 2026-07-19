@@ -692,7 +692,8 @@ declare module "bun" {
 
     /**
      * If `true`, wrap at word boundaries when possible.
-     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     * If `false`, break every line at exactly the column width (characters
+     * are split wherever the limit falls, ignoring word boundaries).
      *
      * @default true
      */
@@ -4550,6 +4551,16 @@ declare module "bun" {
      * @default true
      */
     shared?: boolean;
+    /**
+     * Byte offset into the file where the mapping starts.
+     * @default 0
+     */
+    offset?: number;
+    /**
+     * Maximum number of bytes to map. Clamped to the file size
+     * (minus `offset`). Defaults to mapping the rest of the file.
+     */
+    size?: number;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -6555,6 +6566,12 @@ declare module "bun" {
        * callback contains only the portion that fit in the buffer.
        */
       truncated: boolean;
+      /**
+       * `true` if the datagram's source address was IPv6, `false` for IPv4.
+       * Reflects the packet's own `sockaddr` — a socket adopting an existing
+       * fd may receive packets of the other family than it was created with.
+       */
+      ipv6: boolean;
     }
 
     export interface SocketHandler<DataBinaryType extends BinaryType> {

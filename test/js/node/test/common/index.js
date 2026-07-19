@@ -57,6 +57,8 @@ const noop = () => {};
 const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
 
+const hasSQLite = Boolean(process.versions.sqlite);
+
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(major >= 0 && major <= 0xf);
@@ -130,6 +132,12 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--no-warnings" && process.versions.bun) {
+        // Harmless under Bun; keep scanning so a later --expose-internals (or
+        // --expose-gc) in the same Flags line still installs its shim instead
+        // of re-spawning the test as a child process.
+        continue;
+      }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
         globalThis.gc ??= () => Bun.gc(true);
         break;
@@ -152,28 +160,13 @@ if (process.argv.length === 2 &&
       }
       if (flag === "--expose-internals" && process.versions.bun) {
         process.env.SKIP_FLAG_CHECK = "1";
-        // Serve require("internal/*") from bun's internal module registry
-        // (via bun:internal-for-testing, which is expose-internals-gated:
-        // always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-        // for release). Unknown internal/* specifiers fall through to the
-        // original require and fail exactly as before.
-        const BunModule = require('module');
-        const originalRequire = BunModule.prototype.require;
-        let exposedInternals;
-        BunModule.prototype.require = function require(id) {
-          if (typeof id === 'string' && id.startsWith('internal/')) {
-            exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
-            if (exposedInternals[id] !== undefined) {
-              return exposedInternals[id];
-            }
-          }
-          return originalRequire.apply(this, arguments);
-        };
-        // http2-specific internal modules (internal/http2/util, …) are
-        // served separately via Bun.plugin module shims backed by the
-        // node:http2 implementation's own internals.
-        installBunExposeInternalsShim();
+        installBunExposeInternalsRequireInterceptor();
         break;
+      }
+      if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
+        // node:sqlite is always available in Bun; the Node experimental gate
+        // does not exist, so don't re-spawn just to pass the flag through.
+        continue;
       }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
@@ -194,6 +187,43 @@ if (process.argv.length === 2 &&
       }
     }
   }
+}
+
+// Bun: cluster workers re-run the test file but skip the flag-check block
+// above (it is gated on cluster.isPrimary), so tests gated on
+// `// Flags: --expose-internals` would lose access to internal/* in the
+// worker. Install the same require interceptor for workers.
+if (process.versions.bun &&
+    process.argv.length === 2 &&
+    isMainThread &&
+    !require('cluster').isPrimary &&
+    fs.existsSync(process.argv[1]) &&
+    parseTestFlags().includes('--expose-internals')) {
+  installBunExposeInternalsRequireInterceptor();
+}
+
+// Serve require("internal/*") from bun's internal module registry
+// (via bun:internal-for-testing, which is expose-internals-gated:
+// always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+// for release). Unknown internal/* specifiers fall through to the
+// original require and fail exactly as before.
+function installBunExposeInternalsRequireInterceptor() {
+  const BunModule = require('module');
+  const originalRequire = BunModule.prototype.require;
+  let exposedInternals;
+  BunModule.prototype.require = function require(id) {
+    if (typeof id === 'string' && id.startsWith('internal/')) {
+      exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
+      if (exposedInternals[id] !== undefined) {
+        return exposedInternals[id];
+      }
+    }
+    return originalRequire.apply(this, arguments);
+  };
+  // http2-specific internal modules (internal/http2/util, …) are
+  // served separately via Bun.plugin module shims backed by the
+  // node:http2 implementation's own internals.
+  installBunExposeInternalsShim();
 }
 
 const isWindows = process.platform === 'win32';
@@ -828,6 +858,12 @@ function skipIfWorker() {
   }
 }
 
+function skipIfSQLiteMissing() {
+  if (!hasSQLite) {
+    skip('missing SQLite');
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1097,6 +1133,7 @@ const common = {
   hasCrypto,
   hasOpenSSL,
   hasQuic,
+  hasSQLite,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
@@ -1131,6 +1168,7 @@ const common = {
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   skipIfWorker,
   spawnPromisified,
 
@@ -1292,6 +1330,29 @@ function installBunExposeInternalsShim() {
       this.code = "ERR_HTTP2_ERROR";
     }
   }
+
+  // Webstreams tests read Node's `stream[kState].state` / `.storedError` and
+  // use isPromisePending from internal/webstreams/util. Bun's web streams keep
+  // that state in private fields; surface it through the same kState shape via
+  // bun:internal-for-testing.
+  const kWebStreamState = Symbol('kState');
+  let getWebStreamState;
+  try {
+    ({ getWebStreamState } = require('bun:internal-for-testing'));
+  } catch {
+    // bun:internal-for-testing is gated; without it the kState lookups below
+    // return undefined and the test fails on the assertion rather than here.
+  }
+  if (typeof getWebStreamState === 'function') {
+    for (const ctor of [ReadableStream, WritableStream]) {
+      Object.defineProperty(ctor.prototype, kWebStreamState, {
+        __proto__: null,
+        configurable: true,
+        get() { return getWebStreamState(this); },
+      });
+    }
+  }
+
   Bun.plugin({
     name: "node-test-expose-internals",
     setup(build) {
@@ -1310,7 +1371,16 @@ function installBunExposeInternalsShim() {
       }));
       build.module("internal/timers", () => ({
         loader: "object",
-        exports: { kTimeout: Symbol.for("::buntimeout::") },
+        // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
+        // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
+        exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
+      }));
+      build.module("internal/webstreams/util", () => ({
+        loader: "object",
+        exports: {
+          kState: kWebStreamState,
+          isPromisePending: promise => Bun.peek.status(promise) === "pending",
+        },
       }));
       // node's internal/http: serve the very same symbols Bun's _http_outgoing
       // attaches to OutgoingMessage instances, so tests poke at real state.

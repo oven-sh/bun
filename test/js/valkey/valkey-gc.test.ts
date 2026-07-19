@@ -2,6 +2,105 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "node:net";
 
+// Fuzzer found a heap-use-after-free: connect()'s tls_ctx_failed branch
+// called on_valkey_close() before the socket keep-alive ref was taken, so
+// on_valkey_close's unconditional deref over-released by one. do_connect's
+// scoped deref_guard then dropped the refcount to 0 and freed the
+// Box<JSValkeyClient> while the JS wrapper (and its ext ptr) was still
+// alive; the next property access read freed memory.
+test.concurrent("RedisClient survives a failed custom-TLS context without freeing the live client", async () => {
+  const src = `
+    for (let i = 0; i < 10; i++) {
+      const c = new Bun.RedisClient("rediss://127.0.0.1:1", {
+        tls: { key: "not a valid key", cert: "not a valid cert" },
+        autoReconnect: false,
+      });
+      c.onclose = () => {};
+      try { await c.connect(); } catch {}
+      // Before the fix the backing allocation was already freed here; ASAN
+      // reports heap-use-after-free on the status read inside this getter.
+      if (c.connected !== false) throw new Error("expected connected=false");
+      try { c.close(); } catch {}
+    }
+    Bun.gc(true);
+    await 1;
+    Bun.gc(true);
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+// Fuzzer found the same over-release reachable from subscribe() when the
+// socket dies mid-call: upsert_receive_handler's exit guard re-enters
+// on_writable/update_poll_ref before send() takes its own ref, so a
+// connect/close fault path inside could free the client under the live
+// `&self`. This variant races a server-side RST against subscribe()+close().
+test.concurrent("RedisClient survives subscribe() + close() against a server that resets the connection", async () => {
+  const src = `
+    const CRLF = "\\r\\n";
+    const blk = s => "$" + s.length + CRLF + s + CRLF;
+    const sockets = [];
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { buf: "" }; sockets.push(s); },
+        data(s, d) {
+          s.data.buf += d.toString("latin1");
+          if (s.data.buf.includes("HELLO")) s.write("%1" + CRLF + blk("proto") + ":3" + CRLF);
+          else if (s.data.buf.includes(CRLF)) s.write("+OK" + CRLF);
+          s.data.buf = "";
+        },
+        close() {},
+      },
+    });
+    for (let round = 0; round < 100; round++) {
+      const c = new Bun.RedisClient("redis://127.0.0.1:" + server.port, {
+        autoReconnect: true,
+        connectionTimeout: 2000,
+      });
+      c.onconnect = () => {}; c.onclose = () => {};
+      try { await c.connect(); } catch {}
+      const s = sockets.pop();
+      try { s?.terminate?.(); } catch {}
+      const t0 = Bun.nanoseconds();
+      while (Bun.nanoseconds() - t0 < 4e6) {}
+      try { c.subscribe("ch" + round, () => {}).catch(() => {}); } catch {}
+      try { c.close(); } catch {}
+      if (round % 8 === 0) Bun.gc(false);
+      await new Promise(r => setImmediate(r));
+    }
+    server.stop(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // Fuzzer found a flaky SIGILL when a RedisClient is constructed, a command
 // throws during argument validation (before any connection attempt), and the
 // client is then garbage collected. `updatePollRef` could be reached after
@@ -132,10 +231,9 @@ test.concurrent("RedisClient survives GC across many short-lived instances", asy
 });
 
 // A RESP scalar line (simple string, error, integer, ...) must end with CRLF.
-// The reader bounds how many bytes it will accumulate while waiting for that
-// terminator (MAX_LINE_LEN = 512 KiB), so a server that streams an endless
-// unterminated line gets a protocol error promptly instead of the client
-// buffering and rescanning the whole line on every socket read.
+// The reader caps line-terminated replies at MAX_BULK_LEN (512 MB), so a 600 KB
+// unterminated line is treated as a partial reply; when the server closes
+// mid-line the pending command is rejected as connection-closed.
 test.concurrent("rejects a RESP simple-string reply whose line terminator never arrives", async () => {
   // Minimal mock Redis server: replies +OK to the HELLO handshake, then
   // answers the next command with `payload`.
@@ -161,12 +259,9 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
     });
   }
 
-  // 1) A simple-string reply whose CRLF terminator never arrives. Once more
-  //    than 512 KiB of the line has accumulated, the client must fail the
-  //    reply with a protocol error rather than keep waiting for a terminator
-  //    that never comes. (The server closes the socket after the payload so
-  //    that a client which keeps waiting still settles the promise -- with a
-  //    connection-closed error instead of the expected protocol error.)
+  // 1) A simple-string reply whose CRLF terminator never arrives. The reader
+  //    treats the unterminated bytes as a partial reply and keeps waiting; when
+  //    the server closes, the pending command is rejected as connection-closed.
   {
     const unterminated = Buffer.from("+" + Buffer.alloc(600_000, "A").toString());
     const { server, port } = await listen(unterminated, true);
@@ -179,7 +274,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
         await client.send("PING", []);
         expect.unreachable();
       } catch (error: any) {
-        expect(error.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+        expect(error.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
       } finally {
         client.close();
       }
@@ -188,8 +283,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
     }
   }
 
-  // 2) A large but properly terminated simple string under the bound still
-  //    parses.
+  // 2) A large, properly terminated simple string still parses.
   {
     const value = Buffer.alloc(100_000, "B").toString();
     const { server, port } = await listen(Buffer.from("+" + value + "\r\n"), false);

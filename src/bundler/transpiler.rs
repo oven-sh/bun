@@ -561,6 +561,21 @@ impl<'a> Transpiler<'a> {
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
 
+        // `load_defines` injects a default `process.env.NODE_ENV`; sample the
+        // explicit sources first so that default isn't mistaken for user intent
+        // and `force_node_env` stays `Unspecified` (tsconfig jsx stays in control).
+        let had_explicit_node_env = env_loader.get_node_env().is_some()
+            || self
+                .options
+                .transform_options
+                .define
+                .as_ref()
+                .is_some_and(|m| {
+                    m.keys
+                        .iter()
+                        .any(|k| &**k == options::default_user_defines::node_env::KEY)
+                });
+
         // `parse_env_json` needs a thread-local AST store to build
         // `E::String` nodes in. That work
         // is now done lazily inside `DefineData::parse`, only on the JSON-parse
@@ -576,13 +591,15 @@ impl<'a> Transpiler<'a> {
         self.options.load_defines(self.arena, Some(env_loader))?;
 
         let mut is_development = false;
-        if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
-            if !node_env.is_empty() {
-                if let Some(s) = node_env[0].data.value.e_string() {
-                    if s.eql_comptime(b"production") {
-                        is_production = true;
-                    } else if s.eql_comptime(b"development") {
-                        is_development = true;
+        if had_explicit_node_env {
+            if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
+                if !node_env.is_empty() {
+                    if let Some(s) = node_env[0].data.value.e_string() {
+                        if s.eql_comptime(b"production") {
+                            is_production = true;
+                        } else if s.eql_comptime(b"development") {
+                            is_development = true;
+                        }
                     }
                 }
             }

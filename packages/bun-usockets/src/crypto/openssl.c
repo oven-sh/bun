@@ -247,7 +247,7 @@ static void us_ssl_pending_session_free(void *parent, void *ptr, CRYPTO_EX_DATA 
   struct us_ssl_pending_session_t *pending = ptr;
   while (pending) {
     struct us_ssl_pending_session_t *next = pending->next;
-    free(pending);
+    us_free(pending);
     pending = next;
   }
 }
@@ -265,7 +265,7 @@ static void us_ssl_keylog_cb(const SSL *cssl, const char *line) {
     return;
   }
   struct us_ssl_pending_session_t *pending =
-      malloc(sizeof(struct us_ssl_pending_session_t) + line_len + 1);
+      us_malloc(sizeof(struct us_ssl_pending_session_t) + line_len + 1);
   if (!pending) {
     return;
   }
@@ -297,7 +297,7 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && s->ssl) {
       us_dispatch_keylog(s, pending->data, (int)pending->length);
     }
-    free(pending);
+    us_free(pending);
     pending = next;
   }
 }
@@ -317,7 +317,7 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
     return 0;
   }
   struct us_ssl_pending_session_t *pending =
-      malloc(sizeof(struct us_ssl_pending_session_t) + (size_t)length);
+      us_malloc(sizeof(struct us_ssl_pending_session_t) + (size_t)length);
   if (!pending) {
     return 0;
   }
@@ -355,7 +355,7 @@ static void ssl_flush_pending_session(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && s->ssl) {
       us_dispatch_session(s, pending->data, (int)pending->length);
     }
-    free(pending);
+    us_free(pending);
     pending = next;
   }
 }
@@ -424,7 +424,7 @@ static int us_ssl_pop_pending(SSL *ssl, int idx, unsigned char *out, int out_cap
   } else {
     memcpy(out, pending->data, (size_t)len);
   }
-  free(pending);
+  us_free(pending);
   return len;
 }
 
@@ -916,11 +916,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.passphrase) {
-#ifdef _WIN32
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)_strdup(options.passphrase));
-#else
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)strdup(options.passphrase));
-#endif
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)us_strdup(options.passphrase));
     SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
   }
 
@@ -1134,10 +1130,11 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
 
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded
  * key / certificate / extra-chain strings the regular key/cert/ca options can
- * consume. Returns 1 on success; the three out-strings are malloc'd and the
- * caller frees them with free(). On failure returns 0 and sets *err_reason to
- * a static tag: "parse" (not PKCS#12), "mac" (bad passphrase / corrupt),
- * "key" (no private key), "cert" (no certificate). */
+ * consume. Returns 1 on success; the three out-strings are libc malloc'd (not
+ * us_malloc) because the Rust caller releases them with libc free(). On
+ * failure returns 0 and sets *err_reason to a static tag: "parse" (not
+ * PKCS#12), "mac" (bad passphrase / corrupt), "key" (no private key),
+ * "cert" (no certificate). */
 static int pem_from_bio(BIO *bio, char **out, size_t *out_len) {
   char *mem = NULL;
   long n = BIO_get_mem_data(bio, &mem);
@@ -2237,8 +2234,11 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
       ERR_clear_error();
       s->ssl_fatal_error = 1;
     }
-    us_internal_socket_raw_shutdown(s);
   }
+  /* RECEIVED_SHUTDOWN brought us here, so the TLS shutdown is complete; FIN the
+   * TCP write side so the poll type becomes SHUT_DOWN and the loop's
+   * is_shut_down eof branch can close once both halves are done. */
+  us_internal_socket_raw_shutdown(s);
 }
 
 /* Resume a handshake suspended by an async SNICallback. `ctx` (may be NULL =

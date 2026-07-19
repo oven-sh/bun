@@ -1221,6 +1221,40 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 });
 
 describe("Bun.serve HTTP/3 production", () => {
+  // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
+  // H1 writes it via HttpResponse::writeMark(); H3 must too.
+  test("Date header is sent on every response shape", async () => {
+    await withServer(async port => {
+      // Cover every Http3Response header-send path: internalEnd (string/buffer
+      // body, 404, static route), flushHeaders (ReadableStream, Bun.file,
+      // file route), endWithoutBody (204, HEAD).
+      const cases: Array<{ path: string; method?: string }> = [
+        { path: "/hello" },
+        { path: "/big" },
+        { path: "/status" },
+        { path: "/nope" },
+        { path: "/stream" },
+        { path: "/file" },
+        { path: "/static" },
+        { path: "/file-route" },
+        { path: "/big", method: "HEAD" },
+      ];
+      const httpDate = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+      const results: Array<{ req: string; date: string | null }> = [];
+      for (const c of cases) {
+        const res = await fetchH3(port, c.path, c.method ? { method: c.method } : {});
+        await res.arrayBuffer();
+        results.push({ req: `${c.method ?? "GET"} ${c.path}`, date: res.headers.get("date") });
+      }
+      expect(results).toEqual(
+        cases.map(c => ({
+          req: `${c.method ?? "GET"} ${c.path}`,
+          date: expect.stringMatching(httpDate),
+        })),
+      );
+    });
+  });
+
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
   test("Alt-Svc emitted on HTTP/1.1 responses when http3 is enabled", async () => {
     await withServer(async port => {

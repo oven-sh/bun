@@ -836,25 +836,28 @@ pub mod serialize {
                 operator.to_css(dest)?;
 
                 if dest.minify {
-                    // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
                     // SAFETY: per the `CssString` invariant, the pointee borrows the parser
                     // arena which outlives the `Printer` it is being written to.
                     let value_bytes = unsafe { crate::arena_str(*value) };
-                    // `Vec<u8>: WriteAll<Error = Infallible>` — cannot fail.
-                    let mut id: Vec<u8> = Vec::new();
-                    let _ = css::serializer::serialize_identifier(value_bytes, &mut id);
 
-                    // `serialize_string` is called directly here since `CssString`
-                    // (`*const [u8]`) does not implement `generic::ToCss`.
-                    let mut s: Vec<u8> = Vec::new();
-                    let _ = css::serializer::serialize_string(value_bytes, &mut s);
+                    // Identifier form goes into the printer's reusable scratch
+                    // buffer; the quoted-string length is counted in a null
+                    // sink, so picking the shorter form allocates nothing.
+                    dest.scratchbuf.clear();
+                    let _ =
+                        css::serializer::serialize_identifier(value_bytes, &mut dest.scratchbuf);
+                    let id_len = dest.scratchbuf.len();
 
-                    let id_items = &id[..];
-                    if !id_items.is_empty() && id_items.len() < s.len() {
-                        dest.write_str(id_items)?;
+                    let mut counter = bun_io::DiscardingWriter::new();
+                    let _ = css::serializer::serialize_string(value_bytes, &mut counter);
+
+                    if id_len > 0 && id_len < counter.count {
+                        dest.write_scratchbuf(0..id_len)?;
                     } else {
-                        dest.write_str(&s)?;
+                        // `serialize_string` is called directly here since `CssString`
+                        // (`*const [u8]`) does not implement `generic::ToCss`.
+                        dest.serialize_string(value_bytes)?;
                     }
                 } else {
                     CSSStringFns::to_css(value, dest)?;

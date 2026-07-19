@@ -1352,7 +1352,11 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data);
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
+        global,
+        data,
+        JSValue::UNDEFINED,
+    );
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1482,6 +1486,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
+    close_dns_for_terminate,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1612,6 +1617,22 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+/// `RuntimeHooks::close_dns_for_terminate` — destroy the per-VM global DNS
+/// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
+/// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
+/// are all still live. See `Resolver::close_channel_for_terminate`.
+fn close_dns_for_terminate() {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
+    // of the `OnceCell` only (the resolver's own state is interior-mutable).
+    if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
+        gd.resolver.close_channel_for_terminate();
     }
 }
 
@@ -1829,7 +1850,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {

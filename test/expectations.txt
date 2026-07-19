@@ -54,6 +54,14 @@ test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/bi
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 
+# Spawns test-http-max-http-headers.js, which is not vendored, and asserts its
+# exit code. Only "passed" before #32631 because the old node:test shim never
+# awaited done-style callbacks, so the cp.on('close') assertions never ran.
+# With the real (t, done) support, the second/fourth tests fail (child exits 1
+# with "Module not found" where exit 0 is expected). Remove this entry once
+# test-http-max-http-headers.js is vendored.
+test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
+
 # Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
 # the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
 # swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script
@@ -77,6 +85,24 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
+
+# worker.terminate() lands while a process.* lazy PropertyCallback builder
+# (stdout/stderr/stdin/nextTick/mainModule, via setupWorkerStdio) is in JS;
+# tryClearException() refuses to clear the TerminationException, so the
+# builder returns with it pending and reifyStaticProperty reports the slot
+# found, tripping JSC's "ASSERTION FAILED: !scope.exception() || !result"
+# in getOwnPropertyDescriptor / JSValue::get. Tracked in #34095; fix PRs
+# #33966 and #33418. x64-asan only (e.g. builds 75570, 75601); release
+# lanes are unaffected. Remove once either fix PR lands.
+[ ASAN ] test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js [ CRASH ] # #34095: JSC assertion when terminate() interrupts a lazy PropertyCallback builder
+# The stress test is the bun-owned 8×10-worker amplification of the above,
+# but on CI it only ever hits JSC::ExceptionScope::assertNoException at
+# ExceptionScope.h:61 (6/6: builds 75493/75495/75514/75597/75604/75606),
+# which #33966 reports still reproducing at ~1/4000 workers AFTER its
+# lazy-builder fix ("termination landing later in the bootstrap, after the
+# stdio builders have completed"). Tracked separately in #34690; this entry
+# is NOT removable with the one above.
+[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
 
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]

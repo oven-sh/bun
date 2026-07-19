@@ -773,9 +773,11 @@ impl Terminal {
     #[cfg(windows)]
     pub(crate) fn close_pseudoconsole_after_quiescence(&self) {
         let flags = self.flags.get();
-        if flags.intersects(Flags::CLOSED | Flags::READER_DONE | Flags::PENDING_CLOSE)
-            || self.hpcon.get().is_none()
-        {
+        if flags.contains(Flags::PENDING_CLOSE) {
+            self.arm_pending_close_timer();
+            return;
+        }
+        if flags.intersects(Flags::CLOSED | Flags::READER_DONE) || self.hpcon.get().is_none() {
             self.close_pseudoconsole();
             return;
         }

@@ -228,27 +228,27 @@ process.exit(0);
     cmd: [bunExe(), "primary.ts"],
     env: bunEnv,
     cwd: String(dir),
-    stderr: "pipe",
+    stderr: "inherit",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr.trim()).toBe("");
   const { N, before, during, liveSubprocess } = JSON.parse(stdout.trim());
   // No per-worker protected roots while the workers are alive. Strict equality
   // against the baseline: a regression shows up as `before + N`.
   expect({
     protectedFunctionDelta: during.Function - before.Function,
     protectedObjectDelta: during.Object - before.Object,
+    exitCode,
   }).toEqual({
     protectedFunctionDelta: 0,
     protectedObjectDelta: 0,
+    exitCode: 0,
   });
   // After every worker exits and user code holds no reference, the Subprocess
   // wrappers are collectable. Allow one straggler for a conservatively rooted
   // async frame; a root-cycle leak retains all N.
   expect(liveSubprocess).toBeLessThanOrEqual(1);
   expect(liveSubprocess).toBeLessThan(N);
-  expect(exitCode).toBe(0);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

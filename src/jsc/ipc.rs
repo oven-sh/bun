@@ -108,7 +108,7 @@ impl InternalMsgHolder {
         let Some(cb) = map.get(global, key)? else {
             return Ok(None);
         };
-        map.delete_property(global, key);
+        crate::host_fn::from_js_host_call_generic(global, || map.delete_property(global, key))?;
         Ok(Some(cb))
     }
 

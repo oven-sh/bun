@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 // This test checks that printing stack traces increments and decrements
 // reference-counted strings
@@ -43,6 +43,32 @@ test("error gc test #3", () => {
     Bun.inspect(err);
     Bun.gc();
   }
+});
+
+test("Error.appendStackTrace after materialized error info doesn't crash in GC", async () => {
+  const src = `
+    let keep = [];
+    for (let i = 0; i < 200; i++) {
+      eval(\`(function inner\${i}() {
+        const a = new Error();
+        const b = new Error();
+        a.sourceURL;
+        b.sourceURL;
+        Error.appendStackTrace(a, b);
+        keep.push(b);
+      })();\`);
+    }
+    Bun.gc(true);
+    Bun.gc(true);
+    process.stdout.write("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
 });
 
 // This test fails if:

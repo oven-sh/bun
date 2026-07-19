@@ -1149,12 +1149,17 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
-            return true;
-
-        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            if constexpr (!enableAsymmetricMatchers) {
+                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
+                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            }
             return false;
         }
+
+        if (byteLength == 0)
+            return true;
 
         const void* vector = left->data();
         const void* rightVector = right->data();
@@ -6217,6 +6222,13 @@ CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JS
     JSC::JSValue bound = JSC::JSValue::decode(bindThisArgEncoded);
     auto boundFunction = JSBoundFunction::create(globalObject->vm(), globalObject, valueObject, bound, ArgList(args, args_len), length, jsString(globalObject->vm(), name->toWTFString()), bindSourceCode);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
+}
+
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSBoundFunction__boundThis(JSC::EncodedJSValue value)
+{
+    auto* boundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSC::JSValue::decode(value));
+    if (!boundFunction) return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(boundFunction->boundThis());
 }
 
 CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue prototypeEncoded, JSC::JSGlobalObject* globalObject)

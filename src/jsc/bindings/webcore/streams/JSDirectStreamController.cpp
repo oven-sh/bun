@@ -431,7 +431,8 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_closed) {
+    const bool wasClosed = m_closed;
+    if (!wasClosed) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         closeDirectSinkForError(vm, globalObject, this, error);
         if (catchScope.exception()) [[unlikely]] {
@@ -441,8 +442,12 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     }
     m_closed = true;
 
-    callUnderlyingSourceClose(vm, globalObject, this, error);
-    RETURN_IF_EXCEPTION(scope, );
+    // onClose() already ran the user's close() if the sink was closed (end() arming the
+    // final chunk leaves the stream Readable), so running it again would double it.
+    if (!wasClosed) {
+        callUnderlyingSourceClose(vm, globalObject, this, error);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 
     if (auto* pendingRead = m_pendingRead.get()) {
         m_pendingRead.clear();

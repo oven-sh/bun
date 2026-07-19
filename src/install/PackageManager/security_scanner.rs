@@ -1803,14 +1803,6 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
-fn json_type_name(data: &ExprData) -> &'static str {
-    match data {
-        ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
-        ExprData::EArrayJSON(_) => bun_ast::expr::Tag::EArray.into(),
-        other => other.tag().into(),
-    }
-}
-
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
     advisories_expr: Expr,
@@ -1821,7 +1813,7 @@ fn parse_security_advisories_from_expr(
     let ExprData::EArrayJSON(array) = &advisories_expr.data else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
-            (json_type_name(&advisories_expr.data),),
+            (advisories_expr.data.tag_name(),),
         );
         return Err(crate::Error::InvalidAdvisoriesFormat);
     };
@@ -1831,7 +1823,7 @@ fn parse_security_advisories_from_expr(
         if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
-                (i, json_type_name(&item.data)),
+                (i, item.data.tag_name()),
             );
             return Err(crate::Error::InvalidAdvisoryFormat);
         }

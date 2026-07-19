@@ -636,11 +636,16 @@ async function runTests() {
 
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
-      startGroup(label, () => {
-        if (concurrent) return;
-        if (!isCI) return;
-        process.stderr.write(stdoutPreview);
-      });
+      if (concurrent) {
+        // Don't open a group mid-phase: it would re-anchor the log viewer's
+        // folding for every concurrent title printed after it.
+        console.log(label);
+      } else {
+        startGroup(label, () => {
+          if (!isCI) return;
+          process.stderr.write(stdoutPreview);
+        });
+      }
 
       failure ||= result;
       flaky ||= true;
@@ -831,6 +836,12 @@ async function runTests() {
     const serialTests = tests.filter(t => !isParallelSafeTest(t));
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
     await Promise.all(serialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    // Concurrent tests log their title without opening a group (interleaved
+    // output can't nest), so give the phase its own group instead of letting
+    // the log viewer fold every line under the last serial test's group.
+    if (parallelSafeTests.length && parallelSafeWidth > 1) {
+      startGroup(`Running ${parallelSafeTests.length} parallel-safe tests (${parallelSafeWidth}-wide)`);
+    }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
   }
 
@@ -2129,10 +2140,16 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     try {
       const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
       const step = options["step"] || "";
-      const lane = step.includes("asan") ? "asan" : isWindows || step.includes("windows") ? "windows" : "default";
+      const lane = step.includes("asan")
+        ? "asan"
+        : step.includes("musl")
+          ? "musl"
+          : isWindows || step.includes("windows")
+            ? "windows"
+            : "default";
       for (const [path, entry] of Object.entries(raw)) {
         if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.windows;
+        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
         if (typeof ms === "number") durations[path] = ms;
       }
     } catch (e) {

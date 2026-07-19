@@ -84,6 +84,9 @@ pub struct Options {
     // Packages to exclude from minimum release age checking
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
+    // Show changelog URLs for outdated packages (`bun outdated --changelog`)
+    pub changelog: bool,
+
     /// Override CPU architecture for optional dependencies filtering
     pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
@@ -150,6 +153,7 @@ impl Default for Options {
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
+            changelog: false,
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             config_version: None,
@@ -756,6 +760,8 @@ impl Options {
             if let Some(min_age_ms) = cli.minimum_release_age_ms {
                 self.minimum_release_age_ms = Some(min_age_ms);
             }
+
+            self.changelog = cli.changelog;
 
             self.lockfile_only = cli.lockfile_only;
 

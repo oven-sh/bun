@@ -553,6 +553,42 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
+  test.concurrent("BuildMessage.position.column counts UTF-16 code units", async () => {
+    // Parse errors after a run of astral (surrogate-pair) characters should
+    // report a column that indexes into the line as a JS string (UTF-16 code
+    // units), matching JSC stack frames and source-map columns. Previously the
+    // scanner counted Unicode codepoints, so each astral character shifted the
+    // reported column one to the left.
+    const cases: Array<{ prefix: string; suffix: string }> = [
+      { prefix: "/*\u{1F600}\u{1F600}\u{1F600}*/", suffix: "?" },
+      { prefix: 'var a="\u{1F600}\u{1F600}\u{1F600}";var ', suffix: "1" },
+      { prefix: '"\u{00E9}\u{1F600}\u{4E2D}";', suffix: "??;" },
+      { prefix: '"\u{00E9}\u{00E9}\u{00E9}";', suffix: "??;" },
+    ];
+
+    using dir = tempDir("build-msg-utf16-column", {
+      "entry0.js": cases[0].prefix + cases[0].suffix + "\n",
+      "entry1.js": cases[1].prefix + cases[1].suffix + "\n",
+      "entry2.js": cases[2].prefix + cases[2].suffix + "\n",
+      "entry3.js": cases[3].prefix + cases[3].suffix + "\n",
+    });
+
+    for (let i = 0; i < cases.length; i++) {
+      const { prefix } = cases[i];
+      const result = await buildNoThrow({
+        entrypoints: [join(String(dir), `entry${i}.js`)],
+      });
+      expect(result.success).toBe(false);
+      expect(result.logs.length).toBeGreaterThan(0);
+      const pos = result.logs[0].position!;
+      expect({ entry: i, line: pos.line, column: pos.column }).toEqual({
+        entry: i,
+        line: 1,
+        column: prefix.length + 1,
+      });
+    }
+  });
+
   test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({

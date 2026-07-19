@@ -882,8 +882,15 @@ impl Location {
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
             if full_line.len() > 80 + data.column_count {
-                full_line = &full_line[data.column_count.max(40) - 40
-                    ..(data.column_count + 40).min(full_line.len() - 40) + 40];
+                let mut lo = data.column_count.max(40) - 40;
+                let mut hi = (data.column_count + 40).min(full_line.len() - 40) + 40;
+                while lo > 0 && full_line[lo] & 0xC0 == 0x80 {
+                    lo -= 1;
+                }
+                while hi < full_line.len() && full_line[hi] & 0xC0 == 0x80 {
+                    hi += 1;
+                }
+                full_line = &full_line[lo..hi];
             }
 
             return Some(Location {
@@ -2748,7 +2755,10 @@ impl ErrorPositionState {
                     crossed_line_break = true;
                 }
                 _ => {
-                    self.column_number += 1;
+                    // UTF-16 code units: astral codepoints (> U+FFFF) occupy a surrogate
+                    // pair. This matches the convention of JSC stack frames, source-map
+                    // columns, and `line_col_to_byte_offset`.
+                    self.column_number += 1 + (iter.c > 0xFFFF) as usize;
                 }
             }
 
@@ -3827,6 +3837,36 @@ mod line_column_tracker_tests {
                 ),
                 "diverged at offset {offset} of {:?}",
                 bstr::BStr::new(source.contents())
+            );
+        }
+    }
+
+    #[test]
+    fn error_position_column_counts_utf16_code_units() {
+        // Offsets point at the `?` in each line. Expected columns are 1-based
+        // UTF-16 code units (JS `.length` semantics) of the prefix + 1.
+        let cases: &[(&str, usize, usize)] = &[
+            ("ascii/**/?", 9, 10),
+            ("\u{00E9}\u{00E9}\u{00E9}?", 6, 4),
+            ("\u{4E2D}\u{6587}?", 6, 3),
+            ("\u{1F600}?", 4, 3),
+            ("\u{1F600}\u{1F600}\u{1F600}?", 12, 7),
+            ("a\u{1F600}b\u{00E9}c?", 9, 7),
+        ];
+        for (src, offset, expected_column) in cases.iter().copied() {
+            let source = Source::init_path_string(b"t.js" as &[u8], src.as_bytes());
+            let pos = source.init_error_position(usize2loc(offset));
+            assert_eq!(
+                pos.column_count, expected_column,
+                "source {src:?} offset {offset}: expected column {expected_column}, got {}",
+                pos.column_count
+            );
+            let round_trip =
+                Source::line_col_to_byte_offset(src.as_bytes(), 1, 1, 1, expected_column as u64);
+            assert_eq!(
+                round_trip,
+                Some(offset),
+                "line_col_to_byte_offset round-trip failed for {src:?}"
             );
         }
     }

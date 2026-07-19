@@ -86,8 +86,8 @@ struct HttpResponseData;
         /* A bare CR (not followed by LF) terminated a header value (llhttp's
          * HPE_LF_EXPECTED). */
         HTTP_PARSER_ERROR_LF_EXPECTED = 11,
-        /* node:http compat only: the chunk extensions of a single chunk exceeded
-         * the 16 KiB limit enforced by Node (HPE_CHUNK_EXTENSIONS_OVERFLOW). */
+        /* The chunk extensions of a single chunk exceeded the 16 KiB limit
+         * (Node/llhttp's HPE_CHUNK_EXTENSIONS_OVERFLOW). */
         HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW = 12,
         /* An HTTP/2 client connection preface was received on an HTTP/1 server
          * (llhttp's HPE_PAUSED_H2_UPGRADE). */
@@ -573,9 +573,9 @@ struct HttpResponseData;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
-        /* Maximum size of the chunk extensions of a single chunk, matching Node's
-         * kMaxChunkExtensionsSize in src/node_http_parser.cc (16 KiB). Enforced
-         * only for node:http compat servers. */
+        /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
+         * kMaxChunkExtensionsSize (16 KiB). Enforced for every server
+         * personality so a client cannot stream unbounded extension bytes. */
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
         /* Returns UINT64_MAX on error. Maximum 999999999 is allowed. */
@@ -767,10 +767,6 @@ struct HttpResponseData;
             if(start == data)  [[unlikely]] {
                 return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
             }
-            if (data - start < 2) [[unlikely]] {
-                return ConsumeRequestLineResult::shortRead();
-            }
-
 
             /* RFC 9112 3: exactly one SP separates method and request-target */
             bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
@@ -834,26 +830,36 @@ struct HttpResponseData;
                             /*Indicates that the request line is ancient HTTP*/
                             return ConsumeRequestLineResult::success(nextPosition, true, isConnect);
                         }
-                        /* If we stand at the post padded CR, we have fragmented input so try again later */
-                        if (data[0] == '\r') {
-                            return ConsumeRequestLineResult::shortRead(false, isConnect);
-                        }
-                        /* This is an error */
+                        /* nextPosition < end here, so data < end: any CR is real input, not the
+                         * post-padding sentinel. Fall through to the version error. */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                     }
                 }
             }
 
-            /* If we stand at the post padded CR, we have fragmented input so try again later */
+            /* If we stand at the post padded CR, we have fragmented input so try again later.
+             * A real CR in the input here means the method was never followed by SP. */
             if (data[0] == '\r') {
+                if (data < end) {
+                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
+                }
                 return ConsumeRequestLineResult::shortRead(false, isConnect);
             }
 
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
                     // If we haven't received enough data to check if it's http:// or https://, let's try again later
-                    case -1:
+                    case -1: {
+                        /* -1 only means fewer than 8 bytes follow the SP. If one of them is a
+                         * terminator (<= 32), the target is already complete and can never
+                         * become http(s)://, so this is an invalid request, not a fragment. */
+                        for (char *p = data + 1; p < end; p++) {
+                            if (*(unsigned char *) p <= 32) {
+                                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
+                            }
+                        }
                         return ConsumeRequestLineResult::shortRead(false, isConnect);
+                    }
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
@@ -1261,9 +1267,7 @@ struct HttpResponseData;
             } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
-                if constexpr (IsNodeHttp) {
-                    *chunkedExtensionsByteCount = 0;
-                }
+                *chunkedExtensionsByteCount = 0;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
@@ -1271,7 +1275,7 @@ struct HttpResponseData;
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
-                        if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                        if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         /* The fin dispatch completes the message: a malformed trailer field
@@ -1286,7 +1290,7 @@ struct HttpResponseData;
                             return HttpParserResult::success(consumedTotal, returnedUser);
                         }
                     }
-                    if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                    if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
@@ -1352,7 +1356,7 @@ public:
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
-                    if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                    if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     /* The fin dispatch completes the message: a malformed trailer field
@@ -1365,7 +1369,7 @@ public:
                         return HttpParserResult::success(0, returnedUser);
                     }
                 }
-                if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                     return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                 }
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
@@ -1435,7 +1439,7 @@ public:
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
-                            if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                            if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }
                             /* The fin dispatch completes the message: a malformed trailer field
@@ -1448,7 +1452,7 @@ public:
                                 return HttpParserResult::success(0, returnedUser);
                             }
                         }
-                        if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                        if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {

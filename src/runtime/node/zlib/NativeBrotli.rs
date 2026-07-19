@@ -26,6 +26,13 @@ pub struct Context {
 
     pub last_result: LastResult,
     pub error_: c::BrotliDecoderErrorCode2,
+
+    /// Owned copy of the dictionary bytes. The prepared dictionary (encode) and
+    /// the decoder (decode) borrow this buffer, so it must outlive both; it is
+    /// only cleared by `deinit_dictionary`, after the borrower is destroyed.
+    pub dictionary: Vec<u8>,
+    /// Encode-mode only: the prepared dictionary attached to the encoder.
+    pub prepared_dictionary: Option<NonNull<c::BrotliEncoderPreparedDictionary>>,
 }
 
 impl Default for Context {
@@ -41,6 +48,8 @@ impl Default for Context {
             // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
             last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
             error_: c::BrotliDecoderErrorCode2::NO_ERROR,
+            dictionary: Vec::new(),
+            prepared_dictionary: None,
         }
     }
 }
@@ -82,7 +91,6 @@ mod _impl {
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
         /// External-allocation footprint reported to the GC, fixed at
@@ -145,7 +153,6 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 // .callback = undefined — overwritten before WorkPool::schedule()
                 task: JsCell::new(WorkPoolTask {
@@ -179,13 +186,13 @@ mod _impl {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_undef::<3>();
+            let arguments = callframe.arguments_undef::<4>();
             let this_value = callframe.this();
-            if arguments.len != 3 {
+            if arguments.len != 3 && arguments.len != 4 {
                 return Err(global_this
                     .err(
                         ErrorCode::MISSING_ARGS,
-                        format_args!("init(params, writeResult, writeCallback)"),
+                        format_args!("init(params, writeResult, writeCallback[, dictionary])"),
                     )
                     .throw());
             }
@@ -241,6 +248,26 @@ mod _impl {
                 ));
             }
 
+            // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
+            // outlives the `stream.init` call below (E0716 otherwise).
+            let dictionary_buf;
+            let dictionary = if arguments.ptr[3].is_undefined() {
+                None
+            } else {
+                let dictionary_value = arguments.ptr[3];
+                dictionary_buf = match dictionary_value.as_array_buffer(global_this) {
+                    Some(buf) => buf,
+                    None => {
+                        return Err(global_this.throw_invalid_argument_type_value(
+                            "dictionary",
+                            "Buffer, TypedArray, or DataView",
+                            dictionary_value,
+                        ));
+                    }
+                };
+                Some(dictionary_buf.byte_slice())
+            };
+
             js::write_result_set_cached(this_value, global_this, write_result_value);
 
             js::write_callback_set_cached(
@@ -249,7 +276,7 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global_this),
             );
 
-            let mut err = self.stream.with_mut(|s| s.init());
+            let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
                 return Ok(JSValue::FALSE);
@@ -316,7 +343,14 @@ mod _impl {
     }
 
     impl Context {
-        pub fn init(&mut self) -> Error {
+        pub fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
+            // Mirrors node's Init(): free the previous instance and dictionary
+            // before building new ones. `init` is JS-reachable twice on one
+            // handle, and ResetStream() lands here with no dictionary.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
+            self.deinit_dictionary();
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     let alloc = bun_brotli::BrotliAllocator::alloc;
@@ -333,7 +367,7 @@ mod _impl {
                         );
                     }
                     self.state = NonNull::new(state.cast::<c_void>());
-                    Error::ok()
+                    self.attach_dictionary(dictionary)
                 }
                 bun_zlib::NodeMode::BROTLI_DECODE => {
                     let alloc = bun_brotli::BrotliAllocator::alloc;
@@ -350,10 +384,95 @@ mod _impl {
                         );
                     }
                     self.state = NonNull::new(state.cast::<c_void>());
+                    self.attach_dictionary(dictionary)
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        /// Copies `dictionary` into `self.dictionary` and attaches it to the
+        /// freshly created encoder/decoder state. Must run after `self.state`
+        /// is set and after `deinit_dictionary`.
+        fn attach_dictionary(&mut self, dictionary: Option<&[u8]>) -> Error {
+            let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
+                return Error::ok();
+            };
+            self.dictionary = dict.to_vec();
+            let (data, data_size) = (self.dictionary.as_ptr(), self.dictionary.len());
+            let state = self.state_ptr();
+            match self.mode {
+                bun_zlib::NodeMode::BROTLI_ENCODE => {
+                    let alloc = bun_brotli::BrotliAllocator::alloc;
+                    let free = bun_brotli::BrotliAllocator::free;
+                    // SAFETY: FFI — `data`/`data_size` borrow the Context-owned
+                    // dictionary copy, which outlives the prepared dictionary
+                    // (`deinit_dictionary` destroys it before clearing the Vec).
+                    let prepared = unsafe {
+                        c::BrotliEncoderPrepareDictionary(
+                            c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
+                            data_size,
+                            data,
+                            c::BROTLI_MAX_QUALITY,
+                            Some(alloc),
+                            Some(free),
+                            ptr::null_mut(),
+                        )
+                    };
+                    let Some(prepared) = NonNull::new(prepared) else {
+                        return Error::init(
+                            c"Failed to prepare brotli dictionary".as_ptr(),
+                            -1,
+                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                        );
+                    };
+                    self.prepared_dictionary = Some(prepared);
+                    // SAFETY: FFI — `state` is a live encoder (set by the caller
+                    // just above); `prepared` is owned by `self` and outlives it.
+                    let ok = unsafe {
+                        c::BrotliEncoderAttachPreparedDictionary(state.cast(), prepared.as_ptr())
+                    };
+                    if ok == 0 {
+                        return Error::init(
+                            c"Failed to attach brotli dictionary".as_ptr(),
+                            -1,
+                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                        );
+                    }
+                    Error::ok()
+                }
+                bun_zlib::NodeMode::BROTLI_DECODE => {
+                    // SAFETY: FFI — `state` is a live decoder; `data`/`data_size`
+                    // borrow the Context-owned copy, which outlives the decoder.
+                    let ok = unsafe {
+                        c::BrotliDecoderAttachDictionary(
+                            state.cast(),
+                            c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
+                            data_size,
+                            data,
+                        )
+                    };
+                    if ok == 0 {
+                        return Error::init(
+                            c"Failed to attach brotli dictionary".as_ptr(),
+                            -1,
+                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                        );
+                    }
                     Error::ok()
                 }
                 _ => unreachable!(),
             }
+        }
+
+        /// Destroys the prepared dictionary before releasing the bytes it
+        /// borrows. Idempotent.
+        fn deinit_dictionary(&mut self) {
+            if let Some(prepared) = self.prepared_dictionary.take() {
+                // SAFETY: FFI — created by `BrotliEncoderPrepareDictionary` and
+                // taken out of `self`, so it is destroyed exactly once.
+                unsafe { c::BrotliEncoderDestroyPreparedDictionary(prepared.as_ptr()) };
+            }
+            self.dictionary = Vec::new();
         }
 
         pub fn set_params(&mut self, key: c_uint, value: u32) -> Error {
@@ -383,10 +502,10 @@ mod _impl {
         }
 
         pub fn reset(&mut self) -> Error {
-            if self.state.is_some() {
-                self.deinit_state();
-            }
-            self.init()
+            // Matches node's `BrotliContext::ResetStream()`, which calls `Init()`
+            // with its default (empty) dictionary — a reset drops the dictionary.
+            // `init` frees the previous state and dictionary itself.
+            self.init(None)
         }
 
         /// Frees the Brotli encoder/decoder state without changing mode.
@@ -537,6 +656,8 @@ mod _impl {
             if self.state.is_some() {
                 self.deinit_state();
             }
+            // After the encoder/decoder that borrows the dictionary is gone.
+            self.deinit_dictionary();
             self.mode = bun_zlib::NodeMode::NONE;
         }
 

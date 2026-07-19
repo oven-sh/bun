@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { gcTick, isWindows, tempDir, tmpdirSync } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "path";
@@ -77,6 +77,7 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     const dir = tempDir("mmap-offset", {});
     const file = join(String(dir), "data.bin");
     writeFileSync(file, buf);
+    afterAll(() => dir[Symbol.dispose]());
 
     it.each([
       { offset: 0, size: undefined },

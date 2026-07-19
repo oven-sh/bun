@@ -324,6 +324,9 @@ export class Dev extends EventEmitter {
         } else if (wantsHmrEvent) {
           await Promise.race([seenFiles.promise]);
         }
+        // One Bun.write can surface as several watcher events (notably on
+        // Windows); let them coalesce so releasing the batch bundles once.
+        await Bun.sleep(50);
 
         dev.off("watch_synchronization", onSeenFiles);
 

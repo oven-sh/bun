@@ -1213,19 +1213,6 @@ impl CommandLineReporter {
                 }
             }
 
-            for attempt in sequence.flaky_attempts() {
-                junit
-                    .write_test_case(
-                        attempt.result,
-                        filename,
-                        display_label,
-                        &concatenated_describe_scopes,
-                        0,
-                        attempt.elapsed_ns,
-                        line_number,
-                    )
-                    .expect("oom");
-            }
             junit
                 .write_test_case(
                     status,
@@ -2970,7 +2957,7 @@ impl TestCommand {
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
         }
-        vm.is_shutting_down = true;
+        // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
@@ -3287,12 +3274,10 @@ impl TestCommand {
                 // Node parity: a node test file exits only when the event loop
                 // drains, so in-flight async work (fs I/O, workers, sockets)
                 // completes before process 'exit' handlers verify mustCall()
-                // counts. Opt-in so bun's own suites keep exit-after-tests.
+                // counts. on_before_exit() drains and dispatches 'beforeExit',
+                // matching `bun run`. Opt-in so bun suites keep exit-after-tests.
                 if should_drain_event_loop() {
-                    while vm.is_event_loop_alive() {
-                        vm.tick();
-                        vm.auto_tick_active();
-                    }
+                    vm.on_before_exit();
                 }
                 drop(buntest_strong);
             }

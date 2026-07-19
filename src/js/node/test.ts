@@ -233,6 +233,15 @@ function validateRunOptions(options: Record<string, unknown>) {
       throw $ERR_INVALID_ARG_VALUE("options.env", env, "is not supported with isolation='none'");
     }
   }
+  // Node validates these via the root Test constructor, not inline here;
+  // the observable error is the same synchronous throw.
+  const { concurrency, timeout, signal } = options as Record<string, any>;
+  if (signal !== undefined) validateAbortSignal(signal, "options.signal");
+  if (timeout != null && timeout !== Infinity) validateNumber(timeout, "options.timeout", 0, kTimeoutMax);
+  if (concurrency != null && typeof concurrency !== "boolean") {
+    if (typeof concurrency === "number") validateUint32(concurrency, "options.concurrency", true);
+    else throw $ERR_INVALID_ARG_TYPE("options.concurrency", ["boolean", "number"], concurrency);
+  }
 
   return {
     files,
@@ -251,9 +260,9 @@ function validateRunOptions(options: Record<string, unknown>) {
     testNamePatterns,
     testSkipPatterns,
     testTagFilterExpressions,
-    concurrency: (options as any).concurrency,
-    timeout: (options as any).timeout,
-    signal: (options as any).signal,
+    concurrency,
+    timeout,
+    signal,
   };
 }
 
@@ -402,7 +411,6 @@ async function runOneFile(
   // Under process isolation node models the file itself as a top-level test,
   // named by the path as it was passed in and located at 1:1.
   const fileNode = {
-    __proto__: null,
     nesting: 0,
     name: file,
     type: "test",
@@ -413,13 +421,13 @@ async function runOneFile(
     column: 1,
     file: absolute,
   };
-  reporter.emitMessage("test:enqueue", { ...fileNode });
-  reporter.emitMessage("test:dequeue", { ...fileNode });
+  reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
 
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), [kRunChildEnv]: kRunChildEnvValue },
+    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -483,18 +491,16 @@ async function runOneFile(
       file: absolute,
     });
   } else {
-    const fileError = new Error(stderrText.trim() || `Test file failed with exit code ${exitCode}`);
-    (fileError as { failureType?: string }).failureType = "testCodeFailure";
-    (fileError as { code?: string }).code = "ERR_TEST_FAILURE";
+    error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
     fileCounts.tests++;
     fileCounts.failed++;
     fileCounts.topLevel++;
-    error = fileError;
   }
 
   // node emits the file node's completion before its verdict, and a failed
   // completion carries the error too.
   reporter.emitMessage("test:complete", {
+    __proto__: null,
     ...fileNode,
     type: undefined,
     testNumber: 1,
@@ -508,6 +514,7 @@ async function runOneFile(
   });
   if (fileFailed) {
     reporter.emitMessage("test:fail", {
+      __proto__: null,
       ...fileNode,
       type: undefined,
       testNumber: 1,
@@ -524,6 +531,7 @@ function republishChildEvent(
   counts: Record<string, number>,
 ) {
   const { type, data } = event;
+  Object.setPrototypeOf(data, null);
   data.file = file;
   const isVerdict = type === "test:pass" || type === "test:fail";
   if (isVerdict || type === "test:complete") {
@@ -607,7 +615,7 @@ function nestingOf(node: TestNode) {
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
 function serializeRunError(error: unknown) {
-  if (error instanceof Error) {
+  if (Error.isError(error)) {
     return {
       __proto__: null,
       message: error.message,
@@ -803,7 +811,7 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
   const { skipped, expectFailure } = node;
   const todoEffective = node.todoFlag || hasTodoAncestor(node);
   // node reports the xfail label when there is one, otherwise `true`.
-  const xfail = !skipped && !todoEffective && expectFailure ? (expectFailure.label ?? true) : undefined;
+  const xfail = !skipped && expectFailure ? (expectFailure.label ?? true) : undefined;
   reportQueueChain(node);
   // node spreads a `directive` into the event: `skip: true` / `todo: true`, with
   // the other key absent entirely.
@@ -1677,7 +1685,7 @@ class TestNode {
     this.filePath =
       parent !== undefined && parent.parent !== undefined ? parent.filePath : (currentImportFile ?? Bun.main);
     this.skipped = !!options.skip;
-    this.todoFlag = !!options.todo;
+    this.todoFlag = !!options.todo || (parent?.todoFlag ?? false);
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
   }
 
@@ -2114,7 +2122,7 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
     return undefined;
   }
 
-  if (node.skipped || node.todoFlag) return undefined;
+  if (node.skipped) return undefined;
   return makeTestFailure("test was expected to fail but passed", "expectedFailure");
 }
 
@@ -3081,11 +3089,12 @@ function addTest(
     }
     if (runningNode.isRunning()) {
       // Subtest of a running test (or of an inline suite created inside one).
-      if (mode === "skip" || options.skip) {
-        return Promise.resolve(undefined);
-      }
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
+      if (mode === "skip" || options.skip) {
+        reportDirectiveOnlyNode(child, "skip");
+        return Promise.resolve(undefined);
+      }
       if (mode === "todo") child.todoFlag = true;
       return scheduleSubtest(runningNode, child, fn);
     }
@@ -3179,6 +3188,7 @@ function addSuite(
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
     if (mode === "skip" || options.skip) {
+      reportDirectiveOnlyNode(suite, "skip");
       return Promise.resolve(undefined);
     }
     if (mode === "todo") suite.todoFlag = true;

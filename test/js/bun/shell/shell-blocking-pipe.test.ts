@@ -1,6 +1,6 @@
 import { $, generateHeapSnapshot } from "bun";
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream } from "node:fs";

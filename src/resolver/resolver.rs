@@ -3895,19 +3895,14 @@ impl<'a> Resolver<'a> {
                     return MatchStatus::NotFound;
                 }
 
-                let absolute_out_path: &[u8] = {
-                    if entry_query.entry().abs_path.is_empty() {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                        // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(abs_esm_path)
-                                .expect("unreachable"),
-                        );
-                    }
-                    entry_query.entry().abs_path.as_bytes()
-                };
+                let absolute_out_path: &[u8] = entry_query.entry().abs_path_or_fill(|| {
+                    Interned::from_static(
+                        self.fs_ref()
+                            .dirname_store
+                            .append_slice(abs_esm_path)
+                            .expect("unreachable"),
+                    )
+                });
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
                 } else {
@@ -5270,21 +5265,16 @@ impl<'a> Resolver<'a> {
                 if unsafe { lookup.entry().kind(rfs, self.store_fd) }
                     == Fs::file_system::EntryKind::File
                 {
-                    let out_buf: &[u8] = {
-                        if lookup.entry().abs_path.is_empty() {
-                            let parts = [dir_info.abs_path, &base[..]];
-                            let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(out_buf_)
-                                    .expect("unreachable"),
-                            );
-                        }
-                        lookup.entry().abs_path.as_bytes()
-                    };
+                    let out_buf: &[u8] = lookup.entry().abs_path_or_fill(|| {
+                        let parts = [dir_info.abs_path, &base[..]];
+                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        Interned::from_static(
+                            self.fs_ref()
+                                .dirname_store
+                                .append_slice(out_buf_)
+                                .expect("unreachable"),
+                        )
+                    });
 
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
@@ -5767,21 +5757,16 @@ impl<'a> Resolver<'a> {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
-                let abs_path: &'static [u8] = {
-                    if query.entry().abs_path.is_empty() {
-                        let abs_path_parts = [query.entry().dir, query.entry().base()];
-                        let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                        // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *query.entry }.abs_path = Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable"),
-                        );
-                    }
-                    query.entry().abs_path.as_bytes()
-                };
+                let abs_path: &'static [u8] = query.entry().abs_path_or_fill(|| {
+                    let abs_path_parts = [query.entry().dir, query.entry().base()];
+                    let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
+                    Interned::from_static(
+                        self.fs_ref()
+                            .dirname_store
+                            .append_slice(joined)
+                            .expect("unreachable"),
+                    )
+                });
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
@@ -5873,39 +5858,30 @@ impl<'a> Resolver<'a> {
                             }
 
                             dec_ret!(Some(LoadResult {
-                                path: {
-                                    if query.entry().abs_path.is_empty() {
-                                        // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
-                                        // copied out so no `&Entry` borrow survives into the
-                                        // `&mut Entry` write below.
-                                        let entry_dir = query.entry().dir;
-                                        let new_abs = if !entry_dir.is_empty()
-                                            && entry_dir[entry_dir.len() - 1] == SEP
-                                        {
-                                            let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                            // the trailing path CAN be missing here
-                                        } else {
-                                            let parts: [&[u8]; 3] =
-                                                [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            Interned::from_static(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
-                                        };
-                                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
-                                        // fully evaluated above — sole `&mut Entry` for this write.
-                                        unsafe { &mut *query.entry }.abs_path = new_abs;
+                                path: query.entry().abs_path_or_fill(|| {
+                                    let entry_dir = query.entry().dir;
+                                    if !entry_dir.is_empty()
+                                        && entry_dir[entry_dir.len() - 1] == SEP
+                                    {
+                                        let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
+                                        Interned::from_static(
+                                            self.fs_ref()
+                                                .filename_store
+                                                .append_parts(&parts)
+                                                .expect("unreachable"),
+                                        )
+                                        // the trailing path CAN be missing here
+                                    } else {
+                                        let parts: [&[u8]; 3] =
+                                            [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
+                                        Interned::from_static(
+                                            self.fs_ref()
+                                                .filename_store
+                                                .append_parts(&parts)
+                                                .expect("unreachable"),
+                                        )
                                     }
-                                    query.entry().abs_path.as_bytes()
-                                },
+                                }),
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
                                 file_fd: query.entry().cache().fd,
@@ -5980,23 +5956,14 @@ impl<'a> Resolver<'a> {
 
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
-                    path: {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
-                        // evaluated (shared reads) before the LHS `&mut Entry` is
-                        // materialized for the write — no overlapping unique borrow.
-                        unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
-                        {
-                            Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(&buffer[..])
-                                    .expect("unreachable"),
-                            )
-                        } else {
-                            query.entry().abs_path
-                        };
-                        query.entry().abs_path.as_bytes()
-                    },
+                    path: query.entry().abs_path_or_fill(|| {
+                        Interned::from_static(
+                            self.fs_ref()
+                                .dirname_store
+                                .append_slice(&buffer[..])
+                                .expect("unreachable"),
+                        )
+                    }),
                     diff_case: query.diff_case,
                     dirname_fd: entries.fd,
                     file_fd: query.entry().cache().fd,

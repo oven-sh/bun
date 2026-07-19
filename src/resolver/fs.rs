@@ -279,7 +279,7 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: core::cell::Cell<bool>,
 
-    pub abs_path: Interned,
+    pub abs_path: core::cell::Cell<Interned>,
 }
 
 impl Entry {
@@ -336,15 +336,32 @@ impl Entry {
         self.dir
     }
 
-    /// `Interned` is `Copy`.
+    /// `Interned` is `Copy`. Caller must hold `self.mutex` when this entry is
+    /// reachable from another thread; see [`abs_path_or_fill`].
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path
+        self.abs_path.get()
     }
 
     #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    pub fn set_abs_path(&self, p: Interned) {
+        self.abs_path.set(p);
+    }
+
+    /// Double-checked lazy fill of `abs_path` under `self.mutex`, matching
+    /// [`kind`](Self::kind) / [`symlink`](Self::symlink). Returns the cached
+    /// value if already set, otherwise calls `fill`, stores the result, and
+    /// returns it. `abs_path` is a two-word slice, so unlocked access can
+    /// observe a torn `(ptr, len)` on weakly-ordered CPUs.
+    pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> &'static [u8] {
+        let _g = self.mutex.lock_guard();
+        let cached = self.abs_path.get();
+        if !cached.is_empty() {
+            return cached.as_bytes();
+        }
+        let v = fill();
+        self.abs_path.set(v);
+        v.as_bytes()
     }
 
     /// Stat-on-first-use.
@@ -426,7 +443,7 @@ impl Clone for Entry {
             base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(self.need_stat.get()),
-            abs_path: self.abs_path,
+            abs_path: core::cell::Cell::new(self.abs_path.get()),
         }
     }
 }
@@ -440,7 +457,7 @@ impl Default for Entry {
             base_lowercase_: strings::StringOrTinyString::init(b""),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(true),
-            abs_path: Interned::EMPTY,
+            abs_path: core::cell::Cell::new(Interned::EMPTY),
         }
     }
 }
@@ -731,7 +748,7 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path).write(core::cell::Cell::new(Interned::EMPTY));
                 p
             }
         };

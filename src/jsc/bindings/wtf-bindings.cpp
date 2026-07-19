@@ -29,7 +29,6 @@ static std::once_flag reset_once_flag;
 
 static int current_tty_mode = 0;
 static struct termios orig_tty_termios;
-static bool tty_tcsetattr_blocked = false; // set by SIGSYS handler
 
 int uv__tcsetattr(int fd, int how, const struct termios* term)
 {
@@ -47,10 +46,6 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
 
 extern "C" int uv_tty_reset_mode(void)
 {
-#ifdef __OHOS__
-    // OHOS seccomp blocks tcsetattr; TTY was never modified so nothing to restore.
-    return 0;
-#else
     int saved_errno;
     int err;
 
@@ -67,7 +62,6 @@ extern "C" int uv_tty_reset_mode(void)
     errno = saved_errno;
 
     return err;
-#endif
 }
 
 static void uv__tty_make_raw(struct termios* tio)
@@ -192,17 +186,10 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
     }
 
     /* Apply changes after draining */
-#ifdef __OHOS__
-    // OHOS seccomp blocks tcsetattr (ioctl TCSETSW). TTY raw mode is
-    // unavailable; silently skip to avoid SIGSYS.
-    rc = 0;
-    current_tty_mode = mode;
-#else
     rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
     if (rc == 0) {
         current_tty_mode = mode;
     }
-#endif
 
     return rc;
 #else

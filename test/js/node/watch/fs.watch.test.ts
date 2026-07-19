@@ -946,7 +946,7 @@ describe("fs.promises.watch", () => {
       expect(["rename", "change"]).toContain(r2.value.eventType);
     } finally {
       ac.abort();
-      await it.return().catch(() => {});
+      await it.return();
     }
   });
 
@@ -962,9 +962,9 @@ describe("fs.promises.watch", () => {
       // generator is now suspended at `yield event`; abort here.
       ac.abort();
       await expect(it.next()).rejects.toMatchObject({ name: "AbortError" });
+      expect(await it.return()).toEqual({ value: undefined, done: true });
     } finally {
       clearInterval(interval);
-      await it.return().catch(() => {});
     }
   });
 

@@ -177,8 +177,7 @@ pub trait PosixPipeWriter {
 
     /// Re-derives the slice from `self.get_buffer()` each iteration.
     /// `try_write` only needs `&self`, so the shared borrow of the buffer
-    /// coexists with it, and the `&mut self` for `on_error` is taken after
-    /// the temporary slice borrow has ended — no raw-pointer escape needed.
+    /// coexists with it.
     fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
@@ -193,10 +192,8 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            // `try_write` takes `&self`; re-fetching the buffer here keeps the
-            // shared borrow scoped to this statement so the `&mut self` for
-            // `on_error` below is unencumbered. `try_write` does not mutate
-            // `self`, so `get_buffer()` is stable across iterations.
+            // `try_write` takes `&self` and does not mutate it, so
+            // `get_buffer()` is stable across iterations.
             let attempt = self.try_write(force_sync, &self.get_buffer()[drained..limit]);
             match attempt {
                 WriteResult::Pending(pending) => {
@@ -466,16 +463,22 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    /// Dispatches `Parent::on_error` on registration failure; that callback
-    /// may drop the last strong ref to the parent, so the caller must not
-    /// touch `self` after this returns.
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
         let loop_ = self.parent_event_loop().loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
+                // Same shape as `_on_error`: pin the parent, dispatch the
+                // error, then close so `on_close` runs and the fd/owner ref
+                // are released.
+                let parent = self.parent();
+                // SAFETY: type invariant — set-once parent backref outlives writer.
+                unsafe { Parent::ref_(parent) };
                 self.parent_on_error(err);
+                self.close();
+                // SAFETY: matches the `ref_` above; may free `*self`.
+                unsafe { Parent::deref(parent) };
             }
             sys::Result::Ok(()) => {}
         }

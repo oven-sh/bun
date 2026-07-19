@@ -4579,6 +4579,7 @@ pub fn js_upgrade_duplex_to_tls(
         });
         ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
             global,
+            tls_js_value,
             duplex,
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.

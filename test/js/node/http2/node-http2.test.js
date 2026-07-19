@@ -2523,6 +2523,55 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(exitCode).toBe(0);
 });
 
+it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
+  // Node calls `${value}` and lets the user's exception escape; it must not be
+  // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+  await new Promise(resolve => client.once("connect", resolve));
+
+  try {
+    const boom = msg => ({
+      toString() {
+        throw new RangeError(msg);
+      },
+    });
+    const describeThrow = fn => {
+      try {
+        fn();
+        return { name: "<none>", code: "<none>", message: "<none>" };
+      } catch (e) {
+        return { name: e.constructor.name, code: e.code, message: e.message };
+      }
+    };
+
+    expect([
+      describeThrow(() => client.request({ ":path": "/", "x-a": boom("scalar") })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": "ok", "x-b": boom("second") })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": [boom("array0")] })),
+      describeThrow(() => client.request({ ":path": "/", "x-a": ["ok", boom("array1")] })),
+      describeThrow(() =>
+        client.request({ ":path": "/", "x-a": boom("sensitive"), [http2.sensitiveHeaders]: ["x-a"] }),
+      ),
+    ]).toEqual([
+      { name: "RangeError", code: undefined, message: "scalar" },
+      { name: "RangeError", code: undefined, message: "second" },
+      { name: "RangeError", code: undefined, message: "array0" },
+      { name: "RangeError", code: undefined, message: "array1" },
+      { name: "RangeError", code: undefined, message: "sensitive" },
+    ]);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {
   // RFC 9113 Section 8.2.1: a request carrying a field value with NUL, CR, or
   // LF is malformed and must be answered with a stream error, not delivered

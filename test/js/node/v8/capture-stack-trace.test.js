@@ -1121,3 +1121,32 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   expect(exitCode).toBe(0);
 });
+
+test("Error.appendStackTrace on an error with materialized info does not crash in GC", async () => {
+  const src = `
+    let keep = [];
+    for (let i = 0; i < 200; i++) {
+      eval(\`(function inner\${i}() {
+        const a = new Error();
+        const b = new Error();
+        a.sourceURL;
+        b.sourceURL;
+        Error.appendStackTrace(a, b);
+        keep.push(b);
+        const self = new Error();
+        Error.appendStackTrace(self, self);
+        keep.push(self);
+      })();\`);
+    }
+    Bun.gc(true);
+    Bun.gc(true);
+    process.stdout.write("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+});

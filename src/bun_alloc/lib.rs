@@ -139,45 +139,62 @@ impl StdAllocator {
         let p = unsafe { (self.vtable.alloc)(self.ptr, len, alignment, ra) };
         if p.is_null() { None } else { Some(p) }
     }
+    /// # Safety
+    /// `buf` must describe a live allocation obtained from this allocator, and
+    /// `alignment`/`ra` must satisfy this allocator's vtable contract for it.
     #[inline]
-    pub fn raw_resize(
+    pub unsafe fn raw_resize(
         &self,
         buf: &mut [u8],
         alignment: Alignment,
         new_len: usize,
         ra: usize,
     ) -> bool {
-        // SAFETY: see `raw_alloc`.
+        // SAFETY: caller contract matches the vtable `resize` contract.
         unsafe { (self.vtable.resize)(self.ptr, buf, alignment, new_len, ra) }
     }
+    /// # Safety
+    /// Same contract as [`Self::raw_resize`]. On `Some(p)`, the allocation may
+    /// have moved to `p` and `buf`'s pointer is invalidated.
     #[inline]
-    pub fn raw_remap(
+    pub unsafe fn raw_remap(
         &self,
         buf: &mut [u8],
         alignment: Alignment,
         new_len: usize,
         ra: usize,
     ) -> Option<*mut u8> {
-        // SAFETY: see `raw_alloc`.
+        // SAFETY: caller contract matches the vtable `remap` contract.
         let p = unsafe { (self.vtable.remap)(self.ptr, buf, alignment, new_len, ra) };
         if p.is_null() { None } else { Some(p) }
     }
+    /// # Safety
+    /// `buf` must describe a live allocation obtained from this allocator, and
+    /// `alignment`/`ra` must satisfy this allocator's vtable contract for it.
+    /// The allocation is freed exactly once; its memory must not be accessed
+    /// after this call.
     #[inline]
-    pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: see `raw_alloc`.
+    pub unsafe fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
+        // SAFETY: caller contract matches the vtable `free` contract.
         unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
     }
-    /// `raw_free` with `ret_addr = 0`, byte-aligned.
+    /// [`Self::raw_free`] with `ret_addr = 0`, byte-aligned. A null `ptr` or
+    /// zero `len` is a no-op.
+    ///
+    /// # Safety
+    /// `ptr` must be null or point to a live allocation of `len` bytes
+    /// obtained from this allocator. The allocation is freed exactly once; its
+    /// memory must not be accessed after this call.
     #[inline]
-    pub fn free(&self, bytes: &[u8]) {
-        if bytes.is_empty() {
+    pub unsafe fn free(&self, ptr: *mut u8, len: usize) {
+        if ptr.is_null() || len == 0 {
             return;
         }
-        // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
-        // callee treats it as opaque.
-        let buf =
-            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
-        self.raw_free(buf, Alignment::from_byte_units(1), 0);
+        // SAFETY: caller contract — `ptr[..len]` is a live allocation owned by
+        // this allocator; the slice exists only to satisfy the vtable signature.
+        let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        // SAFETY: caller contract — see the `# Safety` section above.
+        unsafe { self.raw_free(buf, Alignment::from_byte_units(1), 0) };
     }
 }
 
@@ -1583,7 +1600,7 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 }
 
 /// Free a raw `[u8]` allocation not owned by a `Vec`/`Box` (e.g. duped via
-/// `mi_malloc` on the C side, or via [`StdAllocator::free`]). With
+/// `mi_malloc` on the C side, or via [`default_dupe`]). With
 /// `#[global_allocator] = Mimalloc` this is `mi_free`; the `len` is accepted
 /// for size-asserting builds.
 ///
@@ -1592,12 +1609,9 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 /// from the default (mimalloc-backed) allocator. Freed exactly once.
 #[inline]
 pub unsafe fn default_free(ptr: *mut u8, len: usize) {
-    if ptr.is_null() || len == 0 {
-        return;
-    }
-    // SAFETY: caller contract — `ptr[..len]` is a live mimalloc allocation.
-    let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-    basic::C_ALLOCATOR.raw_free(buf, Alignment::from_byte_units(1), 0);
+    // SAFETY: caller contract — `ptr` is null or a live allocation of `len`
+    // bytes from the default allocator, freed exactly once here.
+    unsafe { basic::C_ALLOCATOR.free(ptr, len) };
 }
 
 /// Duplicate `src` into a raw allocation not owned by a

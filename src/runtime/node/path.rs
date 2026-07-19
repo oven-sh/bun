@@ -10,11 +10,9 @@ use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
-/// In practice every JS entry point converts to UTF-8 first (via
-/// `ZigString.toSlice`) and instantiates with
-/// `T = u8`, so the `u16` arm is never reached at runtime — but it must still
-/// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
-/// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
+/// The `u8` arm feeds `create_utf8_for_js` (input is UTF-8); the `u16` arm
+/// hands the code-unit slice to `BunString::clone_utf16` verbatim, so unpaired
+/// surrogates survive the round-trip back to a JS string.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{StringJsc as _, bun_string_jsc};
@@ -47,34 +45,64 @@ impl ZigStringTruncExt for ZigString {
     }
 }
 
+/// Borrowed-or-widened `[u16]` view of a `ZigString` for the `T = u16` path.
+/// 16-bit inputs borrow the JSC backing directly; 8-bit (Latin-1) inputs are
+/// zero-extended so a mixed-width argument list can be processed at one `T`.
+/// The `Owned` arm keeps typical path segments inline (no heap alloc).
+enum PathUtf16<'a> {
+    Borrowed(&'a [u16]),
+    Owned(SmallVec<[u16; 32]>),
+}
+impl<'a> PathUtf16<'a> {
+    #[inline]
+    fn of(z: &'a ZigString) -> Self {
+        if z.len == 0 {
+            Self::Borrowed(&[])
+        } else if z.is_16bit() {
+            Self::Borrowed(z.utf16_slice_aligned())
+        } else {
+            let src = z.slice();
+            let mut buf: SmallVec<[u16; 32]> = SmallVec::new();
+            buf.resize(src.len(), 0);
+            strings::copy_latin1_into_utf16(&mut buf, src);
+            Self::Owned(buf)
+        }
+    }
+    #[inline]
+    fn slice(&self) -> &[u16] {
+        match self {
+            Self::Borrowed(s) => s,
+            Self::Owned(v) => v.as_slice(),
+        }
+    }
+}
+
 /// Pooled path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
-/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
-/// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
-/// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
-/// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
-/// never observed).
+/// sound. The pool is `u16`-backed, so both `T = u8` and `T = u16` borrow it;
+/// only requests exceeding the largest tier (32 × `MAX_PATH_BYTES` bytes) spill
+/// to a one-shot zeroed heap slab.
 enum PathScratch<'a, T: PathCharCwd> {
     Pooled(&'a mut [T]),
     Spill(Box<[T]>),
 }
 
 impl<'a, T: PathCharCwd> PathScratch<'a, T> {
-    /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES`).
-    const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
+    /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES` bytes).
+    const POOL_MAX_BYTES: usize = 32 * MAX_PATH_BYTES;
 
     #[inline]
     fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
-        if !T::IS_U16 && len <= Self::POOL_MAX {
-            // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
-            // is the bytemuck identity cast — never panics, no alignment hazard.
-            let bytes = &mut pool.get(len)[..len];
+        let byte_len = len * core::mem::size_of::<T>();
+        if byte_len <= Self::POOL_MAX_BYTES {
+            // `RarePathBuf::get` hands back a 2-byte-aligned `&mut [u8]` (u16
+            // backing), so `cast_slice_mut::<u8, T>` is sound for T ∈ {u8, u16}.
+            let bytes = &mut pool.get(byte_len)[..byte_len];
             Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
         } else {
-            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
-            // >128 KB) or path-sized (u16), so the zero-fill is negligible and
-            // buys a safe `&mut [T]` in `slice()`.
+            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (only when the
+            // request exceeds 32 × MAX_PATH_BYTES bytes).
             Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
         }
     }
@@ -593,15 +621,27 @@ pub fn basename(
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
-
-    let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
+    let mut suffix_zstr = ZigString::EMPTY;
     if let Some(_suffix_ptr) = suffix_ptr {
-        let suffix_zstr = _suffix_ptr.get_zig_string(global_object)?;
-        if suffix_zstr.len > 0 && suffix_zstr.len <= path_zstr.len {
-            suffix_zslice = Some(suffix_zstr.to_slice());
+        let s = _suffix_ptr.get_zig_string(global_object)?;
+        if s.len > 0 && s.len <= path_zstr.len {
+            suffix_zstr = s;
         }
     }
+
+    if path_zstr.is_16bit() || suffix_zstr.is_16bit() {
+        let path16 = PathUtf16::of(&path_zstr);
+        let suffix16 = PathUtf16::of(&suffix_zstr);
+        return basename_js_t::<u16>(
+            global_object,
+            is_windows,
+            path16.slice(),
+            (suffix_zstr.len > 0).then(|| suffix16.slice()),
+        );
+    }
+
+    let path_zslice = path_zstr.to_slice();
+    let suffix_zslice = (suffix_zstr.len > 0).then(|| suffix_zstr.to_slice());
     basename_js_t::<u8>(
         global_object,
         is_windows,
@@ -808,6 +848,9 @@ pub(crate) fn dirname(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
+    if path_zstr.is_16bit() {
+        return dirname_js_t::<u16>(global_object, is_windows, path_zstr.utf16_slice_aligned());
+    }
     let path_zslice = path_zstr.to_slice();
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1051,6 +1094,9 @@ pub(crate) fn extname(
         return Ok(path_ptr);
     }
 
+    if path_zstr.is_16bit() {
+        return extname_js_t::<u16>(global_object, is_windows, path_zstr.utf16_slice_aligned());
+    }
     let path_zslice = path_zstr.to_slice();
     extname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1221,67 +1267,71 @@ pub(crate) fn format(
         Default::default(),
     )?;
 
-    let mut root: &[u8] = b"";
-    let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
-        Some(js_value.to_slice(global_object)?)
-    } else {
-        None
+    // `get_truthy` performs a full [[Get]] and may invoke user getters/Proxy
+    // traps, so take a +1 ref on each field's WTFStringImpl before reading the
+    // next; the `OwnedString` RAII guards keep all five alive until scope exit.
+    let field = |key: &str| -> JsResult<bun_core::OwnedString> {
+        Ok(bun_core::OwnedString::new(
+            match path_object_ptr.get_truthy(global_object, key)? {
+                Some(v) => v.to_bun_string(global_object)?,
+                None => bun_core::String::EMPTY,
+            },
+        ))
     };
-    if let Some(ref slice) = root_slice {
-        root = slice.slice();
-    }
+    let root_owned = field("root")?;
+    let dir_owned = field("dir")?;
+    let base_owned = field("base")?;
+    let name_owned = field("name")?;
+    let ext_owned = field("ext")?;
 
-    let mut dir: &[u8] = b"";
-    let dir_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "dir")? {
-        Some(js_value.to_slice(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = dir_slice {
-        dir = slice.slice();
-    }
-
-    let mut base: &[u8] = b"";
-    let base_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "base")? {
-        Some(js_value.to_slice(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = base_slice {
-        base = slice.slice();
-    }
-
-    let mut _name: &[u8] = b"";
-    let _name_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "name")? {
-        Some(js_value.to_slice(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = _name_slice {
-        _name = slice.slice();
-    }
-
-    let mut ext: &[u8] = b"";
-    let ext_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "ext")? {
-        Some(js_value.to_slice(global_object)?)
-    } else {
-        None
-    };
-    if let Some(ref slice) = ext_slice {
-        ext = slice.slice();
-    }
+    let root_zstr = root_owned.to_zig_string();
+    let dir_zstr = dir_owned.to_zig_string();
+    let base_zstr = base_owned.to_zig_string();
+    let name_zstr = name_owned.to_zig_string();
+    let ext_zstr = ext_owned.to_zig_string();
 
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+
+    if root_zstr.is_16bit()
+        || dir_zstr.is_16bit()
+        || base_zstr.is_16bit()
+        || name_zstr.is_16bit()
+        || ext_zstr.is_16bit()
+    {
+        let root16 = PathUtf16::of(&root_zstr);
+        let dir16 = PathUtf16::of(&dir_zstr);
+        let base16 = PathUtf16::of(&base_zstr);
+        let name16 = PathUtf16::of(&name_zstr);
+        let ext16 = PathUtf16::of(&ext_zstr);
+        return format_js_t::<u16>(
+            global_object,
+            pool,
+            is_windows,
+            &PathParsed {
+                root: root16.slice(),
+                dir: dir16.slice(),
+                base: base16.slice(),
+                ext: ext16.slice(),
+                name: name16.slice(),
+            },
+        );
+    }
+
+    let root_slice = root_zstr.to_slice();
+    let dir_slice = dir_zstr.to_slice();
+    let base_slice = base_zstr.to_slice();
+    let name_slice = name_zstr.to_slice();
+    let ext_slice = ext_zstr.to_slice();
     format_js_t::<u8>(
         global_object,
         pool,
         is_windows,
         &PathParsed {
-            root,
-            dir,
-            base,
-            ext,
-            name: _name,
+            root: root_slice.slice(),
+            dir: dir_slice.slice(),
+            base: base_slice.slice(),
+            ext: ext_slice.slice(),
+            name: name_slice.slice(),
         },
     )
 }
@@ -1561,12 +1611,8 @@ pub fn join(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // The `ZigStringSlice` RAII guards live inline in `owned` so every
-    // per-arg `toSlice()` is released at scope exit.
-    // ASCII-only inputs (the common case) borrow the WTF backing without
-    // allocating; only non-ASCII triggers a transcode allocation.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
-
+    let mut zstrs: SmallVec<[ZigString; 8]> = SmallVec::with_capacity(args_len);
+    let mut any_16bit = false;
     for (i, &path_ptr) in args.iter().enumerate() {
         // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
         // on the cold error branch (it materialises a 48-byte `fmt::Arguments`
@@ -1583,14 +1629,26 @@ pub fn join(
         if path_zstr.len == 0 {
             continue;
         }
-        owned.push(path_zstr.to_slice());
+        any_16bit |= path_zstr.is_16bit();
+        zstrs.push(path_zstr);
     }
+
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+
+    if any_16bit {
+        let owned16: SmallVec<[PathUtf16<'_>; 8]> = zstrs.iter().map(PathUtf16::of).collect();
+        let paths16: SmallVec<[&[u16]; 8]> = owned16.iter().map(PathUtf16::slice).collect();
+        return join_js_t::<u16>(global_object, pool, is_windows, &paths16);
+    }
+
+    // The `ZigStringSlice` RAII guards live inline in `owned` so every
+    // per-arg `toSlice()` is released at scope exit. ASCII-only inputs (the
+    // common case) borrow the WTF backing without allocating.
+    let owned: SmallVec<[ZigStringSlice; 8]> = zstrs.iter().map(ZigString::to_slice).collect();
     // Derive the `&[u8]` views in a second pass once `owned` is fully built —
     // borrowck then sees `paths` as a plain reborrow of `owned` with no
-    // intervening mutation, so no raw-pointer detach is needed. Empty entries
-    // are skipped both here and inside `join_*_t`.
+    // intervening mutation, so no raw-pointer detach is needed.
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(ZigStringSlice::slice).collect();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
@@ -2018,8 +2076,16 @@ pub(crate) fn normalize(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    let path_zslice = path_zstr.to_slice();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    if path_zstr.is_16bit() {
+        return normalize_js_t::<u16>(
+            global_object,
+            pool,
+            is_windows,
+            path_zstr.utf16_slice_aligned(),
+        );
+    }
+    let path_zslice = path_zstr.to_slice();
     normalize_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }
 
@@ -2387,6 +2453,9 @@ pub fn parse(
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 
+    if path_zstr.is_16bit() {
+        return parse_js_t::<u16>(global_object, is_windows, path_zstr.utf16_slice_aligned());
+    }
     let path_zslice = path_zstr.to_slice();
     parse_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -2805,9 +2874,20 @@ pub(crate) fn relative(
         return Ok(from_ptr);
     }
 
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    if from_zig_str.is_16bit() || to_zig_str.is_16bit() {
+        let from16 = PathUtf16::of(&from_zig_str);
+        let to16 = PathUtf16::of(&to_zig_str);
+        return relative_js_t::<u16>(
+            global_object,
+            pool,
+            is_windows,
+            from16.slice(),
+            to16.slice(),
+        );
+    }
     let from_zig_slice = from_zig_str.to_slice();
     let to_zig_slice = to_zig_str.to_slice();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     relative_js_t::<u8>(
         global_object,
         pool,
@@ -3409,13 +3489,11 @@ pub(crate) fn resolve(
     // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
     // on the stack; `PathScratch` spills to the heap for very long paths.
 
-    // Borrow each argument's WTF backing as a `ZigStringSlice` (no per-arg
-    // `to_owned_slice()` heap copy — ASCII inputs borrow in place, only
-    // non-ASCII transcodes). Inline-8 keeps the typical call alloc-free.
-    // Walk back-to-front to early-out on the first absolute
-    // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
+    // Walk back-to-front to early-out on the first absolute POSIX path; reverse
+    // before handing to `resolve_*_t`. Inline-8 keeps the typical call alloc-free.
+    let mut zstrs: SmallVec<[ZigString; 8]> = SmallVec::new();
     let mut resolved_root = false;
+    let mut any_16bit = false;
 
     let mut i = args_len;
     while i > 0 {
@@ -3433,19 +3511,11 @@ pub(crate) fn resolve(
             continue;
         }
 
-        owned.push(path_zstr.to_slice());
-
-        if !is_windows {
-            // `'/'` is ASCII, so byte-level check on the UTF-8 view matches `charAt(0)`.
-            if owned.last().unwrap().slice().first() == Some(&CHAR_FORWARD_SLASH) {
-                resolved_root = true;
-            }
+        if !is_windows && path_zstr.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
+            resolved_root = true;
         }
-    }
-
-    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(owned.len());
-    for s in owned.iter().rev() {
-        paths.push(s.slice());
+        any_16bit |= path_zstr.is_16bit();
+        zstrs.push(path_zstr);
     }
 
     #[cfg(unix)]
@@ -3453,13 +3523,32 @@ pub(crate) fn resolve(
         if !is_windows {
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
+            if zstrs.is_empty()
+                || (zstrs.len() == 1 && (zstrs[0].eql_comptime(".") || zstrs[0].eql_comptime("./")))
+            {
                 return Ok(Process__getCachedCwd(global_object));
             }
         }
     }
 
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+
+    if any_16bit {
+        let owned16: SmallVec<[PathUtf16<'_>; 8]> = zstrs.iter().map(PathUtf16::of).collect();
+        let mut paths16: SmallVec<[&[u16]; 8]> = SmallVec::with_capacity(owned16.len());
+        for s in owned16.iter().rev() {
+            paths16.push(s.slice());
+        }
+        return resolve_js_t::<u16>(global_object, pool, is_windows, &paths16);
+    }
+
+    // Borrow each argument's WTF backing as a `ZigStringSlice` (ASCII borrows
+    // in place; only non-ASCII Latin-1 transcodes).
+    let owned: SmallVec<[ZigStringSlice; 8]> = zstrs.iter().map(ZigString::to_slice).collect();
+    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(owned.len());
+    for s in owned.iter().rev() {
+        paths.push(s.slice());
+    }
     resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
@@ -3590,8 +3679,16 @@ pub(crate) fn to_namespaced_path(
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    if path_zstr.is_16bit() {
+        return to_namespaced_path_js_t::<u16>(
+            global_object,
+            pool,
+            is_windows,
+            path_zstr.utf16_slice_aligned(),
+        );
+    }
+    let path_zslice = path_zstr.to_slice();
     to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }
 

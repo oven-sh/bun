@@ -455,7 +455,7 @@ static inline JSC::EncodedJSValue jsMessageEventPrototypeFunction_initMessageEve
     EnsureStillAliveScope argument7 = callFrame->argument(7);
     auto messagePorts = argument7.value().isUndefined() ? Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {} : convert<IDLSequence<IDLInterface<MessagePort>>>(*lexicalGlobalObject, argument7.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(WTF::move(type), WTF::move(bubbles), WTF::move(cancelable), WTF::move(data), WTF::move(originArg), WTF::move(lastEventId), WTF::move(source), WTF::move(messagePorts)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(vm, castedThis, WTF::move(type), WTF::move(bubbles), WTF::move(cancelable), WTF::move(data), WTF::move(originArg), WTF::move(lastEventId), WTF::move(source), WTF::move(messagePorts)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessageEventPrototypeFunction_initMessageEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

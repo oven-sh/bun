@@ -112,6 +112,18 @@ test("MessageEvent", () => {
   expect(called).toBe(true);
 });
 
+test("legacy event initializers retain object values across GC", () => {
+  const custom = new CustomEvent("custom");
+  const message = new MessageEvent("message");
+  custom.initCustomEvent("custom", false, false, { custom: true });
+  message.initMessageEvent("message", false, false, { message: true });
+
+  Bun.gc(true);
+
+  expect(custom.detail).toEqual({ custom: true });
+  expect(message.data).toEqual({ message: true });
+});
+
 it("crypto.getRandomValues", () => {
   var foo = new Uint8Array(32);
 

@@ -290,7 +290,7 @@ static inline JSC::EncodedJSValue jsCustomEventPrototypeFunction_initCustomEvent
     EnsureStillAliveScope argument3 = callFrame->argument(3);
     auto detail = argument3.value().isUndefined() ? jsNull() : convert<IDLAny>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initCustomEvent(type, WTF::move(bubbles), WTF::move(cancelable), WTF::move(detail)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initCustomEvent(vm, castedThis, type, WTF::move(bubbles), WTF::move(cancelable), WTF::move(detail)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCustomEventPrototypeFunction_initCustomEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

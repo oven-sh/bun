@@ -202,6 +202,30 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("bind error messages match node's exactly (trailing period)", () => {
+    const db = new DatabaseSync(":memory:");
+    const stmt = db.prepare("SELECT ? AS v");
+    // Node's test suite asserts these messages with exact string equality, so
+    // the trailing '.' must be present for ported tests to pass unmodified.
+    for (const v of [true, false, undefined, Symbol.iterator]) {
+      expect(() => stmt.get(v as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "Provided value cannot be bound to SQLite parameter 1.",
+        }),
+      );
+    }
+    for (const v of [2n ** 64n, -(2n ** 64n)]) {
+      expect(() => stmt.get(v)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "BigInt value is too large to bind.",
+        }),
+      );
+    }
+    db.close();
+  });
+
   test("statements are unbound on each call", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)");

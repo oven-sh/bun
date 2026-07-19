@@ -14,10 +14,10 @@ import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
-import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { webkit } from "../../scripts/build/deps/webkit.ts";
-import { computeFlags } from "../../scripts/build/flags.ts";
-import { rustCanCrossFromLinux, rustTarget } from "../../scripts/build/rust.ts";
+import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
+import { webkit } from "../../../scripts/build/deps/webkit.ts";
+import { computeFlags } from "../../../scripts/build/flags.ts";
+import { rustCanCrossFromLinux, rustTarget } from "../../../scripts/build/rust.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {

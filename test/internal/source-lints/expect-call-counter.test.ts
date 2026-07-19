@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { basename, join } from "path";
 
-const MATCHER_DIR = join(import.meta.dir, "../../src/runtime/test_runner/expect");
+const MATCHER_DIR = join(import.meta.dir, "../../../src/runtime/test_runner/expect");
 
 // Helpers that call increment_expect_call_counter() internally (verified in
 // src/runtime/test_runner/expect.rs and mod.rs).

@@ -12,7 +12,7 @@
 // instead of suppressing the lint. If the item is live on another target or
 // profile (verify with `cargo check --workspace --target <triple>` and
 // `--release`), keep the attribute and update the limits by running
-// `bun ./test/internal/dead-code-escapes.test.ts`.
+// `bun ./test/internal/source-lints/dead-code-escapes.test.ts`.
 //
 // If it fails because a count went DOWN: you deleted dead code — update the
 // limits the same way so the inventory stays accurate.
@@ -20,7 +20,7 @@
 import { file } from "bun";
 import { realpathSync } from "fs";
 import path from "path";
-import { globAllSources } from "../../scripts/glob-sources.ts";
+import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // Item-level escapes only: `#[allow(dead_code)]`, combined lists like
 // `#[allow(dead_code, non_snake_case)]`, and `#[cfg_attr(<pred>, allow(dead_code))]`
@@ -37,7 +37,7 @@ const ESCAPE = /#\[\s*(?:cfg_attr\([^\]]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)
 
 const limits: Record<string, number> = await Bun.file(import.meta.dir + "/dead-code-escape-limits.json").json();
 
-const root = path.resolve(import.meta.dir, "..", "..");
+const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
 
 // Only count files tracked in HEAD: editors and `git stash` round-trips can
@@ -70,7 +70,7 @@ for (const abs of rustSources) {
 }
 
 if (typeof describe === "undefined") {
-  // Standalone mode (`bun ./test/internal/dead-code-escapes.test.ts`):
+  // Standalone mode (`bun ./test/internal/source-lints/dead-code-escapes.test.ts`):
   // regenerate the limits file from the current tree.
   const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : 1)));
   await Bun.write(import.meta.dir + "/dead-code-escape-limits.json", JSON.stringify(sorted, null, 2) + "\n");
@@ -89,12 +89,12 @@ describe("#[allow(dead_code)] escapes", () => {
           `${source} has ${count} item-level #[allow(dead_code)] escapes, up from ${limit}.\n` +
             `Every escape must hide code that is live on SOME target/profile; dead code must be deleted instead.\n` +
             `Verify with \`cargo check --workspace --target <triple>\` (all CI triples) in dev AND release profiles.\n` +
-            `If the new escape is justified, update the inventory with \`bun ./test/internal/dead-code-escapes.test.ts\`.`,
+            `If the new escape is justified, update the inventory with \`bun ./test/internal/source-lints/dead-code-escapes.test.ts\`.`,
         );
       } else if (count < limit) {
         throw new Error(
           `${source} has ${count} item-level #[allow(dead_code)] escapes, down from ${limit}.\n` +
-            `Update the inventory with \`bun ./test/internal/dead-code-escapes.test.ts\`.`,
+            `Update the inventory with \`bun ./test/internal/source-lints/dead-code-escapes.test.ts\`.`,
         );
       }
     });

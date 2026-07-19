@@ -3,8 +3,8 @@
  * hit the plain `autobuild-<sha>` tag. Configure-time only. */
 import { describe, expect, test } from "bun:test";
 
-import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { webkit, WEBKIT_VERSION } from "../../scripts/build/deps/webkit.ts";
+import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
+import { webkit, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {

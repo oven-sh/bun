@@ -2,7 +2,7 @@ import { file } from "bun";
 import { expect, test } from "bun:test";
 import { realpathSync } from "fs";
 import path from "path";
-import { globAllSources } from "../../scripts/glob-sources.ts";
+import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // https://github.com/oven-sh/bun/issues/31976
 //
@@ -15,7 +15,7 @@ import { globAllSources } from "../../scripts/glob-sources.ts";
 // `Drop` must keep its fields private and gate construction behind an
 // `unsafe fn`, so the pairing invariant is acknowledged at every call site.
 
-const root = path.resolve(import.meta.dir, "..", "..");
+const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
 
 // Only scan files tracked in HEAD (a `git stash` round-trip can leave stray

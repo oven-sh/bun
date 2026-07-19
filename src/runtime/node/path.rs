@@ -2707,7 +2707,8 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
     // Lastly, append the rest of the destination (`to`) path that comes after
     // the common path parts
     if out_len > 0 {
-        let slice_size = to_end - to_start;
+        // JS `String.prototype.slice(toStart, toEnd)` yields "" when toStart > toEnd.
+        let slice_size = to_end.saturating_sub(to_start);
         buf_size = out_len;
         if slice_size > 0 {
             buf_offset = buf_size;
@@ -2720,10 +2721,11 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
         return Ok(&buf[0..buf_size]);
     }
 
-    if buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
+    // JS `charCodeAt` returns NaN past the end, which never equals '\'.
+    if to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
-    Ok(&buf[to_start..to_end])
+    Ok(&buf[to_start.min(to_end)..to_end])
 }
 
 pub(crate) fn relative_posix_js_t<T: PathCharCwd>(

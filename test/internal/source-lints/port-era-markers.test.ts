@@ -9,9 +9,9 @@
 import { file } from "bun";
 import { expect, test } from "bun:test";
 import path from "node:path";
-import { globAllSources } from "../../scripts/glob-sources.ts";
+import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-const root = path.resolve(import.meta.dir, "..", "..");
+const root = path.resolve(import.meta.dir, "..", "..", "..");
 
 // Patterns that indicate stale port-era comments. Each was driven to zero
 // occurrences in src/**/*.rs; any reappearance is almost certainly copied

@@ -112,16 +112,47 @@ test("MessageEvent", () => {
   expect(called).toBe(true);
 });
 
-test("legacy event initializers retain object values across GC", () => {
-  const custom = new CustomEvent("custom");
-  const message = new MessageEvent("message");
-  custom.initCustomEvent("custom", false, false, { custom: true });
-  message.initMessageEvent("message", false, false, { message: true });
+test("legacy event initializers retain object values during concurrent GC", async () => {
+  const script = /* js */ `
+    const count = 5000;
+    const customEvents = [];
+    const messageEvents = [];
+    for (let i = 0; i < count; i++) {
+      const custom = new CustomEvent("custom");
+      const message = new MessageEvent("message");
+      customEvents.push(custom);
+      messageEvents.push(message);
+      const garbage = [];
+      for (let j = 0; j < 50; j++) garbage.push({ a: j, b: new Array(10).fill(j) });
+      custom.initCustomEvent("custom", false, false, new Error("custom-" + i));
+      message.initMessageEvent("message", false, false, new Error("message-" + i));
+    }
 
-  Bun.gc(true);
+    for (let i = 0; i < count; i++) {
+      const detail = customEvents[i].detail;
+      const data = messageEvents[i].data;
+      if (detail?.message !== "custom-" + i) throw new Error("lost CustomEvent detail");
+      if (data?.message !== "message-" + i) throw new Error("lost MessageEvent data");
+    }
+    console.log("OK");
+  `;
 
-  expect(custom.detail).toEqual({ custom: true });
-  expect(message.data).toEqual({ message: true });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      BUN_JSC_collectContinuously: "1",
+      BUN_JSC_numberOfGCMarkers: "8",
+      BUN_JSC_verifyGC: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("OK\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it("crypto.getRandomValues", () => {

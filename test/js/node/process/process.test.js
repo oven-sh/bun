@@ -289,14 +289,15 @@ it("process.env.TZ reassignment updates the offset on existing Date instances", 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { a, b, c } = JSON.parse(stdout);
-  expect({ a, b, c }).toEqual({
-    a: { str: expect.stringMatching(/^Sat Apr 14 2018 14:34:56 GMT\+0200 \(.+\)$/), hours: 14, offset: -120 },
-    b: { str: expect.stringMatching(/^Sat Apr 14 2018 13:34:56 GMT\+0100 \(.+\)$/), hours: 13, offset: -60 },
-    c: { str: expect.stringMatching(/^Sat Apr 14 2018 14:34:56 GMT\+0200 \(.+\)$/), hours: 14, offset: -120 },
+  expect({ out: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    out: {
+      a: { str: expect.stringMatching(/^Sat Apr 14 2018 14:34:56 GMT\+0200 \(.+\)$/), hours: 14, offset: -120 },
+      b: { str: expect.stringMatching(/^Sat Apr 14 2018 13:34:56 GMT\+0100 \(.+\)$/), hours: 13, offset: -60 },
+      c: { str: expect.stringMatching(/^Sat Apr 14 2018 14:34:56 GMT\+0200 \(.+\)$/), hours: 14, offset: -120 },
+    },
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });
 
 it("process.version starts with v", () => {

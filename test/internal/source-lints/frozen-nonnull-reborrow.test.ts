@@ -2,7 +2,7 @@ import { file } from "bun";
 import { expect, test } from "bun:test";
 import { realpathSync } from "fs";
 import path from "path";
-import { globAllSources } from "../../scripts/glob-sources.ts";
+import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // `NonNull::from(&*expr)` is always a bug waiting to happen.
 //
@@ -29,9 +29,9 @@ import { globAllSources } from "../../scripts/glob-sources.ts";
 // of the owning `Box` — moving a `Box` retags it, and a pointer taken before
 // the move is a stale sibling of the one the new owner holds.
 //
-// Sibling guard: test/internal/unsound-erased-box.test.ts.
+// Sibling guard: test/internal/source-lints/unsound-erased-box.test.ts.
 
-const root = path.resolve(import.meta.dir, "..", "..");
+const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
 
 // Only scan files tracked in HEAD (a `git stash` round-trip can leave stray

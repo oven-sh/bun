@@ -159,6 +159,15 @@ impl Response {
             WriteResult::Backpressure(len)
         }
     }
+    pub fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
+        // node:http (the only caller) never reaches HTTP/3; fall through to
+        // the copying write for AnyResponse dispatch parity.
+        let _ = self.write(data);
+        data.len()
+    }
+    pub fn spill_body(&mut self, data: &[u8]) {
+        let _ = self.write(data);
+    }
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live FFI handle; status ptr/len valid for read
         unsafe { c::uws_h3_res_write_status(self, status.as_ptr(), status.len()) }
@@ -178,6 +187,9 @@ impl Response {
     }
     pub fn mark_wrote_content_length_header(&mut self) {
         c::uws_h3_res_mark_wrote_content_length_header(self)
+    }
+    pub fn mark_wrote_date_header(&mut self) {
+        c::uws_h3_res_mark_wrote_date_header(self)
     }
     pub fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
@@ -721,6 +733,7 @@ mod c {
             v: u64,
         );
         pub(super) safe fn uws_h3_res_mark_wrote_content_length_header(res: &mut Response);
+        pub(super) safe fn uws_h3_res_mark_wrote_date_header(res: &mut Response);
         pub(super) safe fn uws_h3_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;

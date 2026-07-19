@@ -225,11 +225,15 @@ describe("Bun.Terminal platform behaviour", () => {
     // POSIX ONLCR and ConPTY both render \n as \r\n on the master/read side.
     // Older ConPTY may pad to the cell boundary before \r\n, either with
     // spaces or with an erase-and-advance pair (ESC[nX ESC[nC) when it emits
-    // a full-screen repaint, so accept any non-LF run between READY and \r\n.
+    // a full-screen repaint. In repaint form EVERY row ends \r\n regardless of
+    // the child's output, so anchor the \r\n between the two markers: READY
+    // and LINE2 must land on separate rows, which they only do if the child's
+    // \n was honoured.
     const { output } = await runInTerminal(`process.stdout.write('READY\\nLINE2')`, {
       done: o => o.includes("LINE2"),
     });
-    expect(output).toMatch(/READY[^\n]*\r\n/);
+    expect(output).toMatch(/READY[^\n]*\r\n[^\n]*LINE2/);
+    expect(output).not.toMatch(/READY[^\r\n]*LINE2/);
   });
 
   test("GAP: ANSI escape sequences", async () => {

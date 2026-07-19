@@ -9594,6 +9594,10 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_writable(&self) {
+        // flush() re-enters JS (write callbacks, onStreamEnd, onWantTrailers);
+        // that JS can destroy the session and drop the socket's ref, so the
+        // keepalive must span the whole loop, not just each flush() call.
+        let _keepalive = self.keepalive();
         // flush() ends in flush_stream_queue() → write() → cork(), leaving the
         // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
         // here would let loop.c see last_write_failed==0 and disarm WRITABLE,

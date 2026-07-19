@@ -1,8 +1,9 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import path from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -172,6 +173,30 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
       server.close();
     }
   });
+
+  // Hive-pool user-poison, so only ASAN observes the freed-slot read.
+  test.skipIf(!isASAN)(
+    "send → backpressure then session.destroy() inside the drained write callback does not UAF",
+    async () => {
+      // Runs in a subprocess: the failure mode is an ASAN abort inside
+      // on_native_writable, not an exception the test runner can catch.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "node-http2-writable-destroy-fixture.ts")],
+        env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).not.toContain("AddressSanitizer");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });
 
 describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {

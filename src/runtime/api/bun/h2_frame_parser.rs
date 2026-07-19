@@ -2272,6 +2272,10 @@ impl Stream {
             client.outbound_queue_size.get()
         );
 
+        // dispatch_write_callback re-enters JS; a destroy there can drop the
+        // socket's ref and free `client` between iterations. Not during
+        // finalize: refcount is already 0 and a ref/deref would re-destroy.
+        let _keepalive = (!FINALIZING).then(|| client.keepalive());
         let mut queue = core::mem::take(&mut self.data_frame_queue);
         while let Some(item) = queue.dequeue() {
             let frame = item;
@@ -9614,6 +9618,9 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
+        // detach_native_socket can drop the socket's last ref (Writeonly deref),
+        // so match on_native_read/on_native_writable and hold our own +1.
+        let _keepalive = self.keepalive();
         self.detach_native_socket();
     }
 

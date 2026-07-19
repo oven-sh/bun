@@ -748,8 +748,37 @@ describe("Bun.Transpiler", () => {
     it("malformed enums", () => {
       const err = ts.expectParseError;
 
-      err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
+      err("enum Foo { [2]: 'hi' }", 'Expected string but found "2"');
       err("enum [] { a }", 'Expected identifier but found "["');
+      // Only string literals and substitution-free template literals are
+      // valid computed enum member names.
+      err("enum Foo { ['a' + 'b'] = 1 }", 'Expected "]" but found "+"');
+      err("enum Foo { [`t${1}`] = 1 }", 'Expected string but found "`t${"');
+      err("enum Foo { [Symbol.iterator] = 1 }", 'Expected string but found "Symbol"');
+    });
+
+    it("enum members with computed string literal names", () => {
+      const exp = ts.expectPrinted_;
+
+      exp(
+        "enum E { ['with space'] = 1 }",
+        'var E;\n((E) => {\n  E[E["with space"] = 1] = "with space";\n})(E ||= {});\n',
+      );
+      exp("enum E { [`tmpl`] = 2 }", 'var E;\n((E) => {\n  E[E["tmpl"] = 2] = "tmpl";\n})(E ||= {});\n');
+      // A computed name that is a valid identifier can be referenced by
+      // later members, same as a string literal name.
+      exp(
+        "enum E { ['A'] = 5, B = A * 2 }",
+        'var E;\n((E) => {\n  E[E["A"] = 5] = "A";\n  E[E["B"] = 10] = "B";\n})(E ||= {});\n',
+      );
+      exp(
+        "enum E { ['x'], ['y z'] }",
+        'var E;\n((E) => {\n  E[E["x"] = 0] = "x";\n  E[E["y z"] = 1] = "y z";\n})(E ||= {});\n',
+      );
+      exp(
+        "const enum CE { ['c'] = 9 } console.log(CE.c)",
+        'var CE;\n((CE) => {\n  CE[CE["c"] = 9] = "c";\n})(CE ||= {});\nconsole.log(9 /* c */);\n',
+      );
     });
 
     it("rejects yield/await/this/super in enum initializers", () => {

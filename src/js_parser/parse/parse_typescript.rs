@@ -632,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
-            // Assigned in both live arms below; the third arm returns.
+            // Assigned in every live arm below; the error arm returns.
             let needs_symbol: bool;
 
             // Parse the name
@@ -643,15 +643,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
                 needs_symbol = js_lexer::is_identifier(value.name.slice());
+                p.lexer.next()?;
+            } else if p.lexer.token == T::TOpenBracket {
+                // TypeScript allows computed enum member names when the
+                // expression is a string literal or a substitution-free
+                // template literal: "enum E { ['a'] = 1, [`b`] = 2 }".
+                p.lexer.next()?;
+                if p.lexer.token != T::TStringLiteral
+                    && p.lexer.token != T::TNoSubstitutionTemplateLiteral
+                {
+                    p.lexer.expect(T::TStringLiteral)?;
+                    return Err(err!("SyntaxError"));
+                }
+                let estr = p.lexer.to_utf8_e_string()?;
+                debug_assert!(!estr.is_utf16);
+                value.name = estr.data;
+                needs_symbol = js_lexer::is_identifier(value.name.slice());
+                p.lexer.next()?;
+                p.lexer.expect(T::TCloseBracket)?;
             } else if p.lexer.is_identifier_or_keyword() {
                 value.name = js_ast::StoreStr::new(p.lexer.identifier);
                 needs_symbol = true;
+                p.lexer.next()?;
             } else {
                 p.lexer.expect(T::TIdentifier)?;
                 // error early, name is still `undefined`
                 return Err(crate::Error::SyntaxError);
             }
-            p.lexer.next()?;
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {

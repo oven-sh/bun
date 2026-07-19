@@ -551,16 +551,19 @@ extern "C" void bun_restore_stdio()
         sigset_t sa;
         int err;
 
-        // We might be a background job that doesn't own the TTY so block SIGTTOU
-        // before making the tcsetattr() call, otherwise that signal suspends us.
-        sigemptyset(&sa);
-        sigaddset(&sa, SIGTTOU);
+// OHOS seccomp blocks tcsetattr; skip restore.
+#ifndef __OHOS__
+    // We might be a background job that doesn't own the TTY so block SIGTTOU
+    // before making the tcsetattr() call, otherwise that signal suspends us.
+    sigemptyset(&sa);
+    sigaddset(&sa, SIGTTOU);
 
-        pthread_sigmask(SIG_BLOCK, &sa, nullptr);
-        do
-            err = tcsetattr(fd, TCSANOW, &termios_to_restore_later[fd]);
-        while (err == -1 && errno == EINTR);
-        pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
+    pthread_sigmask(SIG_BLOCK, &sa, nullptr);
+    do
+        err = tcsetattr(fd, TCSANOW, &termios_to_restore_later[fd]);
+    while (err == -1 && errno == EINTR);
+    pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
+#endif
     }
 #endif
 }

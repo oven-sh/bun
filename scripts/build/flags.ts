@@ -215,7 +215,7 @@ export const globalFlags: Flag[] = [
 
   // ─── OHOS cross-compilation ───
   {
-    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`, `-D__MUSL__`, `-mbranch-protection=none`, `-mno-outline-atomics`],
+    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`, `-D__MUSL__`, `-D__OHOS__`, `-mbranch-protection=none`, `-mno-outline-atomics`],
     when: c => c.ohos && c.arm64,
     desc: "OHOS target triple + sysroot + musl libc (no PAC/BTI/outline-atomics for OHOS device compat)",
   },

@@ -223,6 +223,46 @@ describe("transpiler cache", () => {
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
   });
+  test("module_type (package.json \"type\") invalidates cache", () => {
+    // A file with a top-level `return` and no ESM/CJS-forcing syntax is valid
+    // CommonJS but a SyntaxError as an ES module. Same bytes, different
+    // package.json "type" must not share a cache entry.
+    const pad = Buffer.alloc(50 * 1024, "/").toString();
+    const body = `let x = 1;\nif (x === 2) return;\nconsole.log("cjs ok");\n//${pad}\n`;
+    mkdirSync(join(temp_dir, "esm"));
+    mkdirSync(join(temp_dir, "cjs"));
+    writeFileSync(join(temp_dir, "esm", "t.js"), body);
+    writeFileSync(join(temp_dir, "cjs", "t.js"), body);
+    writeFileSync(join(temp_dir, "esm", "package.json"), `{"type":"module"}`);
+    writeFileSync(join(temp_dir, "cjs", "package.json"), `{"type":"commonjs"}`);
+
+    const run = (sub: string) =>
+      Bun.spawnSync({
+        cmd: [bunExe(), "t.js"],
+        cwd: join(temp_dir, sub),
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+    // Prime the cache from the ESM side. This is a legitimate SyntaxError.
+    const esm = run("esm");
+    expect(esm.stderr.toString()).toContain("SyntaxError");
+    expect(esm.exitCode).toBe(1);
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBe(1);
+
+    // Same bytes loaded as CommonJS must not reuse the ESM-format entry.
+    const cjs = run("cjs");
+    expect(cjs.stderr.toString()).toBe("");
+    expect(cjs.stdout.toString().trim()).toBe("cjs ok");
+    expect(cjs.exitCode).toBe(0);
+
+    // And running CJS again is now a cache hit.
+    const cjs2 = run("cjs");
+    expect(cjs2.stdout.toString().trim()).toBe("cjs ok");
+    expect(cjs2.exitCode).toBe(0);
+  });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;

@@ -259,6 +259,10 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        // package.json `"type"` / .mjs / .cjs: picks `exports_kind` for
+        // syntactically-ambiguous files, so it shapes the output.
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 

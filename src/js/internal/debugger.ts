@@ -176,7 +176,16 @@ export default function (
           // start a new server on this already-running debugger thread and
           // report its URL back.
           try {
-            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true, false, isWaitingForDebugger);
+            debug = new Debugger(
+              executionContextId,
+              parsed.url,
+              createBackend,
+              send,
+              close,
+              true,
+              false,
+              isWaitingForDebugger,
+            );
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
             reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
@@ -228,7 +237,16 @@ export default function (
 
   let debug: Debugger | undefined;
   try {
-    debug = new Debugger(executionContextId, url, createBackend, send, close, false, enableNodeCDP, isWaitingForDebugger);
+    debug = new Debugger(
+      executionContextId,
+      url,
+      createBackend,
+      send,
+      close,
+      false,
+      enableNodeCDP,
+      isWaitingForDebugger,
+    );
   } catch (error) {
     exit("Failed to start inspector:\n", error);
   }

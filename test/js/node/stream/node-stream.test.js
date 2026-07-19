@@ -1667,38 +1667,32 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
 });
 
 describe("duplexPair teardown (test-duplex-error.js)", () => {
-  // _destroy schedules the peer teardown on nextTick; two setImmediates give
-  // that tick plus the peer's own destroy/close emission time to settle.
-  const settle = () => new Promise(r => setImmediate(() => setImmediate(r)));
+  const once = (emitter, event) => new Promise(resolve => emitter.once(event, resolve));
 
   it("destroying one side with an error destroys the peer without re-emitting the error", async () => {
     const [a, b] = duplexPair();
     const aError = jest.fn();
     const bError = jest.fn();
-    const bClose = jest.fn();
     a.on("error", aError);
     b.on("error", bError);
-    b.on("close", bClose);
+    const bClosed = once(b, "close");
     a.resume();
     b.resume();
     a.destroy(new Error("boom"));
-    await settle();
+    await bClosed;
     expect({ a: a.destroyed, b: b.destroyed }).toEqual({ a: true, b: true });
     expect(aError).toHaveBeenCalledTimes(1);
     expect(aError.mock.calls[0][0].message).toBe("boom");
     expect(bError).not.toHaveBeenCalled();
-    expect(bClose).toHaveBeenCalledTimes(1);
   });
 
   it("destroying one side without an error ends the peer's readable", async () => {
     const [a, b] = duplexPair();
-    const bEnd = jest.fn();
-    b.on("end", bEnd);
+    const bEnded = once(b, "end");
     b.resume();
     a.destroy();
-    await settle();
+    await bEnded;
     expect(a.destroyed).toBe(true);
-    expect(bEnd).toHaveBeenCalledTimes(1);
   });
 });
 

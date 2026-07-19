@@ -1651,7 +1651,8 @@ describe("NODE_NO_WARNINGS", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
     expect(exitCode).toBe(0);
     return stderr;
   }

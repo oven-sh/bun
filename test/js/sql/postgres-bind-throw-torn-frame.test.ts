@@ -1,16 +1,12 @@
-// Fault-injection test: requires a server we can byte-inspect, which a healthy
-// container does not expose. DO NOT COPY THIS PATTERN; anything a real server
-// can produce belongs in describeWithContainer.
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
 //
-// `write_bind` serialises parameter values directly into the connection's
-// outgoing wire buffer, calling back into JS for each value (coerce / toString
-// / valueOf). The Bind message's Int32 length field is written as a zero
-// placeholder and only patched once every parameter has been encoded. If one of
-// those JS callbacks throws, the query rejects with the user's error, but the
-// partially-written `B\0\0\0\0…` prefix must be truncated from the buffer;
-// otherwise the next query's frames are appended after the torn Bind and the
-// whole lot is flushed together, which a real PostgreSQL server answers with
-// `invalid message length` and a dropped connection.
+// A parameter whose valueOf()/toString() throws mid-Bind must not leave the
+// half-written `B\0\0\0\0…` prefix in the write buffer; flushed ahead of the
+// next query it reads as `invalid message length` and drops the connection.
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
 import {
@@ -26,11 +22,9 @@ import {
   pgRowDescription,
 } from "./wire-frames";
 
-// Mock backend: answers startup with AuthOk+ReadyForQuery, every Parse with
-// ParseComplete+ParameterDescription(int4)+RowDescription+ReadyForQuery, and
-// every Bind with BindComplete+DataRow+CommandComplete+ReadyForQuery. Records
-// the raw bytes of every chunk received after startup so the test can verify
-// the client's wire framing directly.
+// Mock backend: replies to startup / Parse / Bind with the minimal happy-path
+// sequence and records every raw byte received after startup so the test can
+// verify the client's wire framing directly.
 let received!: Buffer;
 const { port, server } = await listeningServer(socket => {
   let pending = Buffer.alloc(0);
@@ -88,10 +82,9 @@ function newClient() {
   });
 }
 
-/** Walk `buf` as a sequence of Byte1-type + Int32-length frontend messages.
- * Returns the type-character list if every declared length is ≥ 4 and the
- * messages tile the buffer exactly; otherwise returns the torn offset and a
- * hex dump of the first bytes at that offset. */
+/** Walk `buf` as Byte1-type + Int32-length frontend messages: returns the type
+ * list iff every declared length is ≥ 4 and messages tile the buffer exactly,
+ * otherwise the torn offset and a hex dump of the bytes there. */
 function frameTypes(buf: Buffer): { types: string[] } | { tornAt: number; head: string } {
   const types: string[] = [];
   let o = 0;
@@ -113,9 +106,8 @@ async function run(evil: unknown, errorType: new (...a: any[]) => Error, message
   received = Buffer.alloc(0);
   const db = newClient();
   try {
-    // First query: the parameter's JS coercion throws while the Bind is being
-    // serialised, after the 'B' tag, the zero length placeholder, the
-    // portal/statement names and the format codes are already in the buffer.
+    // First query: the parameter's JS coercion throws mid-Bind, after the
+    // 'B' tag + zero length placeholder + names + format codes are buffered.
     const first = await db`select ${evil as any}::int4 as v`.catch(e => e);
     expect(first).toBeInstanceOf(errorType);
     expect((first as Error).message).toBe(message);
@@ -123,10 +115,8 @@ async function run(evil: unknown, errorType: new (...a: any[]) => Error, message
     // Second, innocent query on the same connection.
     const rows: any = await db`select ${1}::int4 as v`;
 
-    // Every byte the client sent after startup must be a well-formed frontend
-    // message. A torn Bind shows up as `42 00 00 00 00 …` (declared length 0,
-    // below the 4-byte minimum) at the offset where the first query's Bind was
-    // partially written, and frameTypes() reports it instead of a type list.
+    // Every byte sent after startup must be a well-formed frontend message;
+    // a torn Bind fails frameTypes() with head `42 00 00 00 00 …`.
     const framed = frameTypes(received);
     expect(framed).toEqual({
       types: expect.arrayContaining(["B", "E", "S"]),

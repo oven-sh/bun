@@ -61,7 +61,7 @@ fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
 // R-2: takes `*const` now that every `JSValkeyClient` method is `&self`;
 // `deref()` (and `ref_()`) already only need a shared receiver.
 #[inline]
-fn deref_guard(
+pub(super) fn deref_guard(
     this: *const JSValkeyClient,
 ) -> scopeguard::ScopeGuard<*const JSValkeyClient, fn(*const JSValkeyClient)> {
     fn drop_fn(p: *const JSValkeyClient) {
@@ -1052,6 +1052,11 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn js_disconnect(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        // `disconnect()` -> `close()` can dispatch `on_close` synchronously,
+        // which derefs. Hold a ref so `&self` stays live across the call.
+        self.ref_();
+        let _d = deref_guard(self);
+
         if self.client.get().status == valkey::Status::Disconnected {
             return Ok(JSValue::UNDEFINED);
         }
@@ -1584,6 +1589,17 @@ impl JSValkeyClient {
         self.ref_();
         let _d = deref_guard(self);
 
+        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
+        // Taken before the TLS-context check so the `tls_ctx_failed` branch's
+        // `on_valkey_close()` has a ref to consume instead of over-releasing.
+        self.ref_();
+        let self_ptr = self.as_ctx_ptr();
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
+            // guard releases that ref on early return.
+            unsafe { JSValkeyClient::deref(p) }
+        });
+
         let is_tls = self.client.get().tls != valkey::TLS::None;
         // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
         // is `&'static`. Cast through raw — the per-thread VM is single-owner
@@ -1629,6 +1645,9 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
+            // `on_valkey_close()` releases the socket ref; disarm the errdefer
+            // so it isn't released twice.
+            scopeguard::ScopeGuard::into_inner(errdefer_deref);
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
@@ -1642,15 +1661,6 @@ impl JSValkeyClient {
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
 
-        self.ref_();
-        // Balance the ref above if connect() throws — the caller (e.g. send())
-        // only knows to clean up its own state, not the keep-alive ref.
-        let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
-            // guard releases that ref on early return.
-            unsafe { JSValkeyClient::deref(p) }
-        });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| {
@@ -1692,6 +1702,11 @@ impl JSValkeyClient {
         _this_value: JSValue,
         command: &Command,
     ) -> Result<*mut JSPromise, crate::Error> {
+        // Keep `*self` alive across re-entrant connect/close paths below;
+        // the host-fn shim passes a bare `&self` with no ref of its own.
+        self.ref_();
+        let _d = deref_guard(self);
+
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
 

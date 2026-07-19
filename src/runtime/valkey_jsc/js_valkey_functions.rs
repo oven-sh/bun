@@ -1644,6 +1644,12 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
+        // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
+        // stays live across those calls.
+        this.ref_();
+        let _d = super::js_valkey::deref_guard(this);
+
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
@@ -1748,6 +1754,11 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Hold a ref so `*this` stays live across the handler-map updates and
+        // the `send()` below.
+        this.ref_();
+        let _d = super::js_valkey::deref_guard(this);
+
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;
 

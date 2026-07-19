@@ -305,20 +305,20 @@ function getRetry() {
     manual: {
       permit_on_passed: true,
     },
-    // Self-heal agent loss, and only agent loss. Within one rule the
-    // conditions are ANDed, so `signal_reason` scopes `exit_status: -1` to
-    // real connection loss (Buildkite records no signal reason for that) and
-    // `agent_stop` covers a graceful agent restart mid-job. The previous
-    // blanket `-1` / `255` rules defaulted to `signal_reason: "*"` and so also
-    // matched `cancel`, which is what a `timeout_in_minutes` kill records;
-    // across ~200 recent builds that auto-retried ~670 timed-out test shards
-    // and ~97% of them timed out again or were canceled before finishing,
-    // each one holding an agent for the full step timeout. User-canceled
+    // Self-heal agent/infra loss, and only that. Conditions within one rule
+    // are ANDed, so `signal_reason` scopes each rule to the failure mode it
+    // names: `none` is an agent that dropped its connection mid-job,
+    // `agent_stop` is a graceful agent restart mid-job, `process_run_error`
+    // is the bootstrap failing before the command ever ran. A blanket
+    // `exit_status: -1` / `255` also matches `cancel`, which is what a
+    // `timeout_in_minutes` kill records, so a timed-out shard would be
+    // re-queued just to time out again on the next agent. User-canceled
     // builds are state=canceled and never auto-retry regardless of these
     // rules.
     automatic: [
       { exit_status: -1, signal_reason: "none", limit: 1 },
       { signal_reason: "agent_stop", limit: 2 },
+      { signal_reason: "process_run_error", limit: 1 },
     ],
   };
 }

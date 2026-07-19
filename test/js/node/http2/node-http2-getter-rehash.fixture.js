@@ -1,9 +1,7 @@
 "use strict";
-// Re-entrant session.request() from a user options getter. request() shallow
-// copies options before the native call, so the getter runs while the outer
-// stream is being set up and the inner requests force the streams HashMap to
-// rehash. Streams are heap-allocated, so no *Stream into the map's backing
-// storage should dangle.
+// Re-entrant session.request() from an options getter. request() now shallow
+// copies options in JS before any stream exists (#31323), so this is a
+// re-entrancy/ordering smoke test rather than the original native UAF repro.
 
 const http2 = require("node:http2");
 

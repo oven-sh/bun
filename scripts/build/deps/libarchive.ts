@@ -19,7 +19,7 @@ import type { Config } from "../config.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const LIBARCHIVE_COMMIT = "ded82291ab41d5e355831b96b0e1ff49e24d8939";
+const LIBARCHIVE_COMMIT = "7219b0134d771dc4b51bf86b4d01761b87398b1b";
 
 // The unconditional list from libarchive/CMakeLists.txt + the two blake2
 // reference impls (added when libb2 isn't linked, which it never is here).

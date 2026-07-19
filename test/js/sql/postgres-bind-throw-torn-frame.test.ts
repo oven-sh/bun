@@ -30,6 +30,7 @@ const { port, server } = await listeningServer(socket => {
   let pending = Buffer.alloc(0);
   let sawStartup = false;
   socket.on("data", chunk => {
+    if (sawStartup) received = Buffer.concat([received, chunk]);
     pending = Buffer.concat([pending, chunk]);
     if (!sawStartup) {
       if (pending.length < 4) return;
@@ -37,11 +38,10 @@ const { port, server } = await listeningServer(socket => {
       if (pending.length < len) return;
       pending = pending.subarray(len);
       sawStartup = true;
+      received = Buffer.concat([received, pending]);
       socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-      if (pending.length === 0) return;
     }
-    received = Buffer.concat([received, pending]);
-    pgReadFrontendMessages(pending, type => {
+    pending = pgReadFrontendMessages(pending, type => {
       if (type === 0x50 /* Parse 'P' */) {
         socket.write(
           Buffer.concat([
@@ -62,7 +62,6 @@ const { port, server } = await listeningServer(socket => {
         );
       }
     });
-    pending = Buffer.alloc(0);
   });
   socket.on("error", () => {});
 });

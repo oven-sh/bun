@@ -743,9 +743,14 @@ impl Cmd {
                         })
                     };
                     if flags.stdin() {
-                        stdio[STDIN_NO] = Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(
-                            buf.byte_slice().to_vec(),
-                        ));
+                        let bytes = buf.byte_slice();
+                        // An empty buffer delivers EOF immediately; `Stdio::Ignore`
+                        // matches what `Stdio::extract`/`extract_blob` already do.
+                        stdio[STDIN_NO] = if bytes.is_empty() {
+                            Stdio::Ignore
+                        } else {
+                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
+                        };
                     }
                     if flags.duplicate_out() {
                         stdio[STDOUT_NO] = mk_out();

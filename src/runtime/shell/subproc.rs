@@ -1345,7 +1345,7 @@ impl Readable {
                     };
                     Readable::Pipe(pipe)
                 }
-                // Shell never builds OwnedBuffer; only `Stdio::extract` does.
+                // OwnedBuffer is stdin-only; Readable handles stdout/stderr.
                 Stdio::OwnedBuffer(_) => Readable::Ignore,
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
                     event_loop, process, result, shellio, out_type, interp,
@@ -1392,7 +1392,7 @@ impl Readable {
                     };
                     Readable::Pipe(pipe)
                 }
-                // Shell never builds OwnedBuffer; only `Stdio::extract` does.
+                // OwnedBuffer is stdin-only; Readable handles stdout/stderr.
                 Stdio::OwnedBuffer(_) => Readable::Ignore,
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
                     event_loop, process, result, shellio, out_type, interp,

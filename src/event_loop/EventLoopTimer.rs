@@ -215,6 +215,7 @@ impl Tag {
             | Tag::BunTest // for test timeouts
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
+            | Tag::TerminalPendingClose // gates ClosePseudoConsole; must fire under fake timers
             | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
             => false,
             _ => true,

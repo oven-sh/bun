@@ -792,7 +792,7 @@ impl Terminal {
             all.remove(self.event_loop_timer.as_ptr());
         }
         let next = bun_core::timespec::ms_from_now(
-            bun_core::TimespecMockMode::AllowMockedTime,
+            bun_core::TimespecMockMode::ForceRealTime,
             PENDING_CLOSE_QUIESCENCE_MS,
         );
         self.event_loop_timer.with_mut(|t| {
@@ -1877,7 +1877,12 @@ impl Terminal {
             return;
         }
         #[cfg(windows)]
-        self.cancel_pending_close_timer();
+        {
+            // Conhost may self-terminate (EOF) before the quiescence timer
+            // fires; release hpcon here so it doesn't linger until GC.
+            self.cancel_pending_close_timer();
+            self.close_pseudoconsole();
+        }
         self.update_flags(|f| {
             f.insert(Flags::READER_DONE);
             f.remove(Flags::CONNECTED);

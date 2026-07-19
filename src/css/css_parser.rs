@@ -4252,7 +4252,9 @@ impl ParserState {
     pub fn source_location(&self) -> SourceLocation {
         SourceLocation {
             line: self.current_line_number,
-            column: u32::try_from(self.position - self.current_line_start_position + 1)
+            // `current_line_start_position` is maintained with wrapping arithmetic
+            // (see `consume_4byte_intro`), so the inverse must wrap as well.
+            column: u32::try_from(self.position.wrapping_sub(self.current_line_start_position) + 1)
                 .expect("int cast"),
         }
     }
@@ -4557,7 +4559,9 @@ impl<'a> Tokenizer<'a> {
     pub fn current_source_location(&self) -> SourceLocation {
         SourceLocation {
             line: self.current_line_number,
-            column: u32::try_from((self.position - self.current_line_start_position) + 1)
+            // `current_line_start_position` is maintained with wrapping arithmetic
+            // (see `consume_4byte_intro`), so the inverse must wrap as well.
+            column: u32::try_from(self.position.wrapping_sub(self.current_line_start_position) + 1)
                 .expect("int cast"),
         }
     }
@@ -5437,10 +5441,13 @@ impl<'a> Tokenizer<'a> {
     /// for a 4-byte sequence (0xF0..=0xF7).
     pub fn consume_4byte_intro(&mut self) {
         debug_assert!(self.next_byte_unchecked() & 0xF0 == 0xF0);
-        // This takes two UTF-16 characters to represent, so we actually have
-        // an undercount.
-        self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
         self.position += 1;
+        // 4 UTF-8 bytes encode 2 UTF-16 units (undercount). Input here is
+        // unvalidated bytes, so only apply the -1 when a continuation byte
+        // follows; a stray 0xF0..0xFF must not underflow the column math.
+        if self.next_byte().is_some_and(|b| b & 0xC0 == 0x80) {
+            self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
+        }
     }
 
     pub fn is_ident_start(&self) -> bool {
@@ -5492,7 +5499,12 @@ impl<'a> Tokenizer<'a> {
         debug_assert!(byte != b'\r' && byte != b'\n' && byte != FORM_FEED_BYTE);
         self.position += 1;
         if byte & 0xF0 == 0xF0 {
-            self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
+            // See `consume_4byte_intro`: input is unvalidated bytes, so only
+            // apply the UTF-16 undercount when a continuation byte follows.
+            if self.next_byte().is_some_and(|b| b & 0xC0 == 0x80) {
+                self.current_line_start_position =
+                    self.current_line_start_position.wrapping_sub(1);
+            }
         } else if byte & 0xC0 == 0x80 {
             self.current_line_start_position = self.current_line_start_position.wrapping_add(1);
         }

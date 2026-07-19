@@ -49,47 +49,62 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-pub fn write_bind<Context: WriterContext>(
-    name: &[u8],
-    cursor_name: BunString,
+/// A query parameter converted to its wire-ready native form. Every JS
+/// evaluation that can run user code (index getters, valueOf / toString /
+/// toJSON, Proxy traps) happens while building the `Vec<BoundValue>`; once
+/// that succeeds the write phase touches only these values, so a throwing
+/// conversion cannot leave a half-written Bind in the connection's buffer.
+enum BoundValue {
+    Null,
+    Bool(bool),
+    Int4(i32),
+    Float8(f64),
+    Int8(i64),
+    Bytes(Vec<u8>),
+}
+
+struct BoundParams {
+    format_codes: Vec<Short>,
+    values: Vec<BoundValue>,
+}
+
+fn tag_for(parameter_fields: &[Int4], i: usize) -> types::Tag {
+    if i >= parameter_fields.len() {
+        // parameter in array but not in parameter_fields
+        // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
+        // with will describe better the error saying exactly how many parameters are missing and are expected
+        // Example:
+        // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
+        // errno: "08P01",
+        // code: "ERR_POSTGRES_SERVER_ERROR"
+        return types::Tag::text;
+    }
+    let parameter_field = parameter_fields[i];
+    if (Short::MAX as Int4) < parameter_field {
+        types::Tag::text
+    } else {
+        types::Tag(Short::try_from(parameter_field).unwrap())
+    }
+}
+
+/// Evaluate every bound JS value into native [`BoundValue`]s and the matching
+/// per-parameter format codes. All JS re-entry happens here; the caller writes
+/// the Bind message only after this returns `Ok`.
+fn encode_bind_params(
     global: &JSGlobalObject,
     values_array: JSValue,
     columns_value: JSValue,
     parameter_fields: &[Int4],
-    result_fields: &[protocol::FieldDescription],
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    writer.write(b"B")?;
-    let length = writer.length()?;
-
-    // The bun.String overload is `bun_string` on NewWriter.
-    writer.bun_string(&cursor_name)?;
-    writer.string(name)?;
-
-    if parameter_fields.len() > MAX_PARAMETERS {
-        return Err(AnyPostgresError::TooManyParameters);
-    }
-
-    let len: u16 = u16::try_from(parameter_fields.len()).expect("int cast");
-
-    // The number of parameter format codes that follow (denoted C
-    // below). This can be zero to indicate that there are no
-    // parameters or that the parameters all use the default format
-    // (text); or one, in which case the specified format code is
-    // applied to all parameters; or it can equal the actual number
-    // of parameters.
-    writer.short(len)?;
-
+) -> Result<BoundParams, AnyPostgresError> {
+    let len = parameter_fields.len();
     let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
         .map_err(js_error_to_postgres)?;
-    for i in 0..(len as usize) {
+
+    let mut format_codes: Vec<Short> = Vec::with_capacity(len);
+    for i in 0..len {
         let parameter_field = parameter_fields[i];
         let is_custom_type = (Short::MAX as Int4) < parameter_field;
-        let tag: types::Tag = if is_custom_type {
-            types::Tag::text
-        } else {
-            types::Tag(Short::try_from(parameter_field).unwrap())
-        };
+        let tag = tag_for(parameter_fields, i);
 
         let force_text = is_custom_type
             || (tag.is_binary_format_supported()
@@ -104,119 +119,53 @@ pub fn write_bind<Context: WriterContext>(
                     break 'brk false;
                 });
 
-        if force_text {
-            // If they pass a value as a string, let's avoid attempting to
-            // convert it to the binary representation. This minimizes the room
-            // for mistakes on our end, such as stripping the timezone
-            // differently than what Postgres does when given a timestamp with
-            // timezone.
-            writer.short(0)?;
-            continue;
-        }
-
-        writer.short(tag.format_code())?;
-    }
-
-    // The number of parameter values that follow (possibly zero). This
-    // must match the number of parameters needed by the query.
-    writer.short(len)?;
-
-    bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
-    iter.to(0);
-    let mut i: usize = 0;
-    while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-        let tag: types::Tag = 'brk: {
-            if i >= len as usize {
-                // parameter in array but not in parameter_fields
-                // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
-                // with will describe better the error saying exactly how many parameters are missing and are expected
-                // Example:
-                // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
-                // errno: "08P01",
-                // code: "ERR_POSTGRES_SERVER_ERROR"
-                break 'brk types::Tag::text;
-            }
-            let parameter_field = parameter_fields[i];
-            let is_custom_type = (Short::MAX as Int4) < parameter_field;
-            break 'brk if is_custom_type {
-                types::Tag::text
-            } else {
-                types::Tag(Short::try_from(parameter_field).unwrap())
-            };
-        };
-        if value.is_empty_or_undefined_or_null() {
-            bun_core::scoped_log!(Postgres, "  -> NULL");
-            //  As a special case, -1 indicates a
-            // NULL parameter value. No value bytes follow in the NULL case.
-            writer.int4((-1i32) as u32)?;
-            i += 1;
-            continue;
-        }
-        bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
-
         // If they pass a value as a string, let's avoid attempting to
         // convert it to the binary representation. This minimizes the room
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
+        format_codes.push(if force_text { 0 } else { tag.format_code() });
+    }
+
+    let mut values: Vec<BoundValue> = Vec::with_capacity(len);
+    iter.to(0);
+    let mut i: usize = 0;
+    while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
+        let tag = tag_for(parameter_fields, i);
+        i += 1;
+        if value.is_empty_or_undefined_or_null() {
+            values.push(BoundValue::Null);
+            continue;
+        }
+
         let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
             types::Tag::text
         } else {
             tag
         };
-        match effective_tag {
+        values.push(match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
                 let mut str = BunString::empty();
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 value
                     .json_stringify_fast(global, &mut str)
                     .map_err(js_error_to_postgres)?;
-                let slice = str.to_utf8_without_ref();
-                let l = writer.length()?;
-                writer.write(slice.slice())?;
-                l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
+                BoundValue::Bytes(str.to_utf8_without_ref().slice().to_vec())
             }
-            types::Tag::bool => {
-                let l = writer.length()?;
-                writer.write(&[value.to_boolean() as u8])?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::timestamp | types::Tag::timestamptz => {
-                let l = writer.length()?;
-                writer.int8(
-                    crate::postgres::types::date::from_js(global, value)
-                        .map_err(js_error_to_postgres)?,
-                )?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::bytea => {
-                let buf = value.as_array_buffer(global);
-                let bytes: &[u8] = match buf.as_ref() {
-                    Some(b) => b.byte_slice(),
-                    None => b"",
-                };
-                let l = writer.length()?;
-                bun_core::scoped_log!(Postgres, "    {} bytes", bytes.len());
-                writer.write(bytes)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4 => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4_array => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
+            types::Tag::bool => BoundValue::Bool(value.to_boolean()),
+            types::Tag::timestamp | types::Tag::timestamptz => BoundValue::Int8(
+                crate::postgres::types::date::from_js(global, value).map_err(js_error_to_postgres)?,
+            ),
+            types::Tag::bytea => BoundValue::Bytes(match value.as_array_buffer(global) {
+                Some(b) => b.byte_slice().to_vec(),
+                None => Vec::new(),
+            }),
+            types::Tag::int4 | types::Tag::int4_array => {
+                BoundValue::Int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)?)
             }
             types::Tag::float8 => {
-                let l = writer.length()?;
-                writer.f64(value.to_number(global).map_err(js_error_to_postgres)?)?;
-                l.write_excluding_self()?;
+                BoundValue::Float8(value.to_number(global).map_err(js_error_to_postgres)?)
             }
-
             _ => {
                 let str = bun_core::OwnedString::new(
                     BunString::from_js(value, global).map_err(js_error_to_postgres)?,
@@ -224,14 +173,84 @@ pub fn write_bind<Context: WriterContext>(
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
-                let slice = str.to_utf8_without_ref();
+                BoundValue::Bytes(str.to_utf8_without_ref().slice().to_vec())
+            }
+        });
+    }
+
+    Ok(BoundParams {
+        format_codes,
+        values,
+    })
+}
+
+fn write_bind_encoded<Context: WriterContext>(
+    name: &[u8],
+    cursor_name: BunString,
+    params: &BoundParams,
+    result_fields: &[protocol::FieldDescription],
+    writer: protocol::NewWriter<Context>,
+) -> Result<(), AnyPostgresError> {
+    writer.write(b"B")?;
+    let length = writer.length()?;
+
+    // The bun.String overload is `bun_string` on NewWriter.
+    writer.bun_string(&cursor_name)?;
+    writer.string(name)?;
+
+    let len = params.format_codes.len();
+
+    // The number of parameter format codes that follow (denoted C
+    // below). This can be zero to indicate that there are no
+    // parameters or that the parameters all use the default format
+    // (text); or one, in which case the specified format code is
+    // applied to all parameters; or it can equal the actual number
+    // of parameters.
+    writer.short(len)?;
+    for code in &params.format_codes {
+        writer.short(*code)?;
+    }
+
+    // The number of parameter values that follow (possibly zero). This
+    // must match the number of parameters needed by the query.
+    writer.short(len)?;
+
+    bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
+    for value in &params.values {
+        match value {
+            BoundValue::Null => {
+                bun_core::scoped_log!(Postgres, "  -> NULL");
+                //  As a special case, -1 indicates a
+                // NULL parameter value. No value bytes follow in the NULL case.
+                writer.int4((-1i32) as u32)?;
+            }
+            BoundValue::Bool(b) => {
                 let l = writer.length()?;
-                writer.write(slice.slice())?;
+                writer.write(&[*b as u8])?;
+                l.write_excluding_self()?;
+            }
+            BoundValue::Int4(n) => {
+                let l = writer.length()?;
+                writer.int4(*n as u32)?;
+                l.write_excluding_self()?;
+            }
+            BoundValue::Float8(n) => {
+                let l = writer.length()?;
+                writer.f64(*n)?;
+                l.write_excluding_self()?;
+            }
+            BoundValue::Int8(n) => {
+                let l = writer.length()?;
+                writer.int8(*n)?;
+                l.write_excluding_self()?;
+            }
+            BoundValue::Bytes(bytes) => {
+                let l = writer.length()?;
+                bun_core::scoped_log!(Postgres, "  -> {} bytes", bytes.len());
+                writer.write(bytes)?;
                 l.write_excluding_self()?;
             }
         }
-
-        i += 1;
     }
 
     let mut any_non_text_fields: bool = false;
@@ -292,19 +311,20 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     mut writer: protocol::NewWriter<Context>,
     signature: &mut Signature,
 ) -> Result<(), AnyPostgresError> {
+    // Convert every parameter before the first write so a throwing conversion
+    // cannot leave Parse+Describe stranded in the buffer ahead of a Bind that
+    // will never be written.
+    let params = encode_bind_params(global, array_value, JSValue::ZERO, &[])?;
     write_query(
         query,
         &signature.prepared_statement_name,
         &signature.fields,
         writer,
     )?;
-    write_bind(
+    write_bind_encoded(
         &signature.prepared_statement_name,
         BunString::empty(),
-        global,
-        array_value,
-        JSValue::ZERO,
-        &[],
+        &params,
         &[],
         writer,
     )?;
@@ -328,13 +348,14 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     columns_value: JSValue,
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
-    write_bind(
+    if statement.parameters.len() > MAX_PARAMETERS {
+        return Err(AnyPostgresError::TooManyParameters);
+    }
+    let params = encode_bind_params(global, array_value, columns_value, &statement.parameters)?;
+    write_bind_encoded(
         &statement.signature.prepared_statement_name,
         BunString::empty(),
-        global,
-        array_value,
-        columns_value,
-        &statement.parameters,
+        &params,
         &statement.fields,
         writer,
     )?;
@@ -367,6 +388,21 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
 ) -> Result<(), AnyPostgresError> {
     let name = &statement.signature.prepared_statement_name;
 
+    // Bind — use server-provided types if available (binary format), otherwise
+    // fall back to signature types (text format for unknowns). The server will
+    // handle text-to-type conversion based on the parameter types from Parse.
+    // Convert every parameter before the first write so a throwing conversion
+    // cannot leave Parse (+Describe) stranded in the buffer.
+    let param_fields = if !statement.parameters.is_empty() {
+        &statement.parameters[..]
+    } else {
+        &statement.signature.fields[..]
+    };
+    if param_fields.len() > MAX_PARAMETERS {
+        return Err(AnyPostgresError::TooManyParameters);
+    }
+    let params = encode_bind_params(global, array_value, columns_value, param_fields)?;
+
     // Parse
     {
         let q = protocol::Parse {
@@ -390,23 +426,9 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
     // Bind — use server-provided types if available (binary format), otherwise
     // fall back to signature types (text format for unknowns). The server will
     // handle text-to-type conversion based on the parameter types from Parse.
-    let param_fields = if !statement.parameters.is_empty() {
-        &statement.parameters[..]
-    } else {
-        &statement.signature.fields[..]
-    };
     let result_fields = &statement.fields;
 
-    write_bind(
-        name,
-        BunString::empty(),
-        global,
-        array_value,
-        columns_value,
-        param_fields,
-        result_fields,
-        writer,
-    )?;
+    write_bind_encoded(name, BunString::empty(), &params, result_fields, writer)?;
 
     // Execute
     let exec = protocol::Execute {

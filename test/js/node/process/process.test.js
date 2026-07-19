@@ -274,7 +274,16 @@ it("process.env coerces assigned values to strings", () => {
     }).toThrow("boom");
     expect(process.env.COERCE_THROWS).toBeUndefined();
   } finally {
-    for (const k of ["COERCE_UNDEF", "COERCE_NUM", "COERCE_NULL", "COERCE_BOOL", "COERCE_OBJ", "COERCE_DEF", "COERCE_THROWS", "4242424242"]) {
+    for (const k of [
+      "COERCE_UNDEF",
+      "COERCE_NUM",
+      "COERCE_NULL",
+      "COERCE_BOOL",
+      "COERCE_OBJ",
+      "COERCE_DEF",
+      "COERCE_THROWS",
+      "4242424242",
+    ]) {
       delete process.env[k];
     }
   }

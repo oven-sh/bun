@@ -709,7 +709,7 @@ impl JSMySQLConnection {
         slot: Option<u32>,
     ) -> Option<u32> {
         let array = js::cached_structures_get_cached(this_value)?;
-        let i = slot.unwrap_or(self.cached_structures_len.get());
+        let i = slot.unwrap_or_else(|| self.cached_structures_len.get());
         if array.put_index(&self.global_object, i, structure).is_err() {
             self.global_object.clear_exception_except_termination();
             return None;
@@ -844,11 +844,9 @@ impl JSMySQLConnection {
     ) -> Result<(), OnResultRowError> {
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
-        // `MySQLStatement::structure(&mut self) -> &CachedStructure`
-        // would keep `*statement` exclusively borrowed for the lifetime of the
-        // returned ref, blocking the `&statement.columns` / `fields_flags` reads
-        // below. Stash a `ParentRef` (lifetime-erased `&T`)
-        // and `as_deref` at the `to_js` call site — `*statement`
+        // Hold `&statement.cached_structure` as a `ParentRef` (lifetime-erased
+        // `&T`) so the later `&statement.columns` / `&mut statement` borrows do
+        // not conflict; `as_deref` at the `to_js` call site. `*statement`
         // outlives this fn (held via `request`'s intrusive ref), satisfying
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {

@@ -2389,7 +2389,7 @@ impl PostgresSQLConnection {
     ) -> Option<u32> {
         debug_assert!(!this_value.is_empty());
         let array = js::cached_structures_get_cached(this_value)?;
-        let i = slot.unwrap_or(self.cached_structures_len.get());
+        let i = slot.unwrap_or_else(|| self.cached_structures_len.get());
         if array.put_index(self.global(), i, structure).is_err() {
             self.global().clear_exception_except_termination();
             return None;
@@ -2430,9 +2430,8 @@ impl PostgresSQLConnection {
                     .statement_mut()
                     .ok_or(AnyPostgresError::ExpectedStatement)?;
                 let mut structure: JSValue = JSValue::UNDEFINED;
-                // reshaped for borrowck — `statement.structure()` borrows
-                // `&mut *statement` and returns `&CachedStructure`; capture it as a
-                // `ParentRef` (lifetime-erased `&T`) so `&statement.fields` below
+                // Hold `&statement.cached_structure` as a `ParentRef`
+                // (lifetime-erased `&T`) so the later `&statement.fields` borrow
                 // does not conflict, and `as_deref` for `to_js` at the call site.
                 // `*statement` outlives this arm (held via `request.statement`'s
                 // intrusive ref), satisfying the `ParentRef` liveness invariant.

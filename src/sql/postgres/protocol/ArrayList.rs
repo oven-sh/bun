@@ -63,6 +63,9 @@ impl<'a> WriterContext for ArrayListCtx<'a> {
         arr[i..i + bytes.len()].copy_from_slice(bytes);
         Ok(())
     }
+    fn truncate(mut self, offset: usize) {
+        self.array_mut().truncate(offset);
+    }
 }
 
 pub type Writer<'a> = NewWriter<ArrayListCtx<'a>>;

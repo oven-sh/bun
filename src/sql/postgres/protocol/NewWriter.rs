@@ -7,6 +7,10 @@ pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
     fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyPostgresError>;
+    /// Discard everything written at or after `offset` (a value previously
+    /// returned by [`offset`]). Used to roll back a partially-written message
+    /// when encoding fails partway through.
+    fn truncate(self, offset: usize);
 }
 
 #[derive(Copy, Clone)]
@@ -58,6 +62,22 @@ impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         C::pwrite(self.wrapped, data, i)
+    }
+
+    /// Run `f`; on error, discard every byte it wrote so a half-serialised
+    /// message (e.g. a Bind whose parameter coercion threw in JS) is never
+    /// left in the buffer to desync the next query's flush.
+    #[inline]
+    pub fn atomically<T>(
+        self,
+        f: impl FnOnce(Self) -> Result<T, AnyPostgresError>,
+    ) -> Result<T, AnyPostgresError> {
+        let start = self.offset();
+        let result = f(self);
+        if result.is_err() {
+            C::truncate(self.wrapped, start);
+        }
+        result
     }
 
     pub fn int4(self, value: PostgresInt32) -> Result<(), AnyPostgresError> {

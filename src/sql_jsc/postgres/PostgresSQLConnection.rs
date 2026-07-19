@@ -1685,6 +1685,13 @@ impl protocol::WriterContext for Writer {
     fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         Writer::pwrite(&mut self, bytes, i)
     }
+    #[inline]
+    fn truncate(self, offset: usize) {
+        self.connection.write_buffer.with_mut(|b| {
+            debug_assert!(b.head as usize + offset <= b.byte_list.len());
+            b.byte_list.truncate(b.head as usize + offset);
+        });
+    }
 }
 
 impl PostgresSQLConnection {

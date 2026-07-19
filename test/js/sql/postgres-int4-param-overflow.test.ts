@@ -114,9 +114,8 @@ test.each(overflowing)("binding $label to an int4 parameter rejects instead of s
   }
   expect(error).toBeDefined();
   expect(error?.code ?? error?.message).toMatch(/ERR_POSTGRES_OVERFLOW|Overflow/);
-  // The Bind message must not have reached the server carrying a saturated i32.
-  expect(lastBoundInt4).not.toBe(2147483647);
-  expect(lastBoundInt4).not.toBe(-2147483648);
+  // The Bind message must not have reached the server at all.
+  expect(lastBoundInt4).toBeUndefined();
 });
 
 test("binding INT32_MAX / INT32_MIN to an int4 parameter still works", async () => {

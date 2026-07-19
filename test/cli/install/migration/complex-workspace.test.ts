@@ -249,7 +249,9 @@ beforeAll(async () => {
             version: "1.0.0",
             resolved: reg("two-range-deps", "1.0.0"),
             integrity: integrity["two-range-deps@1.0.0"],
-            dependencies: { "@types/is-number": ">=1.0.0", "no-deps": "^1.0.0" },
+            // left-pad is listed only here, with no matching `packages` entry, so the migrator has
+            // nothing to install for it. The `mustNotExist` checks below make that observable.
+            dependencies: { "@types/is-number": ">=1.0.0", "no-deps": "^1.0.0", "left-pad": "1.0.0" },
           },
           "packages/with-postinstall": {
             version: "1.0.0",
@@ -322,9 +324,19 @@ validate("packages/second/node_modules/body-parser", "1.0.0", "two-range-deps");
 validate("node_modules/@types/is-number", "2.0.0");
 validate("node_modules/is-number", "1.0.0");
 
+// lol: workspace whose folder name differs from its package name, with a no-deps version that
+// conflicts with two-range-deps' `^1.0.0`. bun hoists `^2.0.0` to the root and nests `1.1.0`
+// under the aliased two-range-deps; npm did the inverse. Both satisfy the ranges.
+mustExist("node_modules/lol/package.json");
+validate("node_modules/no-deps", "2.0.0");
+validate("packages/second/node_modules/body-parser/node_modules/no-deps", "1.1.0");
+mustNotExist("packages/lol-package/node_modules/no-deps");
+
 // with-postinstall: lifecycle script ran
 mustExist("packages/with-postinstall/postinstall.txt");
 
-// left-pad is not a dependency of anything here
+// left-pad appears in two-range-deps' lockfile `dependencies` with no matching `packages` entry,
+// so the migrator must not install it anywhere.
 mustNotExist("node_modules/left-pad");
 mustNotExist("packages/second/node_modules/left-pad");
+mustNotExist("packages/second/node_modules/body-parser/node_modules/left-pad");

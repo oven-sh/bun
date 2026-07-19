@@ -162,15 +162,6 @@ process.send("regular message");
 });
 
 test("primary does not root the worker object graph per live worker", async () => {
-  // `onInternalMessagePrimary` stores the Worker object and the internal
-  // message callback for each forked worker. Storing them as GC roots (one
-  // `JSC::Strong` each) means:
-  //   * every live worker adds two entries to the protected-object set, and
-  //   * Worker → ChildProcess → Subprocess → ipc_data → Strong(Worker) is a
-  //     cycle through a root, so the whole graph survives GC after the worker
-  //     exits.
-  // Held in the Subprocess wrapper's own WriteBarrier slots instead, they are
-  // a GC edge rather than a GC root: neither effect occurs.
   using dir = tempDir("cluster-internal-msg-roots", {
     "primary.ts": `
 import cluster from "node:cluster";
@@ -209,11 +200,11 @@ await Promise.all(
 );
 workers.length = 0;
 
-// Bounded poll across event-loop turns: finalization may need a few extra
-// turns, while a Strong-rooted Subprocess never goes away.
+// Bounded poll: finalization may need a few real event-loop idles, while a
+// Strong-rooted Subprocess never goes away no matter how long we wait.
 let liveSubprocess = Infinity;
 for (let i = 0; i < 60; i++) {
-  await new Promise<void>(r => setImmediate(r));
+  await Bun.sleep(25);
   Bun.gc(true);
   liveSubprocess = heapStats().objectTypeCounts.Subprocess ?? 0;
   if (liveSubprocess <= 1) break;
@@ -245,10 +236,10 @@ process.exit(0);
     exitCode: 0,
   });
   // After every worker exits and user code holds no reference, the Subprocess
-  // wrappers are collectable. Allow one straggler for a conservatively rooted
-  // async frame; a root-cycle leak retains all N.
-  expect(liveSubprocess).toBeLessThanOrEqual(1);
+  // wrappers are collectable. A root-cycle leak retains every one of the N;
+  // allow one straggler for a conservatively rooted async frame.
   expect(liveSubprocess).toBeLessThan(N);
+  expect(liveSubprocess).toBeLessThanOrEqual(1);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

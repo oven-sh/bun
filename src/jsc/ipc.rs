@@ -51,16 +51,13 @@ use bun_uws;
 /// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
 /// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
 /// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
-///
-/// The `worker`/`cb`/`callbacks`/`messages` fields back the child-side
-/// process singleton only. The primary side stores the same state in the
-/// `Subprocess` wrapper's WriteBarrier slots so a worker's object graph is not
-/// pinned by a GC root (see `node_cluster_binding`).
 pub struct InternalMsgHolder {
     pub seq: i32,
 
-    /// JS null-prototype object keyed by stringified seq. One root regardless
-    /// of how many acks are in flight. Lazily created.
+    // These fields back the child-side process singleton; the primary side stores
+    // the same state in the Subprocess wrapper's WriteBarrier slots instead.
+    /// JS Map keyed by seq number. One root regardless of how many acks are in
+    /// flight. Lazily created.
     pub callbacks: crate::StrongOptional,
     pub worker: crate::StrongOptional,
     pub cb: crate::StrongOptional,
@@ -82,33 +79,37 @@ impl Default for InternalMsgHolder {
 }
 
 impl InternalMsgHolder {
-    /// Prefixed so the key is never an array index; `putDirect` asserts on
-    /// numeric-string property names.
     #[inline]
-    fn seq_key(buf: &mut [u8; 13], seq: i32) -> &[u8] {
-        bun_core::fmt::buf_print_infallible(buf, format_args!("s{seq}"))
+    fn as_map(map: JSValue) -> &'static mut crate::JSMap {
+        // `JSMap` is an `opaque_ffi!` ZST; the slot was seeded with
+        // `JSMap::create` so `from_js` is non-null. Single JS thread.
+        crate::JSMap::opaque_mut(crate::JSMap::from_js(map).unwrap().as_ptr())
     }
 
-    /// Store `callback` under `seq` on the given JS callbacks object.
-    pub fn put_callback(&self, map: JSValue, global: &JSGlobalObject, seq: i32, callback: JSValue) {
-        let mut buf = [0u8; 13];
-        map.put(global, Self::seq_key(&mut buf, seq), callback);
+    /// Store `callback` under `seq` on the given JS callbacks Map.
+    pub fn put_callback(
+        map: JSValue,
+        global: &JSGlobalObject,
+        seq: i32,
+        callback: JSValue,
+    ) -> JsResult<()> {
+        Self::as_map(map).set(global, JSValue::js_number(seq as f64), callback)
     }
 
     /// Remove and return the callback stored under `seq` on the given JS
-    /// callbacks object, or `None` when absent.
+    /// callbacks Map, or `None` when absent.
     pub fn take_callback(
-        &self,
         map: JSValue,
         global: &JSGlobalObject,
         seq: i32,
     ) -> JsResult<Option<JSValue>> {
-        let mut buf = [0u8; 13];
-        let key = Self::seq_key(&mut buf, seq);
-        let Some(cb) = map.get(global, key)? else {
+        let key = JSValue::js_number(seq as f64);
+        let map = Self::as_map(map);
+        let cb = map.get(global, key)?;
+        if cb.is_undefined() {
             return Ok(None);
-        };
-        crate::host_fn::from_js_host_call_generic(global, || map.delete_property(global, key))?;
+        }
+        map.remove(global, key)?;
         Ok(Some(cb))
     }
 
@@ -157,7 +158,7 @@ impl InternalMsgHolder {
             if !p.is_undefined() {
                 let ack = p.to_int32();
                 if let Some(map) = self.callbacks.get() {
-                    if let Some(callback) = self.take_callback(map, global, ack)? {
+                    if let Some(callback) = Self::take_callback(map, global, ack)? {
                         event_loop.run_callback(callback, global, worker, &[message, handle]);
                         return Ok(());
                     }

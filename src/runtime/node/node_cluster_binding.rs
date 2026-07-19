@@ -79,12 +79,12 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         let map = match singleton.callbacks.get() {
             Some(m) => m,
             None => {
-                let m = JSValue::create_empty_object_with_null_prototype(global);
+                let m = bun_jsc::JSMap::create(global);
                 singleton.callbacks.set(global, m);
                 m
             }
         };
-        singleton.put_callback(map, global, seq, callback);
+        InternalMsgHolder::put_callback(map, global, seq, callback)?;
     }
 
     // sequence number for InternalMsgHolder
@@ -238,20 +238,18 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
 
     let seq = ipc_data.internal_msg_queue.seq;
     if callback.is_function() {
-        // Ack callbacks live in a JS object held by the Subprocess wrapper's
+        // Ack callbacks live in a JS Map held by the Subprocess wrapper's
         // WriteBarrier slot: one GC edge regardless of how many are in flight,
         // and not a GC root, so the Subprocess stays collectable.
         let map = match subprocess_js::ipc_ack_callbacks_get_cached(arguments[0]) {
             Some(m) => m,
             None => {
-                let m = JSValue::create_empty_object_with_null_prototype(global);
+                let m = bun_jsc::JSMap::create(global);
                 subprocess_js::ipc_ack_callbacks_set_cached(arguments[0], global, m);
                 m
             }
         };
-        ipc_data
-            .internal_msg_queue
-            .put_callback(map, global, seq, callback);
+        InternalMsgHolder::put_callback(map, global, seq, callback)?;
     }
 
     // sequence number for InternalMsgHolder
@@ -329,10 +327,7 @@ pub(crate) fn handle_internal_message_primary(
         if !p.is_undefined() {
             let ack = p.to_int32();
             if let Some(map) = subprocess_js::ipc_ack_callbacks_get_cached(this_jsvalue) {
-                if let Some(callback) = ipc_data
-                    .internal_msg_queue
-                    .take_callback(map, global, ack)?
-                {
+                if let Some(callback) = InternalMsgHolder::take_callback(map, global, ack)? {
                     event_loop.run_callback(callback, global, worker, &[message, JSValue::NULL]);
                     return Ok(());
                 }

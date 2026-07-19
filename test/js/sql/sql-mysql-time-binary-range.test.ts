@@ -94,6 +94,7 @@ test.each([
   ["days wraps u32*24", { days: 178956971, hours: 0, minutes: 5, seconds: 6 }],
   ["days = u32::MAX", { days: 0xffff_ffff, hours: 0, minutes: 5, seconds: 6 }],
   ["days just over the 34-day bound", { days: 35, hours: 0, minutes: 0, seconds: 0 }],
+  ["days=34 hours=23 (839h, past the 838h cap)", { days: 34, hours: 23, minutes: 0, seconds: 0 }],
   ["hours > 23", { days: 0, hours: 24, minutes: 0, seconds: 0 }],
   ["minutes > 59", { days: 0, hours: 0, minutes: 60, seconds: 0 }],
   ["seconds > 59", { days: 0, hours: 0, minutes: 0, seconds: 60 }],

@@ -531,14 +531,19 @@ export function windowsEnv(
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       // Node coerces env values to strings on defineProperty too, same as assignment.
+      let coerced: string | undefined;
       if ("value" in attributes) {
-        attributes = { ...attributes, value: String(attributes.value) };
+        coerced = String(attributes.value);
+        attributes = { ...attributes, value: coerced };
       }
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      $Object.$defineProperty(internalEnv, k, attributes);
+      // Sync the new value after a successful define so the OS env sees it (the
+      // pre-define internalEnv[k] was the old value, or undefined for a new key).
+      if (coerced !== undefined) editWindowsEnvVar(k, coerced);
+      return true;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

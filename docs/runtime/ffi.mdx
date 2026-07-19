@@ -282,7 +282,7 @@ const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), l
 Use `JSCallback` to create JavaScript callback functions that you can pass to C/FFI functions, so native code can call back into your JavaScript or TypeScript. This is useful for asynchronous code.
 
 ```ts
-import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
+import { dlopen, JSCallback, ptr, CString, type Pointer } from "bun:ffi";
 
 const {
   symbols: { search },
@@ -294,10 +294,13 @@ const {
   },
 });
 
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-});
+const searchIterator = new JSCallback(
+  (ptr: Pointer | null, length: bigint) => ptr !== null && /hello/.test(new CString(ptr, 0, Number(length))),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+  },
+);
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
@@ -320,11 +323,14 @@ When you're done with a `JSCallback`, call `close()` to free the memory.
 Thread-safe callbacks work best when run from another thread that is running JavaScript code, that is, a [`Worker`](/runtime/workers). A future version of Bun will enable them to be called from any thread, such as new threads spawned by your native library that Bun is not aware of.
 
 ```ts
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-  threadsafe: true, // Optional. Defaults to `false`
-});
+const searchIterator = new JSCallback(
+  (ptr: Pointer | null, length: bigint) => ptr !== null && /hello/.test(new CString(ptr, 0, Number(length))),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+    threadsafe: true, // Optional. Defaults to `false`
+  },
+);
 ```
 
 <Note>

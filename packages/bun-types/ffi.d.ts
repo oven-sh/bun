@@ -357,9 +357,9 @@ declare module "bun:ffi" {
     [FFIType.double]: number;
     [FFIType.float]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: NodeJS.TypedArray | Pointer | CString | null;
+    [FFIType.ptr]: NodeJS.TypedArray | DataView | ArrayBuffer | Pointer | CString | null;
     [FFIType.void]: undefined;
-    [FFIType.cstring]: NodeJS.TypedArray | Pointer | CString | null;
+    [FFIType.cstring]: NodeJS.TypedArray | DataView | ArrayBuffer | Pointer | CString | null;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | JSCallback; // cannot be null
@@ -383,6 +383,67 @@ declare module "bun:ffi" {
     [FFIType.ptr]: Pointer | null;
     [FFIType.void]: undefined;
     [FFIType.cstring]: CString;
+    [FFIType.i64_fast]: number | bigint;
+    [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: Pointer | null;
+    [FFIType.napi_env]: unknown;
+    [FFIType.napi_value]: unknown;
+    [FFIType.buffer]: NodeJS.TypedArray | DataView;
+  }
+  /**
+   * Values a {@link JSCallback} receives when invoked from native code.
+   *
+   * Unlike {@link FFITypeToReturnsType}, a `cstring` argument arrives as a raw
+   * {@link Pointer} (or `null`), not a {@link CString}. Wrap it yourself with
+   * `new CString(ptr)` if you need the string contents.
+   */
+  interface FFITypeToJSCallbackArgsType {
+    [FFIType.char]: number;
+    [FFIType.int8_t]: number;
+    [FFIType.uint8_t]: number;
+    [FFIType.int16_t]: number;
+    [FFIType.uint16_t]: number;
+    [FFIType.int32_t]: number;
+    [FFIType.uint32_t]: number;
+    [FFIType.int64_t]: bigint;
+    [FFIType.uint64_t]: bigint;
+    [FFIType.double]: number;
+    [FFIType.float]: number;
+    [FFIType.bool]: boolean;
+    [FFIType.ptr]: Pointer | null;
+    [FFIType.void]: undefined;
+    [FFIType.cstring]: Pointer | null;
+    [FFIType.i64_fast]: number | bigint;
+    [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: Pointer | null;
+    [FFIType.napi_env]: unknown;
+    [FFIType.napi_value]: unknown;
+    [FFIType.buffer]: NodeJS.TypedArray | DataView;
+  }
+  /**
+   * Values a {@link JSCallback} may return to native code.
+   *
+   * Conversion happens without the JavaScript-side coercion that calls into
+   * native functions get, so pointer-typed returns accept a {@link Pointer},
+   * a TypedArray or DataView (its backing store address is used), or `null`,
+   * but not a {@link CString} or {@link JSCallback}.
+   */
+  interface FFITypeToJSCallbackReturnsType {
+    [FFIType.char]: number;
+    [FFIType.int8_t]: number;
+    [FFIType.uint8_t]: number;
+    [FFIType.int16_t]: number;
+    [FFIType.uint16_t]: number;
+    [FFIType.int32_t]: number;
+    [FFIType.uint32_t]: number;
+    [FFIType.int64_t]: number | bigint;
+    [FFIType.uint64_t]: number | bigint;
+    [FFIType.double]: number;
+    [FFIType.float]: number;
+    [FFIType.bool]: boolean;
+    [FFIType.ptr]: NodeJS.TypedArray | DataView | Pointer | null;
+    [FFIType.void]: void;
+    [FFIType.cstring]: NodeJS.TypedArray | DataView | Pointer | null;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | null;
@@ -416,11 +477,20 @@ declare module "bun:ffi" {
     ["bool"]: FFIType.bool;
     ["ptr"]: FFIType.ptr;
     ["pointer"]: FFIType.pointer;
+    ["void*"]: FFIType.ptr;
+    ["char*"]: FFIType.ptr;
     ["void"]: FFIType.void;
     ["cstring"]: FFIType.cstring;
-    ["function"]: FFIType.pointer; // for now
-    ["usize"]: FFIType.uint64_t; // for now
-    ["callback"]: FFIType.pointer; // for now
+    ["i64_fast"]: FFIType.i64_fast;
+    ["u64_fast"]: FFIType.u64_fast;
+    ["function"]: FFIType.function;
+    ["callback"]: FFIType.function;
+    ["fn"]: FFIType.function;
+    ["usize"]: FFIType.uint64_t;
+    ["size_t"]: FFIType.uint64_t;
+    ["isize"]: FFIType.int64_t;
+    ["c_int"]: FFIType.int32_t;
+    ["c_uint"]: FFIType.uint32_t;
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;
@@ -533,21 +603,45 @@ declare module "bun:ffi" {
   type ToFFIType<T extends FFITypeOrString> = T extends FFIType ? T : T extends string ? FFITypeStringToType[T] : never;
 
   const FFIFunctionCallableSymbol: unique symbol;
-  type ConvertFns<Fns extends Symbols> = {
-    [K in keyof Fns]: {
-      (
-        ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
-          ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
-          : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-            [unknown] extends [Fns[K]["args"]]
-            ? []
-            : never
-      ): [unknown] extends [Fns[K]["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-        ? undefined
-        : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
-      __ffi_function_callable: typeof FFIFunctionCallableSymbol;
-    };
+  type ConvertFn<Fn extends FFIFunction> = {
+    (
+      ...args: Fn["args"] extends infer A extends readonly FFITypeOrString[]
+        ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
+        : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+          [unknown] extends [Fn["args"]]
+          ? []
+          : never
+    ): [unknown] extends [Fn["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+      ? undefined
+      : FFITypeToReturnsType[ToFFIType<NonNullable<Fn["returns"]>>];
+    __ffi_function_callable: typeof FFIFunctionCallableSymbol;
   };
+  type ConvertFns<Fns extends Symbols> = {
+    [K in keyof Fns]: ConvertFn<Fns[K]>;
+  };
+
+  /**
+   * The JavaScript function passed to a {@link JSCallback}.
+   *
+   * Argument and return types are derived from the `definition`:
+   * arguments arrive converted per {@link FFITypeToJSCallbackArgsType} and the
+   * return value must satisfy {@link FFITypeToJSCallbackReturnsType}.
+   */
+  type JSCallbackFunction<Def extends FFIFunction = FFIFunction> = {
+    // A method signature (vs a function type) keeps parameter checking
+    // bivariant, so a narrower handwritten `(ptr: Pointer) => void` stays
+    // assignable where the derived type is `(ptr: Pointer | null) => void`.
+    fn(
+      ...args: Def["args"] extends infer A extends readonly FFITypeOrString[]
+        ? { [L in keyof A]: FFITypeToJSCallbackArgsType[ToFFIType<A[L]>] }
+        : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+          [unknown] extends [Def["args"]]
+          ? []
+          : never
+    ): [unknown] extends [Def["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+      ? void
+      : FFITypeToJSCallbackReturnsType[ToFFIType<NonNullable<Def["returns"]>>];
+  }["fn"];
 
   /**
    * Open a native library and load symbols from it
@@ -575,7 +669,7 @@ declare module "bun:ffi" {
    *
    * @category FFI
    */
-  function dlopen<Fns extends Record<string, FFIFunction>>(
+  function dlopen<const Fns extends Record<string, FFIFunction>>(
     name: string | import("bun").BunFile | URL,
     symbols: Fns,
   ): Library<Fns>;
@@ -614,7 +708,7 @@ declare module "bun:ffi" {
    * }
    * ```
    */
-  function cc<Fns extends Record<string, FFIFunction>>(options: {
+  function cc<const Fns extends Record<string, FFIFunction>>(options: {
     /**
      * File path to an ISO C11 source file to compile and link
      */
@@ -714,7 +808,9 @@ declare module "bun:ffi" {
    * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
    * compile a C wrapper that converts JavaScript types to C types and back.
    */
-  function CFunction(fn: FFIFunction & { ptr: Pointer }): CallableFunction & {
+  function CFunction<const Fn extends FFIFunction & { ptr: Pointer }>(
+    fn: Fn,
+  ): ConvertFn<Fn> & {
     /**
      * Free the memory allocated by the wrapping function
      */
@@ -770,7 +866,7 @@ declare module "bun:ffi" {
    * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
    * compile C wrappers that convert JavaScript types to C types and back.
    */
-  function linkSymbols<Fns extends Record<string, FFIFunction>>(symbols: Fns): Library<Fns>;
+  function linkSymbols<const Fns extends Record<string, FFIFunction>>(symbols: Fns): Library<Fns>;
 
   /**
    * Read a pointer as a {@link Buffer}
@@ -1080,14 +1176,18 @@ declare module "bun:ffi" {
   /**
    * Pass a JavaScript function to FFI (Foreign Function Interface)
    */
-  class JSCallback {
+  class JSCallback<const Def extends FFIFunction = FFIFunction> {
     /**
      * Wrap a JavaScript function so it can be passed to C with `bun:ffi`
+     *
+     * The callback's parameter and return types are inferred from
+     * `definition`, so a mismatch between the declared FFI types and the
+     * JavaScript function is a type error.
      *
      * @param callback The JavaScript function to be called
      * @param definition The C function definition
      */
-    constructor(callback: (...args: any[]) => any, definition: FFIFunction);
+    constructor(callback: JSCallbackFunction<Def>, definition: Def);
 
     /**
      * The pointer to the C function

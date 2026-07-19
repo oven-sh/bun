@@ -17,6 +17,9 @@ const FFIType = {
   "15": 15,
   "16": 16,
   "17": 17,
+  "18": 18,
+  "19": 19,
+  "20": 20,
   bool: 11,
   c_int: 5,
   c_uint: 6,
@@ -45,6 +48,7 @@ const FFIType = {
   uint64_t: 8,
   uint8_t: 2,
   usize: 8,
+  size_t: 8,
   "void*": 12,
   ptr: 12,
   pointer: 12,
@@ -282,8 +286,10 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   configurable: true,
 });
 Object.defineProperty(globalThis, "__GlobalBunFFIPtrArrayBufferViewFn", {
-  value: function isTypedArrayView(val) {
-    return $isTypedArrayView(val);
+  value: function isArrayBufferView(val) {
+    // `$isTypedArrayView` is the fast path, but it excludes DataView, which
+    // the compiled FFI stubs accept like any other ArrayBufferView.
+    return $isTypedArrayView(val) || ArrayBuffer.$isView(val);
   },
   enumerable: false,
   configurable: true,
@@ -303,6 +309,14 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
     return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
+  // A CString (or anything else carrying a numeric "ptr", like a JSCallback).
+  // CString data starts at ptr + byteOffset, like its arrayBuffer getter.
+  var valPtr = val.ptr;
+  if (typeof valPtr === "number") {
+    var valByteOffset = val.byteOffset;
+    return valByteOffset ? valPtr + valByteOffset : valPtr;
+  }
+
   if (typeof val === "string") {
     throw new TypeError("To convert a string to a pointer, encode it as a buffer");
   }
@@ -312,7 +326,7 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
 
 ffiWrappers[FFIType.buffer] = `{
   if (!__GlobalBunFFIPtrArrayBufferViewFn(val)) {
-    throw new TypeError("Expected a TypedArray");
+    throw new TypeError("Expected a TypedArray or DataView");
   }
 
   return val;
@@ -335,6 +349,12 @@ ffiWrappers[FFIType.function] = `{
 
   return ptr;
 }`;
+
+// Node-API arguments are passed through as raw JSValues: the native side reads
+// `napi_value` directly and substitutes the module's env for `napi_env`, so
+// neither may go through the default `val|0` coercion.
+ffiWrappers[FFIType.napi_env] = "val";
+ffiWrappers[FFIType.napi_value] = "val";
 
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
@@ -496,12 +516,13 @@ function cc(options) {
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
 
+  const symbols = options.symbols;
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    if (symbols[key]?.args?.length || FFIType[symbols[key]?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        symbols[key].args ?? [],
+        symbols[key].returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of

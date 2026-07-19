@@ -1,4 +1,4 @@
-import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, FFIType, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
@@ -64,10 +64,10 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () =>
       expect(res.symbols.add(1, 2)).toBe(3);
     });
 
-    // FIXME: produces junk
-    it.skip("when passed arguments with incorrect types, throws an error", () => {
+    it("when passed numeric strings, coerces them like the dlopen wrappers do", () => {
+      // int arguments go through the same `val|0` coercion as dlopen'd symbols
       // @ts-expect-error
-      expect(() => res.symbols.add("1", "2")).toThrow();
+      expect(res.symbols.add("1", "2")).toBe(3);
     });
 
     // looks like `b` defaults to `0`, is this U.B. or expected?
@@ -134,8 +134,10 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
-describe.skip("given a ping(cstr) function", () => {
-  const library = makeValidCase(
+// Successful compiles are fine under ASan; the setjmp/longjmp conflict only
+// affects TinyCC's error handling, which these tests never reach.
+describe.skipIf(isFFIUnavailable)("given a ping(cstr) function", () => {
+  const holder = makeValidCase(
     "ping",
     /* c */ `
     char* ping(char* str) {
@@ -150,21 +152,34 @@ describe.skip("given a ping(cstr) function", () => {
     },
   );
 
-  it("given a valid CString, returns the same pointer", () => {
+  it("given a valid CString, returns a CString wrapping the same pointer", () => {
     const buf = Buffer.from("hello\0");
     const arr = new Uint8Array(buf);
     const cstr = new CString(ptr(arr));
 
-    expect(library.symbols.ping(cstr)).toBe(cstr);
+    const result = holder.library.symbols.ping(cstr);
+    expect(result).toBeInstanceOf(CString);
+    expect(result.ptr).toBe(cstr.ptr);
+    expect(result.toString()).toBe("hello");
+  });
+
+  it("given a CString with a byteOffset, passes the address of its data", () => {
+    const buf = Buffer.from("hello\0");
+    const arr = new Uint8Array(buf);
+    const sliced = new CString(ptr(arr), 2, 3);
+    expect(sliced.toString()).toBe("llo");
+
+    expect(holder.library.symbols.ping(sliced).toString()).toBe("llo");
   });
 }); // </given a ping(cstr) function>
 
-// FIXME: bus error
-describe.skip("given a strlen(cstring) function", () => {
-  const library = makeValidCase(
+// Successful compiles are fine under ASan; the setjmp/longjmp conflict only
+// affects TinyCC's error handling, which these tests never reach.
+describe.skipIf(isFFIUnavailable)("given a strlen(cstring) function", () => {
+  const holder = makeValidCase(
     "strlen",
     /* c */ `
-      size_t strlen(char* str) {
+      unsigned long long strlen(char* str) {
         char* s = str;
         while (*s) s++;
         return s - str;
@@ -183,14 +198,101 @@ describe.skip("given a strlen(cstring) function", () => {
     const arr = new Uint8Array(buf);
     const cstr = new CString(ptr(arr));
 
-    expect(library.symbols.strlen(cstr)).toBe(5);
+    expect(holder.library.symbols.strlen(cstr)).toBe(5n);
   });
 
   it("given a JSString, throws", () => {
     // @ts-expect-error
-    expect(() => library.symbols.strlen("hello")).toThrow(TypeError);
+    expect(() => holder.library.symbols.strlen("hello")).toThrow(TypeError);
   });
 }); // </given a strlen(cstring) function>
+
+// Successful compiles are fine under ASan; the setjmp/longjmp conflict only
+// affects TinyCC's error handling, which these tests never reach.
+describe.skipIf(isFFIUnavailable)("cc applies the same conversions as dlopen", () => {
+  const holder = makeValidCase(
+    "conversions",
+    /* c */ `
+      const char* greet() { return "hello"; }
+      unsigned int identity_u32(unsigned int value) { return value; }
+      unsigned long long identity_size_t(unsigned long long value) { return value; }
+      void* identity_ptr(void* value) { return value; }
+      int invoke(int (*callback)(int), int value) { return callback(value); }
+      long long napi_echo(void* env, long long value) { return value; }
+    `,
+    {
+      greet: {
+        args: [],
+        returns: "cstring",
+      },
+      identity_u32: {
+        args: ["u32"],
+        returns: "u32",
+      },
+      identity_size_t: {
+        args: ["size_t"],
+        returns: "size_t",
+      },
+      identity_ptr: {
+        args: ["ptr"],
+        returns: "ptr",
+      },
+      invoke: {
+        args: ["function", "int"],
+        returns: "int",
+      },
+      napi_echo: {
+        // The numeric enum spellings cover the FFIType reverse lookup for
+        // the types above 17, which the string spellings bypass.
+        args: [FFIType.napi_env, FFIType.napi_value],
+        returns: FFIType.napi_value,
+      },
+    },
+  );
+
+  it("wraps cstring return values in a CString", () => {
+    const result = holder.library.symbols.greet();
+    expect(result).toBeInstanceOf(CString);
+    expect(result.toString()).toBe("hello");
+  });
+
+  it("converts large uint32_t arguments correctly", () => {
+    expect(holder.library.symbols.identity_u32(0xffffffff)).toBe(0xffffffff);
+    expect(holder.library.symbols.identity_u32(0)).toBe(0);
+  });
+
+  it("accepts size_t, which only the native type table spelled out", () => {
+    expect(holder.library.symbols.identity_size_t(42n)).toBe(42n);
+    expect(holder.library.symbols.identity_size_t(7)).toBe(7n);
+  });
+
+  it("converts ArrayBuffer pointer arguments", () => {
+    const buf = new ArrayBuffer(8);
+    expect(holder.library.symbols.identity_ptr(buf)).toBe(ptr(buf));
+  });
+
+  it("throws when a pointer argument cannot be converted", () => {
+    // @ts-expect-error
+    expect(() => holder.library.symbols.identity_ptr({})).toThrow(TypeError);
+  });
+
+  it("accepts a JSCallback object for function arguments", () => {
+    const callback = new JSCallback((value: number) => value * 3, {
+      args: ["int"],
+      returns: "int",
+    });
+    try {
+      expect(holder.library.symbols.invoke(callback, 14)).toBe(42);
+    } finally {
+      callback.close();
+    }
+  });
+
+  it("passes napi_value arguments through untouched", () => {
+    const object = { hello: "napi" };
+    expect(holder.library.symbols.napi_echo(null, object)).toBe(object);
+  });
+}); // </cc applies the same conversions as dlopen>
 
 // =============================================================================
 
@@ -198,10 +300,12 @@ function makeValidCase<Fns extends Record<string, FFIFunction>>(
   name: string,
   source: string,
   symbols: Fns,
-): Library<Fns> {
+): { library: Library<Fns> } {
   const filename = `${name}.c`;
 
-  var library: Library<Fns>;
+  // The library only exists once `beforeAll` has run, so hand tests a holder
+  // instead of a value captured at describe time.
+  const holder = {} as { library: Library<Fns> };
 
   beforeAll(() => {
     try {
@@ -209,7 +313,7 @@ function makeValidCase<Fns extends Record<string, FFIFunction>>(
         [filename]: source,
       });
 
-      library = cc({
+      holder.library = cc({
         source: path.join(dir, filename),
         symbols,
       });
@@ -220,11 +324,10 @@ function makeValidCase<Fns extends Record<string, FFIFunction>>(
   });
 
   afterAll(() => {
-    library.close();
+    holder.library?.close();
   });
 
-  // @ts-ignore
-  return library;
+  return holder;
 }
 
 // =============================================================================

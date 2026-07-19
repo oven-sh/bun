@@ -8685,6 +8685,26 @@ pub mod net {
                 _ => core::mem::size_of::<sockaddr_storage>() as u32,
             }
         }
+        /// The IPv4-mapped IPv6 form (`::ffff:a.b.c.d`) of an `AF_INET` address,
+        /// keeping the port. `None` for any other family.
+        pub fn to_v4_mapped(&self) -> Option<Self> {
+            let v4 = self.as_in4()?;
+            // SAFETY: `sin_addr` is 4 bytes of POD on every target (see `Display`).
+            let octets: [u8; 4] = unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+            let mut addr = [0u8; 16];
+            addr[10] = 0xff;
+            addr[11] = 0xff;
+            addr[12..].copy_from_slice(&octets);
+            let mapped = sockaddr_in6 {
+                family: AF_INET6 as sa_family_t,
+                port: v4.sin_port,
+                addr,
+                ..sockaddr_in6::ZEROED
+            };
+            // SAFETY: `mapped` is a fully-initialized `AF_INET6` sockaddr and this
+            // module's `sockaddr_in6` is layout-identical to the C one (asserted above).
+            Some(unsafe { Self::init_posix((&raw const mapped).cast()) })
+        }
     }
     impl Default for Address {
         // SAFETY: POD, zero-valid — sockaddr union of integer fields.

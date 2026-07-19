@@ -15,7 +15,7 @@ use bun_core::{ZStr, strings};
 use bun_dns::ResultList as GetAddrInfoResultList;
 use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
-    Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
+    Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny, V4Mapped,
 };
 use bun_io::{self as Async, FilePoll, KeepAlive};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -32,7 +32,7 @@ use bun_threading::thread_pool;
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
-use super::cares_jsc::error_to_deferred;
+use super::cares_jsc::{self, error_to_deferred};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -1129,6 +1129,9 @@ pub struct GetAddrInfoRequest {
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
+    /// Read by the c-ares completion path, which synthesizes the IPv4-mapped
+    /// addresses itself. The libc backends get them straight from `getaddrinfo`.
+    pub v4_mapped: V4Mapped,
     pub head: DNSLookup,
     pub tail: *mut DNSLookup, // INTRUSIVE
     pub task: thread_pool::Task,
@@ -1379,6 +1382,7 @@ impl GetAddrInfoRequest {
             resolver_for_caching: resolver,
             hash: query.hash(),
             cache: CacheConfig::default(),
+            v4_mapped: query.options.v4_mapped(),
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
@@ -1567,8 +1571,9 @@ impl GetAddrInfoRequest {
             // Consume the request and move `head` out by value; `ptr::read`
             // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
             let owned = *bun_core::heap::take(this);
+            let v4_mapped = owned.v4_mapped;
             let mut head = owned.head;
-            DNSLookup::process_get_addr_info(&raw mut head, err_, timeout, result);
+            DNSLookup::process_get_addr_info(&raw mut head, err_, timeout, result, v4_mapped);
         }
     }
 
@@ -2012,6 +2017,7 @@ impl DNSLookup {
         err_: Option<c_ares::Error>,
         _timeout: i32,
         result: Option<*mut c_ares::AddrInfo>,
+        v4_mapped: V4Mapped,
     ) {
         bun_output::scoped_log!(DNSLookup, "processGetAddrInfo");
         // This path is reached when the pending-host cache is full (`.disabled`),
@@ -2046,18 +2052,22 @@ impl DNSLookup {
                 Self::destroy(this);
                 return;
             };
-            Self::on_complete(this, r);
+            Self::on_complete(this, r, v4_mapped);
         }
     }
 
     /// SAFETY: see `on_complete_native`.
-    pub(crate) unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
+    pub(crate) unsafe fn on_complete(
+        this: *mut Self,
+        result: *mut c_ares::AddrInfo,
+        v4_mapped: V4Mapped,
+    ) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
         unsafe {
             let array =
-                super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this())
+                cares_jsc::addr_info_to_js_array(&mut *result, v4_mapped, (*this).global_this())
                     .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             Self::on_complete_with_array(this, array);
         }
@@ -4425,6 +4435,10 @@ impl Resolver {
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
+        // Read before the `heap::take`s below free the request.
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache slot.
+        let v4_mapped = unsafe { (*key.lookup).v4_mapped };
+
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
             // pending-cache slot; consumed via `heap::take` below.
@@ -4435,12 +4449,13 @@ impl Resolver {
                     err,
                     timeout,
                     None,
+                    v4_mapped,
                 );
                 drop(bun_core::heap::take(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    DNSLookup::process_get_addr_info(value.as_ptr(), err, timeout, None);
+                    DNSLookup::process_get_addr_info(value.as_ptr(), err, timeout, None, v4_mapped);
                 }
             }
             return;
@@ -4451,7 +4466,7 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
-            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global)
+            let mut array = cares_jsc::addr_info_to_js_array(&mut *addr, v4_mapped, prev_global)
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
@@ -4465,7 +4480,7 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global)
+                    array = cares_jsc::addr_info_to_js_array(&mut *addr, v4_mapped, new_global)
                         .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }

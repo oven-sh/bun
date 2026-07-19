@@ -13,6 +13,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import * as net from "node:net";
+import { join } from "node:path";
 
 test("bun install times out when the registry accepts TCP but never completes the TLS handshake", async () => {
   // Raw TCP listener: accepts the connection, reads (and discards) the
@@ -70,3 +71,69 @@ test("bun install times out when the registry accepts TCP but never completes th
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/31949
+//
+// A registry connection that dies during the TLS handshake involves no
+// certificate at all, so `bun install` must report it as a connection error
+// (ECONNRESET, the code Node and npm surface), never as
+// UNKNOWN_CERTIFICATE_VERIFICATION_ERROR, which sends users hunting through
+// CA stores for a network problem. A FIN (socket.destroy) reaches the SSL
+// close path and its mid-handshake sentinel; a peer RST raw-closes the
+// socket before the SSL layer sees it and reports ConnectionClosed instead.
+test("bun install reports a connection error when the registry closes the connection during the TLS handshake", async () => {
+  // Raw TCP listener: accepts the connection, reads the ClientHello, and
+  // closes the socket without ever writing a TLS byte back.
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    socket.once("data", () => socket.destroy());
+  });
+  const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+  // Left attached after listen succeeds: rejecting a settled promise is a
+  // no-op, and it keeps a later server-level "error" from crashing the test.
+  server.once("error", onListenError);
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    using dir = tempDir("install-handshake-reset", {
+      "package.json": JSON.stringify({
+        name: "reset-repro",
+        version: "1.0.0",
+        dependencies: { "left-pad": "1.3.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "https://127.0.0.1:${port}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: {
+        ...bunEnv,
+        // Keep the manifest lookup off any shared cache so the request always
+        // hits the failing registry.
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+        // One failed attempt is enough to observe the error.
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const combined = stdout + stderr;
+    expect(combined).not.toContain("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR");
+    // ECONNRESET from the handshake sentinel; ConnectionClosed when the
+    // platform's event loop raw-closes the socket before the SSL layer runs.
+    expect(combined).toMatch(/error: (ECONNRESET|ConnectionClosed) downloading package manifest left-pad/);
+    expect(exitCode).not.toBe(0);
+  } finally {
+    for (const s of sockets) s.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

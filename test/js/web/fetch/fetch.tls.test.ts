@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tmpdirSync } from "harness";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -288,6 +289,86 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // A connection reset/closed mid-TLS-handshake involves no certificate at
+  // all, so it must surface as ECONNRESET (like Node), not as a certificate
+  // verification error. https://github.com/oven-sh/bun/issues/31949
+  //
+  // The two variants take different paths: a FIN reaches the SSL close path
+  // and its mid-handshake sentinel, while a peer RST raw-closes the socket
+  // (see the POLL_TYPE_SOCKET error arm in packages/bun-usockets/src/loop.c)
+  // and surfaces as the generic connection-closed failure. Both carry the
+  // ECONNRESET code; only the FIN path has Node's handshake-specific message.
+  for (const [closeMode, closeSocket, viaHandshakeSentinel] of [
+    ["resets (RST)", (socket: net.Socket) => socket.resetAndDestroy(), false],
+    ["closes (FIN)", (socket: net.Socket) => socket.destroy(), true],
+  ] as const) {
+    it(`fetch reports ECONNRESET when the server ${closeMode} the connection during the TLS handshake`, async () => {
+      // Raw TCP listener: accepts the connection, reads the ClientHello, and
+      // kills the socket without ever writing a TLS byte back.
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer(socket => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        socket.on("error", () => {});
+        socket.once("data", () => closeSocket(socket));
+      });
+      const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+      // Left attached after listen succeeds: rejecting a settled promise is a
+      // no-op, and it keeps a later server-level "error" from crashing the test.
+      server.once("error", onListenError);
+      server.listen(0, "127.0.0.1", onListening);
+      try {
+        await listening;
+        const port = (server.address() as net.AddressInfo).port;
+
+        let err: any;
+        try {
+          await fetch(`https://127.0.0.1:${port}/`, { keepalive: false });
+          expect.unreachable();
+        } catch (e) {
+          err = e;
+        }
+
+        expect(err).toBeInstanceOf(Error);
+        // The load-bearing invariant: a mid-handshake reset is a connection
+        // error, never a certificate error.
+        expect(err.code).toBe("ECONNRESET");
+        if (viaHandshakeSentinel && !isWindows) {
+          // Node's exact message for this case. On Windows CI the error
+          // carries a different (still ECONNRESET-coded) message, so the
+          // exact-text assertion is POSIX-only.
+          expect(err.message).toBe("Client network socket disconnected before secure TLS connection was established");
+        }
+      } finally {
+        for (const s of sockets) s.destroy();
+        server.close();
+      }
+    });
+  }
+
+  // A fatal TLS protocol error (the peer answers the ClientHello with
+  // non-TLS bytes) is the other non-certificate handshake failure: uSockets
+  // reports it as the -71/"EPROTO" sentinel (ssl_dispatch_parked_reason),
+  // and it must surface as EPROTO like Node, not as a certificate error.
+  it("fetch reports EPROTO when the server speaks plain HTTP during the TLS handshake", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("ok"),
+    });
+
+    let err: any;
+    try {
+      await fetch(`https://127.0.0.1:${server.port}/`, { keepalive: false });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("EPROTO");
+  });
+
   it("fetch with checkServerIdentity failing should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       try {
@@ -524,7 +605,10 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
+      // Bind the IPv4 loopback explicitly: `hostname: "localhost"` binds ::1
+      // only on some hosts while fetch connects to 127.0.0.1, failing with
+      // ConnectionRefused before the timeout under test can ever fire.
+      hostname: "127.0.0.1",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {

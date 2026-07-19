@@ -75,6 +75,8 @@ class JSCommonJSExtensions;
 class InternalModuleRegistry;
 class JSMockModule;
 class JSMockFunction;
+
+void resetDateCacheForTimeZoneChange(JSC::VM&);
 }
 
 namespace WebCore {

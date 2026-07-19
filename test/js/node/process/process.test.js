@@ -270,6 +270,35 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
 });
 
+it("process.env.TZ reassignment updates the offset on existing Date instances", async () => {
+  const fixture = `
+    const d = new Date("2018-04-14T12:34:56.789Z");
+    process.env.TZ = "Europe/Amsterdam";
+    const a = { str: d.toString(), hours: d.getHours(), offset: d.getTimezoneOffset() };
+    process.env.TZ = "Europe/London";
+    const b = { str: d.toString(), hours: d.getHours(), offset: d.getTimezoneOffset() };
+    const { setTimeZone } = require("bun:jsc");
+    setTimeZone("Europe/Amsterdam");
+    const c = { str: d.toString(), hours: d.getHours(), offset: d.getTimezoneOffset() };
+    process.stdout.write(JSON.stringify({ a, b, c }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { a, b, c } = JSON.parse(stdout);
+  expect({ a, b, c }).toEqual({
+    a: { str: expect.stringMatching(/^Sat Apr 14 2018 14:34:56 GMT\+0200 \(.+\)$/), hours: 14, offset: -120 },
+    b: { str: expect.stringMatching(/^Sat Apr 14 2018 13:34:56 GMT\+0100 \(.+\)$/), hours: 13, offset: -60 },
+    c: { str: expect.stringMatching(/^Sat Apr 14 2018 14:34:56 GMT\+0200 \(.+\)$/), hours: 14, offset: -120 },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

@@ -49,6 +49,13 @@ public:
     // Cached on the JS thread at construction time so the foreign-thread
     // trampoline never has to dereference a Strong to find the context.
     WebCore::ScriptExecutionContextIdentifier m_contextId;
+    // Depth of FFI_Callback_call_* frames currently on the JS thread's stack.
+    // Only touched on the JS thread; the threadsafe entry point never bumps it.
+    unsigned m_activeCallCount { 0 };
+    // The Rust `*mut Function` whose drop JSCallback.close() deferred because a
+    // trampoline frame for this callback was on the stack. Consumed by the
+    // outermost FFICallbackCallScope destructor; opaque, never dereferenced here.
+    void* m_pendingCloseFunction { nullptr };
     ~FFICallbackFunctionWrapper() = default;
 
     FFICallbackFunctionWrapper(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
@@ -58,6 +65,49 @@ public:
     {
     }
 };
+
+// Implemented in Rust (runtime/ffi/ffi_body.rs): enqueues an event-loop task
+// that drops `function` (a `*mut Function`) once no FFI_Callback_call_* frame
+// for it is left on the native stack.
+extern "C" void Bun__FFIFunction__scheduleDeferredDrop(void* function);
+
+// Tracks that a TinyCC-compiled trampoline for this callback is on the native
+// stack, so JSCallback.close() called from inside the callback defers freeing
+// the trampoline's executable memory instead of unmapping it under the caller.
+class FFICallbackCallScope {
+public:
+    explicit FFICallbackCallScope(FFICallbackFunctionWrapper& wrapper)
+        : m_wrapper(wrapper)
+    {
+        m_wrapper.m_activeCallCount++;
+    }
+    ~FFICallbackCallScope()
+    {
+        // Only the outermost frame schedules the drop. No JS can run between
+        // here and the event loop draining its task queue, so a tick started
+        // from inside the callback can never free the trampoline while a frame
+        // below still has to return into it.
+        if (--m_wrapper.m_activeCallCount == 0 && m_wrapper.m_pendingCloseFunction) {
+            void* function = m_wrapper.m_pendingCloseFunction;
+            m_wrapper.m_pendingCloseFunction = nullptr;
+            Bun__FFIFunction__scheduleDeferredDrop(function);
+        }
+    }
+
+private:
+    FFICallbackFunctionWrapper& m_wrapper;
+};
+
+extern "C" bool FFICallbackFunctionWrapper_hasActiveCalls(FFICallbackFunctionWrapper* wrapper)
+{
+    return wrapper->m_activeCallCount > 0;
+}
+
+extern "C" void FFICallbackFunctionWrapper_setPendingClose(FFICallbackFunctionWrapper* wrapper, void* function)
+{
+    wrapper->m_pendingCloseFunction = function;
+}
+
 extern "C" void FFICallbackFunctionWrapper_destroy(FFICallbackFunctionWrapper* wrapper)
 {
     // deref, not delete: pending event-loop tasks may still hold refs.
@@ -199,6 +249,7 @@ static JSC::EncodedJSValue invokeFFICallback(Zig::GlobalObject* globalObject, JS
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     for (size_t i = 0; i < argCount; ++i)
         arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(args[i]));
@@ -228,6 +279,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_0(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
 }
@@ -235,6 +287,7 @@ FFI_Callback_call_0(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_1(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     return invokeFFICallback(wrapper.globalObject.get(), wrapper.m_function.get(), arguments);
@@ -243,6 +296,7 @@ FFI_Callback_call_1(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_2(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -251,6 +305,7 @@ FFI_Callback_call_2(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
 
 extern "C" JSC::EncodedJSValue FFI_Callback_call_3(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -260,6 +315,7 @@ extern "C" JSC::EncodedJSValue FFI_Callback_call_3(FFICallbackFunctionWrapper& w
 
 extern "C" JSC::EncodedJSValue FFI_Callback_call_4(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -270,6 +326,7 @@ extern "C" JSC::EncodedJSValue FFI_Callback_call_4(FFICallbackFunctionWrapper& w
 
 extern "C" JSC::EncodedJSValue FFI_Callback_call_5(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -282,6 +339,7 @@ extern "C" JSC::EncodedJSValue FFI_Callback_call_5(FFICallbackFunctionWrapper& w
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_6(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));
@@ -295,6 +353,7 @@ FFI_Callback_call_6(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::E
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_7(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
+    FFICallbackCallScope callScope { wrapper };
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(args[0]));
     arguments.append(JSC::JSValue::decode(args[1]));

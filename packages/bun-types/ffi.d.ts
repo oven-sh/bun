@@ -1105,6 +1105,14 @@ declare module "bun:ffi" {
      * Free the memory allocated for the callback
      *
      * If called multiple times, does nothing after the first call.
+     *
+     * For non-threadsafe callbacks, it is safe to call this from inside the
+     * callback itself: the memory is not released until the native call stack
+     * that invoked the callback has fully unwound.
+     *
+     * For `threadsafe: true` callbacks, Bun cannot know when a foreign thread
+     * stops using the pointer; the caller must ensure no other thread is still
+     * calling it before closing.
      */
     close(): void;
   }

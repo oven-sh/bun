@@ -1249,7 +1249,7 @@ impl FFI {
 
     pub fn close_callback(_global_this: &JSGlobalObject, ctx: JSValue) -> JSValue {
         // SAFETY: ctx encodes a heap::alloc(*mut Function) created by `callback`
-        drop(unsafe { bun_core::heap::take(ctx.as_ptr_address() as *mut Function) });
+        release_callback_function(ctx.as_ptr_address() as *mut Function);
         JSValue::UNDEFINED
     }
 
@@ -1915,6 +1915,52 @@ impl Default for Function {
 
 unsafe extern "C" {
     fn FFICallbackFunctionWrapper_destroy(_: *mut c_void);
+    fn FFICallbackFunctionWrapper_hasActiveCalls(_: *mut c_void) -> bool;
+    fn FFICallbackFunctionWrapper_setPendingClose(_: *mut c_void, _: *mut c_void);
+}
+
+/// Drops the `heap::alloc`'d `Function` behind a `JSCallback` if no TinyCC
+/// trampoline frame for it is on the native stack; dropping sooner would unmap
+/// the executable page the native caller still has to return into. Otherwise
+/// arms the wrapper so the outermost `FFICallbackCallScope` destructor
+/// (JSFFIFunction.cpp) schedules the drop once that stack has fully unwound.
+fn release_callback_function(function: *mut Function) {
+    // SAFETY: `function` is a live `heap::alloc`'d pointer; the wrapper it
+    // owns is only released by `Function::drop`, which has not run yet.
+    if let Some(wrapper) = unsafe { (*function).callback_wrapper() } {
+        // SAFETY: `wrapper` is the live C++ wrapper the `Function` owns.
+        if unsafe { FFICallbackFunctionWrapper_hasActiveCalls(wrapper.as_ptr()) } {
+            // SAFETY: `function` is stored opaquely; C++ never dereferences it.
+            unsafe {
+                FFICallbackFunctionWrapper_setPendingClose(wrapper.as_ptr(), function.cast())
+            };
+            return;
+        }
+    }
+    // SAFETY: no trampoline frame is live; the `heap::alloc`'d box is ours.
+    drop(unsafe { bun_core::heap::take(function) });
+}
+
+/// Enqueues an event-loop task that re-runs [`release_callback_function`] for
+/// `function` (the `heap::alloc`'d `*mut Function`). Called by the outermost
+/// `FFICallbackCallScope` destructor in JSFFIFunction.cpp when a pending close
+/// is armed. The task routes back through `release_callback_function` instead
+/// of dropping unconditionally: a nested event-loop tick can run it while a
+/// later native invocation of the same callback is on the stack, in which case
+/// it must re-arm the wrapper rather than free the trampoline.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FFIFunction__scheduleDeferredDrop(function: *mut c_void) {
+    fn run(function: *mut Function) -> bun_event_loop::JsResult<()> {
+        release_callback_function(function);
+        Ok(())
+    }
+    // `ManagedTask::new` (no `cleanup` hook) is deliberate: if the VM tears
+    // down first, leaking the `Function` is safer than running `Function::drop`
+    // (which releases `JSC::Strong`s) from `EventLoop::deinit`.
+    let task = jsc::ManagedTask::ManagedTask::new(function.cast::<Function>(), run);
+    jsc::VirtualMachineRef::get()
+        .event_loop_mut()
+        .enqueue_task(task);
 }
 
 impl Drop for Function {
@@ -1941,6 +1987,15 @@ impl Function {
             }
         }
         self.return_type == ABIType::NapiValue
+    }
+
+    /// The `FFICallbackFunctionWrapper` this callback owns, or `None` for
+    /// non-callback (dlopen / cc) functions.
+    fn callback_wrapper(&self) -> Option<NonNull<c_void>> {
+        match &self.step {
+            Step::Compiled(compiled) => compiled.ffi_callback_function_wrapper,
+            _ => None,
+        }
     }
 
     fn fail(&mut self, msg: &'static [u8]) {

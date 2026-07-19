@@ -960,6 +960,20 @@ size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
+template<typename Visitor>
+void JSWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    // Set once in the WebSocket constructor (before this wrapper exists) and
+    // only ever cleared afterwards, so it cannot acquire a new value
+    // post-marking: no output constraint is needed.
+    thisObject->wrapped().creationAsyncContext().visit(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSWebSocket);
+
 void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);

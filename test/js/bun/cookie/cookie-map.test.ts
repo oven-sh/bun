@@ -215,6 +215,44 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  test("can create CookieMap from Proxy-wrapped object", () => {
+    const target = { a: "1", b: "2" };
+
+    // Transparent proxy should behave exactly like the target.
+    const transparent = new Bun.CookieMap(new Proxy(target, {}));
+    expect([...transparent.entries()]).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+    ]);
+
+    // The record branch must go through [[OwnPropertyKeys]], so the ownKeys
+    // trap fires and a throwing trap propagates.
+    let ownKeysCalls = 0;
+    const observed = new Bun.CookieMap(
+      new Proxy(target, {
+        ownKeys(t) {
+          ownKeysCalls++;
+          return Reflect.ownKeys(t);
+        },
+      }),
+    );
+    expect(ownKeysCalls).toBe(1);
+    expect([...observed.entries()]).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+    ]);
+
+    expect(() => {
+      new Bun.CookieMap(
+        new Proxy(target, {
+          ownKeys() {
+            throw new Error("ownKeys trap");
+          },
+        }),
+      );
+    }).toThrow("ownKeys trap");
+  });
+
   test("can create CookieMap from array pairs", () => {
     const map = new Bun.CookieMap([
       ["name", "value"],

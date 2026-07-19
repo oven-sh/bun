@@ -1133,6 +1133,11 @@ test("Error.appendStackTrace on an error with materialized info does not crash i
         b.sourceURL;
         Error.appendStackTrace(a, b);
         keep.push(b);
+        const c = new Error();
+        const d = new Error();
+        d.sourceURL;
+        Error.appendStackTrace(c, d);
+        keep.push(c, d);
         const self = new Error();
         Error.appendStackTrace(self, self);
         keep.push(self);

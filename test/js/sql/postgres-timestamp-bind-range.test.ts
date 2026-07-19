@@ -114,10 +114,18 @@ async function bind(value: unknown): Promise<{ err: any; sent: bigint | undefine
   return { err, sent: bound?.length === 8 ? bound.readBigInt64BE(0) : undefined };
 }
 
+// Largest/smallest f64-representable ms whose `(ms - POSTGRES_EPOCH_MS) * 1000`
+// still fits in i64. Both are between 2^53 and 2^54 so the f64 step is 2; the
+// next representable value in either direction (±2) is the first that wraps.
+const MAX_PG_MS = 9_224_318_721_654_774;
+const MIN_PG_MS = -9_222_425_352_054_774;
+
 // Before the fix each of these silently wrote a Bind with a wrapped (or
 // arbitrary, for non-finite input) i64; the assertion on `sent` is what
 // fails without the src/ change.
 const rejected: { name: string; value: unknown }[] = [
+  { name: "MAX_PG_MS + 2 (first f64 past the positive i64-us limit)", value: MAX_PG_MS + 2 },
+  { name: "MIN_PG_MS - 2 (first f64 past the negative i64-us limit)", value: MIN_PG_MS - 2 },
   { name: "1e16 ms (x1000 overflows i64)", value: 1e16 },
   { name: "-1e16 ms (x1000 underflows i64)", value: -1e16 },
   { name: "Number.MAX_VALUE (saturates then overflows)", value: Number.MAX_VALUE },
@@ -140,6 +148,8 @@ const accepted: { name: string; value: unknown; ms: bigint }[] = [
   { name: "0 (unix epoch)", value: 0, ms: 0n },
   { name: "8.64e15 (max JS Date ms)", value: MAX_DATE_MS, ms: BigInt(MAX_DATE_MS) },
   { name: "-8.64e15 (min JS Date ms)", value: -MAX_DATE_MS, ms: -BigInt(MAX_DATE_MS) },
+  { name: "MAX_PG_MS (largest raw ms that fits i64 us)", value: MAX_PG_MS, ms: BigInt(MAX_PG_MS) },
+  { name: "MIN_PG_MS (smallest raw ms that fits i64 us)", value: MIN_PG_MS, ms: BigInt(MIN_PG_MS) },
   { name: "new Date(8.64e15)", value: new Date(MAX_DATE_MS), ms: BigInt(MAX_DATE_MS) },
   { name: "new Date(0)", value: new Date(0), ms: 0n },
 ];

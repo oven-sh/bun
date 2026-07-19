@@ -679,6 +679,35 @@ pub(crate) fn is_filtered_dependency_or_workspace(
 // process_subtree / hoist_dependency
 // ──────────────────────────────────────────────────────────────────────────
 
+// Folder deps bypass `hoist_dependency`, so a folder package whose dependency
+// graph reaches itself would otherwise re-enqueue its own subtree forever. The
+// dep is still placed so it appears in bun.lock; only the re-enqueue is cut.
+fn is_folder_cycle<const METHOD: BuilderMethod>(
+    pkg_id: PackageID,
+    from_tree: Id,
+    pkg_resolutions: &[Resolution],
+    builder: &Builder<'_, METHOD>,
+) -> bool {
+    if pkg_resolutions[pkg_id as usize].tag != crate::resolution::Tag::Folder {
+        return false;
+    }
+    let mut anc = from_tree;
+    loop {
+        let tree = builder.list.items_tree()[anc as usize];
+        let anc_pkg = match tree.dependency_id {
+            ROOT_DEP_ID => 0,
+            id => builder.resolutions[id as usize],
+        };
+        if anc_pkg == pkg_id {
+            return true;
+        }
+        if tree.parent == INVALID_ID {
+            return false;
+        }
+        anc = tree.parent;
+    }
+}
+
 impl Tree {
     pub fn process_subtree<const METHOD: BuilderMethod>(
         &self,
@@ -832,24 +861,6 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
-                    // Folder deps bypass `hoist_dependency`, so nothing dedupes a folder
-                    // package that reaches itself (directly or via another folder) and it
-                    // would re-enqueue forever. Skip if already an enclosing subtree.
-                    let mut anc = next_id;
-                    loop {
-                        let tree = builder.list.items_tree()[anc as usize];
-                        let anc_pkg = match tree.dependency_id {
-                            ROOT_DEP_ID => 0,
-                            id => builder.resolutions[id as usize],
-                        };
-                        if anc_pkg == pkg_id {
-                            continue 'dep;
-                        }
-                        if tree.parent == INVALID_ID {
-                            break;
-                        }
-                        anc = tree.parent;
-                    }
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: false,
@@ -959,6 +970,7 @@ impl Tree {
                     }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
+                        && !is_folder_cycle(pkg_id, next_id, pkg_resolutions, builder)
                     {
                         builder.queue.write_item(FillItem {
                             tree_id: dest.id,

@@ -576,17 +576,17 @@ test.concurrent(
   async () => {
     // https://github.com/oven-sh/bun/issues/25202
     // Same hoist cycle as the migration cases above, reached without a foreign lockfile:
-    // `bun i ../dir1` resolves `foo: workspace:.` inside the folder package to the folder
-    // package itself, so the hoist builder re-enqueued its own subtree forever.
+    // `foo: workspace:.` inside the folder package resolves to the folder package itself
+    // under a different name, so the hoist builder re-enqueued its own subtree forever.
     const testDir = tempDirWithFiles("install-folder-self-workspace", {
+      "package.json": JSON.stringify({ name: "consumer", dependencies: { test: "file:dir1" } }),
       "dir1/package.json": JSON.stringify({ name: "test", version: "1.0.0", devDependencies: { foo: "workspace:." } }),
-      "dir2/package.json": JSON.stringify({ name: "consumer", dependencies: { test: "file:../dir1" } }),
     });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       env: bunEnv,
-      cwd: join(testDir, "dir2"),
+      cwd: testDir,
       stdout: "ignore",
       stderr: "pipe",
       timeout: 30_000,
@@ -596,7 +596,13 @@ test.concurrent(
     expect(stderr).toContain("Saved lockfile");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(testDir, "dir2", "bun.lock"))).toBeTrue();
+    expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
+
+    // The dep name (`foo`) differs from the package name (`test`), so the placement must
+    // still reach bun.lock for the parser to resolve it on reload.
+    const second = await install(testDir, "--frozen-lockfile");
+    expect(second.stderr).not.toContain("Ignoring lockfile");
+    expect(second.exitCode).toBe(0);
   },
 );
 

@@ -38,16 +38,15 @@ describe.concurrent("run-cjs", () => {
       return { stdout, stderr, exitCode };
     }
 
+    const ok = { stdout: "cjs ok\n", stderr: "", exitCode: 0 };
+
     test('subdir: nameless {"type":"commonjs"} overrides outer named {"type":"module"}', async () => {
       using dir = tempDir("nameless-cjs-subdir", {
         "package.json": `{"name":"outer","type":"module"}`,
         "pkg/package.json": `{"type":"commonjs"}`,
         "pkg/sub/t.js": cjsBody,
       });
-      const { stdout, stderr, exitCode } = await run(join(String(dir), "pkg", "sub"), "t.js");
-      expect(stderr).toBe("");
-      expect(stdout).toBe("cjs ok\n");
-      expect(exitCode).toBe(0);
+      expect(await run(join(String(dir), "pkg", "sub"), "t.js")).toEqual(ok);
     });
 
     test('subdir: nameless {"type":"commonjs"} with no named ancestor', async () => {
@@ -55,10 +54,7 @@ describe.concurrent("run-cjs", () => {
         "pkg/package.json": `{"type":"commonjs"}`,
         "pkg/sub/t.js": cjsBody,
       });
-      const { stdout, stderr, exitCode } = await run(join(String(dir), "pkg", "sub"), "t.js");
-      expect(stderr).toBe("");
-      expect(stdout).toBe("cjs ok\n");
-      expect(exitCode).toBe(0);
+      expect(await run(join(String(dir), "pkg", "sub"), "t.js")).toEqual(ok);
     });
 
     test('adjacent: nameless {"type":"commonjs"} overrides outer named {"type":"module"}', async () => {
@@ -67,10 +63,7 @@ describe.concurrent("run-cjs", () => {
         "pkg/package.json": `{"type":"commonjs"}`,
         "pkg/t.js": cjsBody,
       });
-      const { stdout, stderr, exitCode } = await run(join(String(dir), "pkg"), "t.js");
-      expect(stderr).toBe("");
-      expect(stdout).toBe("cjs ok\n");
-      expect(exitCode).toBe(0);
+      expect(await run(join(String(dir), "pkg"), "t.js")).toEqual(ok);
     });
 
     test('subdir: adding "name" to inner package.json (control)', async () => {
@@ -79,10 +72,7 @@ describe.concurrent("run-cjs", () => {
         "pkg/package.json": `{"name":"inner","type":"commonjs"}`,
         "pkg/sub/t.js": cjsBody,
       });
-      const { stdout, stderr, exitCode } = await run(join(String(dir), "pkg", "sub"), "t.js");
-      expect(stderr).toBe("");
-      expect(stdout).toBe("cjs ok\n");
-      expect(exitCode).toBe(0);
+      expect(await run(join(String(dir), "pkg", "sub"), "t.js")).toEqual(ok);
     });
   });
 });

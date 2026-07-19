@@ -6,8 +6,7 @@ mod _impl {
     use core::ptr;
 
     use bun_jsc::{
-        self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
-        WorkPoolTask,
+        self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPoolTask,
     };
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
@@ -43,7 +42,7 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
-        pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+        pub this_value: JsCell<JsRef>,
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
@@ -107,7 +106,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
-                this_value: JsCell::new(StrongOptional::empty()),
+                this_value: JsCell::new(JsRef::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
@@ -281,7 +280,7 @@ mod _impl {
     }
 
     // Called by RefCount when the count hits 0. `poll_ref` and `this_value`
-    // (Strong) cleanup are handled by their own Drop impls; the Box free is
+    // (JsRef) cleanup are handled by their own Drop impls; the Box free is
     // handled by IntrusiveRc dropping the Box.
     impl Drop for NativeZstd {
         fn drop(&mut self) {

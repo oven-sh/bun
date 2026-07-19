@@ -126,7 +126,9 @@ const id = randomUUIDv7();
 
 A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the lowest 48 bits, and the random value and counter are encoded using the remaining bits.
 
-The `timestamp` parameter defaults to the current time in milliseconds. When the timestamp changes, the counter is reset to a pseudo-random integer wrapped to 4096. This counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
+The `timestamp` parameter defaults to the current time in milliseconds. When the clock moves forward, the counter is reseeded to a new pseudo-random integer (the high bit of the 12-bit counter is kept clear so at least 2048 values remain before rollover). If the clock has not advanced past the last emitted timestamp, Bun reuses the last emitted timestamp and increments the counter. If that counter rolls over, Bun bumps the emitted timestamp forward instead of wrapping the counter, so the returned UUIDs stay strictly increasing (RFC 9562 §6.2). The counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
+
+When you pass an explicit `timestamp`, Bun encodes that value verbatim and tracks a separate counter for it, so explicit-timestamp calls do not observe or alter the monotonic state used by the default path. Repeated calls with the same explicit timestamp increment that separate counter (and bump the emitted timestamp on rollover) so they stay sortable; a call with a different explicit timestamp reseeds it.
 
 The final 8 bytes of the UUID are a cryptographically secure random value. It uses the same random number generator used by `crypto.randomUUID()` (which comes from BoringSSL, which in turn comes from the platform-specific system random number generator usually provided by the underlying hardware).
 
@@ -888,9 +890,10 @@ Wrap text to a specified column width. It preserves ANSI escape codes and hyperl
 Bun.wrapAnsi("The quick brown fox jumps over the lazy dog", 20);
 // => "The quick brown fox\njumps over the lazy\ndog"
 
-// Preserves ANSI escape codes
+// Preserves ANSI escape codes: an open style is closed at each row end
+// and re-opened on the next row so every row renders correctly on its own
 Bun.wrapAnsi("\u001b[31mThe quick brown fox jumps over the lazy dog\u001b[0m", 20);
-// => "\u001b[31mThe quick brown fox\njumps over the lazy\ndog\u001b[0m"
+// => "\u001b[31mThe quick brown fox\u001b[39m\n\u001b[31mjumps over the lazy\u001b[39m\n\u001b[31mdog\u001b[0m"
 ```
 
 ### Options
@@ -907,7 +910,7 @@ Bun.wrapAnsi("Hello World", 5, {
 | Option              | Default | Description                                                                                                     |
 | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
 | `hard`              | `false` | If `true`, break words in the middle if they exceed the column width.                                           |
-| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, only break at explicit newlines.                                |
+| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, break every line at exactly the column width.                   |
 | `trim`              | `true`  | If `true`, trim leading and trailing whitespace from each line.                                                 |
 | `ambiguousIsNarrow` | `true`  | If `true`, treat ambiguous-width Unicode characters as 1 column wide. If `false`, treat them as 2 columns wide. |
 
@@ -937,7 +940,8 @@ namespace Bun {
       hard?: boolean;
       /**
        * If `true`, wrap at word boundaries when possible.
-       * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+       * If `false`, break every line at exactly the column width (characters
+       * are split wherever the limit falls, ignoring word boundaries).
        *
        * @default true
        */

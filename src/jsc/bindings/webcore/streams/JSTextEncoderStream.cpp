@@ -3,6 +3,7 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -119,18 +120,6 @@ template<> void JSTextEncoderStreamConstructor::finishCreation(VM& vm, JSDOMGlob
     m_instanceStructure.set(vm, this, getDOMStructure<JSTextEncoderStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSTextEncoderStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSTextEncoderStream>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -172,8 +161,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSTextEncoderStream>(thisValue);
+    // Node brand-checks here (lib/internal/webstreams/encoding.js) — unlike its other web
+    // streams classes, whose inspect methods just fault on a bad `this`.
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), jsNontrivialString(vm, "utf-8"_s), 0);
     auto* transform = thisObject->m_transform.get();
@@ -315,8 +306,8 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSTextEncoderStream;
 
-// `encoder.encode(chunk)` / `encoder.flush()` on the TextEncoderStreamEncoder cell. Runs no
-// user JS: the method lives on the encoder's internal prototype. Empty return = it threw.
+// `encoder.encode(chunk)` / `encoder.flush()` on the TextEncoderStreamEncoder cell. The
+// encode arm runs user JS (ToString of the chunk). Empty return = it threw.
 static JSValue invokeEncoderMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* encoder, const Identifier& methodName, const MarkedArgumentBuffer& args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -338,44 +329,42 @@ static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStrea
     transformStreamDefaultControllerEnqueue(globalObject, controller, buffer);
 }
 
-JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
+// An abrupt encode OR enqueue completion becomes a rejected promise (a transform algorithm
+// must never throw synchronously into ProcessWrite/ProcessClose — the in-flight operation
+// would never settle). Shared by the transform and flush arms.
+static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, const Identifier& methodName, const MarkedArgumentBuffer& args)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue buffer;
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        MarkedArgumentBuffer args;
-        args.append(chunk);
-        ASSERT(!args.hasOverflowed());
-        buffer = invokeEncoderMethod(vm, globalObject, stream->m_encoder.get(), builtinNames(vm).encodePublicName(), args);
+        JSValue buffer = invokeEncoderMethod(vm, globalObject, stream->m_encoder.get(), methodName, args);
+        if (!catchScope.exception() && !buffer.isEmpty())
+            enqueueIfNonEmptyView(globalObject, controller, buffer);
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
+    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (buffer.isEmpty())
-        return nullptr;
-
-    enqueueIfNonEmptyView(globalObject, controller, buffer);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+}
+
+JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
+{
+    MarkedArgumentBuffer args;
+    args.append(chunk);
+    ASSERT(!args.hasOverflowed());
+    return encodeAndEnqueue(globalObject, stream, controller, builtinNames(getVM(globalObject)).encodePublicName(), args);
 }
 
 JSPromise* textEncoderStreamFlush(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     MarkedArgumentBuffer noArguments;
-    JSValue buffer = invokeEncoderMethod(vm, globalObject, stream->m_encoder.get(), builtinNames(vm).flushPublicName(), noArguments);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    enqueueIfNonEmptyView(globalObject, controller, buffer);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    return encodeAndEnqueue(globalObject, stream, controller, builtinNames(getVM(globalObject)).flushPublicName(), noArguments);
 }
 
 } // namespace WebStreams

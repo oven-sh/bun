@@ -472,11 +472,11 @@ impl<'a> Printer<'a> {
 impl<'a> bun_io::Write for Printer<'a> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        Printer::write_str(self, buf).map_err(|_| bun_core::err!("CSSPrintError"))
+        Printer::write_str(self, buf).map_err(|_| bun_core::Error::WriteFailed)
     }
     #[inline]
     fn write_byte(&mut self, b: u8) -> bun_io::Result<()> {
-        Printer::write_char(self, b).map_err(|_| bun_core::err!("CSSPrintError"))
+        Printer::write_char(self, b).map_err(|_| bun_core::Error::WriteFailed)
     }
 }
 
@@ -528,6 +528,21 @@ impl<'a> Printer<'a> {
     /// If such a string is written, it will break source maps.
     pub fn write_str(&mut self, s: impl AsRef<[u8]>) -> PrintResult<()> {
         let s = s.as_ref();
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!s.contains(&b'\n'));
+        }
+        self.col += u32::try_from(s.len()).expect("int cast");
+        if self.dest.write_all(s).is_err() {
+            return Err(self.add_fmt_error());
+        }
+        Ok(())
+    }
+
+    /// `write_str(&self.scratchbuf[range])` with the field borrows split so
+    /// callers can fill `scratchbuf` and flush it through the same `&mut self`.
+    pub(crate) fn write_scratchbuf(&mut self, range: core::ops::Range<usize>) -> PrintResult<()> {
+        let s = &self.scratchbuf[range];
         #[cfg(debug_assertions)]
         {
             debug_assert!(!s.contains(&b'\n'));

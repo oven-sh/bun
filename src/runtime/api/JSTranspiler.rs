@@ -4,6 +4,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
+use crate::Error;
 use crate::node::{Encoding, StringOrBuffer};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
@@ -12,7 +13,6 @@ use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
-use bun_core::Error;
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
@@ -815,7 +815,7 @@ impl<'a> TransformTask<'a> {
         };
 
         let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
-            self.err = Some(bun_core::err!("ParseError"));
+            self.err = Some(crate::Error::ParseError);
             return;
         };
 
@@ -841,7 +841,7 @@ impl<'a> TransformTask<'a> {
         ) {
             Ok(n) => n,
             Err(err) => {
-                self.err = Some(err);
+                self.err = Some(err.into());
                 return;
             }
         };
@@ -865,7 +865,7 @@ impl<'a> TransformTask<'a> {
 
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
-                if let Some(err) = self.err {
+                if let Some(err) = &self.err {
                     if !self.log.has_any() {
                         break 'brk bun_jsc::BuildMessage::create(
                             self.global,

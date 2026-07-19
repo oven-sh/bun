@@ -1,11 +1,12 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
+use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
 use bun_collections::{HashMap, IdentityContext, StringSet};
-use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
+use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
@@ -166,7 +167,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let res = match req.send_sync() {
         Ok(res) => res,
-        Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
+        Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
+            return Err(WhoamiError::OutOfMemory);
+        }
         Err(e) => {
             Output::err(e, "whoami request failed to send", format_args!(""));
             Global::crash();
@@ -191,7 +194,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
     let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
-        Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
+        Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+            return Err(WhoamiError::OutOfMemory);
+        }
         Err(e) => {
             Output::err(
                 e,
@@ -226,7 +231,9 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
         let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
-            Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
+            Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
+                return Err(AllocError);
+            }
             Err(_) => break 'message None,
         };
 
@@ -534,13 +541,13 @@ pub mod registry {
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
         match response.status_code {
-            400 => return Err(err!("BadRequest")),
-            429 => return Err(err!("TooManyRequests")),
+            400 => return Err(crate::Error::BadRequest),
+            429 => return Err(crate::Error::TooManyRequests),
             404 => return Ok(PackageVersionResponse::NotFound),
-            500..=599 => return Err(err!("HTTPInternalServerError")),
+            500..=599 => return Err(crate::Error::HTTPInternalServerError),
             304 => match loaded_manifest {
                 Some(manifest) => return Ok(PackageVersionResponse::Cached(manifest)),
-                None => return Err(err!("UnexpectedNotModified")),
+                None => return Err(crate::Error::UnexpectedNotModified),
             },
             _ => {}
         }
@@ -577,7 +584,7 @@ pub mod registry {
             return Ok(PackageVersionResponse::Fresh(package));
         }
 
-        Err(err!("PackageFailedToParse"))
+        Err(crate::Error::PackageFailedToParse)
     }
 }
 
@@ -984,7 +991,7 @@ pub mod package_manifest {
             stream.pos += Aligner::skip_amount::<T>(stream.pos);
             let remaining = &stream.buffer[stream.pos.min(stream.buffer.len())..];
             if (remaining.len() as u64) < byte_len {
-                return Err(err!("BufferTooSmall"));
+                return Err(crate::Error::BufferTooSmall);
             }
             let result_bytes = &remaining[..byte_len as usize];
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
@@ -2332,6 +2339,27 @@ impl PackageManifest {
             // PackageVersion's explicit `_padding_*` fields are zeroed by
             // `Default`, so no separate padding scrub is needed.
 
+            // Index the root `time` object once so the per-version publish-time
+            // lookup below is O(1) instead of a linear scan of ~V entries.
+            let time_obj = json.get(b"time").and_then(|e| match e.data {
+                JSON::ExprData::EObjectJSON(obj) => Some(obj),
+                _ => None,
+            });
+            let time_props: &[JSON::E::PropertyJSON] = time_obj
+                .as_ref()
+                .map(|o| o.get().properties())
+                .unwrap_or(&[]);
+            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
+            if !time_props.is_empty() {
+                time_index.ensure_total_capacity(time_props.len())?;
+                for (i, p) in time_props.iter().enumerate() {
+                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()))?;
+                    if !gop.found_existing {
+                        *gop.value_ptr = i as u32;
+                    }
+                }
+            }
+
             for prop in versions {
                 let version_name = prop.key.slice();
                 let mut sliced_version = SlicedString::init(version_name, version_name);
@@ -2932,14 +2960,18 @@ impl PackageManifest {
                     }
                 }
 
-                if let Some(time_expr) = json.get(b"time") {
-                    if let JSON::ExprData::EObjectJSON(time_obj) = &time_expr.data {
-                        if let Some(publish_time_str) =
-                            time_obj.get().get(version_name).and_then(|v| v.as_str())
-                        {
-                            if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                                package_version.publish_timestamp_ms = ms;
-                            }
+                if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
+                    let indexed = &time_props[i as usize];
+                    let entry = if indexed.key.slice() == version_name {
+                        Some(indexed)
+                    } else {
+                        // Hash collision: fall back to a linear scan so the
+                        // result matches the previous `ObjectJSON::get` exactly.
+                        time_props.iter().find(|p| p.key.slice() == version_name)
+                    };
+                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
+                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
+                            package_version.publish_timestamp_ms = ms;
                         }
                     }
                 }

@@ -5,10 +5,11 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 
+use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
-use bun_core::{Error, Global, Output};
+use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
@@ -728,7 +729,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 Err(err) => {
                     if err.get_errno() != bun_sys::E::ENOENT {
                         Output::err(
-                            bun_core::Error::from(err),
+                            crate::Error::from(err),
                             "while reading node_modules/.bin",
                             (),
                         );
@@ -751,7 +752,7 @@ pub fn update_package_json_and_install_and_cli(
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,
             Err(e) => {
-                if e == bun_core::err!("MissingPackageJSON") {
+                if e == crate::Error::MissingPackageJSON {
                     match subcommand {
                         Subcommand::Update => {
                             bun_core::pretty_errorln!("<r>No package.json, so nothing to update");

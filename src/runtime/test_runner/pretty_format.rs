@@ -1627,7 +1627,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Response",
                                 ));
                             }
@@ -1645,7 +1645,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Request",
                                 ));
                             }
@@ -1658,14 +1658,14 @@ impl<'a> Formatter<'a> {
                         let build = unsafe { &*build };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
                             .is_err()
                         {
                             self.failed = true;
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print BuildArtifact",
                                 ));
                             }
@@ -1683,7 +1683,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Blob",
                                 ));
                             }

@@ -2,6 +2,10 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -886,12 +890,6 @@ pub enum ParseErr {
     bad_file_mode,
 }
 
-impl From<ParseErr> for bun_core::Error {
-    fn from(e: ParseErr) -> Self {
-        bun_core::err!(from e)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // parsePatchFile / patchFileSecondPass
 // ──────────────────────────────────────────────────────────────────────────
@@ -1727,7 +1725,7 @@ pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1804,7 +1802,7 @@ pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
     loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
@@ -1818,7 +1816,7 @@ pub fn git_diff_internal(
         b"",
         b"git",
     )
-    .ok_or_else(|| bun_core::err!(FileNotFound))?;
+    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
     const ARGV: &[&[u8]] = &[
         b"-c",
@@ -1934,7 +1932,7 @@ fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 

@@ -224,16 +224,33 @@ export function getStdinStream(
     return ret;
   };
 
+  function rethrowUncaught(err) {
+    throw err;
+  }
+
   async function internalRead(stream) {
     $debug("internalRead();");
     // The reader this read belongs to. releaseLock() rejects the in-flight read(); by the
     // time that rejection lands, own() may already have acquired a NEW reader, so the catch
     // must key on this acquisition rather than on the current `reader`.
     const readerForThisRead = reader;
+    let value;
     try {
       $assert(readerForThisRead);
-      const { value } = await readerForThisRead.read();
+      ({ value } = await readerForThisRead.read());
+    } catch (err) {
+      if (readerForThisRead !== reader) {
+        // disown() released this read's reader while it was in flight (stdin may have been
+        // re-owned since), so the read rejected because the stream was unref()ed, not
+        // because it failed. triggerRead() re-arms if/when it is ref()ed again.
+        triggerRead.$call(stream, undefined);
+        return;
+      }
+      stream.destroy(err);
+      return;
+    }
 
+    try {
       if (value) {
         stream.push(value);
       } else {
@@ -248,14 +265,8 @@ export function getStdinStream(
         stream.push(null);
       }
     } catch (err) {
-      if (readerForThisRead !== reader) {
-        // disown() released this read's reader while it was in flight (stdin may have been
-        // re-owned since), so the read rejected because the stream was unref()ed, not
-        // because it failed. triggerRead() re-arms if/when it is ref()ed again.
-        triggerRead.$call(stream, undefined);
-        return;
-      }
-      stream.destroy(err);
+      if (value) triggerRead.$call(stream, undefined);
+      process.nextTick(rethrowUncaught, err);
     }
   }
 

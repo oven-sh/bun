@@ -1,6 +1,7 @@
+use crate::Error;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_core::{Error, Global, err, pretty_errorln};
+use bun_core::{Global, pretty_errorln};
 
 // The value type and its resolver fn collapse into one trait that the
 // value type implements. Each `T` declares its own resolver and whether it is the
@@ -67,7 +68,7 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values
                 .push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                     Ok(v) => v,
-                    Err(e) if e == err!("InvalidLoader") => {
+                    Err(crate::Error::InvalidLoader) => {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                             bun_fmt::quote(&str[midpoint + 1..str.len()]),

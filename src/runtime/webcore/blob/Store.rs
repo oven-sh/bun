@@ -49,28 +49,28 @@ pub trait StoreExt {
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: Rc<S3Credentials>,
-    ) -> Result<Box<Store>, bun_core::Error>
+    ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, bun_core::Error>
+    ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, bun_core::Error>
+    ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> StoreRef
     where
         Self: Sized;
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error>;
-    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error>
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
+    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, crate::Error>
     where
         Self: Sized;
 }
@@ -109,7 +109,7 @@ pub trait BytesExt {
     fn init_mmap(slice: &'static mut [u8]) -> Bytes
     where
         Self: Sized;
-    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error>
+    fn from_array_list(list: Vec<u8>) -> Result<Bytes, crate::Error>
     where
         Self: Sized;
     fn to_internal_blob(&mut self) -> super::Internal;
@@ -143,7 +143,7 @@ impl StoreExt for Store {
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: Rc<S3Credentials>,
-    ) -> Result<Box<Store>, bun_core::Error> {
+    ) -> Result<Box<Store>, crate::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike
         path.to_thread_safe();
@@ -168,7 +168,7 @@ impl StoreExt for Store {
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, bun_core::Error> {
+    ) -> Result<Box<Store>, crate::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike
         path.to_thread_safe();
@@ -188,7 +188,7 @@ impl StoreExt for Store {
     fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, bun_core::Error> {
+    ) -> Result<Box<Store>, crate::Error> {
         // Compute the extension-derived fallback before moving `pathlike` into
         // the Store so we don't need to clone the owned PathOrFileDescriptor.
         let mime_type = mime_type.or_else(|| match &pathlike {
@@ -216,7 +216,7 @@ impl StoreExt for Store {
         }))
     }
 
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         match &self.data {
             Data::File(file) => {
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =
@@ -262,7 +262,7 @@ impl StoreExt for Store {
         Ok(())
     }
 
-    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> {
+    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, crate::Error> {
         Ok(Store::init(list))
     }
 }
@@ -546,7 +546,7 @@ impl BytesExt for Bytes {
         }
     }
 
-    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> {
+    fn from_array_list(list: Vec<u8>) -> Result<Bytes, crate::Error> {
         // `Bytes` is returned by value — the caller decides where it lives.
         Ok(Bytes::init(list))
     }

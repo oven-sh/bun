@@ -263,7 +263,7 @@ pub mod random {
 
         fn run_task(&mut self) {
             if let Some(scratch) = &mut self.scratch {
-                bun_core::csprng(scratch);
+                boringssl::rand_bytes(scratch);
                 return;
             }
             // SAFETY: `bytes` points into an ArrayBuffer kept alive by `self.value`
@@ -273,7 +273,7 @@ pub mod random {
             let slice = unsafe {
                 core::slice::from_raw_parts_mut(self.bytes.add(self.offset as usize), self.length)
             };
-            bun_core::csprng(slice);
+            boringssl::rand_bytes(slice);
         }
 
         fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
@@ -312,7 +312,7 @@ pub mod random {
         use super::*;
         use crate::node::util::validators;
         use bun_core::String as BunString;
-        use bun_jsc::{JSType, StringJsc as _, UUID};
+        use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
 
         #[bun_jsc::host_fn]
         pub(crate) fn random_int(
@@ -364,14 +364,33 @@ pub mod random {
             }
 
             if max - min > MAX_RANGE {
+                // Node's ERR_OUT_OF_RANGE adds "_" numerical separators to integer
+                // "Received" values whose magnitude exceeds 2^32
+                // (lib/internal/errors.js, addNumericalSeparator).
+                let received = {
+                    let digits = (max - min).to_string();
+                    let (sign, digits) = match digits.strip_prefix('-') {
+                        Some(rest) => ("-", rest),
+                        None => ("", digits.as_str()),
+                    };
+                    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+                    out.push_str(sign);
+                    let lead = digits.len() % 3;
+                    for (i, ch) in digits.chars().enumerate() {
+                        if i != 0 && (i + 3 - lead) % 3 == 0 {
+                            out.push('_');
+                        }
+                        out.push(ch);
+                    }
+                    out
+                };
                 if min_specified {
                     return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "The value of \"max - min\" is out of range. It must be <= {}. Received {}",
-                            MAX_RANGE,
-                            max - min
+                            MAX_RANGE, received
                         ),
                     )
                     .throw());
@@ -381,21 +400,21 @@ pub mod random {
                         jsc::ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "The value of \"max\" is out of range. It must be <= {}. Received {}",
-                            MAX_RANGE,
-                            max - min
+                            MAX_RANGE, received
                         ),
                     )
                     .throw());
             }
 
             // Uniform random in [min, max) via Lemire's nearly-divisionless
-            // rejection sampling, backed by `bun_core::csprng` (BoringSSL RAND_bytes).
+            // rejection sampling, backed by BoringSSL `RAND_bytes` (thread-local
+            // AES-CTR DRBG, no syscall per call).
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);
                 let mut buf = [0u8; 8];
                 let x = loop {
-                    bun_core::csprng(&mut buf);
+                    boringssl::rand_bytes(&mut buf);
                     let x = u64::from_ne_bytes(buf);
                     let m = (x as u128).wrapping_mul(range as u128);
                     let l = m as u64;
@@ -469,6 +488,56 @@ pub mod random {
             str.transfer_to_js(global)
         }
 
+        #[bun_jsc::host_fn]
+        pub(crate) fn random_uuid_v7(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
+            let args = call_frame.arguments();
+
+            let mut disable_entropy_cache = false;
+            if !args.is_empty() {
+                let options = args[0];
+                if !options.is_undefined() {
+                    validators::validate_object(
+                        global,
+                        options,
+                        format_args!("options"),
+                        Default::default(),
+                    )?;
+                    if let Some(disable_entropy_cache_value) =
+                        options.get(global, "disableEntropyCache")?
+                    {
+                        disable_entropy_cache = validators::validate_boolean(
+                            global,
+                            disable_entropy_cache_value,
+                            format_args!("options.disableEntropyCache"),
+                        )?;
+                    }
+                }
+            }
+
+            // jsDateNow() is exactly what JS Date.now() returns, so the embedded
+            // timestamp is never behind a Date.now() sample taken by the caller.
+            let now_ms = global.js_date_now().max(0.0) as u64;
+            let mut entropy = [0u8; 10];
+            if disable_entropy_cache {
+                boringssl::rand_bytes(&mut entropy);
+            } else {
+                entropy
+                    .copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
+            }
+            let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
+
+            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+            uuid.print(
+                (&mut bytes[..36])
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            str.transfer_to_js(global)
+        }
+
         pub(crate) fn assert_offset(
             global: &JSGlobalObject,
             offset_value: JSValue,
@@ -486,12 +555,13 @@ pub mod random {
 
             let max_length = length.min(MAX_POSSIBLE_LENGTH);
             if offset.is_nan() || offset > (max_length as f64) || offset < 0.0 {
+                // Node spells this range with "&&" (lib/internal/crypto/random.js assertOffset).
+                let range = format!(">= 0 && <= {max_length}");
                 return Err(global.throw_range_error(
                     offset,
                     jsc::RangeErrorOptions {
                         field_name: b"offset",
-                        min: 0,
-                        max: i64::try_from(max_length).expect("int cast"),
+                        msg: range.as_bytes(),
                         ..Default::default()
                     },
                 ));
@@ -511,12 +581,13 @@ pub mod random {
             size *= element_size as f64;
 
             if size.is_nan() || size > (MAX_POSSIBLE_LENGTH as f64) || size < 0.0 {
+                // Node spells this range with "&&" (lib/internal/crypto/random.js assertSize).
+                let range = format!(">= 0 && <= {MAX_POSSIBLE_LENGTH}");
                 return Err(global.throw_range_error(
                     size,
                     jsc::RangeErrorOptions {
                         field_name: b"size",
-                        min: 0,
-                        max: i64::try_from(MAX_POSSIBLE_LENGTH).expect("int cast"),
+                        msg: range.as_bytes(),
                         ..Default::default()
                     },
                 ));
@@ -553,7 +624,7 @@ pub mod random {
 
             if callback.is_undefined() {
                 // sync
-                bun_core::csprng(bytes);
+                boringssl::rand_bytes(bytes);
                 return Ok(result);
             }
 
@@ -612,7 +683,7 @@ pub mod random {
                 return Ok(buf_value);
             }
 
-            bun_core::csprng(&mut buf.slice_mut()[offset as usize..][..size]);
+            boringssl::rand_bytes(&mut buf.slice_mut()[offset as usize..][..size]);
 
             Ok(buf_value)
         }
@@ -1313,6 +1384,17 @@ mod _impl {
                 global,
                 "randomUUID",
                 random::__jsc_host_random_uuid,
+                1,
+                Default::default(),
+            ),
+        );
+        crypto.put(
+            global,
+            b"randomUUIDv7",
+            JSFunction::create(
+                global,
+                "randomUUIDv7",
+                random::__jsc_host_random_uuid_v7,
                 1,
                 Default::default(),
             ),

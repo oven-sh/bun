@@ -202,6 +202,48 @@ test("new File('123', '123') is NOT supported", async () => {
   expect(() => new File("123", "123")).toThrow();
 });
 
+describe("new File() lastModified option", () => {
+  const lm = (o: any) => new File([], "n", o).lastModified;
+
+  test.each([
+    // [input, expected] — present member goes through ToNumber; NaN → 0
+    [NaN, 0],
+    ["not a number", 0],
+    [{}, 0],
+    [{ valueOf: () => NaN }, 0],
+    [null, 0],
+    ["", 0],
+    [false, 0],
+    [true, 1],
+    ["123", 123],
+    [1234, 1234],
+    [-1, -1],
+  ] as const)("lastModified: %p -> %p", (input, expected) => {
+    expect(lm({ lastModified: input })).toBe(expected);
+  });
+
+  // The default comes from a native wall-clock read that may differ from JS
+  // Date.now() by a few ms on Windows; assert "current time" within a wide
+  // tolerance rather than an exact bracket.
+  test.each([[{ lastModified: undefined }], [{}]])("%p defaults to the current time", opts => {
+    const value = lm(opts);
+    expect(Number.isFinite(value)).toBe(true);
+    expect(Math.abs(value - Date.now())).toBeLessThan(60_000);
+  });
+
+  test("valueOf throwing propagates", () => {
+    expect(() =>
+      lm({
+        lastModified: {
+          valueOf() {
+            throw new Error("boom");
+          },
+        },
+      }),
+    ).toThrow("boom");
+  });
+});
+
 test("new Blob('123') is NOT supported", async () => {
   expect(() => new Blob("123")).toThrow();
 });
@@ -591,3 +633,58 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
     });
   },
 );
+
+// File-backed twin of "slice bounds are respected when streaming and serving"
+// above: the File arm of resolve_size()/resolved_size() must not widen a
+// sliced Bun.file() to the end of the file either.
+describe("file-backed slice bounds are respected when streaming and serving", () => {
+  test("Bun.file(path).slice(start, end) streams only the slice", async () => {
+    using dir = tempDir("blob-file-slice", { "data.txt": "0123456789".repeat(10) });
+    const s = Bun.file(`${dir}/data.txt`).slice(3, 7);
+    expect(await new Response(s).text()).toBe("3456");
+    // Streaming must not mutate the slice either.
+    expect(s.size).toBe(4);
+
+    let streamed = 0;
+    for await (const chunk of new Response(Bun.file(`${dir}/data.txt`).slice(0, 5)).body!) {
+      streamed += chunk.length;
+    }
+    expect(streamed).toBe(5);
+  });
+
+  test("content-length of a sliced Bun.file response body", async () => {
+    using dir = tempDir("blob-file-slice-cl", { "data.txt": "0123456789".repeat(10) });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Bun.file(`${dir}/data.txt`).slice(3, 7)),
+    });
+
+    const head = await fetch(server.url, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe("4");
+
+    const get = await fetch(server.url);
+    expect(get.headers.get("content-length")).toBe("4");
+    expect(await get.text()).toBe("3456");
+  });
+
+  test("structuredClone keeps the slice size and does not mutate the original", async () => {
+    using dir = tempDir("blob-file-slice-clone", { "data.txt": "0123456789".repeat(10) });
+    const s = Bun.file(`${dir}/data.txt`).slice(0, 5);
+    expect(s.size).toBe(5);
+    const clone = structuredClone(s);
+    expect(clone.size).toBe(5);
+    expect(s.size).toBe(5);
+    expect(await clone.text()).toBe("01234");
+    expect(await s.text()).toBe("01234");
+  });
+
+  test("slice end beyond EOF clamps to the file size", async () => {
+    using dir = tempDir("blob-file-slice-eof", { "data.txt": "0123456789" });
+    const s = Bun.file(`${dir}/data.txt`).slice(5, 5000);
+    expect(await new Response(s).text()).toBe("56789");
+    const clone = structuredClone(s);
+    expect(await clone.text()).toBe("56789");
+    // Serializing resolves the original's size, clamping the window to EOF.
+    expect(s.size).toBe(5);
+  });
+});

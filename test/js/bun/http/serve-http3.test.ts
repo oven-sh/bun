@@ -18,6 +18,15 @@ const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: Abor
 // a live loopback server answers in well under this even on the ASAN lane.
 const DEAD_PORT_ABORT_MS = 1000;
 
+// Every fixture server in this file is torn down on stdin close so the client's
+// pooled session sees CONNECTION_CLOSE and is dropped; otherwise a killed
+// process leaves the client retransmitting until lsquic's idle timeout, and if
+// the OS reuses that ephemeral UDP port a later test's request gets matched
+// onto the dead conn. us_quic_listen_socket_close() flushes CONNECTION_CLOSE
+// synchronously during stop(true); the trailing setTimeout gives the kernel a
+// tick to deliver the loopback datagram before the process exits.
+const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 100); });`;
+
 const fixture = `
 import { serve } from "bun";
 
@@ -150,12 +159,8 @@ const server = serve({
 });
 
 console.error("PORT=" + server.port);
-// Graceful stop on stdin close so the client receives CONNECTION_CLOSE and
-// drops the session — otherwise a SIGKILLed server leaves the client session
-// retransmitting until lsquic's idle timeout, and if the OS reuses the
-// ephemeral UDP port a later test's request gets matched onto that dead conn.
 process.stdin.on("data", () => {});
-process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 100); });
+${STOP_ON_STDIN_END}
 `;
 
 async function withServer(
@@ -337,6 +342,7 @@ describe("Bun.serve HTTP/3", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       // 256 KB body via ReadableStream → no Content-Length on the wire.
@@ -395,6 +401,7 @@ describe("Bun.serve HTTP/3", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       expect(await fetchH3(port, "/anything").then(r => r.text())).toBe("from-route");
@@ -838,7 +845,11 @@ async function withCustomServer(
   try {
     await fn(port, send, waitForStderr);
   } finally {
+    // Give the script a chance to server.stop(true) (CONNECTION_CLOSE) on
+    // stdin end before SIGKILL, so the client's pooled session is released
+    // and can't collide with a later test that reuses the same port.
     proc.stdin?.end();
+    await Promise.race([proc.exited, Bun.sleep(1000)]);
     proc.kill();
     await proc.exited;
     await drain.catch(() => {});
@@ -867,6 +878,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           console.error("RELOADED");
         }
       });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/old").then(r => r.text())).toBe("old-route");
@@ -876,6 +888,78 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect(oldAfter.status).toBe(404);
       expect(await oldAfter.text()).toBe("fallback");
       expect(await fetchH3(port, "/new").then(r => r.text())).toBe("new-route");
+    });
+  });
+
+  // server.stop(true) must send CONNECTION_CLOSE on every live H3 connection
+  // before the UDP fd is closed. Without it the client keeps the pooled
+  // session until the negotiated idle timeout, and if another listener later
+  // binds the same port, a fetch with a ReadableStream body (which can't
+  // retry) is placed on the dead session and fails with HTTP3StreamReset
+  // once the idle alarm fires. This is the root cause of the intermittent
+  // `POST body without Content-Length` failure across the adversarial suite.
+  //
+  // lsquic's ietf_full_conn_ci_close path only packs CONNECTION_CLOSE for a
+  // server conn if there are already-scheduled packets or IFC_GOAWAY_CLOSE;
+  // an idle conn satisfies neither, so abrupt stop used lsquic_conn_abort.
+  test("server.stop(true) sends CONNECTION_CLOSE on an idle H3 connection", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let server;
+      const start = port => {
+        server = Bun.serve({
+          port, tls, http3: true,
+          async fetch(req) {
+            const body = await req.arrayBuffer();
+            return new Response(body, { headers: { "x-len": String(body.byteLength) } });
+          },
+        });
+        console.error("PORT=" + server.port);
+      };
+      start(0);
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", async line => {
+        if (line.includes("stop")) {
+          // Let the delayed-ACK timer fire so send_ctl has nothing scheduled
+          // when listen_socket_close runs; that's the state in which the old
+          // lsquic_conn_close() path went silent.
+          await Bun.sleep(100);
+          const port = server.port;
+          server.stop(true);
+          start(port);
+          console.error("RESTARTED");
+        }
+      });
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async (port, send, waitForStderr) => {
+      // Warm the pooled client session.
+      expect((await fetchH3(port, "/").then(r => r.headers.get("x-len"))) ?? "").toBe("0");
+      send("stop");
+      // waitForStderr matches against the accumulated buffer, so a second
+      // /PORT=/ wait would resolve on the startup line; RESTARTED is emitted
+      // only after the new listener is bound.
+      await waitForStderr(/RESTARTED/);
+      // Same process now listens again on the same port. A fresh handshake
+      // should complete because the client dropped the old session on
+      // CONNECTION_CLOSE; if it reused the dead one the POST below stalls
+      // until idle-timeout and then rejects with HTTP3StreamReset.
+      const body = Buffer.alloc(40_000, "noCL");
+      const res = await fetchH3(port, "/", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(body);
+            c.close();
+          },
+        }),
+        // Fail fast instead of waiting out the ~10s idle alarm; the debug
+        // lane's handshake is well under this on a fresh session.
+        signal: AbortSignal.timeout(2000),
+      });
+      expect(res.headers.get("x-len")).toBe(String(body.length));
+      expect((await res.bytes()).length).toBe(body.length);
     });
   });
 
@@ -1016,6 +1100,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       // Warm the QUIC connection so the /hang stream is actually bound
@@ -1040,6 +1125,40 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 });
 
 describe("Bun.serve HTTP/3 production", () => {
+  // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
+  // H1 writes it via HttpResponse::writeMark(); H3 must too.
+  test("Date header is sent on every response shape", async () => {
+    await withServer(async port => {
+      // Cover every Http3Response header-send path: internalEnd (string/buffer
+      // body, 404, static route), flushHeaders (ReadableStream, Bun.file,
+      // file route), endWithoutBody (204, HEAD).
+      const cases: Array<{ path: string; method?: string }> = [
+        { path: "/hello" },
+        { path: "/big" },
+        { path: "/status" },
+        { path: "/nope" },
+        { path: "/stream" },
+        { path: "/file" },
+        { path: "/static" },
+        { path: "/file-route" },
+        { path: "/big", method: "HEAD" },
+      ];
+      const httpDate = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+      const results: Array<{ req: string; date: string | null }> = [];
+      for (const c of cases) {
+        const res = await fetchH3(port, c.path, c.method ? { method: c.method } : {});
+        await res.arrayBuffer();
+        results.push({ req: `${c.method ?? "GET"} ${c.path}`, date: res.headers.get("date") });
+      }
+      expect(results).toEqual(
+        cases.map(c => ({
+          req: `${c.method ?? "GET"} ${c.path}`,
+          date: expect.stringMatching(httpDate),
+        })),
+      );
+    });
+  });
+
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
   test("Alt-Svc emitted on HTTP/1.1 responses when http3 is enabled", async () => {
     await withServer(async port => {
@@ -1074,6 +1193,7 @@ describe("Bun.serve HTTP/3 production", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       const res = await fetchH3(port, "/");

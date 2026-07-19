@@ -340,12 +340,13 @@ pub mod bv2_impl {
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
     use self::bake_types as bake;
+    use crate::Error;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
-    use bun_core::{Error, FeatureFlags, Output};
+    use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
@@ -681,7 +682,7 @@ pub mod bv2_impl {
                     &mut self,
                     abs_path: &[u8],
                     side: Side,
-                ) -> Result<OpaqueFileId, bun_core::Error> {
+                ) -> crate::Result<OpaqueFileId> {
                     let probe = InputFile::init(abs_path, side);
                     if let Some(index) = self.files.get_index(&probe) {
                         return Ok(OpaqueFileId::init(index as u32));
@@ -1390,7 +1391,7 @@ pub mod bv2_impl {
                 path: &P,
                 contents: &[u8],
                 content_hash: u64,
-            ) -> Result<(), bun_core::Error> {
+            ) -> crate::Result<()> {
                 self.put_or_overwrite_asset(
                     core::ptr::from_ref::<P>(path).cast::<()>(),
                     contents,
@@ -1706,6 +1707,20 @@ pub mod bv2_impl {
         pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
         pub additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+
+        pub stack: Vec<ReachFrame>,
+    }
+
+    #[derive(Copy, Clone)]
+    pub enum ReachFrame {
+        Enter {
+            source_index: Index,
+            was_dynamic_import: bool,
+        },
+        Leave {
+            source_index: Index,
+            was_dynamic_import: bool,
+        },
     }
 
     impl<'a> ReachableFileVisitor<'a> {
@@ -1715,141 +1730,178 @@ pub mod bv2_impl {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
+        //
+        // Explicit-stack DFS (was per-edge recursive). `Enter` does the
+        // pre-order work and queues successors; `Leave` performs the
+        // post-order append. Successors are pushed in pop order then the tail
+        // is reversed so LIFO pop reproduces the original recursion order.
         pub fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
             was_dynamic_import: bool,
         ) {
-            if source_index.is_invalid() {
-                return;
-            }
+            debug_assert!(self.stack.is_empty());
+            self.stack.push(ReachFrame::Enter {
+                source_index,
+                was_dynamic_import,
+            });
 
-            if self.visited.is_set(source_index.get() as usize) {
-                if CHECK_DYNAMIC_IMPORTS {
-                    if was_dynamic_import {
+            while let Some(frame) = self.stack.pop() {
+                let (source_index, was_dynamic_import) = match frame {
+                    ReachFrame::Leave {
+                        source_index,
+                        was_dynamic_import,
+                    } => {
+                        // Each file must come after its dependencies
+                        self.reachable.push(source_index);
+                        if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                            self.dynamic_import_entry_points
+                                .put(source_index.get(), ())
+                                .expect("unreachable");
+                        }
+                        continue;
+                    }
+                    ReachFrame::Enter {
+                        source_index,
+                        was_dynamic_import,
+                    } => (source_index, was_dynamic_import),
+                };
+
+                if source_index.is_invalid() {
+                    continue;
+                }
+
+                if self.visited.is_set(source_index.get() as usize) {
+                    if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
                         self.dynamic_import_entry_points
                             .put(source_index.get(), ())
                             .expect("unreachable");
                     }
+                    continue;
                 }
-                return;
-            }
-            self.visited.set(source_index.get() as usize);
+                self.visited.set(source_index.get() as usize);
 
-            if let Some(scb_bitset) = &self.scb_bitset {
-                if scb_bitset.is_set(source_index.get() as usize) {
-                    let scb_index = self
-                        .scb_list
-                        .get_index(source_index.get())
-                        .expect("unreachable");
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::init(self.scb_list.list.items_reference_source_index()[scb_index]),
-                        false,
-                    );
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::init(self.scb_list.list.items_ssr_source_index()[scb_index]),
-                        false,
-                    );
-                }
-            }
+                let mark = self.stack.len();
 
-            let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
-            let is_css = self.all_loaders[source_index.get() as usize].is_css();
-
-            let import_record_list_id = source_index;
-            // when there are no import records, v index will be invalid
-            if (import_record_list_id.get() as usize) < self.all_import_records.len() {
-                // reshaped for borrowck — split borrow of all_import_records
-                let import_records_len =
-                    self.all_import_records[import_record_list_id.get() as usize].len() as usize;
-                for ir_idx in 0..import_records_len {
-                    let import_record = &mut self.all_import_records
-                        [import_record_list_id.get() as usize]
-                        .as_mut_slice()[ir_idx];
-                    let mut other_source = import_record.source_index;
-                    if other_source.is_valid() {
-                        let mut redirect_count: usize = 0;
-                        while let Some(redirect_id) =
-                            get_redirect_id(self.redirects[other_source.get() as usize])
-                        {
-                            // reshaped for borrowck — copy out the redirect target's
-                            // (source_index, path) before re-borrowing `all_import_records` mutably.
-                            let (other_src_idx, other_path) = {
-                                let other_import_records =
-                                    self.all_import_records[other_source.get() as usize].as_slice();
-                                let other_import_record =
-                                    &other_import_records[redirect_id as usize];
-                                (other_import_record.source_index, other_import_record.path)
-                            };
-                            let import_record = &mut self.all_import_records
-                                [import_record_list_id.get() as usize]
-                                .as_mut_slice()[ir_idx];
-                            import_record.source_index = other_src_idx;
-                            import_record.path = other_path;
-                            other_source = other_src_idx;
-                            if redirect_count == Self::MAX_REDIRECTS {
-                                import_record.path.is_disabled = true;
-                                import_record.source_index = Index::INVALID;
-                                break;
-                            }
-
-                            // Handle redirects to a builtin or external module
-                            // https://github.com/oven-sh/bun/issues/3764
-                            if !other_source.is_valid() {
-                                break;
-                            }
-                            redirect_count += 1;
-                        }
-
-                        let import_record = &self.all_import_records
-                            [import_record_list_id.get() as usize]
-                            .as_slice()[ir_idx];
-                        // Mark if the file is imported by JS and its URL is inlined for CSS
-                        let is_inlined = import_record.source_index.is_valid()
-                            && !self.all_urls_for_css[import_record.source_index.get() as usize]
-                                .is_empty();
-                        if is_js && is_inlined {
-                            self.additional_files_imported_by_js_and_inlined_in_css
-                                .set(import_record.source_index.get() as usize);
-                        } else if is_css && is_inlined {
-                            self.additional_files_imported_by_css_and_inlined
-                                .set(import_record.source_index.get() as usize);
-                        }
-
-                        let next_source = import_record.source_index;
-                        let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
-                        self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                            next_source,
-                            CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
-                        );
+                if let Some(scb_bitset) = &self.scb_bitset {
+                    if scb_bitset.is_set(source_index.get() as usize) {
+                        let scb_index = self
+                            .scb_list
+                            .get_index(source_index.get())
+                            .expect("unreachable");
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::init(
+                                self.scb_list.list.items_reference_source_index()[scb_index],
+                            ),
+                            was_dynamic_import: false,
+                        });
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::init(
+                                self.scb_list.list.items_ssr_source_index()[scb_index],
+                            ),
+                            was_dynamic_import: false,
+                        });
                     }
                 }
 
-                // Redirects replace the source file with another file
-                if let Some(redirect_id) =
-                    get_redirect_id(self.redirects[source_index.get() as usize])
-                {
-                    let redirect_source_index = self.all_import_records
-                        [source_index.get() as usize]
-                        .as_slice()[redirect_id as usize]
-                        .source_index
-                        .get();
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::source(redirect_source_index),
-                        was_dynamic_import,
-                    );
-                    return;
-                }
-            }
+                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
+                let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
-            // Each file must come after its dependencies
-            self.reachable.push(source_index);
-            if CHECK_DYNAMIC_IMPORTS {
-                if was_dynamic_import {
-                    self.dynamic_import_entry_points
-                        .put(source_index.get(), ())
-                        .expect("unreachable");
+                let import_record_list_id = source_index;
+                let mut has_redirect = false;
+                // when there are no import records, v index will be invalid
+                if (import_record_list_id.get() as usize) < self.all_import_records.len() {
+                    let import_records_len = self.all_import_records
+                        [import_record_list_id.get() as usize]
+                        .len() as usize;
+                    for ir_idx in 0..import_records_len {
+                        let import_record = &mut self.all_import_records
+                            [import_record_list_id.get() as usize]
+                            .as_mut_slice()[ir_idx];
+                        let mut other_source = import_record.source_index;
+                        if other_source.is_valid() {
+                            let mut redirect_count: usize = 0;
+                            while let Some(redirect_id) =
+                                get_redirect_id(self.redirects[other_source.get() as usize])
+                            {
+                                let (other_src_idx, other_path) = {
+                                    let other_import_records = self.all_import_records
+                                        [other_source.get() as usize]
+                                        .as_slice();
+                                    let other_import_record =
+                                        &other_import_records[redirect_id as usize];
+                                    (other_import_record.source_index, other_import_record.path)
+                                };
+                                let import_record = &mut self.all_import_records
+                                    [import_record_list_id.get() as usize]
+                                    .as_mut_slice()[ir_idx];
+                                import_record.source_index = other_src_idx;
+                                import_record.path = other_path;
+                                other_source = other_src_idx;
+                                if redirect_count == Self::MAX_REDIRECTS {
+                                    import_record.path.is_disabled = true;
+                                    import_record.source_index = Index::INVALID;
+                                    break;
+                                }
+
+                                // Handle redirects to a builtin or external module
+                                // https://github.com/oven-sh/bun/issues/3764
+                                if !other_source.is_valid() {
+                                    break;
+                                }
+                                redirect_count += 1;
+                            }
+
+                            let import_record = &self.all_import_records
+                                [import_record_list_id.get() as usize]
+                                .as_slice()[ir_idx];
+                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            let is_inlined = import_record.source_index.is_valid()
+                                && !self.all_urls_for_css
+                                    [import_record.source_index.get() as usize]
+                                    .is_empty();
+                            if is_js && is_inlined {
+                                self.additional_files_imported_by_js_and_inlined_in_css
+                                    .set(import_record.source_index.get() as usize);
+                            } else if is_css && is_inlined {
+                                self.additional_files_imported_by_css_and_inlined
+                                    .set(import_record.source_index.get() as usize);
+                            }
+
+                            let next_source = import_record.source_index;
+                            let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
+                            self.stack.push(ReachFrame::Enter {
+                                source_index: next_source,
+                                was_dynamic_import: CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
+                            });
+                        }
+                    }
+
+                    // Redirects replace the source file with another file
+                    if let Some(redirect_id) =
+                        get_redirect_id(self.redirects[source_index.get() as usize])
+                    {
+                        let redirect_source_index = self.all_import_records
+                            [source_index.get() as usize]
+                            .as_slice()[redirect_id as usize]
+                            .source_index
+                            .get();
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::source(redirect_source_index),
+                            was_dynamic_import,
+                        });
+                        has_redirect = true;
+                    }
                 }
+
+                if !has_redirect {
+                    self.stack.push(ReachFrame::Leave {
+                        source_index,
+                        was_dynamic_import,
+                    });
+                }
+
+                self.stack[mark..].reverse();
             }
         }
     }
@@ -1932,6 +1984,7 @@ pub mod bv2_impl {
                     &mut additional_files_imported_by_js_and_inlined_in_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
+                stack: Vec::new(),
             };
 
             // If we don't include the runtime, __toESM or __toCommonJS will not get
@@ -2218,7 +2271,7 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
-                        if err == bun_core::err!("ModuleNotFound") {
+                        if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
                                     // Only re-query if we previously had something cached.
@@ -2289,7 +2342,7 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize],
                         );
 
-                        if err == bun_core::err!("ModuleNotFound") {
+                        if err == _resolver::Error::ModuleNotFound {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
@@ -3789,7 +3842,7 @@ pub mod bv2_impl {
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 let entry_points: *const [Box<[u8]>] =
@@ -3800,7 +3853,7 @@ pub mod bv2_impl {
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.wait_for_parse();
@@ -3812,7 +3865,7 @@ pub mod bv2_impl {
                 *source_code_size = this.source_code_length as u64;
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.scan_for_secondary_paths();
@@ -3927,7 +3980,7 @@ pub mod bv2_impl {
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             // enqueueEntryPoints schedules the runtime task before any fallible
@@ -3968,19 +4021,19 @@ pub mod bv2_impl {
             // inside the closure, before `deinit_without_freeing_arena()`.
             let result = (|| -> Result<Vec<options::OutputFile>, Error> {
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.scan_for_secondary_paths();
@@ -4431,7 +4484,7 @@ pub mod bv2_impl {
                             ..Default::default()
                         };
                         dev.handle_parse_task_failure(
-                            bun_core::err!("Plugin"),
+                            crate::Error::Plugin,
                             load.bake_graph(),
                             source.path.key_for_incremental_graph(),
                             &raw const temp_log,
@@ -4892,7 +4945,7 @@ pub mod bv2_impl {
             self.unique_key = generate_unique_key();
 
             if self.transpiler.log().errors > 0 {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -4905,7 +4958,7 @@ pub mod bv2_impl {
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             if self.transpiler.log().errors > 0 {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             self.scan_for_secondary_paths();
@@ -4940,7 +4993,7 @@ pub mod bv2_impl {
             };
 
             if self.transpiler.log().errors > 0 {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
@@ -5195,7 +5248,7 @@ pub mod bv2_impl {
                                 // css-compatible loader.
                                 dev_server
                                     .handle_parse_task_failure(
-                                        bun_core::err!("InvalidCssImport"),
+                                        crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
                                         sources[index].path.text,
                                         &raw const log,
@@ -6104,7 +6157,7 @@ pub mod bv2_impl {
                             };
 
                             // Only perform directory busting when hot-reloading is enabled
-                            if err == bun_core::err!("ModuleNotFound") {
+                            if err == _resolver::Error::ModuleNotFound {
                                 if self.bun_watcher.is_some() {
                                     if !had_busted_dir_cache {
                                         bun_core::scoped_log!(
@@ -6141,7 +6194,7 @@ pub mod bv2_impl {
                             // Rather than just the first one.
                             import_record.path.is_disabled = true;
 
-                            if err == bun_core::err!("ModuleNotFound") {
+                            if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
                                 if !import_record
@@ -6149,7 +6202,7 @@ pub mod bv2_impl {
                                     .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                     && !self.transpiler.options.ignore_module_resolution_errors
                                 {
-                                    last_error = Some(err);
+                                    last_error = Some(err.into());
                                     if is_package_path(import_record.path.text) {
                                         if ctx.target == Target::Browser
                                             && options::is_node_builtin(import_record.path.text)
@@ -6247,7 +6300,7 @@ pub mod bv2_impl {
                                 }
                             } else {
                                 // assume other errors are already in the log
-                                last_error = Some(err);
+                                last_error = Some(err.into());
                             }
                             continue 'outer;
                         }
@@ -7319,7 +7372,7 @@ pub mod bv2_impl {
             decls: Box<[DeclInfo]>,
         },
         Css {
-            result: Result<Box<[u8]>, bun_core::Error>,
+            result: crate::Result<Box<[u8]>>,
             source_index: IndexInt,
             source_map: Option<bun_sourcemap::Chunk>,
         },
@@ -7502,7 +7555,7 @@ pub mod bv2_impl {
         target: options::Target,
         top_level_dir: &[u8],
         bump: &bun_alloc::Arena,
-    ) -> Result<bun_paths::fs::Path<'static>, bun_core::Error> {
+    ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
         use bun_io::Write as _;
@@ -7533,7 +7586,7 @@ pub mod bv2_impl {
             } else {
                 path_clone.pretty = rel;
             }
-            path_clone.dupe_alloc_fix_pretty(bump)
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
@@ -7545,7 +7598,7 @@ pub mod bv2_impl {
             let _ = fbs.write_all(path_clone.text);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump)
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         }
     }
 

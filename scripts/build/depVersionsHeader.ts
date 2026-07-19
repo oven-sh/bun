@@ -51,12 +51,12 @@ function computeVersions(cfg: Config): [string, string][] {
     if (dep.versionMacro === undefined) continue;
     const source = dep.source(cfg);
     const id = sourceIdentifier(source);
-    // WebKit special case: its `prebuilt.identity` includes the suffix
-    // (e.g. "-debug-asan"), but process.versions should show the clean
-    // commit hash. Use cfg.webkitVersion instead — it IS the source of
-    // truth, identity is just version+suffix derived from it.
+    // WebKit special case: prebuilt.identity carries the artifact suffix, but
+    // process.versions wants the version. Strip the autobuild- prefix so tags
+    // report the clean sha and previews report preview-pr-<N>-<sha8>.
     if (dep.name === "WebKit") {
-      versions.push([dep.versionMacro, cfg.webkitVersion]);
+      const v = cfg.webkitVersion;
+      versions.push([dep.versionMacro, v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v]);
     } else if (id !== undefined) {
       versions.push([dep.versionMacro, id]);
     }

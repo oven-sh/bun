@@ -4,13 +4,14 @@ use core::cmp::Ordering;
 use core::fmt;
 use std::io::Write as _;
 
+use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
     HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
-use bun_core::{Error as BunError, Global, Output, err};
+use bun_core::{Global, Output};
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
@@ -563,7 +564,7 @@ impl Lockfile {
                 Err(e) => {
                     return LoadResult::Err(LoadResultErr {
                         step: LoadStep::ParseFile,
-                        value: e,
+                        value: e.into(),
                         lockfile_path: zstr!("bun.lock"),
                         format: lockfile_format,
                     });
@@ -614,7 +615,7 @@ impl Lockfile {
                 // `format == Binary` the same way the real `Ok` result does.
                 let binary_origin = LoadResult::Err(LoadResultErr {
                     step: LoadStep::ParseFile,
-                    value: err!("DebugTextLockfileRoundTrip"),
+                    value: crate::Error::DebugTextLockfileRoundTrip,
                     lockfile_path: zstr!("bun.lockb"),
                     format: LockfileFormat::Binary,
                 });
@@ -1107,7 +1108,7 @@ impl Lockfile {
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive
-        let root = old.root_package().ok_or_else(|| err!("NoPackage"))?;
+        let root = old.root_package().ok_or(crate::Error::NoPackage)?;
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
@@ -1311,7 +1312,7 @@ fn clean_preprocess_update_requests_cold(
 #[cold]
 #[inline(never)]
 fn clean_verbose_timer_start() -> Result<Timer, BunError> {
-    Timer::start()
+    Ok(Timer::start()?)
 }
 
 #[cold]
@@ -1812,8 +1813,8 @@ impl<'a> Printer<'a> {
         let writer = Output::writer_buffered();
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
-            Err(e) if e == err!("OutOfMemory") => bun_core::out_of_memory(),
-            Err(e) if e == err!("BrokenPipe") || e == err!("WriteFailed") => return Ok(()),
+            Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
+            Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();
@@ -1840,7 +1841,7 @@ impl<'a> Printer<'a> {
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
         let entries: &mut Fs::DirEntry = match entries_option {
             Fs::EntriesOption::Entries(e) => &mut **e,
-            Fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+            Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
         };
 
         // PORTING.md §Forbidden patterns: never `Box::leak` — own `map`/`loader` as locals;
@@ -1987,7 +1988,7 @@ impl Lockfile {
 
         let mut tmpname_buf = [0u8; 512];
         let mut base64_bytes = [0u8; 8];
-        bun_core::csprng(&mut base64_bytes);
+        bun_boringssl_sys::rand_bytes(&mut base64_bytes);
         let tmpname: &ZStr = {
             let mut cursor: &mut [u8] = &mut tmpname_buf[..];
             let start_len = cursor.len();
@@ -2051,13 +2052,13 @@ impl Lockfile {
         }
 
         if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {
-            bun_core::handle_error_return_trace(e);
+            bun_core::handle_error_return_trace(&e);
 
             // note: file is already closed here.
             let _ = sys::unlink(tmpname);
 
             Output::err(
-                e,
+                &e,
                 "Failed to replace old lockfile with new lockfile on disk",
                 format_args!(""),
             );

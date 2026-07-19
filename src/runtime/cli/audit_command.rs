@@ -60,9 +60,7 @@ pub(crate) struct AuditCommand;
 
 impl AuditCommand {
     // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
-    pub(crate) fn exec(
-        ctx: Command::Context,
-    ) -> Result<core::convert::Infallible, bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<core::convert::Infallible> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
         // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
@@ -73,7 +71,7 @@ impl AuditCommand {
         {
             Ok(v) => v,
             Err(err) => {
-                if err == bun_core::err!("MissingPackageJSON") {
+                if err == bun_install::Error::MissingPackageJSON {
                     let mut cwd_buf = bun_paths::PathBuffer::uninit();
                     if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
                         Output::err_generic(
@@ -87,7 +85,7 @@ impl AuditCommand {
                     Global::exit(1);
                 }
 
-                return Err(err);
+                return Err(err.into());
             }
         };
         let json_output = manager.options.json_output;

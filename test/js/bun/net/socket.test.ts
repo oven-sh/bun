@@ -3,7 +3,18 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  getMaxFD,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tls,
+} from "harness";
+import net from "node:net";
+import { createSecureContext, connect as tlsConnect } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -717,7 +728,7 @@ describe.concurrent("socket", () => {
         });
         const result = socket.upgradeTLS({
           data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
-          tls,
+          tls: { ...tls, ca: tls.cert },
           socket: {
             data(socket, data) {
               body += data.toString("utf8");
@@ -1100,7 +1111,7 @@ it("TLS client: flush() after end() does not double-teardown before deferred onC
       const client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
-        tls,
+        tls: { ...tls, ca: tls.cert },
         socket: {
           handshake() { onHandshook(); },
           data() {},
@@ -1777,6 +1788,108 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
   void stderr;
 });
 
+// initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
+// leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
+it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { dlopen, FFIType, ptr } = require("bun:ffi");
+        const isDarwin = process.platform === "darwin";
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+          getsockopt: {
+            args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
+            returns: FFIType.int,
+          },
+        });
+        const SOL_SOCKET = isDarwin ? 0xffff : 1;
+        const SO_KEEPALIVE = isDarwin ? 0x0008 : 9;
+        const IPPROTO_TCP = 6;
+        // Linux TCP_KEEPIDLE = 4; Darwin names it TCP_KEEPALIVE = 0x10.
+        const TCP_KEEPIDLE = isDarwin ? 0x10 : 4;
+        function readIntOpt(fd, level, opt) {
+          const val = new Int32Array(1);
+          const len = new Uint32Array([4]);
+          const rc = libc.symbols.getsockopt(fd, level, opt, ptr(val), ptr(len));
+          if (rc !== 0) throw new Error("getsockopt(" + level + "," + opt + ") failed");
+          return val[0];
+        }
+        // Darwin returns SO_KEEPALIVE as so_options & 0x0008 (= 8), Linux as 0/1.
+        const readBoolOpt = (fd, level, opt) => (readIntOpt(fd, level, opt) ? 1 : 0);
+
+        const open = Promise.withResolvers();
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data() {}, open() {}, close() {}, error() {} },
+        });
+        await using client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            data() {}, close() {},
+            open: () => open.resolve(),
+            error: (_s, e) => open.reject(e),
+            connectError: (_s, e) => open.reject(e),
+          },
+        });
+        await open.promise;
+        const fd = client.fd;
+
+        const out = {};
+        // (a) ms -> seconds: 4000ms must land as TCP_KEEPIDLE=4.
+        out.a_ret = client.setKeepAlive(true, 4000);
+        out.a_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.a_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
+
+        // (b) default shape: setKeepAlive(true) must report success, leave
+        // SO_KEEPALIVE on, and not touch the previously-set TCP_KEEPIDLE.
+        out.off_ret = client.setKeepAlive(false);
+        out.off_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_ret = client.setKeepAlive(true);
+        out.b_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
+
+        // node:net on the same runtime must still write the right idle.
+        const net = require("node:net");
+        const srv = net.createServer(() => {});
+        await new Promise(r => srv.listen(0, "127.0.0.1", r));
+        const nc = net.connect(srv.address().port, "127.0.0.1");
+        await new Promise((res, rej) => { nc.on("connect", res); nc.on("error", rej); });
+        nc.setKeepAlive(true, 4000);
+        out.net_keepidle = readIntOpt(nc._handle.fd, IPPROTO_TCP, TCP_KEEPIDLE);
+        nc.destroy();
+        srv.close();
+
+        console.log(JSON.stringify(out));
+        client.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+    out: {
+      a_ret: true,
+      a_keepalive: 1,
+      a_keepidle: 4,
+      off_ret: true,
+      off_keepalive: 0,
+      b_ret: true,
+      b_keepalive: 1,
+      b_keepidle: 4,
+      net_keepidle: 4,
+    },
+    exitCode: 0,
+  });
+  void stderr;
+});
+
 it("socket handler validation errors throw instead of crashing", async () => {
   // Handlers protects its callbacks only after validation succeeds, so the
   // validation error paths must throw without tearing down a never-protected
@@ -1903,4 +2016,1089 @@ it("socket handler validation errors don't steal GC protection from live sockets
   expect(stdout).toBe("errors=8\nreceived=hello\ndone\n");
   expect(exitCode).toBe(0);
   void stderr;
+});
+
+describe("TLS rejectUnauthorized", () => {
+  // Regenerate with: openssl req -x509 -newkey rsa:2048 -nodes -days 3650 for
+  // each CA, then sign two "localhost" leaves (SAN localhost,127.0.0.1,::1):
+  // one by CA_CRT (SERVER_*) and one by a second, untrusted CA (ROGUE_*).
+  const CA_CRT = `-----BEGIN CERTIFICATE-----
+MIIDHTCCAgWgAwIBAgIUdYbBJxXcjPYUU84754Rvyby/Wl8wDQYJKoZIhvcNAQEL
+BQAwHjEcMBoGA1UEAwwTQnVuLVRlc3QtVHJ1c3RlZC1DQTAeFw0yNjA3MDkxMzA5
+NTFaFw0zNjA3MDYxMzA5NTFaMB4xHDAaBgNVBAMME0J1bi1UZXN0LVRydXN0ZWQt
+Q0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCTEqxdtRmWWEJejm0F
+ZpClpYe2/xnRA1YV/aH/mEeDF47MjYHYwN3htbjd6B0JFk9UhWKoiKuHyLlr6Pu9
+H1f2H4gAaqdkjbRJApXTk1AkDrJE2jZ+0CkMeycplpyjiQRqn0iUrUlbfNm97Wj/
+rx98s0VIS62YYx7z5svBkrxdCmTo8eVZHBgGRcMy9npqJC2t9DdYBWbqjeZCyQsb
+DRrJ46EF5anE1VkNtF6lX13rkjHY7syB+fVKfLFWcGgQCDyd14Ltb3myrfYdKsnZ
+z1wtUDgw1AE80MmatcH3N6ev7bOu68OAsZb3D9i5Ngfs0hUdqhTtUQztkfK3J63m
+5fVZAgMBAAGjUzBRMB0GA1UdDgQWBBQ+Ub20vshUFo+vQrymr9MLIh2NQDAfBgNV
+HSMEGDAWgBQ+Ub20vshUFo+vQrymr9MLIh2NQDAPBgNVHRMBAf8EBTADAQH/MA0G
+CSqGSIb3DQEBCwUAA4IBAQBzuL3k1AeP6WIsZp1ZsYWeC0VItwJXDKWItV5QlsX+
+JysjqMmEmJk55f54gpDdwdovgtqHNSZ6tXMBCLEqm7EQAT17IeUP5jhMy2vhePbp
+WU6KmAGYdack4r9oBk0bEUty/MfeH+poXDCBbZ6i010SEczDZt3X4NnmHHc50dMu
+wNApO7EeiZVjHOzVLpUqM7YMtRiz4QdI5dydNZeB7R6oIM2o0Hx43tE9mZzFOuKb
+KsbVnnD+mVj0e399Y+XxJ58eEvj/QVpYciLKBEvS9fREGbJ9EV7Pf3hy32WY26An
+X9IuLMOkTY4boCoNf5Azw3IPnOCAt1tavdI2ChtYc4fF
+-----END CERTIFICATE-----`;
+
+  const SERVER_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCf80SxHGevvLZP
+ft7aHBHugflXvvX8ieCaVUtn/f8vhDuhs5UyZDrI64xW4ij5eBSteK7JbPY3BGgU
+tzjzsZVR8v0W7Fsqbkd0NL08HKp7jaHcVhgMjNKWHIqzgr/f9lRnLdXfzrr2JG//
+WApHevnNF1TpJJJ604uKkk5HmZcpqdwXgdJeBG1ZEc1pEe6EDUmQQXh4f4J8rmsu
+8CvTVQXeKunZnawhVsY7dKkvH27wBKfOwuafM3q2SnrVqVJfaWN0sdRi7H75PrMl
+Y358AGuxs/AeZ1IUV2XxpYjNI7gEtlK7Dv0kOxSTpJuVLd1J4Z9Sn6pr3MAUEHUz
+nMCtYNP1AgMBAAECggEABNH49PltKn+eYuDo6FvGMpDaKcnIcfbZvOzrG9Qst4rd
+nS7jRSR+HQX0Mb4ZDAORY/TqF4ngFaJdXJp07eshG9odxG4VBT9Tie348fHPNW/8
+O76gdOhdhEaR63z6OU6cFovsERWSzs4kTeaiUKslEggs9+WxQGBVqTRlhYTcaFX4
+39ad0B0MF1bWDFyHhhzzDRMlIEAiIDNs00sTPEPcCFlWBSsuF2MdzO+bWtS76mhI
+JXJJlZe5SeteiudJXjDkpGzpDF32MHRj1Io591o7eYM97NuibxubKngnVArrOb2U
+pBbrFptvhZOdpQ+4vUVnzM3EBjOND05h0wmP9b8xdQKBgQDaOHESKhT9CssLMCEp
+kOehOLS8ZhsJdTH4GK8iQYAbshZ7T1d0AP+rkN2vs9f0eHqWngFCvDtatixfYFJj
+DVW9EgHUVGhvg09PtUJPa3e8lgnx8kr5+4/Pgh3Rs3qBQZFFJf7Z4RKyDjUz9j8O
+mL5YihOP5xVp4goCMYH/U5LrjwKBgQC7pEipjejuYE2UDVAvSOT0r2gn3VgcLYXo
+jzPgkMhNkFus0nJi09Zd7reZ5Qmur4J6N9RNL6ob5hu21nKCP4HZSPN4kU0orsNp
+BVCwWb5ehG8WqFgPrCcVEJtQamHjVLvAgEBVW3Vc0PxnJOml/fvc20TVsc/bl9l0
+QANLWzXWOwKBgQCJ96Ntg5OvhJJpKW3eFNKNuQd0Ee5IJYOJQzn/I4B2gjr6jWhS
+XItJEpdGjiMcWsvOzGkpo063hHQ7fO+51mV925OyhgddcZzEXWpmQiD657Wz9ad3
+s5fx72cg/SOX8zeAi4w8frPORXNXvfmSJfo6ilnh4o1EW3hOeLSjFFjQewKBgQCM
+qFbLuxQb9NbSn7Q27darUP2rvHG7Fajmrso9kWqFMix2fX6/dHqiCTtaQmWiq/AL
+++PKRGuo5DJsOY628jI9FkFkZM9JKtBS3mgg+fUJVw8LFgCFJxBY6wzyF/zu82qW
+n80Z7ygn/oTmMLZw9tYhNcEAy3y76LVaPk355BKUVwKBgAdhDA9DIFzpvIygaZId
+5vbz7dRYQ5MnLT48DxUko33q7+qPQagZltFl+ICBPhVQ10FP1wpNJwPs0ap/XVlB
++wDT5l7WNe2r/XqkI9cwQtZHy+TLwFRygb9ko44wLoNKdYgPEHordKeyGXQQlt3Y
+q7gf9VyYyWX6rkRsx/MV6hLf
+-----END PRIVATE KEY-----`;
+
+  const SERVER_CRT = `-----BEGIN CERTIFICATE-----
+MIIDMDCCAhigAwIBAgIULV6Pt6CN+GC7Hhr9gkO1wFmEeIAwDQYJKoZIhvcNAQEL
+BQAwHjEcMBoGA1UEAwwTQnVuLVRlc3QtVHJ1c3RlZC1DQTAeFw0yNjA3MDkxMzA5
+NTFaFw0zNjA3MDYxMzA5NTFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAJ/zRLEcZ6+8tk9+3tocEe6B+Ve+9fyJ
+4JpVS2f9/y+EO6GzlTJkOsjrjFbiKPl4FK14rsls9jcEaBS3OPOxlVHy/RbsWypu
+R3Q0vTwcqnuNodxWGAyM0pYcirOCv9/2VGct1d/OuvYkb/9YCkd6+c0XVOkkknrT
+i4qSTkeZlymp3BeB0l4EbVkRzWkR7oQNSZBBeHh/gnyuay7wK9NVBd4q6dmdrCFW
+xjt0qS8fbvAEp87C5p8zerZKetWpUl9pY3Sx1GLsfvk+syVjfnwAa7Gz8B5nUhRX
+ZfGliM0juAS2UrsO/SQ7FJOkm5Ut3Unhn1KfqmvcwBQQdTOcwK1g0/UCAwEAAaNw
+MG4wLAYDVR0RBCUwI4IJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAAAAAAAAAB
+MB0GA1UdDgQWBBTfIEZmI/+0PcpH+jHkfBQc9jNOVzAfBgNVHSMEGDAWgBQ+Ub20
+vshUFo+vQrymr9MLIh2NQDANBgkqhkiG9w0BAQsFAAOCAQEADLkbKVP3W+RYFYIg
+A0bfgJrQ1MhebrYk4W95BktNKRHuYE+22Nao8ZJcWXASNAoj++8Z03Be3fY0jHVn
+rY7Fd4p0u0J/IpNfOBbzeT17HvrXQ9cUi7CtaStBKmDpkl1NVmoJNBzwpUISDH/T
+mlWKKg3D5qG0H+RTOAgxDKmc6+fZWt5v/TgQq5hc1NB2WoZAk52uhRD0V7hhfmPy
+ZMdsndROjusArt/+ACRYcGN8g+aoON1RUq1lYeefb2uGtWk3AKd9+nsqTUQsPB/V
+aJSYfdU6MExCjVaib8zV8hjA0hCU0kQ0PlVvPrQkMn3RPhPwRzixLWrIuI4hz9sB
+sm8N1g==
+-----END CERTIFICATE-----`;
+
+  const ROGUE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEugIBADANBgkqhkiG9w0BAQEFAASCBKQwggSgAgEAAoIBAQCN6OeCnDUVF9dC
+ouDNaM8hhpuK4NBm51XN+nm79zEAKTYjoW1j8zFZYfb03dCuYqVQ0rxlvHUFrEm1
+/oOmcDbKHm0VjGN9xkhvfcTRvMcoKW52r3WwRCSLFkYFw+SvFFrtvC9zxpojtFLx
+YY1rfBrnOeCsC34B9Jjb50ioyQcP+aMAy8AUFbBd2+gpslkDuMzFigLkWxXV/6dP
+ta1ZjUOsAjbebGlZ78tSfhVEWpXudnH73y1Wj6hCIg9gdggfDwLqOu0mZa8/+3M7
+TvR5hDstzUOx7I+Q48I7g/du/BIn8CNDRWqWbtz1jPNIJc8g7OnuMsvvZqWgQG7a
+5bxBWUHtAgMBAAECggEAEo+wGElOOCASK8kaFkPrM7tjhNq653rColpsqcU/R4Ic
+brSiljws7EAACS8qKGUGsned5MCtnbxXN9K+bXqn7+/i3LqsGLtiphKRN821Tu98
+X1G71v5SuU6EgiSJOM00x3uhyUbkyl6/qorT8IcfDbdoR5iJNsBDbh/mRQ1mOxR9
+9hoIv5UGsKTYqzm2v4y/W0MITpfp9NyrmExrvg52q20fAQJsGzLhY6mv/HpAbiWx
+dhXuKKDK2kYiv4/5CRgZxDsVbBODTDlwlRTQibZuzFGUxbOjdXJiFS/CxuiggL5L
+x6OgQxLCmlx3gJSWyd1y2YQUfqwio2IvROkMJgYngQKBgQDFE6af59JwfKAZfQjj
+1/CWmg/nvbJId+kCBeRReDPEG4PZVn/iMYQ9U8HMtIGJmR1qPkS479zIhmt3loM8
+LEqLmAB+MUhLBr9w0Ww6E1NOvZYl188DKCHlkyWIgZxLulqcOgpaetZZ1LJGADDJ
+MOtHMih0f14M2lcIPcvvDClPCQKBgQC4Vr8kbNY8PwXF1RZYV/8x/Q4/avuwrJ0k
+e6Gxk9/eHolIcU276QSQTut66KiFVUjLqNXwFX+FsHRh3L3bzfCzKP1XNdVgaKMy
+mYIJpPAK0XF/1F5/1WjhFyvnQws3Ro6VUDT5Nefm9lrM6AdwTUvq6yObU9KP8pCQ
+VPAyxn/wxQKBgG3K39ZQEWYHmC37AZvlrqxIUjoZ7Zv/6bjtzWAx5i0H4zGOxhoe
+2fxMkDhaC5y7x65r2F9rigXRFUf/e0dnqXQRj5y+GfdqX/cbRP8pywygBGk6zKKG
+ljPPAWcGRivOOzK0BxaXPpm3LEZhTsyXS0xTvkQAvUXN0hTOULHxhYX5An8qe9OR
+kYPOXrf14CZGNgGag7fE5eMb1KxivBuH0YzGpEL/bx17MTjcCVQ7/2LXV9BvH3ou
+2sWJCiHIbBdVkSDoKYo5jy6eCX+TKc3OazTnSV3fGBKvY3/IYI69vbXYB2rU/qc2
+yDWqBRzoHJGaUDYu7gJGygq9IiovGWRCT30tAoGAZQsZvzJnXtHwuSOqvAdKbddX
+2skPfTcFExiX1IB5mGO3hflMWIOSN3hHyR59QxKWKbDqecfa3MJBkUGhrmNZD2Sj
+/5X6E7YRbJWdP9yYSc39/2KOQMM1vKYuS6ggQcgdKWcLlrRP1VXI7xX/BEZ/K2hw
+TEdUSMbWShRVjPciMwU=
+-----END PRIVATE KEY-----`;
+
+  const ROGUE_CRT = `-----BEGIN CERTIFICATE-----
+MIIDLjCCAhagAwIBAgIUCD6d9Di7zLh2+19ZFKkuuU/oxMgwDQYJKoZIhvcNAQEL
+BQAwHDEaMBgGA1UEAwwRQnVuLVRlc3QtUm9ndWUtQ0EwHhcNMjYwNzA5MTMwOTUx
+WhcNMzYwNzA2MTMwOTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqG
+SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCN6OeCnDUVF9dCouDNaM8hhpuK4NBm51XN
++nm79zEAKTYjoW1j8zFZYfb03dCuYqVQ0rxlvHUFrEm1/oOmcDbKHm0VjGN9xkhv
+fcTRvMcoKW52r3WwRCSLFkYFw+SvFFrtvC9zxpojtFLxYY1rfBrnOeCsC34B9Jjb
+50ioyQcP+aMAy8AUFbBd2+gpslkDuMzFigLkWxXV/6dPta1ZjUOsAjbebGlZ78tS
+fhVEWpXudnH73y1Wj6hCIg9gdggfDwLqOu0mZa8/+3M7TvR5hDstzUOx7I+Q48I7
+g/du/BIn8CNDRWqWbtz1jPNIJc8g7OnuMsvvZqWgQG7a5bxBWUHtAgMBAAGjcDBu
+MCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAd
+BgNVHQ4EFgQUl5rCgVO/Wjb8QhyZnBLOwGvPZwYwHwYDVR0jBBgwFoAUimhDnL/h
+FghNe5jeHKjRB6WbMF0wDQYJKoZIhvcNAQELBQADggEBAAVb8clHFZpkZF72j2u0
+ulIQksCH4gSa5zamjsisnSlEh8j6jG4h8C5hGmGEh/zzHYKirR+Hqs8aiLA4BHlJ
+mq2rP5gsSMPO1wkeu6ZOFIXsPKA7Tb2ZhNzL0W+xz4e9bbAXE9vSZQggQ2KstokV
+uNg9oyZD5BBxvUGt3ZHSUu2k14HDhSyMnAEADTOAk4u28QxLaPcI7tyZ56Qy1Byf
+UqDL36Xlwc8WG6xdgc3sU3oxGpqNx5Gb/nK2Oql+P8QDXBj2Ak2r5FtyuvzD0JZ4
+ijlBfSKvj17k9aaZj8NI7cU/f1DhdxDutQgxZyikanCO3hOzoaNc6CiSQacYgEOm
+Reo=
+-----END CERTIFICATE-----`;
+
+  const UNTRUSTED_MESSAGE = "unable to verify the first certificate";
+
+  // https://github.com/oven-sh/bun/issues/33846
+  describe.concurrent("Bun.connect (server certificate)", () => {
+    async function connectTo(serverTls: { key: string; cert: string }, clientTls: Record<string, unknown> | boolean) {
+      const received: string[] = [];
+      const handshake = Promise.withResolvers<{
+        authorizedArg: boolean;
+        authorizedGetter: boolean;
+        callbackError: string | null;
+        getterError: string | null;
+      }>();
+      const closed = Promise.withResolvers<void>();
+      const echoed = Promise.withResolvers<void>();
+
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: serverTls,
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+
+      let client: Bun.Socket;
+      try {
+        client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: clientTls as Bun.TLSOptions,
+          socket: {
+            open() {},
+            handshake(socket, authorized, authorizationError) {
+              handshake.resolve({
+                authorizedArg: authorized,
+                authorizedGetter: socket.authorized,
+                callbackError: authorizationError?.message ?? null,
+                getterError: socket.getAuthorizationError()?.message ?? null,
+              });
+            },
+            data(_socket, data) {
+              received.push(data.toString());
+              if (received.join("").includes("ping")) echoed.resolve();
+            },
+            close() {
+              closed.resolve();
+            },
+            error(_socket, err) {
+              handshake.reject(err);
+              echoed.reject(err);
+            },
+            connectError(_socket, err) {
+              handshake.reject(err);
+              closed.reject(err);
+              echoed.reject(err);
+            },
+          },
+        });
+      } catch (e) {
+        server.stop(true);
+        throw e;
+      }
+
+      return {
+        server,
+        client,
+        received,
+        handshake,
+        closed,
+        echoed,
+        [Symbol.dispose]() {
+          client.end();
+          server.stop(true);
+        },
+      };
+    }
+
+    it("closes a connection whose server certificate is not trusted", async () => {
+      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: false,
+        callbackError: UNTRUSTED_MESSAGE,
+        getterError: UNTRUSTED_MESSAGE,
+      });
+      await t.closed.promise;
+      expect(t.received).toEqual([]);
+      // The verdict must stay readable after the forced close.
+      expect(t.client.getAuthorizationError()?.message).toBe(UNTRUSTED_MESSAGE);
+    });
+
+    it("closes an untrusted connection with tls: true", async () => {
+      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: false,
+        callbackError: UNTRUSTED_MESSAGE,
+        getterError: UNTRUSTED_MESSAGE,
+      });
+      await t.closed.promise;
+      expect(t.received).toEqual([]);
+    });
+
+    it("reports authorized=false but keeps the connection with rejectUnauthorized: false", async () => {
+      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT, rejectUnauthorized: false });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: false,
+        callbackError: UNTRUSTED_MESSAGE,
+        getterError: UNTRUSTED_MESSAGE,
+      });
+      t.client.write("ping");
+      await t.echoed.promise;
+      expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
+
+    it("closes an untrusted connection upgraded with only a secureContext", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+
+      const received: string[] = [];
+      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null }>();
+      const closed = Promise.withResolvers<void>();
+
+      using tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      const { context } = createSecureContext({ ca: CA_CRT }) as any;
+      const [raw, secure] = tcp.upgradeTLS({
+        secureContext: context,
+        socket: {
+          handshake(socket: Socket, _success: boolean, authorizationError: Error | null) {
+            handshake.resolve({
+              authorized: socket.authorized,
+              error: authorizationError?.message ?? null,
+            });
+          },
+          data(_socket: Socket, data: Buffer) {
+            received.push(data.toString());
+          },
+          close() {
+            closed.resolve();
+          },
+          error() {},
+        },
+      } as any);
+      using _raw = raw;
+      using _secure = secure;
+
+      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE });
+      await closed.promise;
+      expect(received).toEqual([]);
+    });
+
+    it("closes an untrusted connection upgraded with tls: true", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+
+      const received: string[] = [];
+      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null; rawWrite: number }>();
+      const closed = Promise.withResolvers<void>();
+
+      using tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      const [raw, secure] = tcp.upgradeTLS({
+        tls: true,
+        socket: {
+          handshake(socket: Socket, _success: boolean, authorizationError: Error | null) {
+            handshake.resolve({
+              authorized: socket.authorized,
+              error: authorizationError?.message ?? null,
+              // The raw twin shares the fd: its writes must refuse too.
+              rawWrite: raw.write("must-not-reach-the-peer"),
+            });
+          },
+          data(_socket: Socket, data: Buffer) {
+            received.push(data.toString());
+          },
+          close() {
+            closed.resolve();
+          },
+          error() {},
+        },
+      } as any);
+      using _raw = raw;
+      using _secure = secure;
+
+      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, rawWrite: -1 });
+      await closed.promise;
+      expect(received).toEqual([]);
+    });
+
+    it("keeps a connection whose server certificate is trusted", async () => {
+      using t = await connectTo({ key: SERVER_KEY, cert: SERVER_CRT }, { ca: CA_CRT });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: true,
+        callbackError: null,
+        getterError: null,
+      });
+      t.client.write("ping");
+      await t.echoed.promise;
+      expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
+
+    it("closes an untrusted connection when no handshake callback is provided", async () => {
+      const opened = Promise.withResolvers<{ authorized: boolean; error: string | null }>();
+      const closed = Promise.withResolvers<void>();
+      const received: string[] = [];
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data() {},
+          close() {},
+          error() {},
+        },
+      });
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT },
+        socket: {
+          open(socket) {
+            opened.resolve({
+              authorized: socket.authorized,
+              error: socket.getAuthorizationError()?.message ?? null,
+            });
+          },
+          data(_socket, data) {
+            received.push(data.toString());
+          },
+          close() {
+            closed.resolve();
+          },
+          error(_socket, err) {
+            opened.reject(err);
+            closed.reject(err);
+          },
+          connectError(_socket, err) {
+            opened.reject(err);
+            closed.reject(err);
+          },
+        },
+      });
+      expect(await opened.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE });
+      await closed.promise;
+      expect(received).toEqual([]);
+    });
+
+    it("refuses writes issued from the handshake callback of a rejected connection", async () => {
+      const serverReceived: string[] = [];
+      const handshake = Promise.withResolvers<number>();
+      const closed = Promise.withResolvers<void>();
+      const serverClosed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          data(_socket, data) {
+            serverReceived.push(data.toString());
+          },
+          close() {
+            serverClosed.resolve();
+          },
+          error() {},
+        },
+      });
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            handshake.resolve(socket.write("token-that-must-never-reach-a-mitm"));
+          },
+          data() {},
+          close() {
+            closed.resolve();
+          },
+          error(_socket, err) {
+            handshake.reject(err);
+            closed.reject(err);
+          },
+          connectError(_socket, err) {
+            handshake.reject(err);
+            closed.reject(err);
+            serverClosed.reject(err);
+          },
+        },
+      });
+      expect(await handshake.promise).toBe(-1);
+      await closed.promise;
+      await serverClosed.promise;
+      expect(serverReceived).toEqual([]);
+    });
+
+    it("closes a connection whose certificate does not match the hostname", async () => {
+      using t = await connectTo({ key: SERVER_KEY, cert: SERVER_CRT }, { ca: CA_CRT, serverName: "wrong.example.com" });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError:
+          "Hostname/IP does not match certificate's altnames: Host: wrong.example.com. is not in the cert's altnames: DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+        getterError:
+          "Hostname/IP does not match certificate's altnames: Host: wrong.example.com. is not in the cert's altnames: DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+      });
+      await t.closed.promise;
+      expect(t.received).toEqual([]);
+      // The verdict must stay readable after the forced close.
+      expect(t.client.getAuthorizationError()?.message).toBe(
+        "Hostname/IP does not match certificate's altnames: Host: wrong.example.com. is not in the cert's altnames: DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+      );
+      expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    });
+
+    // node:tls sockets own server-identity policy in JS: an accepting
+    // checkServerIdentity override must keep a mismatched-hostname connection.
+    it("does not enforce a hostname mismatch on node:tls sockets", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+      const received: string[] = [];
+      const echoed = Promise.withResolvers<void>();
+      const client = tlsConnect({
+        host: "127.0.0.1",
+        port: server.port,
+        ca: CA_CRT,
+        servername: "wrong.example.com",
+        checkServerIdentity: () => undefined,
+      });
+      client.on("secureConnect", () => client.write("ping"));
+      client.on("data", d => {
+        received.push(d.toString());
+        if (received.join("").includes("ping")) echoed.resolve();
+      });
+      client.on("error", err => echoed.reject(err));
+      client.on("close", () => echoed.reject(new Error("client closed before the echo completed")));
+      try {
+        await echoed.promise;
+        expect(received.join("")).toBe("hello-from-server\nping");
+      } finally {
+        client.removeAllListeners("close");
+        client.destroy();
+      }
+    });
+
+    // Reverse tunnel: the peer dials in over TCP and the accepting side
+    // becomes the TLS client over the accepted socket. Identity stays owned
+    // by node:tls's JS layer on this path too.
+    it("honors an accepting checkServerIdentity on a listener-accepted net.Socket", async () => {
+      const done = Promise.withResolvers<string>();
+      const srv = net.createServer(accepted => {
+        const c = tlsConnect({
+          socket: accepted,
+          ca: CA_CRT,
+          servername: "wrong.example.com",
+          checkServerIdentity: () => undefined,
+        });
+        c.on("secureConnect", () => c.write("ping"));
+        c.on("data", d => done.resolve(d.toString()));
+        c.on("error", err => done.reject(err));
+        c.on("close", () => done.reject(new Error("closed before the echo completed")));
+      });
+      await new Promise<void>(resolve => srv.listen(0, "127.0.0.1", () => resolve()));
+      const raw = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: (srv.address() as import("node:net").AddressInfo).port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      raw.upgradeTLS({
+        isServer: true,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT },
+        socket: {
+          handshake() {},
+          data(s: Socket, d: Buffer) {
+            s.write(d);
+          },
+          close() {},
+          error() {},
+        },
+      } as any);
+      try {
+        expect(await done.promise).toBe("ping");
+      } finally {
+        raw.end();
+        srv.close();
+      }
+    });
+
+    it("rejects a hostname mismatch on a listener-accepted net.Socket with Node's error", async () => {
+      const done = Promise.withResolvers<string>();
+      const srv = net.createServer(accepted => {
+        const c = tlsConnect({
+          socket: accepted,
+          ca: CA_CRT,
+          servername: "wrong.example.com",
+        });
+        c.on("data", () => done.reject(new Error("data flowed to a mis-identified peer")));
+        c.on("error", err => done.resolve((err as any).code ?? err.message));
+        c.on("close", () => done.resolve("closed with no error"));
+      });
+      await new Promise<void>(resolve => srv.listen(0, "127.0.0.1", () => resolve()));
+      const raw = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: (srv.address() as import("node:net").AddressInfo).port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      raw.upgradeTLS({
+        isServer: true,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT },
+        socket: {
+          handshake() {},
+          data() {},
+          close() {},
+          error() {},
+        },
+      } as any);
+      try {
+        expect(await done.promise).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      } finally {
+        raw.end();
+        srv.close();
+      }
+    });
+
+    it("does not enforce a hostname mismatch on a node:tls socket wrapping an existing net.Socket", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("hello-from-server\n");
+          },
+          data(socket, data) {
+            socket.write(data);
+          },
+          close() {},
+          error() {},
+        },
+      });
+      const received: string[] = [];
+      const echoed = Promise.withResolvers<void>();
+      const raw = net.connect(server.port, "127.0.0.1");
+      await new Promise<void>(resolve => raw.once("connect", resolve));
+      const client = tlsConnect({
+        socket: raw,
+        ca: CA_CRT,
+        servername: "wrong.example.com",
+        checkServerIdentity: () => undefined,
+      });
+      client.on("secureConnect", () => client.write("ping"));
+      client.on("data", d => {
+        received.push(d.toString());
+        if (received.join("").includes("ping")) echoed.resolve();
+      });
+      client.on("error", err => echoed.reject(err));
+      client.on("close", () => echoed.reject(new Error("client closed before the echo completed")));
+      try {
+        await echoed.promise;
+        expect(received.join("")).toBe("hello-from-server\nping");
+      } finally {
+        client.removeAllListeners("close");
+        client.destroy();
+        raw.destroy();
+      }
+    });
+
+    it("keeps a hostname mismatch with rejectUnauthorized: false", async () => {
+      using t = await connectTo(
+        { key: SERVER_KEY, cert: SERVER_CRT },
+        { ca: CA_CRT, serverName: "wrong.example.com", rejectUnauthorized: false },
+      );
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError:
+          "Hostname/IP does not match certificate's altnames: Host: wrong.example.com. is not in the cert's altnames: DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+        getterError:
+          "Hostname/IP does not match certificate's altnames: Host: wrong.example.com. is not in the cert's altnames: DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+      });
+      t.client.write("ping");
+      await t.echoed.promise;
+      expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/33754
+  describe.concurrent("Bun.listen (client certificate)", () => {
+    async function acceptFrom(serverTlsExtra: Record<string, unknown>, clientCert?: { key: string; cert: string }) {
+      const serverReceived: string[] = [];
+      const clientReceived: string[] = [];
+      const handshake = Promise.withResolvers<{
+        successArg: boolean;
+        authorizedGetter: boolean;
+        callbackError: string | null;
+        getterError: string | null;
+        writeResult: number;
+      }>();
+      const serverClosed = Promise.withResolvers<void>();
+      const clientClosed = Promise.withResolvers<void>();
+      const echoed = Promise.withResolvers<void>();
+
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT, ...serverTlsExtra },
+        socket: {
+          open() {},
+          handshake(socket, success, authorizationError) {
+            handshake.resolve({
+              successArg: success,
+              authorizedGetter: socket.authorized,
+              callbackError: authorizationError?.message ?? null,
+              getterError: socket.getAuthorizationError()?.message ?? null,
+              writeResult: socket.write("hello-from-server\n"),
+            });
+          },
+          data(socket, data) {
+            serverReceived.push(data.toString());
+            socket.write(data);
+          },
+          close() {
+            serverClosed.resolve();
+          },
+          error() {},
+        },
+      });
+
+      let client: Bun.Socket;
+      try {
+        client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: { ca: CA_CRT, serverName: "localhost", ...(clientCert ?? {}) },
+          socket: {
+            open() {},
+            handshake(socket) {
+              socket.write("client-app-data\n");
+            },
+            data(_socket, data) {
+              clientReceived.push(data.toString());
+              if (clientReceived.join("").includes("client-app-data\n")) echoed.resolve();
+            },
+            close() {
+              clientClosed.resolve();
+            },
+            error(_socket, err) {
+              handshake.reject(err);
+              echoed.reject(err);
+            },
+            connectError(_socket, err) {
+              handshake.reject(err);
+              serverClosed.reject(err);
+              clientClosed.reject(err);
+              echoed.reject(err);
+            },
+          },
+        });
+      } catch (e) {
+        server.stop(true);
+        throw e;
+      }
+
+      return {
+        server,
+        client,
+        serverReceived,
+        clientReceived,
+        handshake,
+        serverClosed,
+        clientClosed,
+        echoed,
+        [Symbol.dispose]() {
+          client.end();
+          server.stop(true);
+        },
+      };
+    }
+
+    it("closes a connection whose client certificate is not trusted", async () => {
+      using t = await acceptFrom({ ca: CA_CRT, requestCert: true }, { key: ROGUE_KEY, cert: ROGUE_CRT });
+      expect(await t.handshake.promise).toEqual({
+        successArg: true,
+        authorizedGetter: false,
+        callbackError: UNTRUSTED_MESSAGE,
+        getterError: UNTRUSTED_MESSAGE,
+        writeResult: -1,
+      });
+      await t.serverClosed.promise;
+      await t.clientClosed.promise;
+      expect(t.serverReceived).toEqual([]);
+      expect(t.clientReceived).toEqual([]);
+    });
+
+    it("keeps a connection whose client certificate is trusted", async () => {
+      using t = await acceptFrom({ ca: CA_CRT, requestCert: true }, { key: SERVER_KEY, cert: SERVER_CRT });
+      expect(await t.handshake.promise).toEqual({
+        successArg: true,
+        authorizedGetter: true,
+        callbackError: null,
+        getterError: null,
+        writeResult: "hello-from-server\n".length,
+      });
+      await t.echoed.promise;
+      expect(t.serverReceived.join("")).toBe("client-app-data\n");
+    });
+
+    it("keeps an untrusted client certificate with rejectUnauthorized: false but reports authorized=false", async () => {
+      using t = await acceptFrom(
+        { ca: CA_CRT, requestCert: true, rejectUnauthorized: false },
+        { key: ROGUE_KEY, cert: ROGUE_CRT },
+      );
+      expect(await t.handshake.promise).toEqual({
+        successArg: true,
+        authorizedGetter: false,
+        callbackError: UNTRUSTED_MESSAGE,
+        getterError: UNTRUSTED_MESSAGE,
+        writeResult: "hello-from-server\n".length,
+      });
+      await t.echoed.promise;
+      expect(t.serverReceived.join("")).toBe("client-app-data\n");
+    });
+
+    // A bare `secureContext` carries no parsed config; the policy comes from
+    // the context's own verify mode.
+    it("closes an untrusted client certificate on an isServer upgrade with only a secureContext", async () => {
+      const serverReceived: string[] = [];
+      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null; writeResult: number }>();
+      const serverClosed = Promise.withResolvers<void>();
+      const clientClosed = Promise.withResolvers<void>();
+      const { context } = createSecureContext({
+        key: SERVER_KEY,
+        cert: SERVER_CRT,
+        ca: CA_CRT,
+        requestCert: true,
+        rejectUnauthorized: true,
+      } as any) as any;
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(raw, chunk) {
+            raw.upgradeTLS({
+              isServer: true,
+              initialData: chunk,
+              secureContext: context,
+              socket: {
+                handshake(secure: Socket, _success: boolean, authorizationError: Error | null) {
+                  handshake.resolve({
+                    authorized: secure.authorized,
+                    error: authorizationError?.message ?? null,
+                    writeResult: secure.write("hello-from-server\n"),
+                  });
+                },
+                data(_secure: Socket, payload: Buffer) {
+                  serverReceived.push(payload.toString());
+                },
+                close() {
+                  serverClosed.resolve();
+                },
+                error() {},
+              },
+            } as any);
+          },
+          error(_raw, err) {
+            handshake.reject(err);
+            serverClosed.reject(err);
+          },
+          close() {},
+        },
+      });
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ca: CA_CRT, serverName: "localhost", key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("client-app-data\n");
+          },
+          data() {},
+          close() {
+            clientClosed.resolve();
+          },
+          error() {},
+          connectError(_socket, err) {
+            handshake.reject(err);
+            clientClosed.reject(err);
+            serverClosed.reject(err);
+          },
+        },
+      });
+      void client;
+      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, writeResult: -1 });
+      await serverClosed.promise;
+      expect(serverReceived).toEqual([]);
+      await clientClosed.promise;
+    });
+
+    it("closes an untrusted client certificate on a socket upgraded with isServer: true", async () => {
+      const serverReceived: string[] = [];
+      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null; writeResult: number }>();
+      const serverClosed = Promise.withResolvers<void>();
+      const clientClosed = Promise.withResolvers<void>();
+      const serverTls = { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true };
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(raw, chunk) {
+            raw.upgradeTLS({
+              isServer: true,
+              initialData: chunk,
+              tls: serverTls,
+              socket: {
+                open() {},
+                handshake(secure: Socket, _success: boolean, authorizationError: Error | null) {
+                  handshake.resolve({
+                    authorized: secure.authorized,
+                    error: authorizationError?.message ?? null,
+                    writeResult: secure.write("hello-from-server\n"),
+                  });
+                },
+                data(_secure: Socket, payload: Buffer) {
+                  serverReceived.push(payload.toString());
+                },
+                close() {
+                  serverClosed.resolve();
+                },
+                error() {},
+              },
+            } as any);
+          },
+          error(_raw, err) {
+            handshake.reject(err);
+            serverClosed.reject(err);
+          },
+          close() {},
+        },
+      });
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ca: CA_CRT, serverName: "localhost", key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("client-app-data\n");
+          },
+          data() {},
+          close() {
+            clientClosed.resolve();
+          },
+          error() {},
+          connectError(_socket, err) {
+            handshake.reject(err);
+            clientClosed.reject(err);
+            serverClosed.reject(err);
+          },
+        },
+      });
+      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, writeResult: -1 });
+      await serverClosed.promise;
+      expect(serverReceived).toEqual([]);
+      await clientClosed.promise;
+    });
+
+    // upgradeTLS({ isServer: true }) sockets act as the TLS server: the
+    // client-only server-identity check must not run against the peer's
+    // client certificate.
+    it("keeps a valid client certificate on an isServer upgrade with an unrelated serverName", async () => {
+      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null }>();
+      const echoed = Promise.withResolvers<void>();
+      const serverReceived: string[] = [];
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(raw, chunk) {
+            raw.upgradeTLS({
+              isServer: true,
+              initialData: chunk,
+              tls: {
+                key: SERVER_KEY,
+                cert: SERVER_CRT,
+                ca: CA_CRT,
+                requestCert: true,
+                serverName: "wrong.example.com",
+              },
+              socket: {
+                handshake(secure: Socket, _success: boolean, authorizationError: Error | null) {
+                  handshake.resolve({
+                    authorized: secure.authorized,
+                    error: authorizationError?.message ?? null,
+                  });
+                },
+                data(secure: Socket, payload: Buffer) {
+                  serverReceived.push(payload.toString());
+                  secure.write(payload);
+                },
+                close() {},
+                error() {},
+              },
+            } as any);
+          },
+          error(_raw, err) {
+            handshake.reject(err);
+            echoed.reject(err);
+          },
+          close() {},
+        },
+      });
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ca: CA_CRT, serverName: "localhost", key: SERVER_KEY, cert: SERVER_CRT },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("valid-mtls-data");
+          },
+          data() {
+            echoed.resolve();
+          },
+          close() {},
+          error() {},
+          connectError(_socket, err) {
+            handshake.reject(err);
+            echoed.reject(err);
+          },
+        },
+      });
+      void client;
+      expect(await handshake.promise).toEqual({ authorized: true, error: null });
+      await echoed.promise;
+      expect(serverReceived.join("")).toBe("valid-mtls-data");
+    });
+
+    it("rejects a client that presents no certificate when one is required", async () => {
+      const serverReceived: string[] = [];
+      const clientClosed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true },
+        socket: {
+          open() {},
+          handshake() {},
+          data(_socket, data) {
+            serverReceived.push(data.toString());
+          },
+          close() {},
+          error() {},
+        },
+      });
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT, serverName: "localhost" },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("client-app-data\n");
+          },
+          data() {},
+          close() {
+            clientClosed.resolve();
+          },
+          error() {},
+          connectError(_socket, err) {
+            clientClosed.reject(err);
+          },
+        },
+      });
+      await clientClosed.promise;
+      expect(serverReceived).toEqual([]);
+    });
+
+    it("reports authorized=false on a server that never requested a client certificate", async () => {
+      using t = await acceptFrom({});
+      expect(await t.handshake.promise).toEqual({
+        successArg: true,
+        authorizedGetter: false,
+        callbackError: "unable to get issuer certificate",
+        getterError: "unable to get issuer certificate",
+        writeResult: "hello-from-server\n".length,
+      });
+      await t.echoed.promise;
+      expect(t.serverReceived.join("")).toBe("client-app-data\n");
+    });
+  });
 });

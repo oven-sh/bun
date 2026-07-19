@@ -43,8 +43,8 @@ pub fn panicked() {
 
 
 pub fn call_for_test(
-    test_func: fn() -> Result<(), bun_core::Error>,
-) -> Result<(), bun_core::Error> {
+    test_func: fn() -> crate::Result<()>,
+) -> crate::Result<()> {
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
@@ -53,7 +53,7 @@ pub fn call_for_test(
     unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
         TOP_CTX.with(|c| c.set(prev_ctx));
-        return Err(bun_core::err!("Panic"));
+        return Err(crate::Error::Panic);
     }
     TOP_CTX.with(|c| c.set(Some(&raw const ctx)));
     let _guard = TopCtxRestore { prev: prev_ctx };
@@ -65,11 +65,11 @@ pub fn call_for_test(
 /// Otherwise returns the return value of func.
 // Rust cannot forward an arbitrary heterogeneous argument tuple without
 // variadics; callers should wrap the invocation in a closure. The return type
-// uses bun_core::Error, which already covers every error name (including
-// `Panic` via `bun_core::err!("Panic")`).
+// uses crate::Error, which already covers every error name (including
+// `Panic` via `crate::Error::Panic`).
 pub fn call<T>(
-    func: impl FnOnce() -> Result<T, bun_core::Error>,
-) -> Result<T, bun_core::Error> {
+    func: impl FnOnce() -> crate::Result<T>,
+) -> crate::Result<T> {
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
@@ -78,7 +78,7 @@ pub fn call<T>(
     unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
         TOP_CTX.with(|c| c.set(prev_ctx));
-        return Err(bun_core::err!("Panic"));
+        return Err(crate::Error::Panic);
     }
     TOP_CTX.with(|c| c.set(Some(&raw const ctx)));
     let _guard = TopCtxRestore { prev: prev_ctx };

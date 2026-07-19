@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 bytemuck = "1"
+thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true

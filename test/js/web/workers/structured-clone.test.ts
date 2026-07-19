@@ -603,8 +603,10 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ],
   ] as const) {
     test(`${label} under 2GiB clones without crashing`, async () => {
+      // The smallest size (plus margin) whose 1.5x serialization-buffer growth
+      // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
       const script = `
-        const size = 1600000000;
+        const size = 1_500_000_000;
         let v;
         try {
           v = ${expr};
@@ -622,6 +624,9 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // The host's OOM killer reclaiming the child on a small CI runner is not a
+      // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
+      if (proc.signalCode === "SIGKILL" && stdout === "") return;
       expect(["OK", "SKIP"]).toContain(stdout.trim());
       expect(proc.signalCode).toBe(null);
       expect(exitCode).toBe(0);
@@ -803,5 +808,178 @@ describe("structuredClone(Object.prototype)", () => {
   test("bun:jsc serialize/deserialize round-trips it too", () => {
     const cloned = deserialize(serialize(Object.prototype));
     expect(cloned).toEqual({});
+  });
+});
+
+describe("Error serialization semantics", () => {
+  // .message uses OWN data descriptor (HTML spec / Node); .stack uses [[Get]].
+  test("new Error() with no message clones without an own .message", () => {
+    const cloned = structuredClone(new Error());
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  test("accessor .message is not serialized", () => {
+    const e = new Error();
+    Object.defineProperty(e, "message", { get: () => "from-getter" });
+    const cloned = structuredClone(e);
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  test("inherited .message is not serialized", () => {
+    class MyErr extends Error {}
+    MyErr.prototype.message = "inherited";
+    const cloned = structuredClone(new MyErr());
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  // The own data descriptor is ToString'd, not required to already be a string.
+  test.each([
+    [42, "42"],
+    [null, "null"],
+    [undefined, "undefined"],
+    [{ toString: () => "obj" }, "obj"],
+  ])("own data .message %p is coerced to %p", (value, expected) => {
+    const e = new Error("original");
+    e.message = value as any;
+    expect(structuredClone(e).message).toBe(expected);
+  });
+
+  // A throwing coercion propagates the original error rather than dropping the
+  // field. A Symbol message must not reach ErrorInstance's .line materialization.
+  test("Symbol .message throws TypeError instead of crashing", () => {
+    const e = new Error("original");
+    e.message = Symbol("s") as any;
+    expect(() => structuredClone(e)).toThrow(TypeError);
+  });
+
+  test("a throwing .message toString propagates the thrown error", () => {
+    class MyDomainError extends Error {}
+    const e = new Error("original");
+    e.message = {
+      toString() {
+        throw new MyDomainError("nope");
+      },
+    } as any;
+    expect(() => structuredClone(e)).toThrow(MyDomainError);
+  });
+
+  test("a throwing prepareStackTrace propagates the thrown error", () => {
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom");
+    };
+    try {
+      const e = new Error("payload");
+      expect(() => structuredClone(e)).toThrow("boom");
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+  });
+
+  // An own accessor replaces the materialized .stack, so this exercises the
+  // [[Get]] on .stack rather than prepareStackTrace. Node propagates it too.
+  test("a throwing .stack getter propagates, like node", () => {
+    class StackBoom extends Error {}
+    const e = new Error("payload");
+    Object.defineProperty(e, "stack", {
+      get() {
+        throw new StackBoom("boom");
+      },
+      configurable: true,
+    });
+    expect(() => structuredClone(e)).toThrow(StackBoom);
+  });
+
+  test("a custom Error.prepareStackTrace is serialized", () => {
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => "custom";
+    try {
+      expect(structuredClone(new Error("payload")).stack).toBe("custom");
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+  });
+});
+
+describe("options.transfer iterator error propagation", () => {
+  test("user-thrown error from Symbol.iterator propagates unchanged", () => {
+    class MyDomainError extends Error {}
+    const transfer = {
+      [Symbol.iterator]() {
+        throw new MyDomainError("bad state");
+      },
+    };
+    let caught: unknown;
+    try {
+      structuredClone(1, { transfer } as any);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(MyDomainError);
+    expect((caught as any).code).toBeUndefined();
+  });
+
+  test("non-object transfer still throws ERR_INVALID_ARG_TYPE", () => {
+    expect(() => structuredClone(1, { transfer: 42 } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});
+
+describe("truncated Set/Map payloads are rejected without hanging", () => {
+  // Wire header + tag bytes derived from a real serialize() so a CurrentVersion
+  // bump doesn't invalidate the crafted payloads.
+  const setBytes = Array.from(new Uint8Array(serialize(new Set([1, 0]))));
+  const mapBytes = Array.from(new Uint8Array(serialize(new Map([[1, 1]]))));
+  // valid payloads end in NonSetPropertiesTag/NonMapPropertiesTag + 4x 0xFF
+  const setBody = setBytes.slice(0, -5);
+  const mapBody = mapBytes.slice(0, -5);
+
+  const cases: [string, number[]][] = [
+    ["Set truncated after one element", setBody.slice(0, -1)],
+    ["Set truncated after two elements", setBody],
+    ["Set truncated before any element", setBody.slice(0, -2)],
+    ["Map truncated after key/value pair", mapBody],
+    ["Map truncated after key only", mapBody.slice(0, -1)],
+    ["Map truncated before any entry", mapBody.slice(0, -2)],
+  ];
+
+  test.concurrent.each([
+    ["bun:jsc", `import {deserialize} from "bun:jsc"`],
+    ["node:v8", `import {deserialize} from "node:v8"`],
+  ])("%s deserialize rejects every truncation point", async (_api, importLine) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${importLine};
+         for (const [name, bytes] of ${JSON.stringify(cases)}) {
+           try {
+             deserialize(new Uint8Array(bytes));
+             console.log(name + ": RETURNED");
+           } catch (e) {
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: cases.map(([name]) => name + ": Unable to deserialize data."),
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  test("valid Set and Map payloads still round-trip", () => {
+    expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
+    expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
   });
 });

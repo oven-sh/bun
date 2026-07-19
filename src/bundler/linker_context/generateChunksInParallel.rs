@@ -48,7 +48,7 @@ use crate::linker_context_mod::debug;
 pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
-) -> Result<Vec<options::OutputFile>, bun_core::Error> {
+) -> crate::Result<Vec<options::OutputFile>> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
     c.mangle_local_css();
@@ -464,7 +464,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 });
             }
 
-            return Err(bun_core::err!("DuplicateOutputPath"));
+            return Err(crate::Error::DuplicateOutputPath);
         }
     }
 
@@ -590,7 +590,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             bun_ast::Loc::EMPTY,
             b"cannot write multiple output files without an output directory",
         );
-        return Err(bun_core::err!("MultipleOutputFilesWithoutOutputDir"));
+        return Err(crate::Error::MultipleOutputFilesWithoutOutputDir);
     }
 
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.

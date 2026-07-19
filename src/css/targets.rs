@@ -197,7 +197,7 @@ static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new
 impl Browsers {
     /// Ported from here:
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
-    pub fn convert_from_string(esbuild_target: &[&[u8]]) -> Result<Browsers, bun_core::Error> {
+    pub fn convert_from_string(esbuild_target: &[&[u8]]) -> crate::CrateResult<Browsers> {
         let mut browsers = Browsers::default();
 
         for &str in esbuild_target {
@@ -212,10 +212,8 @@ impl Browsers {
                 // Propagates InvalidCharacter / Overflow. Preserve the tag for
                 // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
                 let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
-                    strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
-                    strings::ParseIntError::InvalidCharacter => {
-                        bun_core::err!("InvalidCharacter")
-                    }
+                    strings::ParseIntError::Overflow => crate::CrateError::Overflow,
+                    strings::ParseIntError::InvalidCharacter => crate::CrateError::InvalidCharacter,
                 })?;
                 match year {
                     // https://caniuse.com/?search=es2015
@@ -317,7 +315,7 @@ impl Browsers {
                         break 'entries_without_es &entries_buf[0..4];
                     }
                     _ => {
-                        return Err(bun_core::err!("UnsupportedCSSTarget"));
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
                     }
                 }
             };

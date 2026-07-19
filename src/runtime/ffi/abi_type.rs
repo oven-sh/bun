@@ -261,7 +261,7 @@ impl ABIType {
         ToJSFormatter { tag: self, symbol }
     }
 
-    pub fn typename(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub fn typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
         writer.write_all(self.typename_label())?;
         Ok(())
     }
@@ -270,7 +270,7 @@ impl ABIType {
         self.row().c_type
     }
 
-    pub fn param_typename(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub fn param_typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
         writer.write_all(self.typename_label())?;
         Ok(())
     }

@@ -65,7 +65,7 @@ impl SASL {
         salt_bytes: &[u8],
         iteration_count: u32,
         password: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Note: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
         // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
         // avoid the `bun_runtime` dep (which would create a cycle through
@@ -96,7 +96,7 @@ impl SASL {
             )
         };
         if rc <= 0 {
-            return Err(bun_core::err!("PBKDFD2"));
+            return Err(crate::Error::PBKDFD2);
         }
         Ok(())
     }
@@ -111,13 +111,13 @@ impl SASL {
         &self.server_signature_base64_bytes[0..self.server_signature_len as usize]
     }
 
-    pub fn compute_server_signature(&mut self, auth_string: &[u8]) -> Result<(), bun_core::Error> {
+    pub fn compute_server_signature(&mut self, auth_string: &[u8]) -> crate::Result<()> {
         debug_assert!(self.server_signature_len == 0);
 
-        let server_key = hmac(self.salted_password(), b"Server Key")
-            .ok_or_else(|| bun_core::err!("InvalidServerKey"))?;
-        let server_signature_bytes = hmac(&server_key, auth_string)
-            .ok_or_else(|| bun_core::err!("InvalidServerSignature"))?;
+        let server_key =
+            hmac(self.salted_password(), b"Server Key").ok_or(crate::Error::InvalidServerKey)?;
+        let server_signature_bytes =
+            hmac(&server_key, auth_string).ok_or(crate::Error::InvalidServerSignature)?;
         self.server_signature_len = u8::try_from(bun_base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,
@@ -146,7 +146,7 @@ impl SASL {
     pub fn nonce(&mut self) -> &[u8] {
         if self.nonce_len == 0 {
             let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
-            bun_core::csprng(&mut bytes);
+            bun_boringssl_sys::rand_bytes(&mut bytes);
             self.nonce_len = u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes))
                 .expect("int cast");
         }

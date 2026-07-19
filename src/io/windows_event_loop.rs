@@ -382,7 +382,7 @@ unsafe impl Sync for Waker {}
 impl Waker {
     // `Result` kept (despite being infallible here) for signature parity with
     // the POSIX wakers, whose `init` can fail (eventfd / kqueue).
-    pub fn init() -> Result<Waker, bun_core::Error> {
+    pub fn init() -> Result<Waker, crate::Error> {
         Ok(Waker {
             loop_: bun_ptr::BackRef::from(
                 ptr::NonNull::new(WindowsLoop::get()).expect("WindowsLoop::get() singleton"),

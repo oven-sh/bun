@@ -10,7 +10,7 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
-use bun_core::{Environment, Error as BunError, Output, err};
+use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
@@ -534,7 +534,7 @@ impl StandaloneModuleGraph {
         raw_ptr: *mut u8,
         raw_len: usize,
         offsets: Offsets,
-    ) -> Result<StandaloneModuleGraph, BunError> {
+    ) -> crate::Result<StandaloneModuleGraph> {
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
                 bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
@@ -566,9 +566,7 @@ impl StandaloneModuleGraph {
         let modules_list_base = modules_list_bytes.as_ptr();
 
         if offsets.entry_point_id as usize > modules_list_count {
-            return Err(err!(
-                "Corrupted module graph: entry point ID is greater than module list count"
-            ));
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
@@ -711,7 +709,7 @@ pub(crate) fn to_bytes(
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
-) -> Result<Vec<u8>, BunError> {
+) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
@@ -1523,7 +1521,7 @@ pub(crate) fn download_to_path(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader<'_>,
     dest_z: &ZStr,
-) -> Result<(), BunError> {
+) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
     let mut refresher = bun_core::Progress::Progress::default();
 
@@ -1538,7 +1536,7 @@ pub(crate) fn download_to_path(
             Ok(s) => s,
             Err(err) => {
                 // Return error without printing - let caller decide how to handle
-                return Err(err);
+                return Err(err.into());
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
@@ -1576,14 +1574,14 @@ pub(crate) fn download_to_path(
             match status_code {
                 404 => {
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("TargetNotFound"));
+                    return Err(crate::Error::TargetNotFound);
                 }
                 403 | 429 | 499..=599 => {
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("NetworkError"));
+                    return Err(crate::Error::NetworkError);
                 }
                 200 => {}
-                _ => return Err(err!("NetworkError")),
+                _ => return Err(crate::Error::NetworkError),
             }
         }
 
@@ -1594,20 +1592,22 @@ pub(crate) fn download_to_path(
 
             if compressed_archive_bytes.list.is_empty() {
                 // Return error without printing - let caller handle the messaging
-                return Err(err!("InvalidResponse"));
+                return Err(crate::Error::InvalidResponse);
             }
 
             {
                 // Note: reshaped for borrowck — `refresher.start` borrows
                 // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> Result<(), BunError> {
+                let gunzip_result = (|| -> crate::Result<()> {
                     let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
                         compressed_archive_bytes.list.as_slice(),
                         &mut tarball_bytes,
                     )
-                    .map_err(|_| err!("InvalidResponse"))?;
-                    gunzip.read_all(true).map_err(|_| err!("InvalidResponse"))?;
+                    .map_err(|_| crate::Error::InvalidResponse)?;
+                    gunzip
+                        .read_all(true)
+                        .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();
                 refresher.root.end();
@@ -1641,7 +1641,7 @@ pub(crate) fn download_to_path(
                 if extract_res.is_err() {
                     refresher.root.end();
                     // Return error without printing - let caller handle the messaging
-                    return Err(err!("ExtractionFailed"));
+                    return Err(crate::Error::ExtractionFailed);
                 }
 
                 let mut did_retry = false;
@@ -1665,7 +1665,7 @@ pub(crate) fn download_to_path(
                         }
                         refresher.root.end();
                         // Return error without printing - let caller handle the messaging
-                        return Err(err!("ExtractionFailed"));
+                        return Err(crate::Error::ExtractionFailed);
                     }
                     break;
                 }
@@ -1690,7 +1690,7 @@ pub fn to_executable(
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
-) -> Result<CompileResult, BunError> {
+) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
     let bytes = match to_bytes(
@@ -1740,34 +1740,32 @@ pub fn to_executable(
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
-                return Ok(if e == err!("TargetNotFound") {
-                    CompileResult::fail_fmt(format_args!(
+                return Ok(match e {
+                    crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
                         target
-                    ))
-                } else if e == err!("NetworkError") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::NetworkError => CompileResult::fail_fmt(format_args!(
                         "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
                         target
-                    ))
-                } else if e == err!("InvalidResponse") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
                         "Downloaded file for '{}' appears to be corrupted. Please try again.",
                         target
-                    ))
-                } else if e == err!("ExtractionFailed") {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
-                    ))
-                } else if e == err!("UnsupportedTarget") {
-                    CompileResult::fail_fmt(format_args!("Target '{}' is not supported", target))
-                } else {
-                    CompileResult::fail_fmt(format_args!(
+                    )),
+                    crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(
+                        "Target '{}' is not supported",
+                        target
+                    )),
+                    _ => CompileResult::fail_fmt(format_args!(
                         "Failed to download '{}': {}",
                         target,
                         bstr::BStr::new(e.name())
-                    ))
+                    )),
                 });
             }
         }
@@ -1903,7 +1901,7 @@ pub fn to_executable(
             ) {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to set Windows metadata: {}",
-                    e.name()
+                    e
                 )));
             }
         }
@@ -1941,7 +1939,7 @@ pub fn to_executable(
 
             let _ = Syscall::unlink(temp_posix);
 
-            if e == err!("IsDir") || e == err!("EISDIR") {
+            if e.get_errno() == bun_errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
                     bstr::BStr::new(outfile)
@@ -1966,7 +1964,7 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    pub fn from_executable() -> Result<Option<*mut StandaloneModuleGraph>, BunError> {
+    pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         {
             let Some((base, len)) = macho::get_data() else {
@@ -2138,7 +2136,7 @@ fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,
     offsets: Offsets,
-) -> Result<*mut StandaloneModuleGraph, BunError> {
+) -> crate::Result<*mut StandaloneModuleGraph> {
     let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
     Ok(StandaloneModuleGraph::set(graph))
 }
@@ -2220,7 +2218,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
-) -> Result<(), BunError> {
+) -> crate::Result<()> {
     use bun_ast::ExprData as AstData;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
@@ -2231,45 +2229,46 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     let _reset_guard = bun_ast::StoreResetGuard::new();
 
     let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
-        .map_err(|_| err!("InvalidSourceMap"))?;
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
     let json = parsed.root;
 
     let mappings_str = json
         .get(b"mappings")
-        .ok_or_else(|| err!("InvalidSourceMap"))?;
+        .ok_or(crate::Error::InvalidSourceMap)?;
     let map_vlq: &[u8] = mappings_str
         .as_utf8_string_literal()
-        .ok_or_else(|| err!("InvalidSourceMap"))?;
+        .ok_or(crate::Error::InvalidSourceMap)?;
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
         AstData::EArrayJSON(arr) => arr,
-        _ => return Err(err!("InvalidSourceMap")),
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
     let sources_content = sources_content.get();
     let sources_paths = match json
         .get(b"sources")
-        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
         AstData::EArrayJSON(arr) => arr,
-        _ => return Err(err!("InvalidSourceMap")),
+        _ => return Err(crate::Error::InvalidSourceMap),
     };
     let sources_paths = sources_paths.get();
     if sources_content.items().len() != sources_paths.items().len() {
-        return Err(err!("InvalidSourceMap"));
+        return Err(crate::Error::InvalidSourceMap);
     }
 
-    let map_blob =
-        SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| err!("InvalidSourceMap"))?;
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
-    let map_blob_len_u32 = u32::try_from(map_blob.len()).map_err(|_| err!("SourceMapTooLarge"))?;
+    let map_blob_len_u32 =
+        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
     let sources_len_u32 =
-        u32::try_from(sources_paths.items().len()).map_err(|_| err!("SourceMapTooLarge"))?;
+        u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
     header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
     header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
 
@@ -2279,23 +2278,23 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         + map_blob.len();
 
     for item in sources_paths.items() {
-        let decoded = item.as_str().ok_or_else(|| err!("InvalidSourceMap"))?;
+        let decoded = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
 
         let offset = string_payload.len();
         string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
             length: u32::try_from(string_payload.len() - offset)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
     }
 
     for item in sources_content.items() {
-        let utf8 = item.as_str().ok_or_else(|| err!("InvalidSourceMap"))?;
+        let utf8 = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
 
         let offset = string_payload.len();
 
@@ -2305,7 +2304,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         // feeding that to `Vec::reserve` below would abort with a capacity
         // overflow instead of failing the build.
         if bun_zstd::is_error(bound) {
-            return Err(err!("SourceMapTooLarge"));
+            return Err(crate::Error::SourceMapTooLarge);
         }
         string_payload.reserve(bound);
         if let bun_zstd::Result::Err(err_msg) =
@@ -2319,9 +2318,9 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
             length: u32::try_from(string_payload.len() - offset)
-                .map_err(|_| err!("SourceMapTooLarge"))?,
+                .map_err(|_| crate::Error::SourceMapTooLarge)?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());

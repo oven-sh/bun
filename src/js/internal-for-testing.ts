@@ -52,6 +52,8 @@ const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
 
 export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
 
+export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -230,7 +232,32 @@ export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
+  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
+  "internal/dgram": require("internal/dgram"),
+  // internalBinding() is served by the registered "internal/test/binding"
+  // module (src/js/internal/test/binding.ts), not from here.
 };
+
+// State of a web ReadableStream/WritableStream for vendored node tests that
+// read Node's `stream[kState].state` / `.storedError` (served through the
+// internal/webstreams/util shim in test/js/node/test/common/index.js).
+// The stream's closed promise is settled from every terminal transition, so its
+// status is the state. A WritableStream mid-`erroring` still reports "writable":
+// erroring is not terminal, and nothing observable distinguishes the two here.
+export function getWebStreamState(stream: ReadableStream | WritableStream): {
+  state: string;
+  storedError: unknown;
+} {
+  const closed = $webStreamClosedPromise(stream);
+  switch (Bun.peek.status(closed)) {
+    case "fulfilled":
+      return { state: "closed", storedError: undefined };
+    case "rejected":
+      return { state: "errored", storedError: Bun.peek(closed) };
+    default:
+      return { state: $inheritsWritableStream(stream) ? "writable" : "readable", storedError: undefined };
+  }
+}
 
 export const fs = require("node:fs/promises").$data;
 
@@ -248,6 +275,14 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+};
+
+// Raw datagram descriptor helpers for tests that need an unbound fd (which
+// the internal/dgram UDP wrap does not expose — it binds on create).
+export const dgramInternals = {
+  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
+  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(

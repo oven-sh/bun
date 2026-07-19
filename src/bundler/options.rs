@@ -900,7 +900,7 @@ pub fn defines_from_transform_options(
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
-) -> Result<Box<defines::Define>, bun_core::Error> {
+) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
         None => (&[], &[]),
@@ -1655,7 +1655,7 @@ impl<'a> BundleOptions<'a> {
         &mut self,
         arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
         // caller into an aliased-`&mut` UB
         // raw-pointer dance under Stacked Borrows. Dropped the param and read
@@ -1719,7 +1719,7 @@ impl<'a> BundleOptions<'a> {
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
-    ) -> Result<BundleOptions<'a>, bun_core::Error> {
+    ) -> Result<BundleOptions<'a>, crate::Error> {
         use core::sync::atomic::Ordering;
 
         // Keep `transform` behind an `Arc` so stashing it in `transform_options`
@@ -1982,7 +1982,7 @@ impl<'a> BundleOptions<'a> {
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_paths::PathBuffer::uninit();
-            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
+            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
         }
@@ -2050,7 +2050,7 @@ pub mod bundle_options_defaults {
     }
 }
 
-pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
+pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
     // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(Dir::from_fd(d)),
@@ -2065,7 +2065,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
             // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
             let z = bun_core::ZStr::from_buf(&buf.0[..], len);
             if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
-                let err: bun_core::Error = err.into();
+                let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
                     bstr::BStr::new(output_dir),
@@ -2121,7 +2121,7 @@ impl TransformOptions {
     pub fn init_uncached(
         entry_point_name: &'static [u8],
         code: &[u8],
-    ) -> Result<TransformOptions, bun_core::Error> {
+    ) -> Result<TransformOptions, crate::Error> {
         debug_assert!(!entry_point_name.is_empty());
 
         let entry_point = EntryPointFile {
@@ -2194,7 +2194,7 @@ impl TransformResult {
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
         log: &mut bun_ast::Log,
-    ) -> Result<TransformResult, bun_core::Error> {
+    ) -> Result<TransformResult, crate::Error> {
         let mut errors: Vec<bun_ast::Msg> = Vec::with_capacity(log.errors as usize);
         let mut warnings: Vec<bun_ast::Msg> = Vec::with_capacity(log.warnings as usize);
         for msg in log.msgs.iter() {
@@ -2395,7 +2395,7 @@ impl EntryPoint {
         &self,
         toplevel_path: &[u8],
         kind: EntryPointKind,
-    ) -> Result<Option<api::FrameworkEntryPoint>, bun_core::Error> {
+    ) -> Result<Option<api::FrameworkEntryPoint>, crate::Error> {
         if self.kind == EntryPointKind::Disabled {
             return Ok(None);
         }
@@ -2407,7 +2407,7 @@ impl EntryPoint {
         }))
     }
 
-    fn normalized_path(&self, toplevel_path: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
+    fn normalized_path(&self, toplevel_path: &[u8]) -> Result<Box<[u8]>, crate::Error> {
         debug_assert!(bun_paths::is_absolute(&self.path));
         let mut str: &[u8] = &self.path;
         if let Some(top) = strings::index_of(str, toplevel_path) {
@@ -2433,7 +2433,7 @@ impl EntryPoint {
         &mut self,
         framework_entry_point: api::FrameworkEntryPoint,
         kind: EntryPointKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.path = framework_entry_point.path;
         self.kind = kind;
         let _ = self.env.set_from_loaded(framework_entry_point.env);
@@ -2444,7 +2444,7 @@ impl EntryPoint {
         &mut self,
         framework_entry_point: api::FrameworkEntryPointMessage,
         kind: EntryPointKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.path = framework_entry_point.path.unwrap_or_default();
         self.kind = kind;
 

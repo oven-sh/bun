@@ -3,7 +3,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::mem::{align_of, size_of};
 
-use bun_core::Error;
+use crate::Error;
 use bun_io::Write as _;
 // `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
 // `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
@@ -140,7 +140,7 @@ impl PatchedDepExternal {
         dep.set_patchfile_hash(match self.patchfile_hash_is_null {
             0 => Some(self.patchfile_hash),
             1 => None,
-            _ => return Err(bun_core::err!("InvalidLockfile")),
+            _ => return Err(crate::Error::InvalidLockfile),
         });
         Ok(dep)
     }
@@ -370,19 +370,19 @@ pub(crate) fn load(
     let header_buf = &header_buf_[..n];
 
     if header_buf != HEADER_BYTES {
-        return Err(bun_core::err!("InvalidLockfile"));
+        return Err(crate::Error::InvalidLockfile);
     }
 
     let mut migrate_from_v2 = false;
     let format = stream.read_int_le::<u32>()?;
     if format > FormatVersion::current().0 {
-        return Err(bun_core::err!("Unexpected lockfile version"));
+        return Err(crate::Error::UnexpectedLockfileVersion);
     }
 
     if format < FormatVersion::current().0 {
         // we only allow migrating from v2 to v3 or above
         if format != FormatVersion::V2.0 {
-            return Err(bun_core::err!("Outdated lockfile version"));
+            return Err(crate::Error::OutdatedLockfileVersion);
         }
 
         migrate_from_v2 = true;
@@ -395,7 +395,7 @@ pub(crate) fn load(
 
     let total_buffer_size = stream.read_int_le::<u64>()?;
     if total_buffer_size > stream.buffer.len() as u64 {
-        return Err(bun_core::err!("Lockfile is missing data"));
+        return Err(crate::Error::LockfileIsMissingData);
     }
 
     let packages_load_result =
@@ -412,7 +412,7 @@ pub(crate) fn load(
         let len = lockfile.packages.len();
         for meta in lockfile.packages.items_meta() {
             if meta.id as usize >= len {
-                return Err(bun_core::err!("InvalidLockfile"));
+                return Err(crate::Error::InvalidLockfile);
             }
         }
     }
@@ -422,9 +422,7 @@ pub(crate) fn load(
 
     lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
     if stream.read_int_le::<u64>()? != 0 {
-        return Err(bun_core::err!(
-            "Lockfile is malformed (expected 0 at the end)"
-        ));
+        return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
     }
 
     let has_workspace_name_hashes = false;
@@ -464,7 +462,7 @@ pub(crate) fn load(
                     // `ensure_total_capacity` + slice copy below.
 
                     if workspace_package_name_hashes.len() != workspace_versions_list.len() {
-                        return Err(bun_core::err!("InvalidLockfile"));
+                        return Err(crate::Error::InvalidLockfile);
                     }
 
                     lockfile
@@ -493,7 +491,7 @@ pub(crate) fn load(
                     let workspace_paths_strings: Vec<SemverString> = buffers::read_array(stream)?;
 
                     if workspace_paths_hashes.len() != workspace_paths_strings.len() {
-                        return Err(bun_core::err!("InvalidLockfile"));
+                        return Err(crate::Error::InvalidLockfile);
                     }
 
                     lockfile
@@ -733,7 +731,7 @@ pub(crate) fn load(
             if next_num == HAS_CONFIG_VERSION_TAG {
                 let Some(config_version) = ConfigVersion::from_int(stream.read_int_le::<u64>()?)
                 else {
-                    return Err(bun_core::err!("InvalidLockfile"));
+                    return Err(crate::Error::InvalidLockfile);
                 };
                 lockfile.saved_config_version = Some(config_version);
             }
@@ -769,7 +767,7 @@ pub(crate) fn load(
                             bstr::BStr::new(resolved)
                         ),
                     );
-                    return Err(bun_core::err!("InvalidLockfile"));
+                    return Err(crate::Error::InvalidLockfile);
                 }
             }
 

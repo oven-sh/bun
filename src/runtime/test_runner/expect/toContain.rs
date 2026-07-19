@@ -5,6 +5,7 @@ use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -114,33 +115,31 @@ impl Expect {
         let mut formatter2 = super::make_formatter(global);
         if not {
             let signature = get_signature("toContain", "<green>expected<r>", true);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!(
-                        "\n\n",
-                        "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    ),
-                    expected.to_fmt(&mut formatter),
-                    value.to_fmt(&mut formatter2),
+                concat!(
+                    "\n\n",
+                    "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
                 ),
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             );
         }
 
         let signature = get_signature("toContain", "<green>expected<r>", false);
-        this.throw(
+        throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected to contain: <green>{}<r>\n",
-                    "Received: <red>{}<r>\n",
-                ),
-                expected.to_fmt(&mut formatter),
-                value.to_fmt(&mut formatter2),
+            concat!(
+                "\n\n",
+                "Expected to contain: <green>{}<r>\n",
+                "Received: <red>{}<r>\n",
             ),
+            expected.to_fmt(&mut formatter),
+            value.to_fmt(&mut formatter2),
         )
     }
 }

@@ -105,6 +105,36 @@ describe("zlib", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
+
+  describe("libdeflate level validation", () => {
+    const data = Buffer.alloc(64, "a");
+    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
+    // surface as an invalid-argument error, not "Out of memory".
+    for (const fn of [gzipSync, deflateSync]) {
+      it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
+        for (const level of [-2, -1, 13, 100]) {
+          let err;
+          try {
+            fn(data, { library: "libdeflate", level });
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeDefined();
+          expect(err.message).not.toContain("memory");
+          expect(err.message).toContain("Compression level must be between 0 and 12");
+        }
+      });
+
+      it(`${fn.name}: in-range levels 0..12 succeed and round-trip`, () => {
+        const decompress = fn === gzipSync ? gunzipSync : inflateSync;
+        for (const level of [0, 1, 6, 9, 12]) {
+          const out = fn(data, { library: "libdeflate", level });
+          expect(out.length).toBeGreaterThan(0);
+          expect(Buffer.from(decompress(out, { library: "libdeflate" }))).toEqual(data);
+        }
+      });
+    }
+  });
 });
 
 function* window(buffer, size, advance = size) {
@@ -726,5 +756,13 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+describe("crc32", () => {
+  it("rejects String objects", () => {
+    expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
+    expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
+    expect(zlib.crc32("abc")).toBe(891568578);
   });
 });

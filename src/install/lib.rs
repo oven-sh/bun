@@ -64,6 +64,9 @@ use core::fmt;
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub mod npm;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -74,13 +77,26 @@ pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod dependency;
-#[path = "ExternalSlice.rs"]
-pub mod external_slice;
 pub mod hosted_git_info;
 pub mod integrity;
 pub mod padding_checker;
 pub mod postinstall_optimizer;
-pub mod versioned_url;
+
+/// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
+/// so `bun_resolver` can name them without a `bun_install` dep. Re-exported
+/// here under the original `crate::external_slice` / `crate::versioned_url`
+/// paths.
+pub mod external_slice {
+    pub use bun_install_types::resolver_hooks::{
+        ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap,
+        VersionSlice,
+    };
+}
+pub mod versioned_url {
+    pub use bun_install_types::resolver_hooks::{
+        OldV2VersionedURL, VersionedURL, VersionedURLType,
+    };
+}
 
 pub mod extract_tarball;
 #[path = "lockfile.rs"]
@@ -565,7 +581,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -621,7 +637,7 @@ impl RunCommand {
                             // No usable target — propagate the OS error when we
                             // have one, otherwise leave PATH unmodified.
                             return match result {
-                                Err(e) => Err(e),
+                                Err(e) => Err(e.into()),
                                 Ok(_) => Ok(()),
                             };
                         }
@@ -858,7 +874,7 @@ impl RunCommand {
         env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut (), bun_core::Error> {
+    ) -> Result<*mut (), crate::Error> {
         use bun_core::Global;
 
         let args = ctx.args.clone();
@@ -1165,7 +1181,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PackageManifestError {
+pub enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,
@@ -1176,5 +1192,3 @@ pub(crate) enum PackageManifestError {
 }
 
 bun_core::impl_tag_error!(PackageManifestError);
-
-bun_core::named_error_set!(PackageManifestError);

@@ -1143,13 +1143,7 @@ pub fn normalize_string_generic_tz<
         buf[buf_i] = T::from_u8(0);
     }
 
-    let result = &mut buf[0..buf_i];
-
-    if cfg!(debug_assertions) && is_windows {
-        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit(b"\\:\\")));
-    }
-
-    result
+    &mut buf[0..buf_i]
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
@@ -2213,10 +2207,7 @@ impl PosixToWinNormalizer {
     }
 
     #[inline]
-    pub fn resolve_cwd<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
 
@@ -2225,7 +2216,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_z<'a>(
         &'a mut self,
         maybe_posix_path: &'a [u8],
-    ) -> Result<&'a mut ZStr, bun_core::Error> {
+    ) -> crate::Result<&'a mut ZStr> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
     // On posix `_raw_bytes` is `()` so `resolve_cwd_z` is windows-only.
@@ -2320,7 +2311,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf<'a>(
         buf: &'a mut PosixToWinBuf,
         maybe_posix_path: &'a [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    ) -> crate::Result<&'a [u8]> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2344,7 +2335,7 @@ impl PosixToWinNormalizer {
                     // combination can't exist on NT anyway, so error out
                     // instead of writing past a buffer.
                     if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2368,7 +2359,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf_z<'a>(
         buf: &'a mut PathBuffer,
         maybe_posix_path: &[u8],
-    ) -> Result<&'a mut ZStr, bun_core::Error> {
+    ) -> crate::Result<&'a mut ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2387,7 +2378,7 @@ impl PosixToWinNormalizer {
                     // can't exist on NT anyway, so error out instead of
                     // writing past it.
                     if sr_len + maybe_posix_path.len() > buf.len() {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2410,7 +2401,7 @@ impl PosixToWinNormalizer {
         }
 
         if maybe_posix_path.len() + 1 > buf.len() {
-            return Err(bun_core::err!("NameTooLong"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;

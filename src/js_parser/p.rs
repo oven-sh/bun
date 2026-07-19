@@ -53,7 +53,7 @@ pub(crate) trait ParserLike<'a> {
     fn bump(&self) -> &'a Bump;
     fn source(&self) -> &'a bun_ast::Source;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
-    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
+    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, crate::Error>;
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
@@ -79,7 +79,7 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
         P::new_expr(self, t, loc)
     }
     #[inline]
-    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error> {
+    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, crate::Error> {
         P::store_name_in_ref(self, name)
     }
 }
@@ -911,7 +911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
-    ) -> Result<&'b [u8], bun_core::Error> {
+    ) -> Result<&'b [u8], crate::Error> {
         if let Some(tmpl) = arg.data.e_template() {
             if tmpl.tag.is_some() {
                 return Ok(b""); // tagged template — opaque
@@ -941,7 +941,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         loc: bun_ast::Loc,
         kind: &'static str,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if !self.options.bundle
             || matches!(
                 self.options.allow_unresolved,
@@ -1702,7 +1702,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         alias: &'a [u8],
         r#ref: Ref,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if let Some(name) = self.named_exports.get(alias) {
             // Duplicate exports are an error
             let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
@@ -1998,7 +1998,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(!self.response_ref.is_empty());
         debug_assert!(!self.bun_app_namespace_ref.is_empty());
         let arena = self.arena;
@@ -2093,7 +2093,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
         is_internal: bool,
-    ) -> Result<(), bun_core::Error>
+    ) -> Result<(), crate::Error>
     where
         I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
         Sym: GenerateImportSymbols,
@@ -2231,7 +2231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         import_path: &'a [u8],
         clauses: &[ReactRefreshImportClause<'a>],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if self.options.features.hot_module_reloading {
             self.generate_react_refresh_import_hmr::<true>(parts, import_path, clauses)
         } else {
@@ -2244,7 +2244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         import_path: &'a [u8],
         clauses: &[ReactRefreshImportClause<'a>],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // If `hot_module_reloading`, we are going to generate a require call:
         //
         //     const { $RefreshSig$, $RefreshReg$ } = require("react-refresh/runtime")`
@@ -3017,7 +3017,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Substitution::Failure(expr)
     }
 
-    pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
+    pub fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
         {
             // The wrapper stores only the arena and a non-capturing
             // fn-pointer trampoline; the `*mut P` context is supplied *at call
@@ -3519,7 +3519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::scope::Kind,
         loc: bun_ast::Loc,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if self.reported_stack_overflow.get() {
             while let Some((head, rest)) = self.scope_order_to_visit.split_first() {
                 if head.loc.start == loc.start && head.scope_ref().kind == kind {
@@ -3564,7 +3564,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         KIND: js_ast::scope::Kind,
         loc: bun_ast::Loc,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> Result<usize, crate::Error> {
         let mut parent: js_ast::StoreRef<Scope> = self.current_scope;
         let arena = self.arena;
         // Consume the arena `&mut Scope` directly into a `NonNull` so the
@@ -3854,7 +3854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) -> Result<(), bun_core::Error> {
+    pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) -> Result<(), crate::Error> {
         self.log().add_error(
             Some(self.source),
             loc,
@@ -3926,7 +3926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         path: ParsedPath<'a>,
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
-    ) -> Result<Stmt, bun_core::Error> {
+    ) -> Result<Stmt, crate::Error> {
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
@@ -4300,7 +4300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         path: &ParsedPath,
         stmt: &mut S::Import,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if let Some(loader) = path.loader {
             self.import_records.items_mut()[stmt.import_record_index as usize].loader =
                 Some(loader);
@@ -4343,7 +4343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn create_default_name(
         &mut self,
         loc: bun_ast::Loc,
-    ) -> Result<js_ast::LocRef, bun_core::Error> {
+    ) -> Result<js_ast::LocRef, crate::Error> {
         let identifier: &'a [u8] = {
             let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())
@@ -4363,7 +4363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::symbol::Kind,
         identifier: &'a [u8],
-    ) -> Result<Ref, bun_core::Error> {
+    ) -> Result<Ref, crate::Error> {
         let inner_index = self.symbols.len() as js_ast::base::RefInt; // @truncate
         self.symbols.push(Symbol {
             kind,
@@ -4459,7 +4459,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         exported_members: &mut js_ast::TSNamespaceMemberMap,
         binding: Binding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(id) => {
@@ -4497,7 +4497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         decls: &[G::Decl],
         loop_type: &'static str,
         is_var: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match decls.len() {
             0 => {}
             1 => {
@@ -4533,7 +4533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         KIND: js_ast::s::Kind,
         decls: &[G::Decl],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let what = match KIND {
             js_ast::s::Kind::KAwaitUsing | js_ast::s::Kind::KUsing => "declaration",
             js_ast::s::Kind::KConst => "constant",
@@ -4647,7 +4647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         feature: StrictModeFeature,
         r: bun_ast::Range,
         detail: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let can_be_transformed = feature == StrictModeFeature::ForInVarInit;
         let text: &'a [u8] = match feature {
             StrictModeFeature::WithStatement => b"With statements",
@@ -4760,7 +4760,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
-    ) -> Result<Ref, bun_core::Error> {
+    ) -> Result<Ref, crate::Error> {
         let name_hash = Scope::get_member_hash(name);
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared
         // borrow only (`get_member_with_hash` takes `&self`), so the later
@@ -4854,7 +4854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
-    ) -> Result<Ref, bun_core::Error> {
+    ) -> Result<Ref, crate::Error> {
         let ref_ = if self.will_use_renamer() {
             self.new_symbol(kind, name)?
         } else {
@@ -4870,7 +4870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: js_ast::symbol::Kind,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<Ref, bun_core::Error> {
+    ) -> Result<Ref, crate::Error> {
         // p.checkForNonBMPCodePoint(loc, name)
 
         // Forbid declaring a symbol with a reserved word in strict mode
@@ -4989,7 +4989,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: js_ast::symbol::Kind,
         binding: &mut BindingNodeIndex,
         opts: &ParseStatementOptions,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match &mut binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
@@ -5017,7 +5017,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error> {
+    pub fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, crate::Error> {
         if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
             if let Some(uses) = &mut self.parse_pass_symbol_uses {
                 if let Some(res) = uses.get_mut(name) {
@@ -5218,7 +5218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         parts: &[&'a [u8]],
-    ) -> Result<Expr, bun_core::Error> {
+    ) -> Result<Expr, crate::Error> {
         let result = self.find_symbol(loc, parts[0])?;
 
         let value = self.handle_identifier(
@@ -5287,7 +5287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Reuse the memory if possible
         // This is reusable if the last part turned out to be dead
         self.symbol_uses.clear_retaining_capacity();
@@ -6355,7 +6355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         body: Stmt,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if let js_ast::StmtData::SBlock(block) = &body.data {
             // `S::Block.stmts` is `StoreSlice<Stmt>` arena-owned for parser 'a; no aliasing &mut.
             let block_stmts: &[Stmt] = block.stmts.slice();
@@ -6422,7 +6422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg_ref: Ref,
         stmts_inside_closure: &'a mut [Stmt],
         all_values_are_pure: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let mut name_ref = original_name_ref;
 
         // Follow the link chain in case symbols were merged
@@ -6452,7 +6452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }]);
             let _ = arena;
 
-            if self.enclosing_namespace_arg_ref.is_none() {
+            if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
                     S::Local {
@@ -7027,14 +7027,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(mut cf) = constructor_function {
                         // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
-                            old_stmts.len() + instance_members.len(),
-                            self.arena,
-                        );
-                        constructor_stmts.extend_from_slice(old_stmts);
                         // statements coming from class body inserted after super call or beginning of constructor.
                         let mut super_index: Option<usize> = None;
-                        for (index, item) in constructor_stmts.iter().enumerate() {
+                        for (index, item) in old_stmts.iter().enumerate() {
                             if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
                             {
                                 continue;
@@ -7044,10 +7039,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let i = super_index.map(|j| j + 1).unwrap_or(0);
-                        // bumpalo Vec lacks insert_slice; emulate via per-item insert.
-                        for (off, m) in instance_members.iter().enumerate() {
-                            constructor_stmts.insert(i + off, *m);
-                        }
+                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
+                            old_stmts.len() + instance_members.len(),
+                            self.arena,
+                        );
+                        constructor_stmts.extend_from_slice(&old_stmts[..i]);
+                        constructor_stmts.extend_from_slice(&instance_members);
+                        constructor_stmts.extend_from_slice(&old_stmts[i..]);
 
                         cf.func.body.stmts =
                             bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
@@ -7365,7 +7363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn serialize_metadata(
         &mut self,
         ts_metadata: bun_ast::ts::Metadata,
-    ) -> Result<Expr, bun_core::Error> {
+    ) -> Result<Expr, crate::Error> {
         use bun_ast::ts::Metadata as M;
         // Local: `find_symbol` for a builtin name as an E::Identifier expr.
         macro_rules! ident {
@@ -7665,7 +7663,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn extract_decls_for_binding(
         binding: Binding,
         decls: &mut ListManaged<'a, G::Decl>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(_) => {
@@ -7893,7 +7891,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         original_name: &'a [u8],
         r#ref: Ref,
         export_kind: ReactRefreshExportKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(self.current_scope == self.module_scope);
 
@@ -7909,7 +7907,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         original_name: &'a [u8],
         r#ref: Ref,
         export_kind: ReactRefreshExportKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(self.current_scope == self.module_scope);
 
@@ -8242,7 +8240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
-    ) -> Result<Box<js_ast::Ast<'a>>, bun_core::Error> {
+    ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
 
@@ -8817,7 +8815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn compute_ts_enums_map(
         &self,
         _arena: &'a Bump,
-    ) -> Result<bun_ast::ast_result::TsEnumsMap, bun_core::Error> {
+    ) -> Result<bun_ast::ast_result::TsEnumsMap, crate::Error> {
         // When hot module reloading is enabled, we disable enum inlining
         // to avoid making the HMR graph more complicated.
         if self.options.features.hot_module_reloading {
@@ -8949,7 +8947,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
         // transpiler showed
@@ -9221,7 +9219,7 @@ pub struct LowerUsingDeclarationsContext {
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, const S_: bool>(
         p: &mut P<'a, T, S_>,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
             stack_ref: p.generate_temp_ref(Some(b"__stack")),

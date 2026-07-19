@@ -288,6 +288,10 @@ pub struct NewSocket<const SSL: bool> {
     // a uws ext slot (FFI) and is intrusively refcounted — PORTING.md mandates
     // IntrusiveRc, never Rc, when *T crosses FFI.
     pub twin: JsCell<Option<IntrusiveRc<Self>>>,
+    /// Owned copy of the handshake verify error, so `getAuthorizationError()`
+    /// keeps its verdict after detach (the live error borrows the `SSL`, and
+    /// EPROTO reasons are stack-copied in uSockets).
+    pub verify_error: JsCell<Option<StoredVerifyError>>,
 }
 
 /// Associated `Socket` handler type.
@@ -545,7 +549,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Connect to `self.connection` (must be `Some`). Reads the field directly
     /// rather than taking it by-ref so the single caller in `connect_finish`
     /// doesn't need a disjoint borrow.
-    pub fn do_connect(&self) -> Result<(), bun_core::Error> {
+    pub fn do_connect(&self) -> crate::Result<()> {
         // Keep `self` alive across the re-entrant connect path.
         // SAFETY: `self` is live for this call and outlives the sockets below.
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
@@ -609,7 +613,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         core::mem::size_of::<*mut c_void>() as c_int,
                     ) {
                         uws::ConnectResult::Failed => {
-                            return Err(bun_core::err!("FailedToOpenSocket"));
+                            return Err(crate::Error::FailedToOpenSocket);
                         }
                         uws::ConnectResult::Socket(s) => {
                             *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
@@ -631,7 +635,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     core::mem::size_of::<*mut c_void>() as c_int,
                 );
                 if s.is_null() {
-                    return Err(bun_core::err!("FailedToOpenSocket"));
+                    return Err(crate::Error::FailedToOpenSocket);
                 }
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 self.socket.set(SocketHandler::<SSL>::from(s));
@@ -648,7 +652,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     false,
                 );
                 if s.is_null() {
-                    return Err(bun_core::err!("ConnectionFailed"));
+                    return Err(crate::Error::ConnectionFailed);
                 }
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 let sock = SocketHandler::<SSL>::from(s);
@@ -728,7 +732,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             false
         };
 
-        let initial_delay: u32 = if args.len > 1 {
+        // `initialDelay` is documented in milliseconds; TCP_KEEPIDLE is seconds.
+        let initial_delay_ms: u32 = if args.len > 1 {
             u32::try_from(global.validate_integer_range(
                 args.ptr[1],
                 0i32,
@@ -742,6 +747,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             0
         };
+        let initial_delay = initial_delay_ms / 1000;
         log!("setKeepAlive({}, {})", enabled, initial_delay);
 
         Ok(JSValue::from(
@@ -901,15 +907,45 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
         let _keepalive = this.ref_guard();
-        // NOTE: the drain dispatch deliberately does not depend on whether the
-        // flush hit a fatal send error. Skipping it on fatal (tried in
-        // f0325bddf2) made Windows servers reset FIN-terminated responses:
-        // write_check_error's fatal detection interacts with Windows
-        // would-block semantics, and a skipped drain stalls the response
-        // teardown into an RST. Until that detection is verified on Windows,
-        // keep the legacy contract (the close path still fails the pending
-        // write callback when the socket is torn down).
-        let _ = this.internal_flush();
+        // NOTE (Windows): the drain dispatch deliberately does not depend on
+        // whether the flush hit a fatal send error. Skipping it on fatal
+        // (tried in f0325bddf2) made Windows servers reset FIN-terminated
+        // responses: write_check_error's fatal detection interacts with
+        // Windows would-block semantics, and a skipped drain stalls the
+        // response teardown into an RST. Until that detection is verified on
+        // Windows, keep the legacy contract there (the close path still fails
+        // the pending write callback when the socket is torn down).
+        let fatal_send_errno = this.internal_flush();
+        // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
+        // only reports an errno that is either known peer-gone or persisted
+        // across its bounded unclassified-errno retry window. internal_flush
+        // already dropped the undeliverable buffer and the writable poll is no
+        // longer re-armed, so this dispatch is the last place the errno is
+        // visible - swallowing it here acknowledged the bytes to JS, sent a
+        // clean FIN, and the peer saw a silently truncated stream. Deliver it
+        // like a failed write (syscall "write", same shape as net.ts
+        // failWrite) and close the socket so 'error' is followed by 'close'.
+        #[cfg(not(windows))]
+        if fatal_send_errno != 0 {
+            let global = handlers.global_object;
+            let scope = handlers.enter();
+            let this_value = this.get_this_value(&global);
+            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
+                &global,
+            );
+            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            // The error handler can destroy the socket itself; only close a
+            // still-attached socket. Close without detaching so on_close runs
+            // and JS observes 'close' (mirrors h2's dead-transport close).
+            if !this.socket.get().is_detached() {
+                this.socket.get().close(uws::CloseCode::Normal);
+            }
+            this.exit_scope(scope);
+            return;
+        }
+        #[cfg(windows)]
+        let _ = fatal_send_errno;
         log!(
             "onWritable buffered_data_for_node_net {}",
             this.buffered_data_for_node_net.get().len()
@@ -1327,6 +1363,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// TLS role: `upgradeTLS({ isServer: true })` sockets act as the server
+    /// even though their `Handlers` mode is `Client`.
+    pub fn acts_as_tls_server(&self) -> bool {
+        self.is_server() || self.flags.get().contains(Flags::TLS_SERVER_ROLE)
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `resolve_promise`/`callback.call` re-enter JS which can mutate this
     /// socket via `m_ptr`.
@@ -1616,6 +1658,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
+        // Keep the socket alive across the callbacks below (which re-enter JS)
+        // and across `reject_unauthorized_connection`, whose close may
+        // otherwise drop the last reference.
+        let _keepalive = this.ref_guard();
         let handlers = this.get_handlers();
         log!(
             "onHandshake {} ({})",
@@ -1629,8 +1675,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
+        let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
 
-        if SSL && authorized && !handlers.mode.is_server() {
+        if SSL && authorized && !this.acts_as_tls_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
                 let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
                     &server_name[..]
@@ -1649,19 +1696,64 @@ impl<const SSL: bool> NewSocket<SSL> {
                 {
                     authorized = false;
                     hostname_mismatch = true;
+                    let mut message =
+                        String::from("Hostname/IP does not match certificate's altnames: ");
+                    // Infallible: the writer is a `String`.
+                    let _ = bun_boringssl::write_server_identity_mismatch_reason(
+                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                        hostname,
+                        &mut message,
+                    );
+                    hostname_mismatch_message = Some(message.into_bytes().into_boxed_slice());
                 }
             }
         }
 
-        this.update_flags(|f| {
-            f.set(Flags::AUTHORIZED, authorized);
-            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+        let verify_failed = SSL && ssl_error.error_no != 0;
+
+        this.verify_error.set(if verify_failed {
+            Some(StoredVerifyError {
+                code: Box::from(ssl_error.code_bytes()),
+                reason: Box::from(ssl_error.reason_bytes()),
+            })
+        } else {
+            hostname_mismatch_message.map(|message| StoredVerifyError {
+                code: Box::from(&b"ERR_TLS_CERT_ALTNAME_INVALID"[..]),
+                reason: message,
+            })
         });
+
+        // node:tls sockets defer the hostname verdict: their JS layer applies
+        // `checkServerIdentity` (default or user override) itself.
+        let flags = this.flags.get();
+        let reject_unauthorized = success == 1
+            && flags.contains(Flags::REJECT_UNAUTHORIZED)
+            && (verify_failed
+                || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
+
+        // `REJECTED` is set before the callback runs so no write path can
+        // deliver application data to a peer that is about to be rejected —
+        // including the raw twin of an `upgradeTLS` pair, which shares the fd.
+        this.update_flags(|f| {
+            f.set(Flags::AUTHORIZED, authorized && !verify_failed);
+            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+            f.set(Flags::REJECTED, reject_unauthorized);
+        });
+        if reject_unauthorized {
+            if let Some(twin) = this.twin.get().as_ref() {
+                twin.update_flags(|f| f.insert(Flags::REJECTED));
+            }
+        }
 
         let mut callback = handlers.on_handshake();
         let mut is_open = false;
 
         if handlers.vm.is_shutting_down() {
+            // `on_close` skips its JS dispatch during shutdown, so the native
+            // close is still safe here.
+            if reject_unauthorized {
+                this.reject_unauthorized_connection();
+            }
             return Ok(());
         }
 
@@ -1669,6 +1761,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             callback = handlers.on_open();
             if callback.is_empty() {
+                if reject_unauthorized {
+                    this.reject_unauthorized_connection();
+                }
                 return Ok(());
             }
             is_open = true;
@@ -1700,7 +1795,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             // call handhsake callback with authorized and authorization error if has one
             let authorization_error: JSValue = if ssl_error.error_no == 0 {
-                JSValue::NULL
+                // node:tls (DEFERS) builds its own identity error in JS.
+                if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
+                    this.stored_verify_error_to_js(&global)
+                        .unwrap_or(JSValue::NULL)
+                } else {
+                    JSValue::NULL
+                }
             } else {
                 match super::uws_jsc::verify_error_to_js(&ssl_error, &global) {
                     Ok(v) => v,
@@ -1708,6 +1809,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // `Scope` has no Drop — balance event_loop().enter() and
                         // active_connections before propagating.
                         this.exit_scope(scope);
+                        if reject_unauthorized {
+                            // Take the pending exception before `on_close` re-enters JS.
+                            let pending = global.take_exception(e);
+                            this.reject_unauthorized_connection();
+                            return Err(global.throw_value(pending));
+                        }
                         return Err(e);
                     }
                 }
@@ -1727,7 +1834,35 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
         this.exit_scope(scope);
+        if reject_unauthorized {
+            this.reject_unauthorized_connection();
+        }
         Ok(())
+    }
+
+    /// Stamps the resolved client `rejectUnauthorized` policy on a fresh or
+    /// reused (reconnect) wrapper, clearing any previous handshake verdict.
+    pub(crate) fn reset_client_tls_flags(&self, reject_unauthorized: bool) {
+        self.verify_error.set(None);
+        self.update_flags(|f| {
+            f.remove(
+                Flags::HANDSHAKE_COMPLETE
+                    | Flags::AUTHORIZED
+                    | Flags::HOSTNAME_MISMATCH
+                    | Flags::REJECTED,
+            );
+            f.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
+        });
+    }
+
+    /// Callers hold `on_handshake`'s ref guard, which outlives the
+    /// synchronous `on_close` dispatch of this close.
+    fn reject_unauthorized_connection(&self) {
+        let socket = self.socket.get();
+        if socket.is_detached() || socket.is_closed() {
+            return;
+        }
+        self.close_and_detach(uws::CloseCode::FastShutdown);
     }
 
     /// A new resumable TLS session arrived (the peer's NewSessionTicket was
@@ -2067,6 +2202,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
+    fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        self.verify_error.get().as_ref().map(|stored| {
+            let err = SystemError {
+                errno: 0,
+                code: BunString::clone_utf8(&stored.code),
+                message: BunString::clone_utf8(&stored.reason),
+                path: BunString::EMPTY,
+                syscall: BunString::EMPTY,
+                hostname: BunString::EMPTY,
+                fd: c_int::MIN,
+                dest: BunString::EMPTY,
+            };
+            err.to_error_instance(global)
+        })
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn get_authorization_error(
         this: &Self,
@@ -2076,27 +2227,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
 
         if this.socket.get().is_detached() {
-            return Ok(JSValue::NULL);
+            // The verdict must survive the forced close.
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
-            if this.flags.get().contains(Flags::HOSTNAME_MISMATCH) {
-                let mismatch = SystemError {
-                    errno: 0,
-                    code: BunString::clone_utf8(b"HOSTNAME_MISMATCH"),
-                    message: BunString::clone_utf8(b"Hostname mismatch"),
-                    path: BunString::EMPTY,
-                    syscall: BunString::EMPTY,
-                    hostname: BunString::EMPTY,
-                    fd: c_int::MIN,
-                    dest: BunString::EMPTY,
-                };
-                return Ok(mismatch.to_error_instance(global));
-            }
-            return Ok(JSValue::NULL);
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         let code: &[u8] = ssl_error.code_bytes();
@@ -2269,6 +2412,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
         }
+        if SSL && self.flags.get().contains(Flags::REJECTED) {
+            return -1;
+        }
         let res = socket.raw_writev(iov);
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
@@ -2281,12 +2427,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
         }
+        let flags = self.flags.get();
+        if SSL && flags.contains(Flags::REJECTED) {
+            return -1;
+        }
 
         // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
         // route it through the SSL-encrypting us_socket_write, and its fatal
         // signal is never set for TLS sockets anyway.
-        if self.flags.get().contains(Flags::BYPASS_TLS) {
+        if flags.contains(Flags::BYPASS_TLS) {
             let res = self.do_socket_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
             self.bytes_written
@@ -2295,22 +2445,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             return res;
         }
 
-        let (res, fatal) = socket.write_check_error(buffer);
-        if fatal {
-            // The kernel rejected the write outright (EPIPE/ECONNRESET after
-            // the peer vanished): fail the write. Do NOT close the socket from
-            // inside the write call - a synchronous close dispatches the whole
-            // JS teardown ('close' -> http2 session destroy -> ...) underneath
-            // the caller that issued this write, which is how the x64-asan
-            // lane caught a stale read. Returning -1 makes the JS write fail,
-            // and node:net destroys the handle on a clean stack; the read side
-            // surfaces the reset for anyone who is only waiting.
-            //
-            // The undeliverable buffered data (if the input aliases it) is
-            // dropped by the caller: clearing it here would create a `&mut` of
-            // `buffered_data_for_node_net` while `buffer` may still borrow its
-            // heap allocation.
-            return -1;
+        let (res, fatal_errno) = socket.write_check_error(buffer);
+        if fatal_errno != 0 {
+            // Kernel rejected the send (peer gone): return the negative errno so
+            // JS fails the write; never close from under the caller's stack, and
+            // leave the undeliverable buffer to the caller (aliasing).
+            return -fatal_errno;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
@@ -2337,7 +2477,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
-                    if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    if wrote < -1 {
+                        // Fatal send (peer gone): hand JS the negative errno so
+                        // node:net fails the write like Node's onWriteComplete;
+                        // -1 stays the legacy closed/shutdown sentinel.
+                        JSValue::js_number(f64::from(wrote))
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2771,13 +2916,20 @@ impl<const SSL: bool> NewSocket<SSL> {
             && self.buffered_data_for_node_net.get().len() == 0
     }
 
-    /// Returns `false` when a fatal send error dropped the buffered data.
-    /// NOTE: callers currently ignore this (the drain callback is dispatched
-    /// regardless) - skipping the drain on fatal made Windows servers reset
-    /// FIN-terminated responses (see a5e7ba5905). The return value stays so
-    /// the contract can be re-landed once the Windows fatal-write detection
-    /// is verified.
-    fn internal_flush(&self) -> bool {
+    /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
+    /// a fatal send error (buffer dropped, writable not re-armed).
+    /// On POSIX, `on_writable` consumes the errno: it dispatches the error
+    /// handler and closes the socket. On Windows the errno is still ignored
+    /// (the drain callback is dispatched regardless) - skipping the drain on
+    /// fatal made Windows servers reset FIN-terminated responses (see
+    /// a5e7ba5905) - until the Windows fatal-write detection is verified.
+    fn internal_flush(&self) -> i32 {
+        // A TLS socket whose handshake was rejected has no usable transport:
+        // never push the buffered tail at it, and report no error (the
+        // rejection is surfaced by the handshake path, not by the flush).
+        if SSL && self.flags.get().contains(Flags::REJECTED) {
+            return 0;
+        }
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
         // mitigated ASM-verified PROVEN_CACHED stale loads of
@@ -2796,22 +2948,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
             } else {
-                let (res, fatal) = self
+                let (res, fatal_errno) = self
                     .socket
                     .get()
                     .write_check_error(self.buffered_data_for_node_net.get().slice());
-                if fatal {
+                if fatal_errno != 0 {
                     // Same rule as write_maybe_corked: drop the undeliverable
-                    // buffer and stop re-arming the writable retry, but do not
-                    // close from inside the drain dispatch - the peer reset is
-                    // delivered on the read side and tears the socket down on
-                    // a clean stack. Report the failure so callers do not
-                    // dispatch the JS drain callback (the write did NOT
-                    // complete; Node fails the callback instead of succeeding
-                    // it).
+                    // buffer, stop re-arming the writable retry, and report the
+                    // errno so the event-loop caller surfaces it (the data was
+                    // already acknowledged to JS, so only an 'error' can).
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
-                    return false;
+                    return fatal_errno;
                 }
                 res
             };
@@ -2838,7 +2986,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.can_end_after_flush() {
             self.mark_inactive();
         }
-        true
+        0
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3145,7 +3293,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        let args = callframe.arguments_old::<1>();
+        if args.len < 1 {
+            return Err(global.throw(format_args!("Expected 1 arguments")));
+        }
+        Self::upgrade_tls_impl(this, global, args.ptr[0], false)
+    }
 
+    /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
+    /// (`checkServerIdentity`), so its internal entry point sets it; the public
+    /// `upgradeTLS` never does.
+    pub(crate) fn upgrade_tls_impl(
+        this: &Self,
+        global: &JSGlobalObject,
+        opts: JSValue,
+        defers_server_identity: bool,
+    ) -> JsResult<JSValue> {
         if SSL {
             return Ok(JSValue::UNDEFINED);
         }
@@ -3159,11 +3322,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "upgradeTLS requires an established socket"
             )));
         };
-        let args = callframe.arguments_old::<1>();
-        if args.len < 1 {
-            return Err(global.throw(format_args!("Expected 1 arguments")));
-        }
-        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
         }
@@ -3263,7 +3421,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(SSLConfig::default());
+                ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3315,22 +3473,26 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let vm = handlers.vm;
 
-        // The +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx` below.
-        let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
-
         let cfg = ssl_opts.as_ref();
+        let reject_unauthorized =
+            upgrade_reject_policy(vm, cfg, is_server, owned_ctx.as_ref().map(|c| c.as_ptr()));
+        let mut initial_flags = Flags::initial(reject_unauthorized);
+        initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
+        initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(SocketHandler::<true>::DETACHED),
-            owned_ssl_ctx: Cell::new(owned_ctx_taken),
+            // Ownership of the +1 `SSL_CTX` ref transfers here; the
+            // `OwnedSslCtx` guard stays armed until this point.
+            owned_ssl_ctx: Cell::new(owned_ctx.map(|c| c.into_raw())),
             connection: JsCell::new(this.connection.get().clone()),
             local_binding: JsCell::new(None),
             protos: JsCell::new(cfg.and_then(|c| c.protos_bytes().map(Box::<[u8]>::from))),
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3338,6 +3500,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
@@ -3442,6 +3605,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         let raw_ref = raw;
         raw_ref.ref_();
@@ -3775,29 +3939,25 @@ pub enum NativeCallbacks {
 }
 
 impl NativeCallbacks {
+    /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
+    /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
+    /// Copy the parser pointer out first; the callee's `keepalive()` holds it.
     pub fn on_data(&self, data: &[u8]) -> bool {
-        match self {
-            NativeCallbacks::H2(h2) => {
-                // TODO: properly propagate exception upwards
-                // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_read`
-                // takes `&self`.
-                if h2.on_native_read(data).is_err() {
-                    return false;
-                }
-                true
-            }
-            NativeCallbacks::None => false,
-        }
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `on_native_read` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_read(data).is_ok() }
     }
     pub fn on_writable(&self) -> bool {
-        match self {
-            NativeCallbacks::H2(h2) => {
-                // `on_native_writable(&self)` — Deref through `RefPtr`.
-                h2.on_native_writable();
-                true
-            }
-            NativeCallbacks::None => false,
-        }
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_writable() };
+        true
     }
 }
 
@@ -3808,6 +3968,11 @@ impl NativeCallbacks {
 enum WriteResult {
     Fail,
     Success { wrote: i32, total: usize },
+}
+
+pub struct StoredVerifyError {
+    pub code: Box<[u8]>,
+    pub reason: Box<[u8]>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3831,8 +3996,53 @@ bitflags::bitflags! {
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
+        /// The peer failed verification under an enforcing policy: the socket
+        /// refuses writes and is closed right after the handshake callback.
+        const REJECTED             = 1 << 10;
         const HOSTNAME_MISMATCH    = 1 << 11;
+        const REJECT_UNAUTHORIZED  = 1 << 12;
+        /// Set only by the node:net / node:tls socket constructors: their JS
+        /// layer owns server-identity policy (`checkServerIdentity`), so a
+        /// hostname mismatch alone is reported but never enforced natively.
+        const DEFERS_SERVER_IDENTITY = 1 << 13;
+        /// `upgradeTLS({ isServer: true })`: the socket acts as the TLS server
+        /// even though its `Handlers` mode is `Client` (no listener), so the
+        /// client-only server-identity check must not run against its peer.
+        const TLS_SERVER_ROLE      = 1 << 14;
     }
+}
+
+impl Flags {
+    fn initial(reject_unauthorized: bool) -> Flags {
+        let mut flags = Flags::default();
+        flags.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
+        flags
+    }
+}
+
+/// Reject policy for an `upgradeTLS`/duplex socket: a parsed config wins.
+fn upgrade_reject_policy(
+    vm: &VirtualMachine,
+    cfg: Option<&SSLConfig>,
+    is_server: bool,
+    ctx: Option<*mut SSL_CTX>,
+) -> bool {
+    if cfg.is_none() && is_server {
+        server_ctx_rejects_unauthorized(ctx)
+    } else {
+        crate::socket::resolve_reject_unauthorized(vm, cfg, is_server)
+    }
+}
+
+/// A bare server-side `secureContext` carries no parsed config, so the policy
+/// comes from the ctx itself: `us_ssl_ctx_from_options` sets
+/// `FAIL_IF_NO_PEER_CERT` iff the context was created with `rejectUnauthorized`.
+fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+    let Some(ctx) = ctx else { return false };
+    const MODE: c_int =
+        boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
 }
 
 impl Default for Flags {
@@ -3983,6 +4193,12 @@ impl DuplexUpgradeContext {
                 // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
+                //
+                // Neuter the JS listener thunks now, while the wrapper is still
+                // strongly held, so the later `StartTLS` → `deinit` → `Drop`
+                // teardown (after `handle_connect_error` downgrades it) is a
+                // no-op on already-cleared shadows.
+                self.upgrade.teardown();
                 let p = tls.into_this_ptr();
                 let _ =
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
@@ -4043,7 +4259,7 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this) };
                     return;
                 }
-                let started: Result<(), bun_core::Error> = {
+                let started: crate::Result<()> = {
                     // SAFETY: `this` is live; this `&mut` is scoped to the block
                     // and ends before any `Self::deinit` call below.
                     let this_ref = unsafe { &mut *this };
@@ -4063,7 +4279,7 @@ impl DuplexUpgradeContext {
                     }
                 };
                 if let Err(err) = started {
-                    if err == bun_core::err!("OutOfMemory") {
+                    if matches!(err, crate::Error::Alloc(_)) {
                         bun_core::out_of_memory();
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
@@ -4074,6 +4290,12 @@ impl DuplexUpgradeContext {
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
+                        //
+                        // Neuter the JS listener thunks now, while the wrapper
+                        // is still strongly held, so the `deinit` → `Drop`
+                        // teardown below is a no-op on already-cleared shadows.
+                        // SAFETY: `this` is live; `&mut` ends before `deinit`.
+                        unsafe { (*this).upgrade.teardown() };
                         let p = tls.into_this_ptr();
                         let _ = TLSSocket::handle_connect_error(p, errno, 0);
                     }
@@ -4152,6 +4374,24 @@ impl DuplexUpgradeContext {
 // ──────────────────────────────────────────────────────────────────────────
 // Free-standing host functions
 // ──────────────────────────────────────────────────────────────────────────
+
+/// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
+/// public `upgradeTLS`, but hostname policy stays with node's JS layer.
+#[bun_jsc::host_fn]
+pub fn js_upgrade_tls_deferred(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket, opts] = callframe.arguments_as_array::<2>();
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+    }
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
+    }
+    Err(global.throw(format_args!("Expected a socket instance")))
+}
 
 #[bun_jsc::host_fn]
 pub fn js_upgrade_duplex_to_tls(
@@ -4237,9 +4477,9 @@ pub fn js_upgrade_duplex_to_tls(
     // Drop frees ssl_opts on error.
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
-            ssl_opts = SSLConfig::from_js(VirtualMachine::get().as_mut(), global, tls)?;
+            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(SSLConfig::default());
+            ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
@@ -4253,6 +4493,21 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
+    let reject_unauthorized = upgrade_reject_policy(
+        handlers.vm,
+        socket_config,
+        is_server,
+        owned_ctx.as_ref().map(|c| c.as_ptr()),
+    );
+    // Client duplex upgrades come from net.ts, whose JS layer owns
+    // server-identity policy; http2's server upgrade also lands here, where
+    // the deferral is meaningless.
+    let initial_flags = Flags::initial(reject_unauthorized)
+        | if is_server {
+            Flags::empty()
+        } else {
+            Flags::DEFERS_SERVER_IDENTITY
+        };
     let tls = TLSSocket::new(TLSSocket {
         ref_count: bun_ptr::RefCount::init(),
         handlers: JsCell::new(Some(handlers)),
@@ -4266,7 +4521,7 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(Flags::default()),
+        flags: Cell::new(initial_flags),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),
@@ -4274,6 +4529,7 @@ pub fn js_upgrade_duplex_to_tls(
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
+        verify_error: JsCell::new(None),
     });
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);
@@ -4331,6 +4587,7 @@ pub fn js_upgrade_duplex_to_tls(
         });
         ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
             global,
+            tls_js_value,
             duplex,
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
@@ -4685,7 +4942,7 @@ pub mod testing_apis {
                     let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
                     parse_errno_name(&name).ok_or_else(|| {
                         global.throw(format_args!(
-                            "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH)"
+                            "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
                         ))
                     })?
                 }
@@ -4754,6 +5011,7 @@ pub mod testing_apis {
             b"EINVAL" => libc::EINVAL,
             b"ENETUNREACH" => libc::ENETUNREACH,
             b"EHOSTUNREACH" => libc::EHOSTUNREACH,
+            b"EPROTOTYPE" => libc::EPROTOTYPE,
         }
         #[cfg(windows)]
         map! {
@@ -4770,6 +5028,7 @@ pub mod testing_apis {
             b"EINVAL" => 10022,
             b"ENETUNREACH" => 10051,
             b"EHOSTUNREACH" => 10065,
+            b"EPROTOTYPE" => 10041,
         }
         None
     }

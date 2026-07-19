@@ -14,8 +14,8 @@ use bun_collections::VecExt;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
+use crate::Error;
 use bun_core::strings;
-use bun_core::{Error, err};
 
 use bun_ast::LexerLog as _;
 
@@ -69,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: &mut Expr,
     ) -> Result<(), Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
 
         let had_pure_comment_before =
@@ -107,7 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_star {
             if p.lexer.has_newline_before {
                 p.lexer.unexpected()?;
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
             p.lexer.next()?;
         }
@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
             if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments::<false>()?; // isInsideJSXElement
+                let _ = p.skip_type_script_type_arguments::<false, false>()?; // isInsideJSXElement
             }
         }
 
@@ -507,7 +507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
                 p.lexer.unexpected()?;
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             let mut invalid_log = LocList::new_in(p.arena);
@@ -590,7 +590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if type_colon_range.len > 0 {
             p.log()
                 .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // Are these arguments for a call to a function named "async"?
@@ -620,7 +620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if spread_range.len > 0 {
                 p.log()
                     .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             let mut value = Expr::join_all_with_comma(items);
@@ -630,7 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Indicate that we expected an arrow function
         p.lexer.expected(T::TEqualsGreaterThan)?;
-        Err(err!("SyntaxError"))
+        Err(crate::Error::SyntaxError)
     }
 
     pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
@@ -677,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // example:
             // export class {}
             if !is_identifier {
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
@@ -972,7 +972,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         let loc = p.lexer.loc();
 
@@ -1047,7 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.lexer.range(),
                                     b"Unexpected \",\" after rest pattern",
                                 );
-                                return Err(err!("SyntaxError"));
+                                return Err(crate::Error::SyntaxError);
                             }
                         }
 
@@ -1104,7 +1104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.range(),
                                 b"Unexpected \",\" after rest pattern",
                             );
-                            return Err(err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
 
                         if p.lexer.token != T::TComma {
@@ -1541,6 +1541,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(stmts)
     }
 
+    /// One-token lookahead: advance past the current token, evaluate `pred`,
+    /// then unconditionally restore the lexer (including `is_log_disabled`).
+    #[inline]
+    pub(crate) fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let result = matches!(self.lexer.next(), Ok(())) && pred(self);
+        self.lexer.restore(&old_lexer);
+        result
+    }
+
+    #[inline]
+    fn check_for_arrow_after_the_current_token(&mut self) -> bool {
+        self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
+    }
+
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub fn parse_async_prefix_expr(
@@ -1588,36 +1604,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if level.lte(Level::Assign) {
                         // p.markLoweredSyntaxFeature();
 
-                        let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
-                        let arg_loc = p.lexer.loc();
-                        let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
-                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
-                            binding: arg_binding,
-                            ..Default::default()
-                        });
-                        p.lexer.next()?;
+                        // In TypeScript, "async <ident>" not followed by "=>" treats "async" as
+                        // a plain identifier (e.g. "async as T"), matching tsc's two-token
+                        // lookahead in isUnParenthesizedAsyncArrowFunctionWorker (TypeScript#8444).
+                        let is_arrow_fn = !Self::IS_TYPESCRIPT_ENABLED
+                            || p.check_for_arrow_after_the_current_token();
 
-                        let _ = p.push_scope_for_parse_pass(
-                            js_ast::scope::Kind::FunctionArgs,
-                            async_range.loc,
-                        )?;
+                        if is_arrow_fn {
+                            let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
+                            let arg_loc = p.lexer.loc();
+                            let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                            let args: &'a mut [G::Arg] =
+                                p.arena.alloc_slice_fill_with(1, |_| G::Arg {
+                                    binding: arg_binding,
+                                    ..Default::default()
+                                });
+                            p.lexer.next()?;
 
-                        let mut data = FnOrArrowDataParse {
-                            allow_await: AwaitOrYield::AllowExpr,
-                            needs_async_loc: args[0].binding.loc,
-                            ..Default::default()
-                        };
-                        // Pop the scope on the error path too.
-                        let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
-                            Ok(body) => body,
-                            Err(e) => {
-                                p.pop_scope();
-                                return Err(e);
-                            }
-                        };
-                        arrow_body.is_async = true;
-                        p.pop_scope();
-                        return Ok(p.new_expr(arrow_body, async_range.loc));
+                            let _ = p.push_scope_for_parse_pass(
+                                js_ast::scope::Kind::FunctionArgs,
+                                async_range.loc,
+                            )?;
+
+                            let mut data = FnOrArrowDataParse {
+                                allow_await: AwaitOrYield::AllowExpr,
+                                needs_async_loc: args[0].binding.loc,
+                                ..Default::default()
+                            };
+                            // Pop the scope on the error path too.
+                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                                Ok(body) => body,
+                                Err(e) => {
+                                    p.pop_scope();
+                                    return Err(e);
+                                }
+                            };
+                            arrow_body.is_async = true;
+                            p.pop_scope();
+                            return Ok(p.new_expr(arrow_body, async_range.loc));
+                        }
                     }
                 }
 

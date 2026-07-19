@@ -7,7 +7,7 @@ const BUN_VERSION = (process.env.BUN_VERSION || Bun.version || process.versions.
 await Bun.write(join(import.meta.dir, "../package.json"), JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
 
 // copy CLAUDE.md
-let claude = Bun.file(join(import.meta.dir, "../../../src/init/rule.md"));
+let claude = Bun.file(join(import.meta.dir, "../../../src/cli/init/rule.md"));
 if (await claude.exists()) {
   let original = await claude.text();
   const endOfFrontMatter = original.lastIndexOf("---\n");

@@ -114,7 +114,9 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const SERIALIZATION_VERSION: u8 = 3;
+/// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
+///    keeps its window's end across structuredClone/postMessage
+const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -162,10 +164,8 @@ pub trait BlobExt {
         global: &JSGlobalObject,
     );
     fn get_content_type(&self) -> Option<ZigStringSlice>;
-    fn _on_structured_clone_serialize<W: bun_io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error>;
+    fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
+    -> crate::Result<()>;
     fn on_structured_clone_serialize(
         &self,
         _global_this: &JSGlobalObject,
@@ -728,7 +728,7 @@ impl BlobExt for Blob {
     fn _on_structured_clone_serialize<W: bun_io::Write>(
         &self,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
@@ -769,6 +769,10 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
+                // Version 4: a file-backed slice's window end. Written before
+                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
+                // on the wire and the receiver stats it locally, like v3.
+                writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -833,19 +837,14 @@ impl BlobExt for Blob {
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
-            Err(e)
-                if e == bun_core::err!("EndOfStream")
-                    || e == bun_core::err!("TooSmall")
-                    || e == bun_core::err!("InvalidValue") =>
-            {
+            Err(e) if e.name() == "OutOfMemory" => {
+                return Err(global_this.throw_out_of_memory());
+            }
+            Err(_) => {
                 return Err(
                     global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
                 );
             }
-            Err(e) if e == bun_core::err!("OutOfMemory") => {
-                return Err(global_this.throw_out_of_memory());
-            }
-            Err(_) => unreachable!(),
         };
 
         // Advance the caller's cursor by the number of bytes consumed.
@@ -2345,15 +2344,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
-                    // Only resolve an unknown size. A slice already has a concrete
-                    // `size`; overwriting it with `store_size - offset` would widen
-                    // the view to the end of the backing store. Clamp a known size
-                    // to `available` so a bogus size can't report past the store end.
-                    if self.size.get() == MAX_SIZE {
-                        self.size.set(available);
-                    } else {
-                        self.size.set(self.size.get().min(available));
-                    }
+                    self.size.set(window_size(self.size.get(), available));
                 }
             }
             store::DataTag::File => {
@@ -2367,7 +2358,8 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let available = store_size - self.offset.get();
+                    self.size.set(window_size(self.size.get(), available));
                     return;
                 }
 
@@ -2401,16 +2393,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     let offset = store_size.min(offset);
                     let available = store_size - offset;
-                    // Matches `resolve_size`: a known size (e.g. a slice) is
-                    // authoritative; only an unknown size falls back to the
-                    // remainder of the backing store. Clamp to `available` so a
-                    // bogus size can't report past the store end.
-                    let size = if self.size.get() == MAX_SIZE {
-                        available
-                    } else {
-                        self.size.get().min(available)
-                    };
-                    return (offset, size);
+                    return (offset, window_size(self.size.get(), available));
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -2422,8 +2405,9 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    let offset = store_size.min(self.offset.get());
+                    let available = store_size - offset;
+                    return (offset, window_size(self.size.get(), available));
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -4151,7 +4135,7 @@ impl StructuredCloneWriter {
 
 // Implement `bun_io::Write` so `write_int_le` / `write_all` work directly.
 impl bun_io::Write for StructuredCloneWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         StructuredCloneWriter::write(self, bytes);
         Ok(())
     }
@@ -4160,13 +4144,11 @@ impl bun_io::Write for StructuredCloneWriter {
 // Only ever called with f64 (Blob.last_modified). A concrete impl
 // because Rust forbids `[u8; size_of::<F>()]`
 // without `generic_const_exprs`. Bit-cast → native-endian bytes.
-fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> Result<(), bun_core::Error> {
-    writer.write_all(&value.to_ne_bytes())
+fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> crate::Result<()> {
+    Ok(writer.write_all(&value.to_ne_bytes())?)
 }
 
-fn read_float<B: AsRef<[u8]>>(
-    reader: &mut bun_io::FixedBufferStream<B>,
-) -> Result<f64, bun_core::Error> {
+fn read_float<B: AsRef<[u8]>>(reader: &mut bun_io::FixedBufferStream<B>) -> crate::Result<f64> {
     let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
     reader.read_exact(&mut bytes_buf)?;
     Ok(f64::from_ne_bytes(bytes_buf))
@@ -4175,21 +4157,21 @@ fn read_float<B: AsRef<[u8]>>(
 fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
-) -> Result<Vec<u8>, bun_core::Error> {
+) -> crate::Result<Vec<u8>> {
     if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
-        return Err(bun_core::err!("TooSmall"));
+        return Err(crate::Error::TooSmall);
     }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)
-        .map_err(|_| bun_core::err!("TooSmall"))?;
+        .map_err(|_| crate::Error::TooSmall)?;
     Ok(slice)
 }
 
 fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
 
@@ -4199,7 +4181,11 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let content_type_was_set: bool = reader.read_int_le::<u8>()? != 0;
 
     let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
-        .ok_or_else(|| bun_core::err!("InvalidValue"))?;
+        .ok_or(crate::Error::InvalidValue)?;
+
+    // Version 4: file-backed records carry the blob's own size so a sliced
+    // Bun.file() keeps its window's end. MAX_SIZE means unknown.
+    let mut file_size: Option<u64> = None;
 
     let blob: *mut Blob = match store_tag {
         store::SerializeTag::Bytes => 'bytes: {
@@ -4240,13 +4226,23 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            if version >= 4 {
+                file_size = Some(reader.read_int_le::<u64>()?);
+            }
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
-                    .ok_or_else(|| bun_core::err!("InvalidValue"))?;
+                    .ok_or(crate::Error::InvalidValue)?;
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
+                    // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
+                    // so a crafted record cannot materialize an fd no JS could construct (fd == -1
+                    // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
+                    #[cfg(not(windows))]
+                    if fd.0 < 0 {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
@@ -4257,6 +4253,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
+                    // Same constraint the JS entry (`Valid::path_null_bytes`)
+                    // enforces: a NUL-embedded path cannot be handed to the
+                    // syscall layer (`ZStr::as_cstr` would truncate / panic).
+                    if strings::index_of_char(&path, 0).is_some() {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     // The owned `CowSlice`
                     // adopts the `Box<[u8]>` so the store frees it in
                     // `PathLike::drop`; borrowing here would drop `path` at scope
@@ -4315,6 +4317,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
+    if let Some(size) = file_size {
+        // resolve_size() clamps this to the actual file size on first use.
+        if size != MAX_SIZE {
+            blob.size.set(size as SizeType);
+        }
+    }
     if let Some(store) = blob.store.get() {
         let store_size = store.size();
         if store_size != MAX_SIZE {
@@ -4453,7 +4461,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                     return Retry::Continue;
                 }
                 bun_sys::Result::Err(err2) => {
-                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno as i32));
+                    this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
                     this.set_system_error(err.with_path(err_path).to_system_error());
                     this.set_opened_fd_if_present(Fd::INVALID);
                     return Retry::Fail;
@@ -4485,7 +4493,7 @@ pub trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
     fn set_system_error(&mut self, e: bun_sys::SystemError);
-    fn set_errno_if_present(&mut self, _e: bun_core::Error) {}
+    fn set_errno_if_present(&mut self, _e: crate::Error) {}
     fn set_opened_fd_if_present(&mut self, _fd: Fd) {}
 }
 
@@ -5690,10 +5698,13 @@ pub fn jsdom_file_construct_(
                 }
             }
 
-            if let Some(last_modified) = options.get_truthy(global_this, "lastModified")? {
+            // WebIDL dictionary member: only `undefined` / not-present falls
+            // through to the Date.now() default. Any present value (including
+            // `null`) goes through ToNumber, with NaN normalized to 0.
+            if let Some(last_modified) = options.get(global_this, "lastModified")? {
                 set_last_modified = true;
-                blob.last_modified
-                    .set(last_modified.to_number(global_this)?);
+                let n = last_modified.to_number(global_this)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }
@@ -5776,9 +5787,9 @@ pub fn construct_bun_file(
                     }
                 }
             }
-            if let Some(last_modified) = opts.get_truthy(global_object, "lastModified")? {
-                blob.last_modified
-                    .set(last_modified.to_number(global_object)?);
+            if let Some(last_modified) = opts.get(global_object, "lastModified")? {
+                let n = last_modified.to_number(global_object)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }
@@ -6217,6 +6228,18 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
     #[cfg(windows)]
     {
         jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
+    }
+}
+
+/// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an
+/// unknown (`MAX_SIZE`) size resolves to the store's remainder; a concrete
+/// size (a slice's window) is authoritative, clamped so a bogus or stale
+/// value can't report past the end of the backing store.
+fn window_size(current: SizeType, available: SizeType) -> SizeType {
+    if current == MAX_SIZE {
+        available
+    } else {
+        current.min(available)
     }
 }
 
@@ -7064,7 +7087,7 @@ pub trait FileOpener: Sized {
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
-    fn set_errno(&mut self, e: bun_core::Error);
+    fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
     fn pathlike(&self) -> &PathOrFileDescriptor;
@@ -7120,7 +7143,7 @@ pub trait FileOpener: Sized {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32));
+                        self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
                         self_.set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
                                 .with_path(path_string_2.slice())
@@ -7165,7 +7188,7 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as i32));
+                self.set_errno(bun_errno::from_errno(errno as i32).into());
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
                         .with_path(path_string.slice())
@@ -7206,7 +7229,7 @@ pub trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
-                        self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
+                        self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                         self.set_system_error(jsc::SysErrorJsc::to_system_error(
                             &err.with_path(path_string.slice()),
                         ));

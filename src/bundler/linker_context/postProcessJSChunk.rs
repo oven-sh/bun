@@ -45,7 +45,7 @@ pub fn post_process_js_chunk(
     worker: &mut ThreadPool::Worker,
     chunk: &mut Chunk,
     chunk_index: usize,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;

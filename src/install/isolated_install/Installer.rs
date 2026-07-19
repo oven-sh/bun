@@ -235,7 +235,7 @@ impl<'a> Installer<'a> {
         task_id: crate::package_manager_task::Id,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: crate::Error,
         url: &[u8],
     ) {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
@@ -604,17 +604,17 @@ pub enum CompleteState {
     Fail,
 }
 
-fn download_error_reason(e: bun_core::Error) -> &'static [u8] {
+fn download_error_reason(e: crate::Error) -> &'static [u8] {
     match e {
-        e if e == bun_core::err!("TarballHTTP400") => b"400 Bad Request",
-        e if e == bun_core::err!("TarballHTTP401") => b"401 Unauthorized",
-        e if e == bun_core::err!("TarballHTTP402") => b"402 Payment Required",
-        e if e == bun_core::err!("TarballHTTP403") => b"403 Forbidden",
-        e if e == bun_core::err!("TarballHTTP404") => b"404 Not Found",
-        e if e == bun_core::err!("TarballHTTP4xx") => b"HTTP 4xx",
-        e if e == bun_core::err!("TarballHTTP5xx") => b"HTTP 5xx",
-        e if e == bun_core::err!("TarballFailedToExtract") => b"failed to extract",
-        e if e == bun_core::err!("TarballFailedToDownload") => b"download failed",
+        crate::Error::TarballHTTP400 => b"400 Bad Request",
+        crate::Error::TarballHTTP401 => b"401 Unauthorized",
+        crate::Error::TarballHTTP402 => b"402 Payment Required",
+        crate::Error::TarballHTTP403 => b"403 Forbidden",
+        crate::Error::TarballHTTP404 => b"404 Not Found",
+        crate::Error::TarballHTTP4xx => b"HTTP 4xx",
+        crate::Error::TarballHTTP5xx => b"HTTP 5xx",
+        crate::Error::TarballFailedToExtract => b"failed to extract",
+        crate::Error::TarballFailedToDownload => b"download failed",
         _ => e.name().as_bytes(),
     }
 }
@@ -660,15 +660,15 @@ pub enum Result {
 }
 
 pub struct DownloadError {
-    pub err: bun_core::Error,
+    pub err: crate::Error,
     pub url: Box<[u8]>,
 }
 
 pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
-    RunScripts(bun_core::Error),
-    Binaries(bun_core::Error),
+    RunScripts(crate::Error),
+    Binaries(crate::Error),
     Patching(Log),
     Download(DownloadError),
 }
@@ -2254,10 +2254,7 @@ impl<'a> Installer<'a> {
         None
     }
 
-    pub fn link_dependency_bins(
-        &self,
-        parent_entry_id: StoreEntryId,
-    ) -> core::result::Result<(), bun_core::Error> {
+    pub fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
         let lockfile = self.lockfile();
         let store = self.store;
 

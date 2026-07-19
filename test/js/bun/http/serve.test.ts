@@ -14,6 +14,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
+import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -1248,6 +1249,54 @@ it("should support reloading", async () => {
   );
 });
 
+// Reloading a server that was CREATED as a node:http one re-applies node-compat mode to
+// the live, already-listening native context (reload -> set_routes); it must be an
+// idempotent no-op. On assert-enabled builds a real re-switch aborts the process, so the
+// repro runs in a subprocess. `bun --hot` takes this exact path on every reload.
+it("reload() of a node:http-backed server is not treated as a mode switch", async () => {
+  const code = `
+    const noop = function () {};
+    const server = Bun.serve({ port: 0, fetch: () => new Response("x"), onNodeHTTPRequest: noop });
+    server.reload({ fetch: () => new Response("y"), onNodeHTTPRequest: noop });
+    server.stop(true);
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OK\n");
+  expect(exitCode).toBe(0);
+});
+
+it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
+  // The server's kind is fixed when listen() sizes its connections' native
+  // per-socket block; a reload that smuggles in the node:http handler used by
+  // node's http.Server wrapper must be ignored, not flip the context into
+  // node-compat mode under connections allocated with the smaller block.
+  const first: Handler = () => new Response("first");
+  const second: Handler = () => new Response("second");
+  await runTest(
+    {
+      fetch: first,
+    },
+    async server => {
+      expect(await (await fetch(server.url.origin)).text()).toBe("first");
+      server.reload({
+        fetch: second,
+        // @ts-expect-error internal option used by node:http's Server
+        onNodeHTTPRequest: () => {
+          throw new Error("must never be routed");
+        },
+      });
+      // Fresh connections after the reload (fetch pools per-origin, so mix in
+      // explicit no-keepalive requests to force new native sockets).
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
+        expect(await res.text()).toBe("second");
+      }
+    },
+  );
+});
+
 describe("status code text", () => {
   const fixture = {
     200: "OK",
@@ -1645,6 +1694,117 @@ describe("response framing", () => {
       );
       expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
       expect(HEAD).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+    });
+  });
+
+  // RFC 9110 §9.3.2: a server MUST NOT send content in response to HEAD.
+  // RFC 9112 §6.3 rule 1: a HEAD response is terminated at the end of the
+  // header section; any octets after it are parsed as the next response on a
+  // keep-alive connection, so a body here desynchronizes the connection.
+  describe("HEAD on the error path writes no body bytes", () => {
+    const boom = () => {
+      throw new Error("boom");
+    };
+
+    // Paths with an error() handler, or no handler throw at all, can be
+    // exercised in-process: the error never reaches on_unhandled_rejection.
+    it.each([
+      ["sync error()", () => new Response("EBODY", { status: 503, headers: { "x-from": "error" } })],
+      ["async error()", async () => new Response("EBODY", { status: 503, headers: { "x-from": "error" } })],
+    ])("%s Response mirrors the normal HEAD path", async (_label, errorHandler) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: boom,
+        error: errorHandler,
+      });
+      const head = await rawRequest(server.port, "HEAD");
+      const get = await rawRequest(server.port, "GET");
+      expect({
+        head: {
+          statusLine: head.statusLine,
+          body: head.body,
+          cl: head.headers["content-length"],
+          x: head.headers["x-from"],
+        },
+        get: {
+          statusLine: get.statusLine,
+          body: get.body,
+          cl: get.headers["content-length"],
+          x: get.headers["x-from"],
+        },
+      }).toEqual({
+        head: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "", cl: "5", x: "error" },
+        get: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "EBODY", cl: "5", x: "error" },
+      });
+    });
+
+    it("the dev missing-response page is not sent for HEAD", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: () => undefined as any });
+      const head = await rawRequest(server.port, "HEAD");
+      const get = await rawRequest(server.port, "GET");
+      expect({
+        head: { statusLine: head.statusLine, body: head.body },
+        get: { statusLine: get.statusLine, body: get.body },
+      }).toEqual({
+        head: { statusLine: "HTTP/1.1 200 OK", body: "" },
+        get: { statusLine: "HTTP/1.1 200 OK", body: "Welcome to Bun! To get started, return a Response object." },
+      });
+    });
+
+    // The default-500 and dev-error-page paths report the thrown error via
+    // on_unhandled_rejection, which would fail an in-process test, so run
+    // them (and the keep-alive desync witness) in a subprocess.
+    it("default 500 / dev error page write no body, and HEAD does not desync a keep-alive connection", async () => {
+      const src = `
+        import net from "node:net";
+        const wire = (port, payload) => new Promise(resolve => {
+          let b = Buffer.alloc(0);
+          const s = net.connect(port, "127.0.0.1", () => s.write(payload));
+          s.on("data", d => { b = Buffer.concat([b, d]); });
+          s.on("error", () => resolve(b));
+          s.on("close", () => resolve(b));
+        });
+        const afterHead = w => w.toString("latin1").split("\\r\\n\\r\\n").slice(1).join("\\r\\n\\r\\n");
+        const boom = req => {
+          if (new URL(req.url).pathname === "/boom") throw new Error("boom");
+          return new Response("OKBODY");
+        };
+        const s1 = Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: boom });
+        const s2 = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: boom });
+        const head = m => m + " /boom HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n";
+        const out = {
+          prod_head: afterHead(await wire(s1.port, head("HEAD"))),
+          prod_get: afterHead(await wire(s1.port, head("GET"))),
+          dev_head_len: afterHead(await wire(s2.port, head("HEAD"))).length,
+          dev_get_len: afterHead(await wire(s2.port, head("GET"))).length,
+          pipeline: afterHead(await wire(s1.port,
+            "HEAD /boom HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n" +
+            "GET /ok HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n"
+          )).split("\\r\\n")[0],
+        };
+        console.log(JSON.stringify(out));
+        s1.stop(true); s2.stop(true);
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      expect(out).toEqual({
+        prod_head: "",
+        prod_get: "Something went wrong!",
+        dev_head_len: 0,
+        dev_get_len: expect.any(Number),
+        pipeline: "HTTP/1.1 200 OK",
+      });
+      expect(out.dev_get_len).toBeGreaterThan(1000);
+      expect(exitCode).toBe(0);
     });
   });
 });
@@ -3353,4 +3513,31 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
+// request-line like llhttp's s_start state. That leniency must stay behind the
+// node-http flag: Bun.serve still rejects a request that does not begin with the
+// request-line.
+it.each([
+  ["CRLF", "\r\n"],
+  ["bare LF", "\n"],
+  ["bare CR", "\r"],
+])("Bun.serve rejects a leading %s before the request-line", async (_label, prefix) => {
+  using server = serve({ port: 0, fetch: () => new Response("ok") });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(server.port, "127.0.0.1", () => {
+    socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+  });
+  let received = "";
+  socket.on("data", chunk => {
+    received += chunk;
+  });
+  socket.on("error", reject);
+  socket.on("close", () => resolve(received));
+  const statusLine = (await promise).split("\r\n")[0];
+  socket.destroy();
+
+  expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });

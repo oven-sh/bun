@@ -86,6 +86,26 @@ describe("udpSocket()", () => {
     ).toThrow();
   });
 
+  // Out-of-range connect.port used to be silently rewritten to 0, so send()
+  // returned true while every datagram was dropped. The bind path already
+  // rejected the same values; connect must too.
+  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)("connect with out-of-range port %p rejects", port => {
+    expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
+      'Expected "connect.port" to be an integer between 1 and 65535',
+    );
+  });
+
+  test("connect with valid port at range boundaries is accepted", async () => {
+    for (const port of [1, 65535]) {
+      const socket = await udpSocket({ connect: { hostname: "127.0.0.1", port } });
+      try {
+        expect(socket.remoteAddress).toEqual({ address: "127.0.0.1", family: "IPv4", port });
+      } finally {
+        socket.close();
+      }
+    }
+  });
+
   // The Strong ref on the JS wrapper used to be left in place when udpSocket()
   // threw before the underlying uws socket was created (invalid options, bind
   // failure), pinning the wrapper forever and leaking the Zig struct.
@@ -563,4 +583,28 @@ describe("udpSocket()", () => {
       30_000,
     );
   });
+});
+
+// us_udp_socket_send batches at most ~204 messages per sendmmsg; a >batch-size
+// sendMany must loop and report the TOTAL accepted. The pre-fix loop condition
+// compared against a decremented `num` and stopped after one batch, which every
+// <=100-packet test above still satisfies.
+test("sendMany() sends every packet of a larger-than-one-batch call", async () => {
+  const server = await udpSocket({ socket: { data() {} } });
+  const client = await udpSocket({ connect: { port: server.port, hostname: "127.0.0.1" } });
+  try {
+    const N = 500;
+    const payloads = new Array(N);
+    for (let i = 0; i < N; i++) payloads[i] = "x";
+    // The regression this guards: the old loop exited after ONE batch, so a
+    // 500-packet call reported <=~204. Assert "more than one batch" rather
+    // than the exact count -- a loaded kernel may legitimately accept fewer
+    // than all 500.
+    const res = client.sendMany(payloads);
+    expect(res).toBeGreaterThan(204);
+    expect(res).toBeLessThanOrEqual(N);
+  } finally {
+    client.close();
+    server.close();
+  }
 });

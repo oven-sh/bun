@@ -972,7 +972,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
     }
 
-    pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, bun_core::Error> {
+    pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match subcommand {

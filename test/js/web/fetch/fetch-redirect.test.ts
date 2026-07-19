@@ -1,6 +1,89 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { once } from "node:events";
 import net from "node:net";
+
+// WHATWG HTTP-redirect fetch runs on the response head (status line + Location);
+// the 3xx body is discarded, not awaited. A redirecting server that never finishes
+// its own body must not be able to stall the follow-up request.
+describe("fetch() follows a redirect on headers without waiting for the 3xx body", () => {
+  async function run(responseHead: (location: string) => string) {
+    let finalRequests = 0;
+    await using final = Bun.serve({
+      port: 0,
+      fetch() {
+        finalRequests++;
+        return new Response("FINAL");
+      },
+    });
+    const location = `${final.url.origin}/final`;
+
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        // Write the 302 head (and part of its body) immediately; never send the
+        // rest. The socket stays open until the test tears it down.
+        socket.write(responseHead(location));
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/start`);
+      expect({
+        status: res.status,
+        redirected: res.redirected,
+        url: res.url,
+        body: await res.text(),
+        finalRequests,
+      }).toEqual({
+        status: 200,
+        redirected: true,
+        url: location,
+        body: "FINAL",
+        finalRequests: 1,
+      });
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+    }
+  }
+
+  it("chunked body with no terminating chunk", async () => {
+    await run(loc => `HTTP/1.1 302 Found\r\nLocation: ${loc}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n`);
+  });
+
+  it("Content-Length body that is never completed", async () => {
+    await run(loc => `HTTP/1.1 302 Found\r\nLocation: ${loc}\r\nContent-Length: 50\r\n\r\n0123456789`);
+  });
+
+  it("close-delimited body on a connection that stays open", async () => {
+    await run(loc => `HTTP/1.1 302 Found\r\nLocation: ${loc}\r\nConnection: close\r\n\r\npartial`);
+  });
+});
+
+it("fetch() with redirect: 'manual' still exposes the 3xx response body", async () => {
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.end("HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 7\r\n\r\nignored");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+    expect({ status: res.status, redirected: res.redirected, body: await res.text() }).toEqual({
+      status: 302,
+      redirected: false,
+      body: "ignored",
+    });
+  } finally {
+    server.close();
+  }
+});
 
 // https://github.com/oven-sh/bun/issues/12701
 it("fetch() preserves body on redirect", async () => {

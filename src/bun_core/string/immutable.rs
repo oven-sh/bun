@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 use core::ffi::c_int;
 
 use crate::BoundedArray;
-use crate::Error;
+use crate::CrateError as Error;
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
@@ -233,7 +233,7 @@ pub mod unicode {
 /// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
 /// returning the slice up to the last complete codepoint boundary.
 ///
-/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek`.
+/// Shared body of `js_parser::Lexer::peek`.
 #[inline]
 pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     let mut end = at;
@@ -250,9 +250,9 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     &bytes[at..end]
 }
 
-/// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
+/// WTF-8 codepoint stepper shared by the JS and JSON lexers.
 ///
-/// The JS, JSON, and TOML lexers all call the same
+/// The JS and JSON lexers call the same
 /// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
 /// pair defined alongside this module, so the stepper belongs here.
 ///
@@ -1475,7 +1475,7 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
     let mut off: usize = 0;
     for s in strs {
         if s.len() > out.len() - off {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         out[off..off + s.len()].copy_from_slice(s);
         off += s.len();
@@ -3055,11 +3055,11 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
 /// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
-impl From<ToUTF16Error> for crate::Error {
+impl From<ToUTF16Error> for crate::CrateError {
     fn from(e: ToUTF16Error) -> Self {
         match e {
-            ToUTF16Error::InvalidByteSequence => crate::err!("InvalidByteSequence"),
-            ToUTF16Error::OutOfMemory => crate::err!("OutOfMemory"),
+            ToUTF16Error::InvalidByteSequence => crate::CrateError::InvalidByteSequence,
+            ToUTF16Error::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
         }
     }
 }

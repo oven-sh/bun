@@ -133,7 +133,7 @@ impl ResolveMessage {
     pub fn fmt(
         specifier: &[u8],
         referrer: &[u8],
-        err: bun_core::Error,
+        err: crate::CrateError,
         import_kind: ImportKind,
     ) -> Vec<u8> {
         use bstr::BStr;
@@ -148,51 +148,57 @@ impl ResolveMessage {
             .ok();
             return out;
         }
-        // Note: matching against interned bun_core::Error consts.
-        if err == bun_core::err!("ModuleNotFound") {
-            if referrer == b"bun:main" {
-                write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+        // The same logical error can arrive nested (e.g. via
+        // `CrateError::Resolver(resolver::Error::ModuleNotFound)`), so dispatch
+        // on the tag string rather than structural equality.
+        match err.name() {
+            "ModuleNotFound" => {
+                if referrer == b"bun:main" {
+                    write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+                    return out;
+                }
+                if bun_resolver::is_package_path(specifier)
+                    && !strings::contains_char(specifier, b'/')
+                {
+                    write!(
+                        &mut out,
+                        "Cannot find package '{}' from '{}'",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                } else {
+                    write!(
+                        &mut out,
+                        "Cannot find module '{}' from '{}'",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                }
                 return out;
             }
-            if bun_resolver::is_package_path(specifier) && !strings::contains_char(specifier, b'/')
-            {
+            "InvalidDataURL" => {
                 write!(
                     &mut out,
-                    "Cannot find package '{}' from '{}'",
+                    "Cannot resolve invalid data URL '{}' from '{}'",
                     BStr::new(specifier),
                     BStr::new(referrer),
                 )
                 .ok();
-            } else {
-                write!(
-                    &mut out,
-                    "Cannot find module '{}' from '{}'",
-                    BStr::new(specifier),
-                    BStr::new(referrer),
-                )
-                .ok();
+                return out;
             }
-            return out;
-        }
-        if err == bun_core::err!("InvalidDataURL") {
-            write!(
-                &mut out,
-                "Cannot resolve invalid data URL '{}' from '{}'",
-                BStr::new(specifier),
-                BStr::new(referrer),
-            )
-            .ok();
-            return out;
-        }
-        if err == bun_core::err!("InvalidURL") {
-            write!(
-                &mut out,
-                "Cannot resolve invalid URL '{}' from '{}'",
-                BStr::new(specifier),
-                BStr::new(referrer),
-            )
-            .ok();
-            return out;
+            "InvalidURL" => {
+                write!(
+                    &mut out,
+                    "Cannot resolve invalid URL '{}' from '{}'",
+                    BStr::new(specifier),
+                    BStr::new(referrer),
+                )
+                .ok();
+                return out;
+            }
+            _ => {}
         }
         // else
         if bun_resolver::is_package_path(specifier) {
@@ -321,7 +327,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&this.msg.data.text).to_js(global))
+        Ok(ZigString::init_utf8(&this.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]
@@ -333,7 +339,7 @@ impl ResolveMessage {
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
+                ZigString::init_utf8(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata).
@@ -354,7 +360,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(if let Some(referrer) = &this.referrer {
-            ZigString::init(referrer).to_js(global)
+            ZigString::init_utf8(referrer).to_js(global)
         } else {
             JSValue::NULL
         })

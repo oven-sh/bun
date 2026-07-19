@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -459,6 +459,69 @@ describe("structuredClone with Blob and File", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("file-backed Blob path with interior NUL is rejected at deserialize", async () => {
+      // A crafted Blob wire image whose File store path contains an interior
+      // NUL must be rejected as a JS error at deserialize time; it must never
+      // reach the syscall layer where the C-string view would truncate (and
+      // debug builds abort in ZStr::as_cstr). Build the image by round-tripping
+      // a real file-backed blob and overwriting the path bytes, so the outer
+      // serializer framing and the Blob record layout stay whatever the current
+      // build emits.
+      const probe = Buffer.alloc(16, 0x5a);
+      const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));
+      const at = good.indexOf(probe);
+      expect(at).toBeGreaterThan(0);
+      // Sanity: both entry points accept the unmodified image.
+      expect(deserialize(good)).toBeInstanceOf(Blob);
+      expect(v8.deserialize(good)).toBeInstanceOf(Blob);
+
+      const bad = Buffer.from(good);
+      bad.set(Buffer.from("/e\0tc/host\0s____", "latin1"), at);
+
+      // Run in a child so that if the reader ever aborts on these bytes the
+      // test runner survives. The assertion is on the deserialize step: it
+      // must throw, so no Blob carrying a NUL-embedded path ever exists.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { deserialize } = require("bun:jsc");
+            const v8 = require("node:v8");
+            const bad = Buffer.from(process.argv[1], "base64");
+            for (const [name, de] of [["bun:jsc", deserialize], ["node:v8", b => v8.deserialize(b)]]) {
+              let threw = null;
+              try {
+                de(bad);
+              } catch (e) {
+                threw = { name: e?.constructor?.name, message: String(e?.message ?? e) };
+              }
+              process.stdout.write(JSON.stringify({ entry: name, threw }) + "\\n");
+            }
+          `,
+          bad.toString("base64"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l));
+      expect({ lines, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        lines: [
+          { entry: "bun:jsc", threw: { name: "TypeError", message: "Unable to deserialize data." } },
+          { entry: "node:v8", threw: { name: "TypeError", message: "Unable to deserialize data." } },
+        ],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
     test("in-process: offset at store boundary yields empty view", async () => {
       // offset == store length stays within the allocation on any build, so
       // this is safe to assert in-process and covers the boundary directly.
@@ -470,6 +533,80 @@ describe("structuredClone with Blob and File", () => {
 
       const viaV8 = v8.deserialize(Buffer.from(craft(4n)));
       expect((await viaV8.arrayBuffer()).byteLength).toBe(0);
+    });
+
+    // The File-store variant of the Blob record carries a raw fd on the wire.
+    // `Bun.file(fd)` enforces `0 <= fd <= i32::MAX`; the deserializer must
+    // apply the same range so a crafted record cannot materialize a Blob over
+    // an fd that no JS could construct. On posix, fd == -1 reaches the
+    // `raw != -1` assert in `Fd::as_borrowed_fd` and aborts the process at
+    // the first `.size` / body-mixin touch.
+    describe.skipIf(isWindows)("crafted File blob fd (posix)", () => {
+      // Robustness against header/framing changes: serialize a file-backed
+      // blob over a distinctive sentinel fd, locate its 4-byte image in the
+      // output (posix Fd is `#[repr(transparent)] i32`), and patch it.
+      const fdSentinel = 0x7e7d7c7b; // distinct bytes, inside [0, i32::MAX]
+      const fdImage = Buffer.from(new Uint8Array(serialize(Bun.file(fdSentinel))));
+      const fdNeedle = Buffer.alloc(4);
+      fdNeedle.writeInt32LE(fdSentinel);
+      const fdFieldIndex = fdImage.indexOf(fdNeedle);
+      if (fdFieldIndex < 0) throw new Error("could not locate fd field in serialized file blob");
+
+      function craftFd(fd: number) {
+        const out = Buffer.from(fdImage);
+        out.writeInt32LE(fd, fdFieldIndex);
+        return out;
+      }
+
+      // The pre-fix build aborts on `.size`, so run each case in a subprocess
+      // and require a clean exit that reports a deserialize-time throw.
+      const fdChildScript = `
+        const { deserialize } = require("bun:jsc");
+        const v8 = require("node:v8");
+        const payload = Buffer.from(process.argv[1], "base64");
+        for (const de of [deserialize, buf => v8.deserialize(Buffer.from(buf))]) {
+          let outcome;
+          try {
+            const blob = de(payload);
+            void blob.size;
+            outcome = { threw: false };
+          } catch (e) {
+            outcome = { threw: true, message: String(e.message) };
+          }
+          process.stdout.write(JSON.stringify(outcome) + "\\n");
+        }
+      `;
+
+      test.concurrent.each([
+        ["fd = -1", -1],
+        ["fd = -2", -2],
+        ["fd = i32::MIN", -2147483648],
+      ])("%s is rejected at deserialize", async (_name, fd) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fdChildScript, craftFd(fd).toString("base64")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const expected = { threw: true, message: "Unable to deserialize data." };
+        expect({
+          stderr,
+          outcomes: stdout
+            .split("\n")
+            .filter(Boolean)
+            .map(l => JSON.parse(l)),
+        }).toEqual({ stderr: "", outcomes: [expected, expected] });
+        expect(exitCode).toBe(0);
+      });
+
+      test("fd >= 0 still deserializes", () => {
+        for (const fd of [0, 1, fdSentinel]) {
+          expect(deserialize(craftFd(fd))).toBeInstanceOf(Blob);
+          expect(v8.deserialize(craftFd(fd))).toBeInstanceOf(Blob);
+        }
+      });
     });
 
     test("truncated payload at every byte boundary throws cleanly", () => {

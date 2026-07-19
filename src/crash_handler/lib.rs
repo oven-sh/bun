@@ -29,6 +29,9 @@ pub mod cpu_features;
 #[path = "handle_oom.rs"]
 pub mod handle_oom;
 
+pub mod error;
+pub use error::{Error, Result};
+
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
 /// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
 /// and defined here.
@@ -99,9 +102,9 @@ pub mod debug {
     // Previously lived in `bun_jsc::btjs::zig_std_debug`; relocated here so the
     // crash handler (lower-tier crate) gets real symbol names in debug builds
     // and `btjs` re-exports from this module.
+    use crate::Error;
     #[cfg(not(windows))]
     use bun_collections::HashMap;
-    use bun_core::{Error, err};
     #[cfg(not(windows))]
     use core::ffi::c_void;
 
@@ -127,7 +130,7 @@ pub mod debug {
         pub fn open() -> Result<SelfInfo, Error> {
             // `if (builtin.strip_debug_info) return error.MissingDebugInfo;`
             if !cfg!(debug_assertions) {
-                return Err(err!("MissingDebugInfo"));
+                return Err(crate::Error::MissingDebugInfo);
             }
             #[cfg(any(
                 target_os = "linux",
@@ -160,7 +163,7 @@ pub mod debug {
                 target_os = "illumos",
                 windows,
             )))]
-            Err(err!("UnsupportedOperatingSystem"))
+            Err(crate::Error::UnsupportedOperatingSystem)
         }
 
         /// Port of `SelfInfo.getModuleForAddress`.
@@ -172,7 +175,7 @@ pub mod debug {
             #[cfg(windows)]
             {
                 let _ = address;
-                return Err(err!("MissingDebugInfo"));
+                return Err(crate::Error::MissingDebugInfo);
             }
             #[cfg(not(any(target_vendor = "apple", windows)))]
             {
@@ -200,8 +203,8 @@ pub mod debug {
 
         #[cfg(not(any(target_vendor = "apple", windows)))]
         fn lookup_module_dl(&mut self, address: usize) -> Result<&mut Module, Error> {
-            let m = bun_sys::elf::find_loaded_module(address)
-                .ok_or_else(|| err!("MissingDebugInfo"))?;
+            let m =
+                bun_sys::elf::find_loaded_module(address).ok_or(crate::Error::MissingDebugInfo)?;
             if !self.address_map.contains_key(&m.base_address) {
                 let obj_di = Box::new(Module {
                     base_address: m.base_address,
@@ -219,7 +222,7 @@ pub mod debug {
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 {
-                return Err(err!("MissingDebugInfo"));
+                return Err(crate::Error::MissingDebugInfo);
             }
             let base_address = info.dli_fbase as usize;
             if !self.address_map.contains_key(&base_address) {
@@ -370,10 +373,10 @@ pub mod debug {
             self,
             w: &mut W,
             c: Color,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             match self {
                 TtyConfig::NoColor => Ok(()),
-                TtyConfig::EscapeCodes => w.write_all(match c {
+                TtyConfig::EscapeCodes => Ok(w.write_all(match c {
                     Color::Bold => b"\x1b[1m",
                     Color::Reset => b"\x1b[0m",
                     Color::Dim => b"\x1b[2m",
@@ -381,7 +384,7 @@ pub mod debug {
                     Color::Yellow => b"\x1b[33m",
                     Color::Green => b"\x1b[32m",
                     Color::BrightCyan => b"\x1b[96m",
-                }),
+                })?),
             }
         }
     }
@@ -392,7 +395,7 @@ pub mod debug {
 // The local stub predated `bun_io` compiling; it carried a
 // `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
 // canonical trait instead provides its own `write_fmt` returning
-// `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
+// `Result<(), crate::Error>`, so `write!` on `impl Write` now yields the
 // crate-native error directly (the `fmt_err` shim below became identity).
 // `BoundedArray<u8,N>` and `FmtAdapter` impls live in `bun_io` (orphan rules).
 // ──────────────────────────────────────────────────────────────────────────
@@ -407,7 +410,7 @@ pub(crate) fn stderr_writer() -> StderrWriter {
     StderrWriter
 }
 impl Write for StderrWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         #[cfg(windows)]
         {
             // On Windows this is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
@@ -477,13 +480,11 @@ mod draft {
 
     use super::{FmtAdapter, Write, debug, stderr_writer};
 
-    /// D101: now identity. Pre-dedup `Write` had a `core::fmt::Write` supertrait so
-    /// `write!` returned `fmt::Result` and needed remapping. With canonical
-    /// `bun_io::Write::write_fmt` the error type is already `bun_core::Error`; this
-    /// stays as a no-op so the ~22 `.map_err(fmt_err)?` sites don't churn.
+    /// D101: maps the `bun_io::Write::write_fmt` error into this crate's Error so
+    /// the ~22 `.map_err(fmt_err)?` sites compose with `crate::Result`.
     #[inline(always)]
-    fn fmt_err(e: bun_core::Error) -> bun_core::Error {
-        e
+    fn fmt_err(e: bun_core::Error) -> crate::Error {
+        crate::Error::from(e)
     }
 
     /// Runtime flag, exposed as an
@@ -515,7 +516,7 @@ mod draft {
     /// Print an argv vector as a shell-ish line.
     /// Called when the addr2line spawn fails.
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-    fn fmt_argv<W: super::Write>(w: &mut W, argv: &[Vec<u8>]) -> Result<(), bun_core::Error> {
+    fn fmt_argv<W: super::Write>(w: &mut W, argv: &[Vec<u8>]) -> crate::Result<()> {
         for (i, a) in argv.iter().enumerate() {
             if i > 0 {
                 w.write_byte(b' ')?;
@@ -640,7 +641,7 @@ mod draft {
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
-        ZigError(bun_core::Error),
+        ZigError(&'static [u8]),
 
         OutOfMemory,
     }
@@ -685,8 +686,8 @@ mod draft {
                 }
                 CrashReason::DatatypeMisalignment => writer.write_str("Unaligned memory access"),
                 CrashReason::StackOverflow => writer.write_str("Stack overflow"),
-                CrashReason::ZigError(err) => {
-                    write!(writer, "error.{}", bstr::BStr::new(err.name()))
+                CrashReason::ZigError(err_name) => {
+                    write!(writer, "error.{}", bstr::BStr::new(err_name))
                 }
                 CrashReason::OutOfMemory => writer.write_str("Bun ran out of memory"),
             }
@@ -1330,7 +1331,11 @@ mod draft {
 
     /// This is called when `main` returns an error.
     /// We don't want to treat it as a crash under certain error codes.
-    pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&StackTrace>) -> ! {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn handle_root_error(
+        err: impl bun_core::output::ErrName,
+        error_return_trace: Option<&StackTrace>,
+    ) -> ! {
         use bun_core::{err_generic, pretty_error};
 
         /// bun_sys::posix has no rlimit yet —
@@ -1348,24 +1353,24 @@ mod draft {
         }
 
         let mut show_trace = Environment::SHOW_CRASH_TRACE;
+        let name: &[u8] = err.name();
 
-        // Match against interned error consts (see PORTING.md §Idiom map: catch |e| switch (e))
-        if err == bun_core::err!("OutOfMemory") {
+        if name == b"OutOfMemory" {
             super::out_of_memory();
-        } else if err == bun_core::err!("InvalidArgument")
-            || err == bun_core::err!("Invalid Bunfig")
-            || err == bun_core::err!("InstallFailed")
-        {
+        } else if matches!(
+            name,
+            b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed"
+        ) {
             if !show_trace {
                 Global::exit(1);
             }
-        } else if err == bun_core::err!("SyntaxError") {
+        } else if name == b"SyntaxError" {
             Output::err("SyntaxError", "An error occurred while parsing code", ());
-        } else if err == bun_core::err!("CurrentWorkingDirectoryUnlinked") {
+        } else if name == b"CurrentWorkingDirectoryUnlinked" {
             err_generic!(
                 "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
             );
-        } else if err == bun_core::err!("SystemFdQuotaExceeded") {
+        } else if name == b"SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1408,7 +1413,7 @@ mod draft {
                     "<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if err == bun_core::err!("ProcessFdQuotaExceeded") {
+        } else if name == b"ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1451,8 +1456,7 @@ mod draft {
                     "<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if err == bun_core::err!("NotOpenForReading") || err == bun_core::err!("Unexpected")
-        {
+        } else if matches!(name, b"NotOpenForReading" | b"Unexpected") {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
@@ -1487,7 +1491,7 @@ mod draft {
                 } else {
                     err_generic!(
                         "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(name),
                     );
                     show_trace = true;
                 }
@@ -1496,31 +1500,28 @@ mod draft {
             {
                 err_generic!(
                     "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                    bstr::BStr::new(err.name()),
+                    bstr::BStr::new(name),
                 );
                 show_trace = true;
             }
-        } else if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+        } else if matches!(name, b"ENOENT" | b"FileNotFound") {
             Output::err(
                 "ENOENT",
                 "Bun could not find a file, and the code that produces this error is missing a better error.",
                 (),
             );
-        } else if err == bun_core::err!("MissingPackageJSON") {
+        } else if name == b"MissingPackageJSON" {
             err_generic!("Bun could not find a package.json file to install from");
             bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
             // The macros need
             // `:literal`, so branch on the const and call separately.
             if Environment::SHOW_CRASH_TRACE {
-                err_generic!(
-                    "'main' returned <red>error.{}<r>",
-                    bstr::BStr::new(err.name())
-                );
+                err_generic!("'main' returned <red>error.{}<r>", bstr::BStr::new(name));
             } else {
                 err_generic!(
                     "An internal error occurred (<red>{}<r>)",
-                    bstr::BStr::new(err.name())
+                    bstr::BStr::new(name)
                 );
             }
             show_trace = true;
@@ -1528,7 +1529,7 @@ mod draft {
 
         if show_trace {
             VERBOSE_ERROR_TRACE.store(show_trace, Ordering::Relaxed);
-            handle_error_return_trace_extra::<true>(err, error_return_trace);
+            handle_error_return_trace_extra::<true>(name, error_return_trace);
         }
 
         Global::exit(1);
@@ -1688,9 +1689,7 @@ mod draft {
         bun_core::RacyCell::new([0; 512 * 1024]);
 
     #[cfg(unix)]
-    fn update_posix_segfault_handler(
-        mut act: Option<&mut libc::sigaction>,
-    ) -> Result<(), bun_core::Error> {
+    fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
         if let Some(act_) = act.as_deref_mut() {
             // SAFETY: single global; only mutated during signal-handler setup
             if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
@@ -1974,7 +1973,7 @@ mod draft {
                 "View Debug Trace: {}",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
+                    reason: CrashReason::ZigError(b"DumpStackTrace"),
                     trace: &stack,
                 }
             );
@@ -2076,7 +2075,7 @@ mod draft {
     #[unsafe(no_mangle)]
     pub(crate) static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
-    pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
+    pub fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
         #[cfg(debug_assertions)]
         {
             if Output::is_ai_agent() {
@@ -2521,7 +2520,7 @@ mod draft {
         pub(crate) fn write_encoded(
             self_: Option<&StackLine>,
             writer: &mut impl Write,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             let Some(known) = self_ else {
                 writer.write_all(b"_")?;
                 return Ok(());
@@ -2582,10 +2581,7 @@ mod draft {
         }
     }
 
-    fn encode_trace_string(
-        opts: &TraceString<'_>,
-        writer: &mut impl Write,
-    ) -> Result<(), bun_core::Error> {
+    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
         writer.write_all(report_base_url())?;
         writer.write_all(b"/")?;
         writer.write_all(Environment::VERSION_STRING.as_bytes())?;
@@ -2634,20 +2630,20 @@ mod draft {
                     }
                     // Insufficient memory.
                     r if r == bun_zlib::ReturnCode::MemError as i32 => {
-                        return Err(bun_core::err!("OutOfMemory"));
+                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
                     }
                     // The buffer dest was not large enough to hold the compressed data.
                     r if r == bun_zlib::ReturnCode::BufError as i32 => {
-                        return Err(bun_core::err!("NoSpaceLeft"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                     }
                     // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
                     // This is technically possible but impossible because we pass 9.
-                    _ => return Err(bun_core::err!("Unexpected")),
+                    _ => return Err(crate::Error::Unexpected),
                 };
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
                 if bun_base64::encode_len(compressed) > b64_bytes.len() {
-                    return Err(bun_core::err!("NoSpaceLeft"));
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                 }
                 let b64_len = bun_base64::encode(&mut b64_bytes, compressed);
 
@@ -2676,9 +2672,9 @@ mod draft {
             CrashReason::DatatypeMisalignment => writer.write_byte(b'6')?,
             CrashReason::StackOverflow => writer.write_byte(b'7')?,
 
-            CrashReason::ZigError(err) => {
+            CrashReason::ZigError(err_name) => {
                 writer.write_byte(b'8')?;
-                writer.write_all(err.name().as_bytes())?;
+                writer.write_all(err_name)?;
             }
 
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
@@ -2690,10 +2686,7 @@ mod draft {
         Ok(())
     }
 
-    pub fn write_u64_as_two_vlqs(
-        writer: &mut impl Write,
-        addr: usize,
-    ) -> Result<(), bun_core::Error> {
+    pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {
         // `as u32 as i32` reinterprets the 32-bit halves, preserving bits.
         let first = VLQ::encode((((addr as u64) & 0xFFFFFFFF00000000) >> 32) as u32 as i32);
         let second = VLQ::encode(((addr as u64) & 0xFFFFFFFF) as u32 as i32);
@@ -2985,14 +2978,7 @@ mod draft {
 
     #[cold]
     #[inline(never)]
-    fn cold_handle_error_return_trace<const IS_ROOT: bool>(
-        err_int_workaround_for_zig_ccall_bug: u16,
-        trace: &StackTrace,
-    ) {
-        // bun_core::Error
-        // is errno-based, so the error round-trips through its u16 representation.
-        let err = bun_core::Error::from_errno(err_int_workaround_for_zig_ccall_bug as i32);
-
+    fn cold_handle_error_return_trace<const IS_ROOT: bool>(err_name: &[u8], trace: &StackTrace) {
         // The format of the panic trace is slightly different in debug
         // builds Mainly, we demangle the backtrace immediately instead
         // of using a trace string.
@@ -3018,15 +3004,18 @@ mod draft {
             } else {
                 bun_core::pretty_errorln!(
                     "<blue>note<r><d>:<r> caught error.{}:",
-                    bstr::BStr::new(err.name())
+                    bstr::BStr::new(err_name)
                 );
             }
             Output::flush();
             dump_stack_trace(trace, WriteStackTraceLimits::default());
         } else {
+            // SAFETY: `err_name` outlives the local `TraceString` it is formatted through.
+            let reason =
+                CrashReason::ZigError(unsafe { bun_collections::detach_lifetime(err_name) });
             let ts = TraceString {
                 trace,
-                reason: CrashReason::ZigError(err),
+                reason,
                 action: TraceStringAction::ViewTrace,
             };
             if IS_ROOT {
@@ -3037,7 +3026,7 @@ mod draft {
             } else {
                 bun_core::pretty_errorln!(
                     "<cyan>trace<r>: error.{}: <d>{}<r>",
-                    bstr::BStr::new(err.name()),
+                    bstr::BStr::new(err_name),
                     ts,
                 );
             }
@@ -3046,7 +3035,7 @@ mod draft {
 
     #[inline]
     fn handle_error_return_trace_extra<const IS_ROOT: bool>(
-        err: bun_core::Error,
+        err_name: &[u8],
         maybe_trace: Option<&StackTrace>,
     ) {
         // Rust has no error-return tracing; `HAVE_ERROR_RETURN_TRACING` is const
@@ -3060,7 +3049,7 @@ mod draft {
         }
 
         if let Some(trace) = maybe_trace {
-            cold_handle_error_return_trace::<IS_ROOT>(err.as_u16(), trace);
+            cold_handle_error_return_trace::<IS_ROOT>(err_name, trace);
         }
     }
 
@@ -3072,8 +3061,8 @@ mod draft {
     /// In release builds with error return tracing enabled, this is also exposed.
     /// You can test if this feature is available by checking `bun --help` for the flag.
     #[inline]
-    pub fn handle_error_return_trace(err: bun_core::Error, maybe_trace: Option<&StackTrace>) {
-        handle_error_return_trace_extra::<false>(err, maybe_trace);
+    pub fn handle_error_return_trace(err_name: &[u8], maybe_trace: Option<&StackTrace>) {
+        handle_error_return_trace_extra::<false>(err_name, maybe_trace);
     }
 
     unsafe extern "C" {
@@ -3092,7 +3081,7 @@ mod draft {
                 "View Debug Trace: {}",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
+                    reason: CrashReason::ZigError(b"DumpStackTrace"),
                     trace,
                 }
             );
@@ -3216,10 +3205,7 @@ mod draft {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-    fn spawn_symbolizer(
-        program: &bun_core::ZStr,
-        trace: &StackTrace,
-    ) -> Result<(), bun_core::Error> {
+    fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> crate::Result<()> {
         let mut argv: Vec<Vec<u8>> = Vec::new();
         argv.push(program.as_bytes().to_vec());
         argv.push(b"--exe".to_vec());
@@ -3261,7 +3247,7 @@ mod draft {
             let _ = stderr.write_all(b"Failed to invoke command: ");
             let _ = fmt_argv(stderr, &argv);
             let _ = stderr.write_all(b"\n");
-            return Err(bun_core::err!("Unexpected"));
+            return Err(crate::Error::Unexpected);
         }
         Ok(())
     }
@@ -3328,7 +3314,7 @@ mod draft {
     /// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
     pub fn append_pre_crash_handler<T: 'static>(
         ptr: *mut T,
-        handler: fn(&mut T) -> Result<(), bun_core::Error>,
+        handler: fn(&mut T) -> crate::Result<()>,
     ) -> Result<(), bun_alloc::AllocError> {
         // Rust can't capture `handler` in a bare `fn` item, so box a closure that
         // performs the cast+call. Errors are intentionally swallowed (best-effort dump).
@@ -3381,9 +3367,9 @@ mod draft {
         debug_info: &mut SelfInfo,
         tty_config: TtyConfig,
         limits: &WriteStackTraceLimits,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if debug::STRIP_DEBUG_INFO {
-            return Err(bun_core::err!("MissingDebugInfo"));
+            return Err(crate::Error::MissingDebugInfo);
         }
         let mut frame_index: usize = 0;
         let mut frames_left: usize = stack_trace
@@ -3486,13 +3472,10 @@ mod draft {
     pub(crate) fn get_source_at_address(
         debug_info: &mut SelfInfo,
         address: usize,
-    ) -> Result<Option<SourceAtAddress>, bun_core::Error> {
+    ) -> crate::Result<Option<SourceAtAddress>> {
         let module = match debug_info.get_module_for_address(address) {
             Ok(m) => m,
-            Err(e)
-                if e == bun_core::err!("MissingDebugInfo")
-                    || e == bun_core::err!("InvalidDebugInfo") =>
-            {
+            Err(crate::Error::MissingDebugInfo | crate::Error::InvalidDebugInfo) => {
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -3500,10 +3483,7 @@ mod draft {
 
         let symbol_info = match module.get_symbol_at_address(address) {
             Ok(s) => s,
-            Err(e)
-                if e == bun_core::err!("MissingDebugInfo")
-                    || e == bun_core::err!("InvalidDebugInfo") =>
-            {
+            Err(crate::Error::MissingDebugInfo | crate::Error::InvalidDebugInfo) => {
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -3524,7 +3504,7 @@ mod draft {
         symbol_name: &[u8],
         compile_unit_name: &[u8],
         tty_config: TtyConfig,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
         // ingest. The constant is tiny and this path is debug-only — build it once
         // at runtime in a stack BoundedArray (no heap, async-signal-safe).
@@ -3579,11 +3559,12 @@ mod draft {
                             out_stream.write_all(b"^\n")?;
                         }
                     }
-                    Err(e)
-                        if e == bun_core::err!("EndOfFile")
-                            || e == bun_core::err!("FileNotFound")
-                            || e == bun_core::err!("BadPathName")
-                            || e == bun_core::err!("AccessDenied") => {}
+                    Err(
+                        crate::Error::EndOfFile
+                        | crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                        | crate::Error::Sys(bun_errno::SystemErrno::EINVAL)
+                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES),
+                    ) => {}
                     Err(e) => return Err(e),
                 }
             }
@@ -3599,7 +3580,7 @@ mod draft {
         out_stream: &mut impl Write,
         tty_config: TtyConfig,
         source_location: &SourceLocation,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Need this to always block even in async I/O mode, because this could potentially
         // be called from e.g. the event loop code crashing.
         let f = bun_sys::File::openat(
@@ -3608,7 +3589,7 @@ mod draft {
             bun_sys::O::RDONLY,
             0,
         )
-        .map_err(bun_core::Error::from)?;
+        .map_err(crate::Error::from)?;
 
         let mut line_buf: [u8; 4096] = [0; 4096];
         let mut fbs_len: usize = 0;
@@ -3629,7 +3610,7 @@ mod draft {
                             current_line_start += pos + 1;
                         }
                     } else if amt_read < buf.len() {
-                        return Err(bun_core::err!("EndOfFile"));
+                        return Err(crate::Error::EndOfFile);
                     } else {
                         amt_read = f.read(&mut buf[..])?;
                         current_line_start = 0;

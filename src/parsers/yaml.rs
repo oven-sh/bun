@@ -77,14 +77,12 @@ pub enum YamlParseError {
 
 bun_core::oom_from_alloc!(YamlParseError);
 
-impl From<YamlParseError> for bun_core::Error {
-    // Map each variant to its tag string via `bun.err!`, the same shape
-    // `json5::ExternalError` uses one file over.
+impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
         match e {
-            YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            YamlParseError::SyntaxError => bun_core::err!("SyntaxError"),
-            YamlParseError::StackOverflow => bun_core::err!("StackOverflow"),
+            YamlParseError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            YamlParseError::SyntaxError => crate::Error::SyntaxError,
+            YamlParseError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -800,8 +798,6 @@ pub enum ParseError {
 }
 
 bun_core::oom_from_alloc!(ParseError);
-
-bun_core::named_error_set!(ParseError);
 
 // ───────────────────────────────────────────────────────────────────────────
 // String / StringRange / StringBuilder

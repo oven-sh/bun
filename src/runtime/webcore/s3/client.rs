@@ -1022,6 +1022,7 @@ pub(crate) fn download_stream(
             poll_ref: bun_io::KeepAlive::init(),
             response_buffer: MutableString::default(),
             mutex: Default::default(),
+            request_error: None,
             reported_response_buffer: MutableString::default(),
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with

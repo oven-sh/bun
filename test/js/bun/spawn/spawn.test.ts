@@ -397,6 +397,20 @@ for (let [gcTick, label] of [
         await prom;
       });
 
+      it("kill() rejects String objects", async () => {
+        const process = spawn({
+          cmd: [shellExe(), "-c", "sleep 1000"],
+          stdout: "pipe",
+        });
+        try {
+          expect(() => process.kill(String.prototype as any)).toThrow(TypeError);
+          expect(() => process.kill(new String("SIGKILL") as any)).toThrow(TypeError);
+        } finally {
+          process.kill();
+          await process.exited;
+        }
+      });
+
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
           cmd: ["node", "-e", "process.stdin.setRawMode?.(true); process.stdin.pipe(process.stdout)"],
@@ -1033,6 +1047,45 @@ describe("close handling", () => {
         expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
       },
     );
+
+    it.skipIf(isWindows)("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
+      // Once .stdio exposes the raw fd number, JS owns it; the Subprocess
+      // finalizer must not close that number again at GC time (the kernel may
+      // have recycled it). Run in a child so a debug abort shows as exit != 0.
+      const fixture = /* js */ `
+        const fs = require("node:fs");
+        let hits = 0;
+        for (let i = 0; i < 4; i++) {
+          let p = Bun.spawn({
+            cmd: ["/bin/sh", "-c", "printf hi >&3"],
+            stdio: ["ignore", "ignore", "ignore", "pipe"],
+          });
+          await p.exited;
+          const fd = p.stdio[3];
+          if (typeof fd !== "number") throw new Error("stdio[3] not a number: " + fd);
+          const b = Buffer.alloc(8);
+          if (fs.readSync(fd, b) !== 2 || b.subarray(0, 2).toString() !== "hi")
+            throw new Error("stdio[3] unreadable");
+          fs.closeSync(fd);
+          const victim = fs.openSync(process.execPath, "r");
+          p = null;
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          try { fs.fstatSync(victim); } catch { hits++; }
+          try { fs.closeSync(victim); } catch {}
+        }
+        if (hits) throw new Error("finalizer closed " + hits + "/4 recycled fds");
+        console.log("PASS");
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    });
   });
 });
 

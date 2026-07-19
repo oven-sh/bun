@@ -114,10 +114,9 @@ impl Stdio {
         }
     }
 
-    pub fn can_use_memfd(&self, is_sync: bool, has_max_buffer: bool) -> bool {
+    pub fn can_use_memfd(&self) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let _ = (is_sync, has_max_buffer);
             return false;
         }
 
@@ -125,7 +124,8 @@ impl Stdio {
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) | Self::ArrayBuffer(_) => true,
-            Self::Pipe => is_sync && !has_max_buffer,
+            // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
+            // grandchild still writing after the child exits would be lost.
             _ => false,
         }
     }

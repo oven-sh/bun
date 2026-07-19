@@ -433,7 +433,7 @@ impl MinifyRenamer {
     pub fn assign_names_by_frequency(
         &mut self,
         name_minifier: &js_ast::NameMinifier,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let mut name_buf: Vec<u8> = Vec::with_capacity(64);
 
         let mut sorted: Vec<SlotAndCount> = Vec::new();
@@ -870,8 +870,8 @@ pub enum UnusedName {
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
-/// the exact condition under which `MutableString::ensure_valid_identifier`
-/// returns the input unchanged (modulo the strict-mode-reserved-word remap,
+/// a sufficient condition for `MutableString::ensure_valid_identifier` to
+/// return the input unchanged (modulo the strict-mode-reserved-word remap,
 /// handled by the caller). That function currently always allocates
 /// a `Box<[u8]>` even on the borrow path, so hoisting
 /// this check into the renamer keeps zero-alloc behaviour for the
@@ -993,10 +993,10 @@ impl NumberScope {
         //
         // `name` may still equal `input_name` bytewise even when `normalized`
         // is true: `ensure_valid_identifier` returns the input bytes unchanged
-        // for an identifier whose first codepoint is a non-ASCII ID_Start
-        // (e.g. `é`, `π`), since only `is_simple_ascii_identifier` is
-        // ASCII-restricted. The hot ASCII path skips the byte compare via
-        // `!normalized`; the rare non-ASCII path falls back to it.
+        // for any already-valid identifier (e.g. `Café`, `π`), since only
+        // `is_simple_ascii_identifier` is ASCII-restricted. The hot ASCII path
+        // skips the byte compare via `!normalized`; the rare non-ASCII path
+        // falls back to it.
         if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.
@@ -1061,44 +1061,39 @@ impl ExportRenamer {
 
     pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {
         let entry = self.used.get_or_put(input).expect("unreachable");
-        let mut tries: u32 = 1;
-        if entry.found_existing {
-            loop {
-                self.string_buffer.reset();
-                write!(
-                    self.string_buffer.writer(),
-                    "{}{}",
-                    bstr::BStr::new(input),
-                    tries
-                )
-                .expect("unreachable");
-                tries += 1;
-                let attempt: &[u8] = self.string_buffer.slice();
-                // Reshaped for borrowck — `get_or_put` borrows `self.used`
-                // mutably, so allocate the arena copy first.
-                let to_use: &[u8] = self.arena.alloc_slice_copy(attempt);
-                let entry = self.used.get_or_put(to_use).expect("unreachable");
-                if !entry.found_existing {
-                    // `StringHashMap` owns a boxed copy of the key on insert.
-                    *entry.value_ptr = tries;
-
-                    let entry = self.used.get_or_put(input).expect("unreachable");
-                    *entry.value_ptr = tries;
-                    // `to_use` borrows `self.arena` (disjoint from `self.used`
-                    // above); returnable directly under split-borrow rules.
-                    return to_use;
-                }
-            }
-        } else {
-            *entry.value_ptr = tries;
+        if !entry.found_existing {
+            *entry.value_ptr = 1;
+            // `StringHashMap` does not expose a key pointer; allocate a copy in
+            // `self.arena` so the returned slice is tied to `&self`.
+            return self.arena.alloc_slice_copy(input);
         }
 
-        // `StringHashMap` does not expose a key pointer; allocate a copy in `self.arena`
-        // so the returned slice is tied to `&self` (sub-borrow of `&mut self`).
-        self.arena.alloc_slice_copy(input)
+        // Resume from the last suffix handed out for this prefix so N collisions
+        // on the same name stay O(N) total (see `NumberScope::find_unused_name`).
+        let mut tries: u32 = *entry.value_ptr;
+        loop {
+            self.string_buffer.reset();
+            write!(
+                self.string_buffer.writer(),
+                "{}{}",
+                bstr::BStr::new(input),
+                tries
+            )
+            .expect("unreachable");
+            tries += 1;
+            let attempt: &[u8] = self.string_buffer.slice();
+            if self.used.contains_key(attempt) {
+                continue;
+            }
+            // `StringHashMap::put` boxes the key itself; the arena copy below is
+            // only for the caller's returned slice (`string_buffer` is reused).
+            self.used.put(attempt, 1).expect("unreachable");
+            *self.used.get_mut(input).expect("unreachable") = tries;
+            return self.arena.alloc_slice_copy(attempt);
+        }
     }
 
-    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {
+    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
         let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
         self.count += 1;
         Ok(name)

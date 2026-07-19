@@ -555,7 +555,7 @@ pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
     debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
     // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
     // heap-stable `Box<HiveAllocator>` for the VM lifetime.
-    let pool = unsafe { &raw const *(*state).body_value_pool };
+    let pool = unsafe { &raw const **(*state).body_value_pool };
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }
@@ -1402,7 +1402,7 @@ impl Value {
         Ok(())
     }
 
-    pub fn to_error(&mut self, err: bun_core::Error, global: &JSGlobalObject) -> JsTerminated<()> {
+    pub fn to_error(&mut self, err: &crate::Error, global: &JSGlobalObject) -> JsTerminated<()> {
         self.to_error_instance(
             ValueError::Message(BunString::create_format(format_args!(
                 "Error reading file {}",
@@ -2285,13 +2285,13 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         value.to_blob_if_possible();
 
         match value {
             Value::Used => {
                 bun_core::scoped_log!(BodyValueBufferer, "Used");
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(crate::Error::StreamAlreadyUsed);
             }
             Value::Empty | Value::Null => {
                 bun_core::scoped_log!(BodyValueBufferer, "Empty");
@@ -2461,7 +2461,7 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         debug_assert!(matches!(value, Value::Locked(_)));
         let Value::Locked(locked) = value else {
             unreachable!()
@@ -2487,12 +2487,12 @@ impl<'a> ValueBufferer<'a> {
             *value = Value::Used;
 
             if stream.is_locked(self.global) {
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(crate::Error::StreamAlreadyUsed);
             }
 
             match stream.ptr {
                 webcore::readable_stream::Source::Invalid => {
-                    return Err(bun_core::err!("InvalidStream"));
+                    return Err(crate::Error::InvalidStream);
                 }
                 // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
@@ -2501,7 +2501,7 @@ impl<'a> ValueBufferer<'a> {
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
-                    return Err(bun_core::err!("UnsupportedStreamType"));
+                    return Err(crate::Error::UnsupportedStreamType);
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the
@@ -2574,10 +2574,10 @@ impl<'a> ValueBufferer<'a> {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             let readable = value
                 .to_readable_stream(self.global)
-                .map_err(|_| bun_core::err!("JSError"))?;
+                .map_err(|_| crate::Error::JSError)?;
             // The JS exception value is
             // flattened to a string-coded error because `run`'s callers consume
-            // `bun_core::Error` (the exception itself stays pending on the VM).
+            // `crate::Error` (the exception itself stays pending on the VM).
             readable.ensure_still_alive();
             readable.protect();
             return self.buffer_locked_body_value(value, None);

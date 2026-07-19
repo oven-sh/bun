@@ -757,6 +757,11 @@ public:
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
+    /* Switch this app into node:http compat mode (see HttpContext::enableNodeHttpCompat). */
+    void enableNodeHttpCompat() {
+        httpContext->enableNodeHttpCompat();
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);
@@ -767,9 +772,11 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = useInsecureHTTPParser;
+        httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
         return std::move(*this);
     }
 

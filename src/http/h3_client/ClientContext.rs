@@ -175,7 +175,7 @@ impl ClientContext {
                     port,
                 );
                 self.unregister(session_mut(session));
-                PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
+                PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;
             }
         }
@@ -221,7 +221,9 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            session_mut(s).stream_body_by_http_id(async_http_id, ended);
+            if session_mut(s).stream_body_by_http_id(async_http_id, ended) {
+                return;
+            }
         }
     }
 

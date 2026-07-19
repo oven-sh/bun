@@ -8969,6 +8969,131 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
   expect(await exited).not.toBe(0);
 });
 
+describe("rejects percent-encoded dependency names that would bypass [install.scopes]", () => {
+  // A dependency named `@priv%2fx` has no literal `/`, so scope routing would
+  // match it against no `[install.scopes]` entry and fall through to the
+  // default registry. That registry receives `GET /@priv%2fx`, which the npm
+  // namespace decodes back to `@priv/x`, so the default registry serves the
+  // scoped packument for a name the scope pin was meant to redirect. npm's
+  // validate-npm-package-name rejects non-URL-friendly names at parse time;
+  // bun must do the same before any registry request.
+  for (const [label, depName, alias] of [
+    ["root dependency key", "@priv%2fx", "@priv%2fx"],
+    ["npm: alias target", "npm:@priv%2fx@*", "innocent"],
+    // uppercase %2F and the raw `?` URL metacharacter must be rejected too.
+    ["uppercase %2F", "@priv%2Fx", "@priv%2Fx"],
+    ["raw ? metacharacter", "@priv/x?", "@priv/x?"],
+  ] as const) {
+    test(label, async () => {
+      const defaultHits: string[] = [];
+      using defaultReg = Bun.serve({
+        port: 0,
+        fetch(req) {
+          defaultHits.push(new URL(req.url).pathname);
+          return new Response("{}", { status: 404 });
+        },
+      });
+      const scopedHits: string[] = [];
+      using scopedReg = Bun.serve({
+        port: 0,
+        fetch(req) {
+          scopedHits.push(new URL(req.url).pathname);
+          return new Response("{}", { status: 404 });
+        },
+      });
+
+      await Promise.all([
+        write(
+          join(packageDir, "bunfig.toml"),
+          `
+[install]
+cache = false
+registry = "http://localhost:${defaultReg.port}/"
+[install.scopes]
+"@priv" = { url = "http://localhost:${scopedReg.port}/" }
+`,
+        ),
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: { [alias]: alias === depName ? "*" : depName },
+          }),
+        ),
+      ]);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await stderr.text();
+      await stdout.text();
+
+      expect(err.toLowerCase()).toContain("invalid package name");
+      expect({ defaultHits, scopedHits }).toEqual({ defaultHits: [], scopedHits: [] });
+      expect(await exited).not.toBe(0);
+      expect(await exists(join(packageDir, "node_modules", alias))).toBe(false);
+    });
+  }
+
+  test("literal @scope/name still routes to the pinned registry", async () => {
+    const defaultHits: string[] = [];
+    using defaultReg = Bun.serve({
+      port: 0,
+      fetch(req) {
+        defaultHits.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+registry = "http://localhost:${defaultReg.port}/"
+[install.scopes]
+"@priv" = { url = "http://localhost:${port}/" }
+`,
+      ),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: { "@priv/x": "*" },
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    await stdout.text();
+    await exited;
+
+    // Control: a well-formed scoped name must not be rejected by the new
+    // validator; it is routed to the pinned registry (which 404s here because
+    // verdaccio has no @priv/x) and must never touch the default registry.
+    expect(err).not.toContain("Invalid package name");
+    expect(defaultHits).toEqual([]);
+  });
+});
+
 test("registry override from a project .env only keeps the saved token when the host matches and the scheme is not downgraded", async () => {
   // `bun install` loads the project's `.env` before computing installer
   // options, so a repo-committed `.env` can point BUN_CONFIG_REGISTRY at a

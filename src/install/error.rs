@@ -192,6 +192,8 @@ pub enum Error {
     LockfileIsMissingResolutionData,
     #[error("MissingPackageName")]
     MissingPackageName,
+    #[error("InvalidPackageName")]
+    InvalidPackageName,
     #[error("GlobError")]
     GlobError,
     #[error("Invalid")]
@@ -375,6 +377,7 @@ impl Error {
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
             Self::MissingPackageName => "MissingPackageName",
+            Self::InvalidPackageName => "InvalidPackageName",
             Self::GlobError => "GlobError",
             Self::Invalid => "Invalid",
             Self::LockfileValidationFailedListIsImpossiblyLong => {

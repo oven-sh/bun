@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import { deserialize as v8deserialize, serialize as v8serialize } from "node:v8";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -981,5 +982,98 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+// https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+// The memory-table lookup ("If memory[value] exists, then return memory[value]") is the first
+// step for every value, so an ArrayBuffer that was already serialized must resolve as a back-
+// reference even if user code detached it between the first visit and the second.
+describe("structuredClone back-reference to an ArrayBuffer detached after its first visit", () => {
+  const detach = (ab: ArrayBuffer) => structuredClone(ab, { transfer: [ab] });
+
+  const roundTrips: [string, (value: unknown) => any][] = [
+    ["structuredClone", structuredClone],
+    ["v8.deserialize(v8.serialize())", (value: unknown) => v8deserialize(v8serialize(value))],
+    ["bun:jsc deserialize(serialize())", (value: unknown) => deserialize(serialize(value))],
+  ];
+
+  describe.each(roundTrips)("%s", (_, roundTrip) => {
+    test("object properties: {ab, get g(){detach(ab)}, ab2: ab}", () => {
+      const ab = new ArrayBuffer(8);
+      new Uint8Array(ab).fill(7);
+      const input = {
+        ab,
+        get g() {
+          detach(ab);
+          return 1;
+        },
+        ab2: ab,
+      };
+      const cloned = roundTrip(input);
+      expect(ab.byteLength).toBe(0);
+      expect(cloned.ab2).toBe(cloned.ab);
+      expect(cloned.g).toBe(1);
+      expect(cloned.ab.byteLength).toBe(8);
+      expect([...new Uint8Array(cloned.ab)]).toEqual([7, 7, 7, 7, 7, 7, 7, 7]);
+    });
+
+    test("array elements: [ab, {get g(){detach(ab)}}, ab]", () => {
+      const ab = new ArrayBuffer(4);
+      new Uint8Array(ab).set([1, 2, 3, 4]);
+      const input = [
+        ab,
+        {
+          get g() {
+            detach(ab);
+            return 1;
+          },
+        },
+        ab,
+      ];
+      const cloned = roundTrip(input);
+      expect(ab.byteLength).toBe(0);
+      expect(cloned[2]).toBe(cloned[0]);
+      expect(cloned[0].byteLength).toBe(4);
+      expect([...new Uint8Array(cloned[0])]).toEqual([1, 2, 3, 4]);
+    });
+
+    test("resizable ArrayBuffer back-reference after mid-clone detach", () => {
+      const ab = new ArrayBuffer(4, { maxByteLength: 16 });
+      new Uint8Array(ab).set([9, 8, 7, 6]);
+      const input = {
+        ab,
+        get g() {
+          detach(ab);
+          return 1;
+        },
+        ab2: ab,
+      };
+      const cloned = roundTrip(input);
+      expect(cloned.ab2).toBe(cloned.ab);
+      expect(cloned.ab.byteLength).toBe(4);
+      expect(cloned.ab.maxByteLength).toBe(16);
+      expect(cloned.ab.resizable).toBe(true);
+      expect([...new Uint8Array(cloned.ab)]).toEqual([9, 8, 7, 6]);
+    });
+
+    test("control: first visit of a detached ArrayBuffer still throws DataCloneError", () => {
+      const ab = new ArrayBuffer(4);
+      const input = {
+        get g() {
+          detach(ab);
+          return 1;
+        },
+        ab,
+      };
+      let error: unknown;
+      try {
+        roundTrip(input);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(DOMException);
+      expect((error as DOMException).name).toBe("DataCloneError");
+    });
   });
 });

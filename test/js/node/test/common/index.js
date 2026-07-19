@@ -128,7 +128,7 @@ if (process.argv.length === 2 &&
     fs.existsSync(process.argv[1])) {
   const flags = parseTestFlags();
   if (process.versions.bun && process.execArgv.includes("--expose-internals")) {
-    installBunExposeInternalsShim();
+    installBunExposeInternalsRequireInterceptor();
   }
   for (const flag of flags) {
     if (!process.execArgv.includes(flag) &&

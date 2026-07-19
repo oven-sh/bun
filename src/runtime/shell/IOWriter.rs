@@ -745,6 +745,10 @@ impl IOWriter {
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
     fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
+        // `run_yield` below re-enters child completions whose teardown may
+        // drop the last external `Arc<IOWriter>`; keep ourselves alive for
+        // the callback body (mirrors `on_error`).
+        let _keepalive = self.keepalive();
         // NOTE: `set_writing` re-derives `state()` on Windows, which would
         // invalidate `s` under Stacked Borrows; do it before binding `s`
         // (matches the ordering in `on_error`).
@@ -1193,12 +1197,10 @@ fn drain_buffered_data(
 
 impl Drop for IOWriter {
     fn drop(&mut self) {
-        // With `Arc` the last ref drops *after* the callback returns, so the
-        // synchronous path is safe (PipeWriter cannot touch us after free).
-        // TODO: if a PipeWriter callback is on the stack when the last
-        // Arc drops (possible via re-entrant child deinit), we need the async
-        // hop. Revisit once `bun_event_loop::EventLoopTask` is wired to the
-        // shell's `EventLoopHandle` shim.
+        // Every PipeWriter callback (`on_write_pollable`/`on_error`, and the
+        // POSIX `_on_error`/`register_poll` error arms via `Parent::ref_`)
+        // holds a keepalive strong ref, so the last `Arc` cannot drop while
+        // one is on the stack and Drop runs strictly after they return.
         let s = self.state.get_mut();
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]

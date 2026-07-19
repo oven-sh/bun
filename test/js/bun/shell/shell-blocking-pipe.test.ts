@@ -1,7 +1,10 @@
 import { $, generateHeapSnapshot } from "bun";
 
-import { test } from "bun:test";
-import { isWindows } from "harness";
+import { test, expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { createReadStream } from "node:fs";
+import { join } from "node:path";
 
 // We skip this test on Windows becasue:
 // 1. Windows didn't have this problem to begin with
@@ -30,4 +33,50 @@ test.skipIf(isWindows)("writing > send buffer size (with a variable) doesn't blo
   if (result !== expected + "\n") {
     throw new Error("Expected " + expected + "\n but got " + result);
   }
+});
+
+// Redirecting a builtin's stdout to a named pipe must go through the pollable
+// IOWriter path. Previously the redirect fd was hardcoded as non-pollable on
+// POSIX while open_for_writing_impl still set O_NONBLOCK, so a large echo hit
+// EAGAIN inside do_file_write and panicked with
+// "drainBufferedData returning .pending in IOWriter.doFileWrite should not happen".
+test.skipIf(isWindows)("builtin redirect to a named pipe larger than the pipe buffer", async () => {
+  using dir = tempDir("shell-fifo-redirect", {
+    "run.ts": `
+      // 200KB: larger than the default 64KB pipe buffer so the first write()
+      // only partially drains and the next one returns EAGAIN.
+      const big = Buffer.alloc(200_000, "bun!").toString();
+      await Bun.$\`echo \${big} > \${process.argv[2]}\`;
+    `,
+  });
+  const fifo = join(String(dir), "out.fifo");
+  mkfifo(fifo);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts", fifo],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  // Open the read end so the child's O_WRONLY open unblocks; draining here
+  // is what lets the pollable writer make progress after EAGAIN.
+  const reader = createReadStream(fifo, { encoding: "utf8" });
+  let received = "";
+  const drained = new Promise<void>((resolve, reject) => {
+    reader.on("data", chunk => {
+      received += chunk;
+    });
+    reader.on("end", resolve);
+    reader.on("error", reject);
+  });
+
+  const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+  await drained;
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
+  expect(received).toBe(Buffer.alloc(200_000, "bun!").toString() + "\n");
+  expect(exitCode).toBe(0);
 });

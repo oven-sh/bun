@@ -1991,6 +1991,15 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: intrusive refcount bump via raw pointer; see the Windows
+        // `WindowsWriterParent::ref_` impl below for the aliasing rationale.
+        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: intrusive refcount drop via raw pointer; may free `this`.
+        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
+    }
 }
 
 #[cfg(windows)]

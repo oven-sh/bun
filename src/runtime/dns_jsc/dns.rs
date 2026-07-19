@@ -296,7 +296,23 @@ pub(super) mod lib_info {
             // bitcast u32 mach_port → i32 fd
             sys::Fd::from_native(machport as i32),
         );
-        debug_assert!(matches!(rc, sys::Result::Ok(_)));
+        if let sys::Result::Err(err) = rc {
+            // Registration failed: the machport callback will never fire.
+            // Return the poll slot and complete the request with an error so
+            // the promise rejects instead of hanging forever.
+            let _ = err;
+            poll.deinit();
+            // SAFETY: `request` is the live heap-allocated request; no other
+            // owner exists (the poll was never registered).
+            unsafe {
+                GetAddrInfoRequest::get_addr_info_async_callback(
+                    -1,
+                    ptr::null_mut(),
+                    request.cast::<c_void>(),
+                );
+            }
+            return promise_value;
+        }
 
         poll.enable_keeping_process_alive(ctx);
         // SAFETY: request is live (heap-allocated) and exclusively accessed on this thread.

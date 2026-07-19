@@ -12,4 +12,8 @@ call `Bun.build`/`Bun.Transpiler`. Tests that exercise any code compiled into
 the bun binary stay in `test/internal/` so the Buildkite lanes run them against
 the build under test.
 
+The workflow runs on a bare checkout (no `bun install`), so tests here may
+only import built-ins, relative paths, and `harness` (resolved via
+`test/tsconfig.json` paths).
+
 To run locally: `bun test test/internal/source-lints/`.

@@ -1483,7 +1483,8 @@ pub struct H2FrameParser {
     /// Promised stream id whose PUSH_PROMISE header block is being delivered by the engine (its
     /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
     rewrite_pending_push: Cell<u32>,
-    /// stream id -> JS stream context object, for the rewrite engine's Sink callbacks.
+    /// stream id -> JS stream context object (the Http2Stream). Single store: dispatches read it
+    /// via `stream_ctx` and the legacy `Stream::get_identifier` wrapper.
     sctx: JsCell<BunHashMap<u32, StrongOptional>>,
     /// In-progress decoded header array + sensitive-name array, accumulated across on_header.
     /// Packed name/value bytes of the header block being decoded (reused per block).
@@ -1518,6 +1519,32 @@ impl H2FrameParser {
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
+    }
+
+    /// The JS stream context object for `stream_id` (the Http2Stream instance the JS layer
+    /// registered via `setStreamContext` / the `streamStart` return value / `request()`'s stream
+    /// argument). Falls back to the numeric id for dispatches that fire before JS has supplied one.
+    #[inline]
+    pub(crate) fn stream_ctx(&self, stream_id: u32) -> JSValue {
+        self.sctx
+            .get()
+            .get(&stream_id)
+            .and_then(|s| s.get())
+            .unwrap_or_else(|| JSValue::js_number(stream_id as f64))
+    }
+
+    /// Record (or replace) the JS stream context for `stream_id`. A single `sctx` entry is the
+    /// only GC root the parser holds per stream.
+    #[inline]
+    pub(crate) fn set_stream_ctx(
+        &self,
+        stream_id: u32,
+        value: JSValue,
+        global_object: &JSGlobalObject,
+    ) {
+        self.sctx.with_mut(|m| {
+            m.insert(stream_id, StrongOptional::create(value, global_object));
+        });
     }
 
     /// Hold a `+1` for the extent of a native frame that can re-enter JS (and therefore free the
@@ -1608,7 +1635,6 @@ enum StreamState {
 pub struct Stream {
     id: u32,
     state: StreamState,
-    js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
     end_after_headers: bool,
     is_waiting_more_headers: bool,
@@ -2002,9 +2028,12 @@ impl Stream {
             if self.data_frame_queue.is_empty() {
                 if _frame.end_stream {
                     if self.wait_for_trailers {
-                        client.dispatch(JSH2FrameParser::Gc::onWantTrailers, self.get_identifier());
+                        client.dispatch(
+                            JSH2FrameParser::Gc::onWantTrailers,
+                            self.get_identifier(client),
+                        );
                     } else {
-                        let identifier = self.get_identifier();
+                        let identifier = self.get_identifier(client);
                         identifier.ensure_still_alive();
                         if self.state == StreamState::HALF_CLOSED_REMOTE {
                             self.state = StreamState::CLOSED;
@@ -2179,7 +2208,6 @@ impl Stream {
         Stream {
             id: stream_identifier,
             state: StreamState::OPEN,
-            js_context: StrongOptional::empty(),
             wait_for_trailers: false,
             end_after_headers: false,
             is_waiting_more_headers: false,
@@ -2225,18 +2253,8 @@ impl Stream {
         )
     }
 
-    pub fn set_context(&mut self, value: JSValue, global_object: &JSGlobalObject) {
-        let old = core::mem::replace(
-            &mut self.js_context,
-            StrongOptional::create(value, global_object),
-        );
-        drop(old);
-    }
-
-    pub fn get_identifier(&self) -> JSValue {
-        self.js_context
-            .get()
-            .unwrap_or_else(|| JSValue::js_number(self.id as f64))
+    pub fn get_identifier(&self, client: &H2FrameParser) -> JSValue {
+        client.stream_ctx(self.id)
     }
 
     pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
@@ -2257,10 +2275,6 @@ impl Stream {
         // TODO: We should not need this ref counting here, since Parser owns Stream
         parser.ref_();
         self.signal = Some(signal_ref);
-    }
-
-    pub fn detach_context(&mut self) {
-        self.js_context.deinit();
     }
 
     fn clean_queue<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
@@ -2305,13 +2319,11 @@ impl Stream {
             client
                 .pending_engine_stream_closes
                 .with_mut(|v| v.push(self.id));
-            // Release the engine-dispatch context root too; without this the Strong JS
-            // stream object lives until the session dies.
-            client.sctx.with_mut(|m| {
-                m.remove(&self.id);
-            });
         }
-        self.detach_context();
+        // Release the per-stream JS context root so the JS stream object can be collected.
+        client.sctx.with_mut(|m| {
+            m.remove(&self.id);
+        });
         self.clean_queue::<FINALIZING>(client);
         if let Some(signal) = self.signal.take() {
             drop(signal);
@@ -2599,7 +2611,7 @@ impl H2FrameParser {
         let _ = writer_stream.write_all(&value.to_ne_bytes());
         let old_state = stream.state;
         stream.state = StreamState::CLOSED;
-        let identifier = stream.get_identifier();
+        let identifier = stream.get_identifier(self);
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
         self.dispatch_with_2_extra(
@@ -2637,7 +2649,7 @@ impl H2FrameParser {
         let _ = writer_stream.write_all(&value.to_ne_bytes());
 
         stream.state = StreamState::CLOSED;
-        let identifier = stream.get_identifier();
+        let identifier = stream.get_identifier(self);
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
         if rst_code == ErrorCode::NO_ERROR {
@@ -4134,7 +4146,7 @@ impl H2FrameParser {
 
         self.dispatch_with_3_extra(
             JSH2FrameParser::Gc::onStreamHeaders,
-            stream.get_identifier(),
+            stream.get_identifier(self),
             headers,
             sensitive_headers,
             JSValue::js_number(flags as f64),
@@ -4289,7 +4301,7 @@ impl H2FrameParser {
                 if let Ok(chunk) = self.handlers.get().binary_type.to_js(payload, &global) {
                     self.dispatch_with_extra(
                         JSH2FrameParser::Gc::onStreamData,
-                        stream.get_identifier(),
+                        stream.get_identifier(self),
                         chunk,
                     );
                 }
@@ -4307,7 +4319,7 @@ impl H2FrameParser {
                 };
             }
             if frame.flags & DataFrameFlags::END_STREAM as u8 != 0 {
-                let identifier = stream.get_identifier();
+                let identifier = stream.get_identifier(self);
                 identifier.ensure_still_alive();
 
                 if stream.state == StreamState::HALF_CLOSED_LOCAL {
@@ -4591,7 +4603,7 @@ impl H2FrameParser {
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
             stream.state = StreamState::CLOSED;
-            let identifier = stream.get_identifier();
+            let identifier = stream.get_identifier(self);
             identifier.ensure_still_alive();
             stream.free_resources::<false>(self);
             if rst_code == ErrorCode::NO_ERROR.0 {
@@ -4852,7 +4864,7 @@ impl H2FrameParser {
         if stream.state == StreamState::CLOSED {
             return;
         }
-        let identifier = stream.get_identifier();
+        let identifier = stream.get_identifier(self);
         identifier.ensure_still_alive();
 
         // no more continuation headers we can call it closed
@@ -5316,12 +5328,7 @@ impl H2FrameParser {
                 // streamStart returns the JS stream it created; storing it here saves the
                 // setStreamContext host call the JS layer used to make per stream.
                 if returned.is_object() {
-                    self.sctx.with_mut(|m| {
-                        m.insert(stream_identifier, StrongOptional::create(returned, &global));
-                    });
-                    // SAFETY: stream is *mut Stream from self.streams; valid while the map
-                    // entry exists
-                    unsafe { (*stream).set_context(returned, &global) };
+                    self.set_stream_ctx(stream_identifier, returned, &global);
                 }
             }
         }
@@ -5631,18 +5638,10 @@ impl H2FrameParser {
         }
     }
 
-    /// Resolve the JS stream context for the rewrite engine's dispatches: the `sctx` map (populated
-    /// by setStreamContext, i.e. server-side inbound streams) or the legacy stream's own context
-    /// (populated directly by the legacy request() for client-initiated streams).
+    /// Resolve the JS stream context for the rewrite engine's dispatches (see `stream_ctx`; kept
+    /// as an alias so the Sink impl's per-callback shape stays legible).
     fn rewrite_stream_ctx(&self, stream_id: u32) -> JSValue {
-        if let Some(ctx) = self.sctx.get().get(&stream_id).and_then(|s| s.get()) {
-            return ctx;
-        }
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
-            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            return unsafe { (*stream).get_identifier() };
-        }
-        JSValue::UNDEFINED
+        self.stream_ctx(stream_id)
     }
 
     /// Record outbound DATA the legacy encoder wrote so the engine's send windows track reality.
@@ -6112,8 +6111,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_stream_open(&self, stream_id: u32) {
         // Bridge: create the legacy stream entry (the legacy outbound host fns — respond/sendData/
         // rstStream/getStreamState — look streams up there) AND dispatch onStreamStart, which the
-        // legacy helper already does. The JS streamStart handler then calls setStreamContext,
-        // populating both `sctx` and the legacy stream context.
+        // legacy helper already does. The JS streamStart handler's return value populates `sctx`.
         let _ = self.handle_received_stream_id(stream_id);
     }
 
@@ -7564,9 +7562,12 @@ impl H2FrameParser {
             }
             if close {
                 if stream.wait_for_trailers {
-                    self.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
+                    self.dispatch(
+                        JSH2FrameParser::Gc::onWantTrailers,
+                        stream.get_identifier(self),
+                    );
                 } else {
-                    let identifier = stream.get_identifier();
+                    let identifier = stream.get_identifier(self);
                     identifier.ensure_still_alive();
                     if stream.state == StreamState::HALF_CLOSED_REMOTE {
                         stream.state = StreamState::CLOSED;
@@ -7884,7 +7885,7 @@ impl H2FrameParser {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
-                        let identifier = stream.get_identifier();
+                        let identifier = stream.get_identifier(this);
                         identifier.ensure_still_alive();
                         this.dispatch_with_2_extra(
                             JSH2FrameParser::Gc::onFrameError,
@@ -8093,7 +8094,7 @@ impl H2FrameParser {
                 offset += chunk_size;
             }
         }
-        let identifier = stream.get_identifier();
+        let identifier = stream.get_identifier(this);
         identifier.ensure_still_alive();
         if stream.state == StreamState::HALF_CLOSED_REMOTE {
             stream.state = StreamState::CLOSED;
@@ -8490,12 +8491,17 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
+        let stream_id = stream_id_arg.to_u32();
+        if !this.streams.get().contains_key(&stream_id) {
             return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        }
 
-        // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        Ok(unsafe { (*stream).js_context.get() }.unwrap_or(JSValue::UNDEFINED))
+        Ok(this
+            .sctx
+            .get()
+            .get(&stream_id)
+            .and_then(|s| s.get())
+            .unwrap_or(JSValue::UNDEFINED))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -8529,20 +8535,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected context to be an object")));
         }
 
-        // Rewrite engine: record the JS stream context for the engine's Sink callbacks. Dropping a
-        // previous entry releases its root (StrongOptional: Drop -> destroy).
-        this.sctx.with_mut(|m| {
-            m.insert(
-                stream_id,
-                StrongOptional::create(context_arg, global_object),
-            );
-        });
-
-        // Legacy path: also set on the legacy stream if it still exists (best-effort).
-        if let Some(stream) = this.streams.get().get(&stream_id).copied() {
-            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).set_context(context_arg, global_object) };
-        }
+        this.set_stream_ctx(stream_id, context_arg, global_object);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -8566,7 +8559,8 @@ impl H2FrameParser {
         let mut it = StreamResumableIterator::init(this);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            let Some(value) = (unsafe { (*stream).js_context.get() }) else {
+            let id = unsafe { (*stream).id };
+            let Some(value) = this.sctx.get().get(&id).and_then(|s| s.get()) else {
                 continue;
             };
             this.handlers.get().vm.event_loop_mut().run_callback(
@@ -8605,7 +8599,7 @@ impl H2FrameParser {
                 let old_state = stream.state;
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::CANCEL.0;
-                let identifier = stream.get_identifier();
+                let identifier = stream.get_identifier(this);
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(this);
                 this.dispatch_with_2_extra(
@@ -8648,7 +8642,7 @@ impl H2FrameParser {
             if stream.state != StreamState::CLOSED {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = rst_code;
-                let identifier = stream.get_identifier();
+                let identifier = stream.get_identifier(this);
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(this);
                 this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, error_arg);
@@ -8850,12 +8844,12 @@ impl H2FrameParser {
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
-                            stream.set_context(stream_ctx_arg, global_object);
+                            this.set_stream_ctx(stream_id, stream_ctx_arg, global_object);
                         }
                         stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
+                            stream.get_identifier(this),
                             JSValue::js_number(stream.rst_code as f64),
                         );
                         return Ok(JSValue::js_number(stream_id as f64));
@@ -9036,13 +9030,13 @@ impl H2FrameParser {
                             if !stream_ctx_arg.is_empty_or_undefined_or_null()
                                 && stream_ctx_arg.is_object()
                             {
-                                stream.set_context(stream_ctx_arg, global_object);
+                                this.set_stream_ctx(stream_id, stream_ctx_arg, global_object);
                             }
                             stream.state = StreamState::CLOSED;
                             stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
                             this.dispatch_with_extra(
                                 JSH2FrameParser::Gc::onStreamError,
-                                stream.get_identifier(),
+                                stream.get_identifier(this),
                                 JSValue::js_number(stream.rst_code as f64),
                             );
                             return Ok(JSValue::UNDEFINED);
@@ -9127,12 +9121,12 @@ impl H2FrameParser {
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
-                            stream.set_context(stream_ctx_arg, global_object);
+                            this.set_stream_ctx(stream_id, stream_ctx_arg, global_object);
                         }
                         stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
+                            stream.get_identifier(this),
                             JSValue::js_number(stream.rst_code as f64),
                         );
                         return Ok(JSValue::js_number(stream_id as f64));
@@ -9148,7 +9142,7 @@ impl H2FrameParser {
         // The `options` getters below can run user JS while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
-            stream.set_context(stream_ctx_arg, global_object);
+            this.set_stream_ctx(stream_id, stream_ctx_arg, global_object);
         }
         let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
         let mut exclusive: bool = false;
@@ -9165,7 +9159,7 @@ impl H2FrameParser {
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                 this.dispatch_with_extra(
                     JSH2FrameParser::Gc::onStreamError,
-                    stream.get_identifier(),
+                    stream.get_identifier(this),
                     JSValue::js_number(stream.rst_code as f64),
                 );
                 return Ok(JSValue::js_number(stream_id as f64));
@@ -9243,7 +9237,7 @@ impl H2FrameParser {
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
+                            stream.get_identifier(this),
                             JSValue::js_number(stream.rst_code as f64),
                         );
                         return Ok(JSValue::js_number(stream.id as f64));
@@ -9267,7 +9261,7 @@ impl H2FrameParser {
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
+                            stream.get_identifier(this),
                             JSValue::js_number(stream.rst_code as f64),
                         );
                         return Ok(JSValue::js_number(stream_id as f64));
@@ -9286,7 +9280,7 @@ impl H2FrameParser {
                     stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                     this.dispatch_with_extra(
                         JSH2FrameParser::Gc::onStreamError,
-                        stream.get_identifier(),
+                        stream.get_identifier(this),
                         JSValue::js_number(stream.rst_code as f64),
                     );
                     return Ok(JSValue::js_number(stream_id as f64));
@@ -9323,7 +9317,7 @@ impl H2FrameParser {
             this.rejected_streams.set(this.rejected_streams.get() + 1);
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
+                stream.get_identifier(this),
                 JSValue::js_number(stream.rst_code as f64),
             );
             if this.rejected_streams.get() >= this.max_rejected_streams.get() {
@@ -9359,14 +9353,14 @@ impl H2FrameParser {
 
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
+                stream.get_identifier(this),
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
 
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
+                stream.get_identifier(this),
                 JSValue::js_number(stream.rst_code as f64),
             );
             return Ok(JSValue::js_number(stream_id as f64));
@@ -9524,7 +9518,10 @@ impl H2FrameParser {
 
             if wait_for_trailers {
                 stream.state = StreamState::HALF_CLOSED_LOCAL;
-                this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
+                this.dispatch(
+                    JSH2FrameParser::Gc::onWantTrailers,
+                    stream.get_identifier(this),
+                );
                 return Ok(JSValue::js_number(stream_id as f64));
             }
 
@@ -9536,7 +9533,7 @@ impl H2FrameParser {
             // response regressed the state to HALF_CLOSED_LOCAL and never
             // told JS, leaking the stream (and the session's connection
             // count) until socket close.
-            let identifier = stream.get_identifier();
+            let identifier = stream.get_identifier(this);
             identifier.ensure_still_alive();
             if stream.state == StreamState::HALF_CLOSED_REMOTE {
                 stream.state = StreamState::CLOSED;

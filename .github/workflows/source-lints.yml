@@ -1,0 +1,63 @@
+name: source-lints
+
+permissions:
+  contents: read
+
+# Source-tree lints and build-script unit tests from test/internal/source-lints/.
+# These never touch the built bun binary (no bun:internal-for-testing, no
+# bunExe() spawns), so they can run against a released bun immediately on push
+# instead of waiting for build-bun in every Buildkite test lane.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**/*.rs"
+      - "src/jsc/bindings/**"
+      - "scripts/build/**"
+      - "scripts/glob-sources.ts"
+      - "test/harness.ts"
+      - "test/tsconfig.json"
+      - "test/_util/**"
+      - "test/internal/source-lints/**"
+      - ".github/workflows/source-lints.yml"
+      - ".github/actions/setup-bun/**"
+  pull_request:
+    paths:
+      - "src/**/*.rs"
+      - "src/jsc/bindings/**"
+      - "scripts/build/**"
+      - "scripts/glob-sources.ts"
+      - "test/harness.ts"
+      - "test/tsconfig.json"
+      - "test/_util/**"
+      - "test/internal/source-lints/**"
+      - ".github/workflows/source-lints.yml"
+      - ".github/actions/setup-bun/**"
+  merge_group:
+
+env:
+  BUN_VERSION: "1.3.2"
+
+jobs:
+  source-lints:
+    name: "Source lints"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      # PR pushes supersede earlier runs; main commits always run to completion.
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      # No `bun install`: every test here imports only built-ins, relative
+      # paths, or `harness` (resolved via test/tsconfig.json `paths`), so a
+      # bare checkout is sufficient.
+      - name: Run source lints
+        run: bun test test/internal/source-lints/

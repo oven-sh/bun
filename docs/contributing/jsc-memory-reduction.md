@@ -379,3 +379,11 @@ Per-pair geomean +1.8%. 4 of 5 pairs favor patched. The interleaving cancels con
 Stage-1 `CacheableIdentifier` change (landed): `isCacheableIdentifierCell`/`createFromCell`/`getCacheableIdentifier` resolve inline cells to atoms so `obj[inlineStr]` populates an AccessCase instead of taking the generic slow path on every access. With `InlineStringCache`, subsequent accesses return the same resolved cell and hit the IC's atom-pointer compare.
 
 Prototype: `oven-sh/WebKit#307` (23 commits).
+
+### Deliverable
+
+Tag `inline-strings-v1` (`oven-sh/WebKit@c3264e5320`, 23 commits over the baseline at `639550acdc`) is the upstream-ready cut: inline small strings, all materialization fixes, `InlineStringCache`/`InlineAtomCache`, `JSStringBuilder`, `CacheableIdentifier` ByVal caching. Full JetStream2 interleaved: +2.2% median, +1.8% per-pair geomean (5 pairs). RAMification string-heavy subset: ~flat geomean, parsers -3% to -15%.
+
+The branch tip (`bun-inline-small-strings`) carries 11 further commits: phase-A tag-aware deref shims across `Identifier.h`/`PropertyName.h`/`PropertyTable`/`Structure*`/`HasOwnPropertyCache`/`MegamorphicCache` (infrastructure for phase D), phase-3 partial `view()` swaps, and `[[unlikely]]` hints. The shims add a tag-check branch on every `IdentifierRepHash::hash`/`PropertyName::isSymbol` call and measure ~-1% with no fiber words flowing; they belong with phase D (parser emits fiber-word `Identifier`s for 2-7 char tokens), not in the v1 cut.
+
+Phase C (26 JIT `StringImpl::m_hashAndFlags` load sites) and phase 3 remainder (~15 `value()`→`view()` swaps) are mapped at file:line in this document's conversation history for a follow-up pass.

@@ -315,6 +315,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
+            JSC::Options::useTemporal() = true;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG

@@ -126,3 +126,11 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# test/js/web/temporal/temporal.test.ts
+# TemporalCore::withTimeZone keeps up to 8 open UCalendars in a process-
+# lifetime LazyNeverDestroyed TinyLRUCache, one per time zone ID; LRU
+# eviction ucal_closes them. The TimeZoneCacheEntry that owns each UCalendar
+# is WTF_MAKE_TZONE_ALLOCATED (bmalloc), which LSAN does not scan as a root
+# region, so the libc-allocated UCalendar it holds is reported as a direct
+# leak even though it is reachable and bounded.
+leak:TemporalCore::withTimeZone

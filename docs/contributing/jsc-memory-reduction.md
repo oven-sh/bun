@@ -365,13 +365,13 @@ Results at 20 commits: RAMification geomean +0.4% (peak footprint, 20 string-hea
 
 Interleaved full-suite runs (5 baseline/patched pairs, 64 subtests each) on a container with ±5% session drift:
 
-| Pair | Baseline | Patched | Delta |
-| ---- | -------: | ------: | ----: |
-| 1    |   188.15 |  189.40 | +0.7% |
-| 2    |   204.64 |  214.22 | +4.7% |
-| 3    |   209.64 |  219.11 | +4.5% |
-| 4    |   214.75 |  211.75 | -1.4% |
-| 5    |   214.55 |  215.72 | +0.5% |
+| Pair       |   Baseline |    Patched |     Delta |
+| ---------- | ---------: | ---------: | --------: |
+| 1          |     188.15 |     189.40 |     +0.7% |
+| 2          |     204.64 |     214.22 |     +4.7% |
+| 3          |     209.64 |     219.11 |     +4.5% |
+| 4          |     214.75 |     211.75 |     -1.4% |
+| 5          |     214.55 |     215.72 |     +0.5% |
 | **median** | **209.64** | **214.22** | **+2.2%** |
 
 Per-pair geomean +1.8%. 4 of 5 pairs favor patched. The interleaving cancels container drift that made earlier sequential measurements swing ±5%.

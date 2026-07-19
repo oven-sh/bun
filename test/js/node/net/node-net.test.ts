@@ -965,8 +965,8 @@ it.skipIf(isWindows)(
     const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
     // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
     // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds +10..13 of heap noise on aarch64 release (builds 75570/75589).
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(18);
+    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
     expect(exitCode).toBe(0);
   },
   60_000,

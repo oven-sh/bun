@@ -92,13 +92,17 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # builder returns with it pending and reifyStaticProperty reports the slot
 # found, tripping JSC's "ASSERTION FAILED: !scope.exception() || !result"
 # in getOwnPropertyDescriptor / JSValue::get. Tracked in #34095; fix PRs
-# #33966 and #33418. The stress test is the bun-owned amplified form of the
-# vendored one and dies with the same assertion (or ExceptionScope.h:61
-# assertNoException). Both SIGABRT on the x64-asan lane only (e.g. builds
-# 75570, 75604); release lanes are unaffected. Remove both entries once
-# either fix PR lands.
+# #33966 and #33418. x64-asan only (e.g. builds 75570, 75601); release
+# lanes are unaffected. Remove once either fix PR lands.
 [ ASAN ] test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js [ CRASH ] # #34095: JSC assertion when terminate() interrupts a lazy PropertyCallback builder
-[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34095: same terminate-vs-lazy-builder assertion
+# The stress test is the bun-owned 8×10-worker amplification of the above,
+# but on CI it only ever hits JSC::ExceptionScope::assertNoException at
+# ExceptionScope.h:61 (6/6: builds 75493/75495/75514/75597/75604/75606),
+# which #33966 reports still reproducing at ~1/4000 workers AFTER its
+# lazy-builder fix ("termination landing later in the bootstrap, after the
+# stdio builders have completed"). Tracked separately in #34690; this entry
+# is NOT removable with the one above.
+[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
 
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]

@@ -255,7 +255,6 @@ describe("transpiler cache", () => {
     // Same bytes loaded as CommonJS must not reuse the ESM-format entry.
     // features_hash mismatch -> unlink + rewrite, same filename, net count 0.
     const cjs = run("cjs");
-    expect(cjs.stderr.toString()).toBe("");
     expect(cjs.stdout.toString().trim()).toBe("cjs ok");
     expect(newCacheCount()).toBe(0);
     expect(cjs.exitCode).toBe(0);

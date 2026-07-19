@@ -469,22 +469,29 @@ export class Dev extends EventEmitter {
       }
       dev.output.on("panic", onPanic);
       const disposes = new Set<() => void>();
+      function maybeResolve() {
+        // `>=` (not `===`): if the caller did unsynchronized writes before
+        // this batch, straggler received-hmr-event IPCs from those bundles
+        // can arrive after this listener is registered and push clientWaits
+        // past connectedClients.size. Strict equality would then never match.
+        if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
+          cleanupAndResolve();
+        }
+      }
       for (const client of dev.connectedClients) {
         const socketEventHandler = () => {
           verboseSynchronization("Client received event");
           clientWaits++;
-          // `>=` (not `===`): if the caller did unsynchronized writes before
-          // this batch, straggler received-hmr-event IPCs from those bundles
-          // can arrive after this listener is registered and push clientWaits
-          // past connectedClients.size. Strict equality would then never match.
-          if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
-            client.off("received-hmr-event", socketEventHandler);
-            cleanupAndResolve();
-          }
+          maybeResolve();
         };
+        // A client that crashes applying the update never acks; it is dropped
+        // from connectedClients on exit, so re-check instead of hanging.
+        const exitHandler = () => maybeResolve();
         client.on("received-hmr-event", socketEventHandler);
+        client.on("exit", exitHandler);
         disposes.add(() => {
           client.off("received-hmr-event", socketEventHandler);
+          client.off("exit", exitHandler);
         });
       }
       async function onEvent(kind: WatchSynchronization) {

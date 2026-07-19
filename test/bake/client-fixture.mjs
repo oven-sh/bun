@@ -88,8 +88,9 @@ function createWindow(windowUrl) {
       // Ack a hot update only once the new module code has actually run. Node's
       // Blob.arrayBuffer() resolves on a later macrotask than the WS listener's
       // setImmediate, so acking from the WS listener would race the eval.
+      // Full reloads are not acked here; the new window acks from the
+      // `[Bun] Hot-module-reloading socket connected` handler after loadPage.
       internal.onEvent("bun:afterUpdate", sendHmrAck);
-      internal.onEvent("bun:beforeFullReload", sendHmrAck);
     }
   };
 

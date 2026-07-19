@@ -899,8 +899,10 @@ it.if(isWindows)(
 
 // On Windows, unix paths route through the named-pipe codepath which reports
 // failure asynchronously; this test targets the synchronous-failure branch in
-// Listener.connectInner.
-it.skipIf(isWindows)(
+// Listener.connectInner. Under ASAN the global allocator is the system one,
+// so leaked Box<NewSocket> structs never show up in mimalloc's page bins and
+// the metric below is a no-op there.
+it.skipIf(isWindows || isASAN)(
   "should not leak when connect({path}) fails synchronously on a reused handle",
   async () => {
     // node:net creates a detached native socket (`_handle`) and passes it as
@@ -937,22 +939,29 @@ it.skipIf(isWindows)(
       }
 
       // Count live mimalloc pages across all size bins. Each leaked
-      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
-      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
-      // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation.
+      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~38 pages.
+      // Unlike RSS this is the allocator's own bookkeeping, so it's
+      // independent of OS page reclamation.
       function pageCount() {
         return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
       }
 
-      // Warm up with the SAME workload as the measured run: on builds where
-      // JSC shares mimalloc, its heap keeps growing until the first full-size
-      // batch, so equal batches make the delta isolate the per-run leak.
-      await run(8000);
-      const before = pageCount();
-      await run(8000);
-      const after = pageCount();
-      console.log(JSON.stringify({ before, after, delta: after - before }));
+      // JSC allocates through mimalloc too, so its heap growth is in this
+      // count. It steps up for the first few rounds and then sits flat; a
+      // real leak grows every round by the same ~38 pages. Run equal rounds
+      // until two in a row match (plateau = bounded), giving up after eight
+      // (linear growth = leak).
+      const samples = [];
+      let delta = Infinity;
+      for (let round = 0; round < 8; round++) {
+        await run(8000);
+        samples.push(pageCount());
+        if (round > 0) {
+          delta = samples.at(-1) - samples.at(-2);
+          if (delta < 10) break;
+        }
+      }
+      console.log(JSON.stringify({ samples, delta }));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -962,10 +971,11 @@ it.skipIf(isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 pages
-    // (debug+ASAN). With it: 0 ± 2. The threshold sits well clear of both.
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
+    const { samples, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref every round adds ~38 pages and the loop
+    // runs to its cap. With it the count plateaus within four rounds (delta
+    // 0 between the last two, 60/60 linux + 15/15 darwin runs).
+    expect(delta, `mimalloc page count per round: ${samples}`).toBeLessThan(10);
     expect(exitCode).toBe(0);
   },
   60_000,

@@ -50,8 +50,10 @@ const integrity = {
   "no-deps@1.1.0": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
   "no-deps@2.0.0": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
   "is-number@1.0.0": "sha512-PWbU1PO3loy/91zx8zOoQ37b8UWuu64eJONVIObQSlUUrYag+zy562vmZuRwRcv2hDhgK1Dc9qkJVS954CB1Nw==",
-  "@types/is-number@2.0.0": "sha512-GEeIxCB+NpM1NrDBqmkYPeU8bI//i+xPzdOY4E1YHet51IcFmz4js6k57m69fLl/cbn7sOR7wj9RNNw53X8AiA==",
-  "two-range-deps@1.0.0": "sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA==",
+  "@types/is-number@2.0.0":
+    "sha512-GEeIxCB+NpM1NrDBqmkYPeU8bI//i+xPzdOY4E1YHet51IcFmz4js6k57m69fLl/cbn7sOR7wj9RNNw53X8AiA==",
+  "two-range-deps@1.0.0":
+    "sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA==",
 };
 
 beforeAll(async () => {
@@ -64,8 +66,7 @@ beforeAll(async () => {
     fetch: () => new Response(barTgz),
   });
   const barUrl = `http://localhost:${tarballServer.port}/bar-0.0.2.tgz`;
-  const barIntegrity =
-    "sha512-" + Buffer.from(await crypto.subtle.digest("SHA-512", barTgz)).toString("base64");
+  const barIntegrity = "sha512-" + Buffer.from(await crypto.subtle.digest("SHA-512", barTgz)).toString("base64");
 
   const registryUrl = registry.registryUrl().replace(/\/$/, "");
   const reg = (name: string, version: string) => `${registryUrl}/${name}/-/${name.split("/").pop()}-${version}.tgz`;
@@ -143,9 +144,9 @@ beforeAll(async () => {
   if (!fs.existsSync(path.join(cwd!, "hello-0.3.2.tgz"))) throw new Error("failed to pack hello");
   const helloIntegrity =
     "sha512-" +
-    Buffer.from(
-      await crypto.subtle.digest("SHA-512", fs.readFileSync(path.join(cwd!, "hello-0.3.2.tgz"))),
-    ).toString("base64");
+    Buffer.from(await crypto.subtle.digest("SHA-512", fs.readFileSync(path.join(cwd!, "hello-0.3.2.tgz")))).toString(
+      "base64",
+    );
 
   write(
     "package-lock.json",

@@ -320,6 +320,23 @@ impl Rm {
                             e.started = true;
                             (e.args_start, e.args_start + e.total_tasks)
                         };
+
+                        // Check every operand before any deletion task is
+                        // scheduled. `-r` traversal stays under these roots:
+                        // the worker unlinks with `O_NOFOLLOW`/`AT_REMOVEDIR`
+                        // semantics and never descends through symlinks.
+                        for i in args_start..argc {
+                            let root = Builtin::of(interp, cmd).arg_bytes(i);
+                            if let Err(msg) = Builtin::sandbox_check_path(
+                                interp,
+                                cmd,
+                                Kind::Rm,
+                                root,
+                                crate::shell::sandbox::SandboxAccess::Write,
+                            ) {
+                                return Self::write_failing_error(interp, cmd, &msg, 1);
+                            }
+                        }
                         let (sig, out_count) = match &Self::state_mut(interp, cmd).state {
                             RmState::Exec(e) => (
                                 bun_ptr::BackRef::new(&e.error_signal),

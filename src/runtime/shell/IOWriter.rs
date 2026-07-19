@@ -1006,6 +1006,26 @@ impl IOWriter {
         }
     }
 
+    /// Count queued bytes against the sandbox output limit (no-op without a
+    /// sandbox policy). Exceeding the limit settles the promise with a
+    /// rejection; the chunk itself still completes, and the next
+    /// `Builtin::on_io_writer_chunk` dispatch delivers the cancellation.
+    fn sandbox_count_output(&self, n: usize) {
+        // End the `state()` borrow before entering the interpreter: the
+        // limit-exceeded path calls into JS (promise rejection), which must
+        // not overlap a live `&mut State`.
+        let interp: Option<*const Interpreter> = self
+            .state()
+            .interp
+            .as_ref()
+            .map(|p| core::ptr::from_ref(p.get()));
+        if let Some(interp) = interp {
+            // SAFETY: `set_interp` contract — the pointer is the live owning
+            // Interpreter; the shell is single-threaded.
+            let _ = unsafe { &*interp }.sandbox_count_output(n);
+        }
+    }
+
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires.
     pub fn enqueue(&self, child: ChildPtr, bytelist: Option<*mut Vec<u8>>, buf: &[u8]) -> Yield {
@@ -1019,6 +1039,7 @@ impl IOWriter {
                 err: None,
             };
         }
+        self.sandbox_count_output(buf.len());
         let s = self.state();
         s.buf.extend_from_slice(buf);
         s.writers.push(Writer {
@@ -1067,6 +1088,8 @@ impl IOWriter {
             };
         }
         let end = s.buf.len();
+        self.sandbox_count_output(end - start);
+        let s = self.state();
         s.writers.push(Writer {
             ptr: child,
             len: end - start,

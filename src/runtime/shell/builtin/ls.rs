@@ -101,6 +101,33 @@ impl Ls {
                     Some(start) => argc - start,
                     None => 1,
                 };
+
+                // Check every path operand (or the implicit ".") before any
+                // task is scheduled. `-R` recursion stays under these roots:
+                // the dirent-kind check in `run_from_thread_pool` never
+                // descends into symlinks.
+                {
+                    use crate::shell::sandbox::SandboxAccess;
+                    let check = |path: &[u8]| {
+                        Builtin::sandbox_check_path(
+                            interp,
+                            cmd,
+                            Kind::Ls,
+                            path,
+                            SandboxAccess::Read,
+                        )
+                    };
+                    let denied = match paths_start {
+                        Some(start) => (start..argc)
+                            .find_map(|i| check(Builtin::of(interp, cmd).arg_bytes(i)).err()),
+                        None => check(b".").err(),
+                    };
+                    if let Some(msg) = denied {
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                        return Builtin::write_failing_error(interp, cmd, &msg, 1);
+                    }
+                }
+
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
                     task_count: AtomicUsize::new(task_count),

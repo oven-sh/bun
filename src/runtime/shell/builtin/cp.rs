@@ -173,6 +173,39 @@ impl Cp {
                 let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
                 let operands = 1 + (target - start);
                 let interp_ptr = interp.as_ctx_ptr();
+
+                // Sources are read, the target is written. `-R` traversal
+                // stays under the checked roots: the dereference flags
+                // (`-H`/`-L`) are rejected at parse time and the copy
+                // reproduces symlinks instead of following them.
+                {
+                    use crate::shell::sandbox::SandboxAccess;
+                    let mut denied = Builtin::sandbox_check_path(
+                        interp,
+                        cmd,
+                        Kind::Cp,
+                        &tgt,
+                        SandboxAccess::Write,
+                    )
+                    .err();
+                    if denied.is_none() {
+                        denied = (start..target).find_map(|i| {
+                            Builtin::sandbox_check_path(
+                                interp,
+                                cmd,
+                                Kind::Cp,
+                                Builtin::of(interp, cmd).arg_bytes(i),
+                                SandboxAccess::Read,
+                            )
+                            .err()
+                        });
+                    }
+                    if let Some(msg) = denied {
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                        return Builtin::write_failing_error(interp, cmd, &msg, 1);
+                    }
+                }
+
                 for i in start..target {
                     let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                     let task = ShellCpTask::create(

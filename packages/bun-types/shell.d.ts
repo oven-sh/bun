@@ -77,6 +77,105 @@ declare module "bun" {
     function throws(shouldThrow: boolean): $;
 
     /**
+     * **Experimental.** Create a sandboxed shell for running untrusted shell
+     * commands. Policy is enforced inside Bun's shell interpreter, before any
+     * command or filesystem operation executes:
+     *
+     * - Only Bun Shell builtins may run; external binaries are always
+     *   blocked. `commands.allow` / `commands.deny` restrict the builtin set
+     *   further.
+     * - Filesystem access is denied unless a path's symlink-resolved form is
+     *   under one of the `fs.read` / `fs.write` prefixes. A `write` prefix
+     *   also grants read access; omit `write` for a read-only sandbox.
+     * - The sandbox has no network access: no builtin performs network I/O
+     *   and external binaries cannot run. `network` is reserved and only
+     *   accepts `false`.
+     * - `limits.timeout` / `limits.maxOutputBytes` stop runaway commands by
+     *   rejecting the promise with a descriptive error.
+     *
+     * Blocked commands and file operations fail with exit code 1 and a
+     * `"... not permitted in sandbox"` message on stderr, so `&&`/`||` and
+     * `.nothrow()` compose normally.
+     *
+     * The returned shell inherits this shell's current `cwd`, `env`, and
+     * `throws` settings. It cannot be re-sandboxed; derive a new sandbox from
+     * an unsandboxed shell instead.
+     *
+     * @param options Sandbox policy. An empty object is the most restrictive
+     * policy: all builtins, no filesystem access, no limits.
+     *
+     * @example
+     * ```js
+     * import { $ } from "bun";
+     *
+     * const box = $.sandbox({
+     *   commands: { deny: ["rm"] },
+     *   fs: { read: ["/workspace/data"], write: ["/workspace/data/out"] },
+     *   limits: { timeout: 5_000, maxOutputBytes: 1024 * 1024 },
+     * });
+     *
+     * await box`ls /workspace/data`; // ok
+     * await box`cat /etc/passwd`;    // rejects: read access not permitted in sandbox
+     * ```
+     */
+    function sandbox(options: ShellSandboxOptions): $;
+
+    /**
+     * Policy for a sandboxed shell created with `$.sandbox()`.
+     */
+    interface ShellSandboxOptions {
+      /**
+       * Which commands the sandboxed shell may run. External binaries are
+       * always blocked; these lists filter Bun Shell's builtin commands.
+       * Unknown command names throw.
+       */
+      commands?: {
+        /**
+         * If present, only these builtins may run.
+         * @default all builtins
+         */
+        allow?: string[];
+        /**
+         * These builtins may never run, even when listed in `allow`.
+         */
+        deny?: string[];
+      };
+      /**
+       * Filesystem path prefixes the sandboxed shell may touch. Paths must be
+       * absolute. Every path a command, redirect, glob, or `[[ -f ... ]]`
+       * test uses is resolved against the shell's cwd and through symlinks
+       * before it is compared, so `..` segments and symlinks cannot escape.
+       * @default no filesystem access
+       */
+      fs?: {
+        /** Prefixes that may be read (listed, globbed, or used as input). */
+        read?: string[];
+        /** Prefixes that may be written. A write prefix also grants read. */
+        write?: string[];
+      };
+      /**
+       * Reserved. Sandboxed shells cannot access the network (external
+       * binaries are blocked and no builtin performs network I/O), so the
+       * only supported value is `false`.
+       * @default false
+       */
+      network?: false;
+      /** Resource limits for the whole script. */
+      limits?: {
+        /**
+         * Wall-clock limit in milliseconds. When exceeded, the promise
+         * rejects and the interpreter stops scheduling work.
+         */
+        timeout?: number;
+        /**
+         * Maximum total bytes the script may write to stdout, stderr, and
+         * file redirects combined. When exceeded, the promise rejects.
+         */
+        maxOutputBytes?: number;
+      };
+    }
+
+    /**
      * A shell command that runs once awaited, or once an output method like
      * `.text()` or `.json()` is called.
      *

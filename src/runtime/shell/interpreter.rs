@@ -331,6 +331,27 @@ pub struct Interpreter {
     pub cleanup_state: Cell<CleanupState>,
     pub estimated_size_for_gc: Cell<usize>,
 
+    /// Sandbox policy (`$.sandbox({...})`). `None` for ordinary shells, in
+    /// which case every sandbox hook below is a no-op.
+    pub sandbox: Option<Box<crate::shell::SandboxPolicy>>,
+    /// Set once when a sandbox limit aborts the run; checked at every
+    /// interpreter step boundary so in-flight state unwinds through normal
+    /// completion paths instead of being torn down mid-state.
+    sandbox_fault: Cell<Option<crate::shell::SandboxFault>>,
+    /// Wall-clock deadline mirror of the sandbox timeout timer, checked at
+    /// step boundaries so synchronous bursts that starve the event loop
+    /// still observe the timeout.
+    sandbox_deadline: Cell<Option<bun_core::Timespec>>,
+    /// Total bytes written to stdout/stderr/redirects, counted against
+    /// `limits.maxOutputBytes`.
+    sandbox_output_bytes: Cell<u64>,
+    /// True once the JS promise was settled by a sandbox fault; `finish()`
+    /// then skips the resolve call and only tears down.
+    promise_settled: Cell<bool>,
+    /// Intrusive timer node for `limits.timeout`. `JsCell` so `&self` can
+    /// hand `*mut EventLoopTimer` to the timer heap.
+    pub event_loop_timer: JsCell<crate::timer::EventLoopTimer>,
+
     /// Side-channel for `try_()`: lets init/setup paths use `?`-style cleanup
     /// while still surfacing the rich syscall error at the boundary.
     pub last_err: JsCell<Option<bun_sys::Error>>,
@@ -498,6 +519,7 @@ impl Interpreter {
         jsobjs: Vec<crate::jsc::JSValue>,
         export_env_: Option<EnvMap>,
         cwd_: Option<&[u8]>,
+        sandbox: Option<Box<crate::shell::SandboxPolicy>>,
     ) -> ShellResult<Box<Interpreter>> {
         // ── export_env ─────────────────────────────────────────────────────
         // On the `.js` event loop, take `export_env_` (or empty); on `.mini`,
@@ -610,6 +632,14 @@ impl Interpreter {
             this_jsvalue: Cell::new(crate::jsc::JSValue::ZERO),
             cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
             estimated_size_for_gc: Cell::new(0),
+            sandbox,
+            sandbox_fault: Cell::new(None),
+            sandbox_deadline: Cell::new(None),
+            sandbox_output_bytes: Cell::new(0),
+            promise_settled: Cell::new(false),
+            event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
+                crate::timer::EventLoopTimerTag::ShellInterpreterTimeout,
+            )),
             last_err: JsCell::new(None),
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
@@ -756,6 +786,7 @@ impl Interpreter {
             Vec::new(),
             None,
             cwd,
+            None,
         ) {
             Ok(i) => i,
             Err(e) => e.throw_mini(),
@@ -1160,6 +1191,173 @@ impl Interpreter {
         let _ = err.throw_js(global);
     }
 
+    // ── sandbox ($.sandbox) ────────────────────────────────────────────────
+
+    #[inline]
+    pub fn sandbox(&self) -> Option<&crate::shell::SandboxPolicy> {
+        self.sandbox.as_deref()
+    }
+
+    /// `true` once a sandbox fault (timeout / output limit) aborted the run.
+    /// Also checks the wall-clock deadline so synchronous bursts that starve
+    /// the event loop (and thus the timeout timer) still observe it. Checked
+    /// at step boundaries; each caller unwinds through its normal completion
+    /// path with a nonzero exit code.
+    #[inline]
+    pub fn sandbox_cancel_requested(&self) -> bool {
+        if self.sandbox.is_none() {
+            return false;
+        }
+        if self.sandbox_fault.get().is_some() {
+            return true;
+        }
+        if let Some(deadline) = self.sandbox_deadline.get() {
+            if bun_core::Timespec::now(bun_core::TimespecMockMode::AllowMockedTime)
+                .greater(&deadline)
+            {
+                self.trigger_sandbox_fault(crate::shell::SandboxFault::Timeout);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The synthetic write error delivered to builtins whose IO loop is
+    /// interrupted by a sandbox fault.
+    pub fn sandbox_cancel_error() -> bun_sys::Error {
+        bun_sys::Error::from_code(bun_sys::E::ECANCELED, bun_sys::Tag::write)
+    }
+
+    /// Count `n` bytes of shell output against `limits.maxOutputBytes`.
+    /// Returns `Err(ECANCELED)` when the run is (or just became) cancelled so
+    /// write loops stop through their existing error handling.
+    pub fn sandbox_count_output(&self, n: usize) -> bun_sys::Result<()> {
+        let Some(policy) = self.sandbox() else {
+            return Ok(());
+        };
+        if self.sandbox_cancel_requested() {
+            return Err(Self::sandbox_cancel_error());
+        }
+        let Some(limit) = policy.max_output_bytes else {
+            return Ok(());
+        };
+        let total = self.sandbox_output_bytes.get().saturating_add(n as u64);
+        self.sandbox_output_bytes.set(total);
+        if total > limit {
+            self.trigger_sandbox_fault(crate::shell::SandboxFault::OutputLimit);
+            return Err(Self::sandbox_cancel_error());
+        }
+        Ok(())
+    }
+
+    /// Abort a sandboxed run: record the fault, settle the JS promise with a
+    /// descriptive rejection (carrying the output captured so far), and let
+    /// the state machine unwind at the `sandbox_cancel_requested` boundaries.
+    /// Does NOT tear down interpreter state — in-flight nodes still reference
+    /// it; `finish()` runs the teardown once they unwind.
+    fn trigger_sandbox_fault(&self, fault: crate::shell::SandboxFault) {
+        use crate::jsc::JSValue;
+        use crate::jsc::generated::JSShellInterpreter;
+
+        if self.sandbox_fault.get().is_some() {
+            return;
+        }
+        self.sandbox_fault.set(Some(fault));
+        self.disarm_sandbox_timer();
+
+        if !matches!(self.event_loop, EventLoopHandle::Js { .. }) || self.promise_settled.get() {
+            return;
+        }
+        self.promise_settled.set(true);
+        let this_jsvalue = self.this_jsvalue.get();
+        if this_jsvalue == JSValue::ZERO {
+            return;
+        }
+        let Some(reject) = JSShellInterpreter::reject_get_cached(this_jsvalue) else {
+            return;
+        };
+        let global_this = self
+            .global_this_ref()
+            .expect("global_this set on Js event-loop path");
+        let buffered_stdout = self.get_buffered_stdout(global_this);
+        let buffered_stderr = self.get_buffered_stderr(global_this);
+        // The caller no longer waits on this run; don't hold the event loop
+        // open for whatever is still unwinding.
+        self.keep_alive.with_mut(|k| k.disable());
+
+        let policy = self.sandbox().expect("fault requires a sandbox policy");
+        let message = match fault {
+            crate::shell::SandboxFault::Timeout => format!(
+                "Shell command timed out after {}ms (sandbox limits.timeout)",
+                policy.timeout_ms.unwrap_or(0)
+            ),
+            crate::shell::SandboxFault::OutputLimit => format!(
+                "Shell command output exceeded {} bytes (sandbox limits.maxOutputBytes)",
+                policy.max_output_bytes.unwrap_or(0)
+            ),
+        };
+        use bun_jsc::StringJsc as _;
+        let message_js = bun_core::String::clone_utf8(message.as_bytes())
+            .to_js(global_this)
+            .unwrap_or(JSValue::UNDEFINED);
+
+        let loop_ = self.event_loop;
+        let _entered = loop_.entered();
+        if let Err(err) = reject.call(
+            global_this,
+            JSValue::UNDEFINED,
+            &[
+                JSValue::js_number_from_int32(1),
+                buffered_stdout,
+                buffered_stderr,
+                message_js,
+            ],
+        ) {
+            global_this.report_active_exception_as_unhandled(err);
+        }
+        JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+    }
+
+    /// `limits.timeout` timer fired (dispatched via
+    /// `EventLoopTimerTag::ShellInterpreterTimeout`).
+    pub(crate) fn on_sandbox_timeout(&self) {
+        use crate::timer::EventLoopTimerState;
+        if self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED {
+            return;
+        }
+        self.event_loop_timer
+            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        if self.flags.get().done() || self.exit_code.get().is_some() {
+            return;
+        }
+        self.trigger_sandbox_fault(crate::shell::SandboxFault::Timeout);
+    }
+
+    fn arm_sandbox_timer(&self, timeout_ms: u64) {
+        let ts = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
+            timeout_ms.min(i64::MAX as u64) as i64,
+        );
+        self.sandbox_deadline.set(Some(ts));
+        self.event_loop_timer.with_mut(|t| {
+            t.next = crate::timer::ElTimespec {
+                sec: ts.sec,
+                nsec: ts.nsec,
+            };
+        });
+        crate::jsc_hooks::timer_all_mut().insert(self.event_loop_timer.as_ptr());
+    }
+
+    fn disarm_sandbox_timer(&self) {
+        use crate::timer::EventLoopTimerState;
+        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all_mut().remove(self.event_loop_timer.as_ptr());
+            self.event_loop_timer
+                .with_mut(|t| t.state = EventLoopTimerState::CANCELLED);
+        }
+    }
+
     // ── run loop ───────────────────────────────────────────────────────────
 
     /// When `!quiet`, dup stdout/stderr (or open
@@ -1280,6 +1478,14 @@ impl Interpreter {
 
         if matches!(self.event_loop, EventLoopHandle::Js { .. }) {
             self.exit_code.set(Some(exit_code));
+            self.disarm_sandbox_timer();
+            if self.promise_settled.get() {
+                // A sandbox fault already rejected the promise (and cleared
+                // the cached resolve/reject); only the teardown remains.
+                self.keep_alive.with_mut(|k| k.disable());
+                self.deref_root_shell_and_io_if_needed(true);
+                return Yield::done();
+            }
             let this_jsvalue = self.this_jsvalue.get();
             if this_jsvalue != JSValue::ZERO {
                 if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
@@ -1347,6 +1553,10 @@ impl Interpreter {
             ));
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
+
+        if let Some(timeout_ms) = self.sandbox().and_then(|p| p.timeout_ms) {
+            self.arm_sandbox_timer(timeout_ms);
+        }
 
         let shell = self.root_shell.as_ptr();
         let ast = &raw const self.args.get().script_ast;
@@ -1431,6 +1641,10 @@ impl Interpreter {
             &raw const *this as usize,
             <&'static str>::from(this.cleanup_state.get()),
         );
+
+        // The sandbox timeout timer holds a raw pointer into this allocation;
+        // it must leave the heap before the box drops.
+        this.disarm_sandbox_timer();
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
@@ -3054,7 +3268,7 @@ pub fn create_shell_interpreter(
         )));
     }
 
-    let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, jsobjs, quiet, cwd, export_env, sandbox) = parsed_shell_script.take(global);
 
     let cwd = cwd.map(bun_core::OwnedString::new);
     let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
@@ -3070,6 +3284,7 @@ pub fn create_shell_interpreter(
         jsobjs,
         export_env,
         cwd_slice.as_ref().map(|c| c.slice()),
+        sandbox,
     ) {
         ShellResult::Ok(i) => i,
         ShellResult::Err(e) => {

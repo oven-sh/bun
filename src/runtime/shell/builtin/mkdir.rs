@@ -121,6 +121,19 @@ impl Mkdir {
                 if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.tasks_count = task_count;
                 }
+                for i in args_start..argc {
+                    let path = Builtin::of(interp, cmd).arg_bytes(i);
+                    if let Err(msg) = Builtin::sandbox_check_path(
+                        interp,
+                        cmd,
+                        Kind::Mkdir,
+                        path,
+                        crate::shell::sandbox::SandboxAccess::Write,
+                    ) {
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                        return Builtin::write_failing_error(interp, cmd, &msg, 1);
+                    }
+                }
                 let opts = Self::state_mut(interp, cmd).opts;
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                 let evtloop = Builtin::event_loop(interp, cmd);

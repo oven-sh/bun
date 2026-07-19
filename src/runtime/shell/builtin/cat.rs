@@ -191,6 +191,16 @@ impl Cat {
                     *i += 1;
                 }
 
+                if let Err(msg) = Builtin::sandbox_check_path(
+                    interp,
+                    cmd,
+                    Kind::Cat,
+                    path.as_bytes(),
+                    crate::shell::sandbox::SandboxAccess::Read,
+                ) {
+                    return Self::write_failing_error(interp, cmd, &msg, 1);
+                }
+
                 let dir = Builtin::cwd(interp, cmd);
                 let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
                     Ok(fd) => fd,

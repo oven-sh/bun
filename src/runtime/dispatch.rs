@@ -566,6 +566,15 @@ fn run_task_cold(task: Task) {
             ShellRmDirTask::run_from_main_thread(t);
         }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellYesTask => {
+            // `yes`'s no-IO write loop bounces through the event loop every
+            // few chunks; the task storage lives inside `Box<Yes>` in the
+            // interpreter arena (stable until the builtin is deinited).
+            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
+            // `YesTask::enqueue` and alive until the builtin completes.
+            let t = unsafe { &*cast_ptr!(crate::shell::builtins::yes::YesTask) };
+            crate::shell::builtins::yes::YesTask::run_from_main_thread(t);
+        }
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
@@ -576,7 +585,7 @@ fn run_task_cold(task: Task) {
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
-        // ShellYesTask + any tag the hot path mis-routed: producer bug.
+        // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag.0),
     }
 }
@@ -1060,6 +1069,13 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         EventLoopTimerTag::SubprocessTimeout => {
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
                 .timeout_callback())
+        }
+        EventLoopTimerTag::ShellInterpreterTimeout => {
+            timer_arm!(
+                crate::shell::Interpreter,
+                event_loop_timer,
+                |c, _now, _vm| (*c).on_sandbox_timeout()
+            )
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
             // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers

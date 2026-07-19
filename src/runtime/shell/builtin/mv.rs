@@ -108,6 +108,26 @@ impl Mv {
                 }
                 let cwd = Builtin::cwd(interp, cmd);
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
+
+                // Renames unlink the source and create the target, so both
+                // need write access. Checked before the target-probe task so
+                // a denied mv does not even stat the target.
+                {
+                    let sources_start = Self::state_mut(interp, cmd).args.sources_start;
+                    for i in sources_start..=target_idx {
+                        let path = Builtin::of(interp, cmd).arg_bytes(i);
+                        if let Err(msg) = Builtin::sandbox_check_path(
+                            interp,
+                            cmd,
+                            Kind::Mv,
+                            path,
+                            crate::shell::sandbox::SandboxAccess::Write,
+                        ) {
+                            return Self::write_failing_error(interp, cmd, &msg, 1);
+                        }
+                    }
+                }
+
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let mut task = Box::new(ShellMvCheckTargetTask {

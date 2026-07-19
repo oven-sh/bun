@@ -225,6 +225,19 @@ impl Cmd {
 
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
+            // A cancelled sandboxed run stops scheduling new work; states that
+            // are already waiting on IO unwind through their own callbacks.
+            if interp.sandbox_cancel_requested()
+                && !matches!(
+                    interp.as_cmd(this).state,
+                    CmdState::Done | CmdState::WaitingWriteErr
+                )
+                && matches!(interp.as_cmd(this).exec, Exec::None)
+            {
+                let me = interp.as_cmd_mut(this);
+                me.exit_code = Some(1);
+                me.state = CmdState::Done;
+            }
             let (shell, node) = {
                 let me = interp.as_cmd(this);
                 (me.base.shell, me.node)
@@ -461,12 +474,37 @@ impl Cmd {
         };
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
+            if let Some(policy) = interp.sandbox() {
+                if !policy.builtin_allowed(kind) {
+                    return Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!(
+                            "bun: {}: command not permitted in sandbox\n",
+                            bstr::BStr::new(&first_arg)
+                        ),
+                    );
+                }
+            }
             log!("Cmd {} exec builtin={:?}", this, kind);
             if let Some(y) = Builtin::init(interp, this, kind) {
                 return y;
             }
             debug_assert!(matches!(interp.as_cmd(this).exec, Exec::Builtin(_)));
             return Builtin::start(interp, this);
+        }
+
+        if interp.sandbox().is_some() {
+            // Blocked before any PATH probing so a sandboxed script cannot
+            // learn what exists on the host filesystem.
+            return Builtin::cmd_write_failing_error(
+                interp,
+                this,
+                format_args!(
+                    "bun: {}: external commands are not permitted in sandbox\n",
+                    bstr::BStr::new(&first_arg)
+                ),
+            );
         }
 
         // ── Subprocess path ─────────────────────────────────────────────────

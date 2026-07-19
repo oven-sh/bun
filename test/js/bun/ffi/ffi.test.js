@@ -720,6 +720,54 @@ it(".ptr is not leaked", () => {
 
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.
+it.skipIf(isFFIUnavailable)(
+  "lib.symbols.<fn>.ptr is the native symbol address and round-trips through CFunction",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { CFunction, JSCallback, linkSymbols } from "bun:ffi";
+      const cb = new JSCallback((a, b) => a + b, { args: ["int", "int"], returns: "int" });
+      const lib = linkSymbols({ add2: { ptr: cb.ptr, args: ["int", "int"], returns: "int" } });
+      const symPtr = lib.symbols.add2.ptr;
+      console.log(JSON.stringify({
+        cbPtr: cb.ptr,
+        symPtr,
+        nativePtr: lib.symbols.add2.native.ptr,
+        isInteger: Number.isInteger(symPtr),
+      }));
+      const rewrapped = new CFunction({ ptr: symPtr, args: ["int", "int"], returns: "int" });
+      console.log("call", rewrapped(2, 3));
+      rewrapped.close();
+      lib.close();
+      cb.close();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n");
+    const parsed = lines[0].startsWith("{") ? JSON.parse(lines[0]) : lines[0];
+    expect({ parsed, call: lines[1], stderr, exitCode }).toEqual({
+      parsed: {
+        cbPtr: parsed.cbPtr,
+        symPtr: parsed.cbPtr,
+        nativePtr: parsed.cbPtr,
+        isInteger: true,
+      },
+      call: "call 5",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(Number.isInteger(parsed.cbPtr)).toBe(true);
+    expect(parsed.cbPtr).toBeGreaterThan(0);
+  },
+);
+
+// Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
+// which the ASan lane's leak checker then reports against this file.
 it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native call", async () => {
   await using proc = Bun.spawn({
     cmd: [

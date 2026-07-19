@@ -289,6 +289,35 @@ it("process.env coerces assigned values to strings", () => {
   }
 });
 
+it("process.env coerces assigned values to strings in a worker with an explicit env", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker(
+         \`process.env.X = 42;
+          process.env.Y = "y";
+          process.env.Y = undefined;
+          Object.defineProperty(process.env, "Z", { value: 7, writable: true, enumerable: true, configurable: true });
+          require("worker_threads").parentPort.postMessage({
+            X: process.env.X, Y: process.env.Y, Z: process.env.Z,
+            xt: typeof process.env.X, yt: typeof process.env.Y, zt: typeof process.env.Z,
+          });\`,
+         { eval: true, env: { SEED: "seed" } },
+       );
+       w.on("message", m => { console.log(JSON.stringify(m)); });
+       w.on("error", e => { console.error(String(e)); process.exitCode = 1; });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ X: "42", Y: "undefined", Z: "7", xt: "string", yt: "string", zt: "string" });
+  expect(exitCode).toBe(0);
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

@@ -463,6 +463,61 @@ describe("bunshell", () => {
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(await thisFile.text());
   });
 
+  describe("redirect into a too-small Buffer fails the command", () => {
+    // A `> ${buf}` target that cannot hold the full output must surface as a
+    // nonzero exit code (like `> /dev/full`), not exit 0 with the data
+    // silently cut short.
+    test("builtin", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf}`.quiet();
+      expect({
+        written: buf.toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({
+        written: "hell",
+        stderr: "echo: No space left on device\n",
+        exitCode: 1,
+      });
+    });
+
+    test("builtin: `|| rhs` runs", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf} || echo write_failed`.quiet();
+      expect({ stdout: r.stdout.toString(), exitCode: r.exitCode }).toEqual({
+        stdout: "write_failed\n",
+        exitCode: 0,
+      });
+    });
+
+    test("builtin: exact fit succeeds", async () => {
+      const buf = Buffer.alloc(12);
+      const r = await $`echo hello world > ${buf}`.quiet();
+      expect({
+        written: buf.toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({ written: "hello world\n", stderr: "", exitCode: 0 });
+    });
+
+    test("subprocess", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf}`.quiet();
+      expect(buf.toString("latin1")).toBe("hell");
+      expect(r.exitCode).not.toBe(0);
+    });
+
+    test("subprocess: `|| rhs` runs", async () => {
+      const buf = Buffer.alloc(4);
+      const r =
+        await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf} || echo write_failed`.quiet();
+      expect({ stdout: r.stdout.toString(), exitCode: r.exitCode }).toEqual({
+        stdout: "write_failed\n",
+        exitCode: 0,
+      });
+    });
+  });
+
   test("redirect Buffer", async () => {
     const buffer = Buffer.alloc(1 << 20);
     const result = await $`cat ${import.meta.path} > ${buffer}`;

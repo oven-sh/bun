@@ -1324,6 +1324,7 @@ impl Readable {
                         .buffered_output = BufferedOutput::ArrayBuffer {
                         buf: core::mem::take(array_buffer),
                         i: 0,
+                        overflow: false,
                     };
                     Readable::Pipe(pipe)
                 }
@@ -1369,6 +1370,7 @@ impl Readable {
                         .buffered_output = BufferedOutput::ArrayBuffer {
                         buf: core::mem::take(array_buffer),
                         i: 0,
+                        overflow: false,
                     };
                     Readable::Pipe(pipe)
                 }
@@ -1648,6 +1650,10 @@ pub enum BufferedOutput {
     ArrayBuffer {
         buf: jsc::array_buffer::ArrayBufferStrong,
         i: u32,
+        /// Set by [`Self::append`] when the target buffer cannot hold the
+        /// full chunk; read by [`PipeReader::try_signal_done_to_cmd`] to fail
+        /// the command instead of exiting 0 with truncated output.
+        overflow: bool,
     },
 }
 
@@ -1678,18 +1684,24 @@ impl BufferedOutput {
             BufferedOutput::Bytelist(b) => {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
-            BufferedOutput::ArrayBuffer { buf, i } => {
+            BufferedOutput::ArrayBuffer { buf, i, overflow } => {
                 let array_buf_slice = buf.slice_mut();
                 let idx = *i as usize;
-                // TODO: We should probably throw error here?
-                if idx >= array_buf_slice.len() {
-                    return;
+                let length = array_buf_slice.len().saturating_sub(idx).min(bytes.len());
+                if length > 0 {
+                    array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
+                    *i += u32::try_from(length).expect("int cast");
                 }
-                let length = (array_buf_slice.len() - idx).min(bytes.len());
-                array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
-                *i += u32::try_from(length).expect("int cast");
+                if length < bytes.len() {
+                    *overflow = true;
+                }
             }
         }
+    }
+
+    #[inline]
+    pub fn overflowed(&self) -> bool {
+        matches!(self, BufferedOutput::ArrayBuffer { overflow: true, .. })
     }
 }
 
@@ -2211,6 +2223,11 @@ impl PipeReader {
                 // `state.Err` after this point is `Drop`, which tolerates `None`).
                 if let PipeReaderState::Err(slot) = &mut me.state {
                     slot.take().map(|b| *b)
+                } else if me.buffered_output.overflowed() {
+                    Some(
+                        bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::write)
+                            .to_system_error(),
+                    )
                 } else {
                     None
                 }

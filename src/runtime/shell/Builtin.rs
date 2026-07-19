@@ -29,6 +29,10 @@ pub struct Builtin {
     /// Set by `done()` and stashed by `write_failing_error` so the async
     /// `on_io_writer_chunk` path can recover the intended exit code.
     pub exit_code: Option<ExitCode>,
+    /// First error latched by [`Builtin::write_no_io`]; [`Builtin::done`]
+    /// folds it into the exit code so a builtin whose only failure is a write
+    /// error (`> ${buf}` too small) does not exit 0.
+    pub write_err: Option<bun_sys::Error>,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
     pub err_buf: Vec<u8>,
     pub impl_: Impl,
@@ -393,16 +397,18 @@ impl BuiltinIO {
                 // stored cursor is u32.
                 let idx = *i as usize;
                 let total = arraybuf.array_buffer.byte_len as usize;
-                if idx >= total {
+                let write_len = total.saturating_sub(idx).min(buf.len());
+                if write_len > 0 {
+                    let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                    dst.copy_from_slice(&buf[..write_len]);
+                    *i = i.saturating_add(write_len as u32);
+                }
+                if write_len < buf.len() {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
@@ -535,6 +541,7 @@ impl Builtin {
             stdout,
             stderr,
             exit_code: None,
+            write_err: None,
             err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
@@ -863,6 +870,21 @@ impl Builtin {
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
     pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
+        // A `write_no_io` error that the builtin itself did not handle
+        // (discarded `let _ = write_no_io(...)`) fails the command here,
+        // mirroring the async `on_io_writer_chunk` error path.
+        let exit_code = match (exit_code, Self::of_mut(interp, cmd).write_err.take()) {
+            (0, Some(e)) => {
+                if Self::of(interp, cmd).stderr.needs_io().is_none() {
+                    let msg =
+                        Self::task_error_to_string(interp, cmd, Self::kind_of(interp, cmd), &e)
+                            .to_vec();
+                    let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, &msg);
+                }
+                1
+            }
+            (code, _) => code,
+        };
         Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
@@ -931,7 +953,13 @@ impl Builtin {
             IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        let r = unsafe { out.write_no_io_to(shell, buf) };
+        if let Err(e) = &r {
+            if me.write_err.is_none() {
+                me.write_err = Some(e.clone());
+            }
+        }
+        r
     }
 
     /// Shell exec env of the owning Cmd.

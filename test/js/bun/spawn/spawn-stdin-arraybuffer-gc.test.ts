@@ -26,14 +26,18 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
         const protectedU8 = () => heapStats().protectedObjectTypeCounts.Uint8Array ?? 0;
         const liveU8 = () => heapStats().objectTypeCounts.Uint8Array ?? 0;
 
+        // A plain ArrayBuffer as stdin so a Bun-internal Uint8Array copy shows
+        // up as a positive liveDelta. Setup runs in a nested frame so its own
+        // Uint8Array temporary is out of scope before the baseline GC below.
+        const [payload, expectedHash] = (() => {
+          const p = new ArrayBuffer(64 * 1024);
+          new Uint8Array(p).fill(65);
+          return [p, Bun.SHA1.hash(p, "hex")];
+        })();
+
         Bun.gc(true);
         const protectedBefore = protectedU8();
-
-        // A plain ArrayBuffer (not a Uint8Array) so any Uint8Array we observe
-        // afterwards is one Bun allocated internally, not ours.
-        const payload = new ArrayBuffer(64 * 1024);
-        new Uint8Array(payload).fill(65);
-        const expectedHash = Bun.SHA1.hash(payload, "hex");
+        const liveBefore = liveU8();
 
         const proc = Bun.spawn({
           cmd: [process.execPath, "-e", ${JSON.stringify(catScript)}],
@@ -56,7 +60,7 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
 
         console.log(JSON.stringify({
           protectedDelta: protectedDuring - protectedBefore,
-          liveDuring,
+          liveDelta: liveDuring - liveBefore,
         }));
       `;
 
@@ -70,12 +74,10 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
       if (exitCode !== 0) throw new Error(`fixture failed (exit ${exitCode}):\n${stderr}\n${stdout}`);
 
       // No Strong root is taken for the copied stdin bytes (protectedDelta 0),
-      // and no internal JSC Uint8Array is allocated for the copy (the user
-      // passed a plain ArrayBuffer, so liveDuring counts only Bun-internal
-      // Uint8Arrays).
+      // and no internal JSC Uint8Array is allocated for the copy (liveDelta 0).
       expect(JSON.parse(stdout.trim())).toEqual({
         protectedDelta: 0,
-        liveDuring: 0,
+        liveDelta: 0,
       });
     });
   }

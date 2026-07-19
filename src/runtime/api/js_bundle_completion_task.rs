@@ -441,6 +441,7 @@ impl JSBundleCompletionTask {
         // keep them in the output array. Destroy all other non-entry-point files.
         // With --splitting, there can be multiple sourcemap files (one per chunk).
         let mut kept: usize = 0;
+        let mut old_to_new = vec![u32::MAX; output_files.len()];
         // Swap-compact in place via index iteration so each loop body holds
         // at most one `&mut` into `output_files`.
         for i in 0..output_files.len() {
@@ -527,12 +528,20 @@ impl JSBundleCompletionTask {
             };
 
             if keep_this {
+                old_to_new[i] = kept as u32;
                 output_files.swap(kept, i);
                 kept += 1;
             }
             // Trailing (dropped) entries are freed by `truncate` below.
         }
         output_files.truncate(kept);
+        // `source_map_index` stored pre-compaction positions; remap so the
+        // later `output_files_js[source_map_index]` lookup stays correct.
+        for f in output_files.iter_mut() {
+            if f.source_map_index != u32::MAX {
+                f.source_map_index = old_to_new[f.source_map_index as usize];
+            }
+        }
 
         result
     }
@@ -644,7 +653,6 @@ impl JSBundleCompletionTask {
                 // initialized during VM startup before any `Bun.build` is reachable.
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
-                let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !outdir.is_empty() {
                         if outdir_is_abs {
@@ -662,27 +670,38 @@ impl JSBundleCompletionTask {
                         output_file.dest_path.clone()
                     };
                     let result = output_file.to_js(Some(&path), global_this);
-                    if to_assign_on_sourcemap != JSValue::ZERO {
-                        crate::generated_classes::js_BuildArtifact::sourcemap_set_cached(
-                            to_assign_on_sourcemap,
-                            global_this,
-                            result,
-                        );
-                        if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
-                            // SAFETY: `as_` returned a live `*mut BuildArtifact`
-                            // owned by the JS wrapper; the borrow lasts only for
-                            // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
-                        }
-                        to_assign_on_sourcemap = JSValue::ZERO;
-                    }
-
-                    if output_file.source_map_index != u32::MAX {
-                        to_assign_on_sourcemap = result;
-                    }
-
                     if let Err(e) = output_files_js.put_index(global_this, i as u32, result) {
                         return Ok(promise.reject(global_this, Err(e))?);
+                    }
+                }
+
+                // `output_files` is laid out as [chunks..., sourcemaps/bytecode...,
+                // additional...], so a chunk's sourcemap is at `source_map_index`,
+                // not "the next element".
+                for (i, output_file) in output_files.iter().enumerate() {
+                    if output_file.source_map_index == u32::MAX {
+                        continue;
+                    }
+                    let owner = match output_files_js.get_index(global_this, i as u32) {
+                        Ok(v) => v,
+                        Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                    };
+                    let sourcemap = match output_files_js
+                        .get_index(global_this, output_file.source_map_index)
+                    {
+                        Ok(v) => v,
+                        Err(e) => return Ok(promise.reject(global_this, Err(e))?),
+                    };
+                    crate::generated_classes::js_BuildArtifact::sourcemap_set_cached(
+                        owner,
+                        global_this,
+                        sourcemap,
+                    );
+                    if let Some(artifact) = owner.as_::<BuildArtifact>() {
+                        // SAFETY: `as_` returned a live `*mut BuildArtifact`
+                        // owned by the JS wrapper; the borrow lasts only for
+                        // this `set` call (no other Rust alias exists).
+                        unsafe { (*artifact).sourcemap.set(global_this, sourcemap) };
                     }
                 }
 

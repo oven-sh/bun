@@ -319,6 +319,53 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  describe.each([
+    ["two entrypoints", { splitting: false }],
+    ["two entrypoints + splitting", { splitting: true }],
+  ])("BuildArtifact.sourcemap with %s", (_label, { splitting }) => {
+    test.each(["linked", "external"] as const)("sourcemap: %s", async mode => {
+      const dir = tempDirWithFiles("build-artifact-sourcemap-multi", {
+        "shared.ts": `export const S = { n: 1 };\n`,
+        "a.ts": `import { S } from "./shared";\nconsole.log("a", S.n);\n`,
+        "b.ts": `import { S } from "./shared";\nconsole.log("b", S.n);\n`,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(dir, "a.ts"), join(dir, "b.ts")],
+        outdir: join(dir, "out"),
+        target: "node",
+        format: "esm",
+        sourcemap: mode,
+        splitting,
+      });
+      expect(build.success).toBe(true);
+
+      const js = build.outputs.filter(o => o.kind !== "sourcemap");
+      const maps = build.outputs.filter(o => o.kind === "sourcemap");
+      expect(js.length).toBeGreaterThanOrEqual(2);
+      expect(maps.length).toBe(js.length);
+
+      expect(
+        build.outputs.map(o => ({
+          path: path.basename(o.path),
+          kind: o.kind,
+          sourcemap: o.sourcemap ? { path: path.basename(o.sourcemap.path), kind: o.sourcemap.kind } : null,
+        })),
+      ).toEqual(
+        build.outputs.map(o => ({
+          path: path.basename(o.path),
+          kind: o.kind,
+          sourcemap: o.kind === "sourcemap" ? null : { path: path.basename(o.path) + ".map", kind: "sourcemap" },
+        })),
+      );
+
+      for (const o of js) {
+        expect(o.sourcemap).not.toBe(null);
+        expect(maps).toContain(o.sourcemap);
+      }
+      Bun.gc(true);
+    });
+  });
+
   // test("BuildArtifact properties splitting", async () => {
   //   Bun.gc(true);
   //   const x = await Bun.build({

@@ -48,7 +48,7 @@ function byRule(findings: Finding[]) {
   return m;
 }
 
-describe("scripts/lint-tests.ts", () => {
+describe.concurrent("scripts/lint-tests.ts", () => {
   test("flags each anti-pattern on the right line", async () => {
     const { findings, exitCode } = await lint({
       "bad.test.ts": [

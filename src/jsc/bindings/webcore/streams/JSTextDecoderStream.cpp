@@ -411,6 +411,11 @@ static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderSt
 
 JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
+    // https://encoding.spec.whatwg.org/#decode-and-enqueue-a-chunk step 1 converts `chunk` to a
+    // non-optional BufferSource, so `undefined` is a TypeError. TextDecoder.decode's first
+    // argument is optional and would treat it as an empty buffer instead.
+    if (chunk.isUndefined()) [[unlikely]]
+        return promiseRejectedWith(globalObject, createTypeError(globalObject, "TextDecoderStream: chunk must be an ArrayBuffer or ArrayBufferView"_s));
     return decodeAndEnqueue(globalObject, stream, controller, chunk, /* streaming */ true);
 }
 

@@ -1385,13 +1385,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         // Strict mode also compares own non-index properties (e.g. symbols); loose
-        // ignores them. Guarded up front so the early returns below (empty, shared
-        // backing) do not skip it, and so the property walk is reserved for the
-        // rare case where extras exist.
+        // ignores them. The byte checks below still run first so a mismatch stays
+        // O(bytes) and node's byte-level semantics (NaN payload bits) are preserved;
+        // only the "bytes equal" exits defer to the property walk when extras exist.
+        bool compareOwnProperties = false;
         if constexpr (isStrict) {
-            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
-                break;
-            }
+            compareOwnProperties = hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure());
         }
 
         JSC::JSArrayBufferView* left = uncheckedDowncast<JSArrayBufferView>(c1);
@@ -1402,8 +1401,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
+        if (byteLength == 0) {
+            if (compareOwnProperties) break;
             return true;
+        }
 
         if (right->isDetached() || left->isDetached()) [[unlikely]] {
             return false;
@@ -1415,8 +1416,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (vector == rightVector) [[unlikely]]
+        if (vector == rightVector) [[unlikely]] {
+            if (compareOwnProperties) break;
             return true;
+        }
 
         // For Float32Array and Float64Array, when not in strict mode, we need to
         // handle +0 and -0 as equal, and NaN as not equal to itself.
@@ -1460,6 +1463,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (memcmp(vector, rightVector, byteLength) != 0) {
             return false;
         }
+        if (compareOwnProperties) break;
         return true;
     }
     case StringObjectType: {

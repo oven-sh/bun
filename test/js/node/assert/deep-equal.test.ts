@@ -25,6 +25,12 @@ interface Case {
 const sym = Symbol("shared");
 const sharedArrayBuffer = new ArrayBuffer(4);
 
+function float64WithNaNPayload(bits: bigint) {
+  const arr = new Float64Array(1);
+  new BigUint64Array(arr.buffer)[0] = bits;
+  return arr;
+}
+
 class WithPrototypeGetter {
   get a() {
     return 1;
@@ -558,6 +564,14 @@ const cases: Case[] = [
     strict: false,
     loose: false,
     looseBug: "reports equal",
+  },
+  {
+    // Strict mode compares the bytes; the property walk would see both as NaN and accept them.
+    name: "Float64Arrays with distinct NaN payloads and an extra own property",
+    a: () => withExtraProperty(float64WithNaNPayload(0x7ff8000000000001n)),
+    b: () => withExtraProperty(float64WithNaNPayload(0x7ff8000000000002n)),
+    strict: false,
+    loose: false,
   },
 
   // Arrays.

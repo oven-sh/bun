@@ -158,4 +158,47 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(stdout).not.toContain("FAIL");
     expect(exitCode).toBe(0);
   });
+
+  // spawnSync swaps the VM's event_loop_handle (prepare/cleanup) while async
+  // I/O already in flight keeps its producer thread (the HTTP client thread)
+  // calling wakeup() cross-thread. Exercises that concurrency and that the
+  // main loop resumes and completes every request after the swap.
+  test("async I/O in flight survives concurrent spawnSync loop-handle swaps", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const url = "http://localhost:" + server.port + "/";
+        let ok = 0;
+        for (let round = 0; round < 4; round++) {
+          const inflight = [];
+          for (let i = 0; i < 24; i++) inflight.push(fetch(url).then(r => r.text()));
+          // Swap event_loop_handle repeatedly while the fetches are in flight.
+          for (let i = 0; i < 3; i++) {
+            const r = Bun.spawnSync({ cmd: ["echo", "x"], env: process.env });
+            if (r.exitCode !== 0) { console.log("FAIL: spawnSync exit " + r.exitCode); process.exit(2); }
+          }
+          for (const body of await Promise.all(inflight)) {
+            if (body !== "ok") { console.log("FAIL: fetch body " + JSON.stringify(body)); process.exit(3); }
+            ok++;
+          }
+        }
+        server.stop(true);
+        console.log("SUCCESS:" + ok);
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(stdout).toContain("SUCCESS:96");
+    expect(stdout).not.toContain("FAIL");
+  });
 });

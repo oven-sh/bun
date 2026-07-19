@@ -178,7 +178,10 @@ pub struct VirtualMachine {
     /// both types are owned by `bun_runtime` (forward dep). Access goes through
     /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: *mut c_void,
-    pub event_loop_handle: Option<*mut PlatformEventLoop>,
+    /// Per-VM platform event loop (uws `Loop` on POSIX, libuv on Windows);
+    /// null = unset. Atomic: producer threads read it on the cross-thread
+    /// `wakeup()` path while the JS thread may rewrite it (spawnSync).
+    pub event_loop_handle: core::sync::atomic::AtomicPtr<PlatformEventLoop>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
     /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
     /// threads.
@@ -879,23 +882,46 @@ impl VirtualMachine {
         unsafe { &mut *self.uws_loop() }
     }
 
+    /// Acquire-load the per-VM platform event loop pointer (null before
+    /// `ensure_waker()`). Safe from any thread: the cross-thread `wakeup()`
+    /// path reads it this way and hands it straight to the thread-safe
+    /// `us_wakeup_loop` extern without forming a `&mut Loop`.
+    #[inline(always)]
+    pub fn event_loop_handle_ptr(&self) -> *mut PlatformEventLoop {
+        self.event_loop_handle
+            .load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Release-store the per-VM platform event loop pointer. JS-thread-only
+    /// writers (`ensure_waker`, spawnSync prepare/cleanup, `Bun.serve` init);
+    /// Release pairs with the Acquire load in [`Self::event_loop_handle_ptr`].
+    #[inline(always)]
+    pub fn set_event_loop_handle_ptr(&self, handle: *mut PlatformEventLoop) {
+        self.event_loop_handle
+            .store(handle, core::sync::atomic::Ordering::Release);
+    }
+
     /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
     /// uws loop on POSIX, libuv loop on Windows). `None` only before
-    /// `ensure_waker()` runs. Consolidates the open-coded raw deref of
-    /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
-    /// `update_counts` call sites into one SAFETY block.
+    /// `ensure_waker()` runs. Consolidates the open-coded raw deref at the
+    /// `EventLoop::tick*` / `update_counts` call sites into one SAFETY block.
     ///
-    /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
-    /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
-    /// so the returned `&mut` cannot alias any field of `self`.
+    /// JS-thread-only — forms `&mut PlatformEventLoop`. Cross-thread callers
+    /// (`wakeup()`) MUST use [`Self::event_loop_handle_ptr`] instead. The
+    /// `PlatformEventLoop` is a separate heap allocation (uws/uv-owned), so
+    /// the returned `&mut` cannot alias any field of `self`.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
-        // SAFETY: when `Some`, `event_loop_handle` was set in `init()` /
-        // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
-        // for the VM lifetime. Single-JS-thread invariant per `unsafe impl
-        // Sync` — only the owning JS thread reborrows mutably.
-        self.event_loop_handle.map(|h| unsafe { &mut *h })
+        let handle = self.event_loop_handle_ptr();
+        if handle.is_null() {
+            None
+        } else {
+            // SAFETY: non-null `event_loop_handle` was set in `init()` /
+            // `ensure_waker()` to the live per-VM uws/uv loop and remains
+            // valid for the VM lifetime. JS-thread-only per `unsafe impl Sync`.
+            Some(unsafe { &mut *handle })
+        }
     }
 
     /// Read-then-zero `pending_unref_counter`. `swap(0)` so a concurrent
@@ -1010,19 +1036,21 @@ impl VirtualMachine {
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls
     /// `uws_loop_mut()` (→ this) every time the microtask queue drains, and
-    /// the only call site there is already gated on
-    /// `event_loop_handle.is_some()`.
+    /// the only call site there is already gated on a non-null
+    /// `event_loop_handle`.
     #[inline(always)]
     pub fn uws_loop(&self) -> *mut uws::Loop {
         #[cfg(unix)]
         {
-            debug_assert!(
-                self.event_loop_handle.is_some(),
-                "uws event_loop_handle is null"
-            );
-            // SAFETY: set in `init()` on the JS thread before any host_fn /
+            // Relaxed (not Acquire): this is a JS-thread-only hot path and the
+            // only writer is the JS thread, so program order already makes its
+            // own store visible. Set in `init()` before any host_fn /
             // event-loop tick runs; never cleared while the VM is live.
-            unsafe { self.event_loop_handle.unwrap_unchecked() }
+            let handle = self
+                .event_loop_handle
+                .load(core::sync::atomic::Ordering::Relaxed);
+            debug_assert!(!handle.is_null(), "uws event_loop_handle is null");
+            handle
         }
         #[cfg(not(unix))]
         {
@@ -3198,16 +3226,9 @@ impl VirtualMachine {
 
     /// Returns this VM's libuv event loop handle (must already be initialized).
     pub fn uv_loop(&self) -> *mut Async::Loop {
-        #[cfg(debug_assertions)]
-        {
-            return self
-                .event_loop_handle
-                .expect("libuv event_loop_handle is null");
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            self.event_loop_handle.unwrap()
-        }
+        let handle = self.event_loop_handle_ptr();
+        assert!(!handle.is_null(), "libuv event_loop_handle is null");
+        handle
     }
 
     /// Whether TLS certificate verification is enforced, from the cached override or the env loader.

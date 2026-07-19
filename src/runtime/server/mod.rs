@@ -1865,7 +1865,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
-        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
+        unsafe { (*self.vm_mut()).set_event_loop_handle_ptr(bun_io::Loop::get()) };
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
@@ -2971,8 +2971,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             }
                             if !this_ref.config.http1 {
                                 // SAFETY: per-thread VM singleton; no aliasing `&mut`.
-                                jsc::VirtualMachine::get().as_mut().event_loop_handle =
-                                    Some(bun_io::Loop::get());
+                                jsc::VirtualMachine::get()
+                                    .as_mut()
+                                    .set_event_loop_handle_ptr(bun_io::Loop::get());
                             }
                         }
                     }

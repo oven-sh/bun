@@ -345,7 +345,7 @@ impl EventLoop {
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
         // `event_loop_handle` (which is the libuv loop).
-        if vm.event_loop_handle.is_some() {
+        if !vm.event_loop_handle_ptr().is_null() {
             vm.uws_loop_mut().drain_quic_if_necessary();
         }
 
@@ -578,9 +578,18 @@ impl EventLoop {
         let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
         // owning per-thread singleton; non-null and live for the VM lifetime.
-        // `addr_of!` projects to the field place without forming an
-        // intermediate `&VirtualMachine` that would assert no-alias.
-        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }.expect("event_loop_handle")
+        // JS-thread-only (libuv completion callbacks), and only the JS thread
+        // writes `event_loop_handle`, so reading it here races nothing.
+        // `AtomicPtr<T>` has the same layout as `*mut T`; read the bytes via
+        // the raw field projection to avoid an intermediate `&VirtualMachine`
+        // (a caller may hold `&mut`).
+        let handle = unsafe {
+            core::ptr::addr_of!((*vm).event_loop_handle)
+                .cast::<*mut crate::PlatformEventLoop>()
+                .read()
+        };
+        assert!(!handle.is_null(), "event_loop_handle");
+        handle
     }
 
     pub fn usockets_loop(&self) -> *mut uws::Loop {
@@ -596,9 +605,12 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            self.vm_ref().event_loop_handle.expect(
-                "usockets_loop: event_loop_handle not initialized (call ensure_waker first)",
-            )
+            let handle = self.vm_ref().event_loop_handle_ptr();
+            assert!(
+                !handle.is_null(),
+                "usockets_loop: event_loop_handle not initialized (call ensure_waker first)"
+            );
+            handle
         }
     }
 
@@ -896,14 +908,19 @@ impl EventLoop {
 
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding();
-        if self.vm_ref().event_loop_handle.is_none() {
+        if self.vm_ref().event_loop_handle_ptr().is_null() {
             #[cfg(windows)]
             {
                 self.uws_loop = NonNull::new(uws::Loop::get());
             }
             let vm = self.vm();
-            // SAFETY: `vm` is the live owning VM.
-            unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
+            // SAFETY: `vm` is the live owning VM; Release-store pairs with the
+            // Acquire load on the cross-thread `wakeup()` path.
+            unsafe {
+                (*vm)
+                    .event_loop_handle
+                    .store(Async::Loop::get(), Ordering::Release)
+            };
             // Route through raw addr_of to avoid stacked-borrow
             // aliasing of the embedded field with its parent.
             // SAFETY: `vm` is the live owning VM; gc_controller is embedded.
@@ -980,19 +997,29 @@ impl EventLoop {
         #[cfg(windows)]
         {
             if let Some(loop_) = self.uws_loop {
-                // SAFETY: uws_loop is a valid live uws::Loop handle
-                unsafe { (*loop_.as_ptr()).wakeup() };
+                // Cross-thread, like the POSIX arm: call the thread-safe
+                // `us_wakeup_loop` extern on the raw pointer, not
+                // `WindowsLoop::wakeup(&mut self)` whose autoref would form a
+                // second `&mut Loop` to the singleton (mirrors `WindowsWaker`).
+                // SAFETY: `loop_` is the live per-VM uws loop; the extern
+                // routes to the thread-safe `uv_async_send`.
+                unsafe { uws::us_wakeup_loop(loop_.as_ptr()) };
             }
             return;
         }
         #[cfg(not(windows))]
         {
-            // Route through the single audited `platform_loop_opt()` accessor
-            // (set-once `Option<*mut>` deref) instead of open-coding the raw
-            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
-            // either way (autoref), so no soundness change vs the prior code.
-            if let Some(loop_) = self.vm_ref().platform_loop_opt() {
-                loop_.wakeup();
+            // Cross-thread: producer threads (HTTP client, work pool, waiters)
+            // reach here via `enqueue_task_concurrent`/`ref_concurrently`.
+            // Acquire-load the loop pointer and call the thread-safe
+            // `us_wakeup_loop` extern directly — forming a `&mut Loop` (as the
+            // JS-thread `platform_loop_opt()` does) would alias the loop the
+            // JS thread owns. Mirrors `HTTPThread::wakeup`.
+            let loop_ = self.vm_ref().event_loop_handle_ptr();
+            if !loop_.is_null() {
+                // SAFETY: `loop_` is the live per-VM uws loop; `us_wakeup_loop`
+                // is a thread-safe eventfd/pipe write (see uws_sys/Loop.rs).
+                unsafe { uws::us_wakeup_loop(loop_) };
             }
         }
     }
@@ -1448,7 +1475,7 @@ pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
 pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm: *mut (),
 ) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
-    vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
+    NonNull::new(vm_from_ptr(vm).event_loop_handle_ptr())
 }
 
 #[unsafe(no_mangle)]
@@ -1456,7 +1483,7 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     vm: *mut (),
     h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
-    vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
+    vm_from_ptr(vm).set_event_loop_handle_ptr(h.map_or(core::ptr::null_mut(), NonNull::as_ptr));
 }
 
 #[unsafe(no_mangle)]

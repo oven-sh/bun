@@ -777,6 +777,12 @@ async function runTests() {
           env.BUN_JSC_validateExceptionChecks = "1";
           env.BUN_JSC_dumpSimulatedThrows = "1";
         }
+        if (basename(execPath).includes("asan")) {
+          // Hunt the DFG CFA crash cluster (BUN-2YP4 et al): validate DFG graph
+          // invariants after every phase so a bad Node/Edge fails at the source.
+          // (validateAbstractInterpreterState is too slow: 26s+ for a trivial loop.)
+          env.BUN_JSC_validateGraphAtEachPhase = "1";
+        }
         if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
           env.BUN_DESTRUCT_VM_ON_EXIT = "1";
           env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
@@ -1582,6 +1588,12 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
+  }
+  if (basename(execPath).includes("asan")) {
+    // Hunt the DFG CFA crash cluster (BUN-2YP4 et al): validate DFG graph
+    // invariants after every phase so a bad Node/Edge fails at the source.
+    // (validateAbstractInterpreterState is too slow: 26s+ for a trivial loop.)
+    env.BUN_JSC_validateGraphAtEachPhase = "1";
   }
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";

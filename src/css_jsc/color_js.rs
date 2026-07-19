@@ -37,11 +37,24 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
         use bun_jsc::ComptimeStringMapExt as _;
         match OUTPUT_COLOR_FORMAT_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(
-                "color",
-                property_name,
-                "OutputColorFormat string",
-            )),
+            None => {
+                // List the accepted spellings straight from the lookup map so the
+                // error message can't drift from what the parser actually accepts.
+                let n = OUTPUT_COLOR_FORMAT_MAP.len();
+                let mut one_of = std::string::String::from("'");
+                for (i, key) in OUTPUT_COLOR_FORMAT_MAP.keys().enumerate() {
+                    one_of.push_str(std::str::from_utf8(key).expect("map keys are ASCII"));
+                    one_of.push('\'');
+                    if i + 2 < n {
+                        one_of.push_str(", '");
+                    } else if i + 2 == n {
+                        one_of.push_str(" or '");
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "{property_name} must be one of {one_of}"
+                )))
+            }
         }
     }
 }

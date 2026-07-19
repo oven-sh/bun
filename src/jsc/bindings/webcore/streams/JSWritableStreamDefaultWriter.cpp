@@ -482,7 +482,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_close, (
     if (!stream)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s))));
     if (writableStreamCloseQueuedOrInFlight(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot close a WritableStream that is already closing"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a WritableStream that is already closing"_s))));
     auto* promise = writableStreamDefaultWriterClose(lexicalGlobalObject, writer);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);

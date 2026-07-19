@@ -2140,10 +2140,16 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     try {
       const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
       const step = options["step"] || "";
-      const lane = step.includes("asan") ? "asan" : isWindows || step.includes("windows") ? "windows" : "default";
+      const lane = step.includes("asan")
+        ? "asan"
+        : step.includes("musl")
+          ? "musl"
+          : isWindows || step.includes("windows")
+            ? "windows"
+            : "default";
       for (const [path, entry] of Object.entries(raw)) {
         if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.windows;
+        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
         if (typeof ms === "number") durations[path] = ms;
       }
     } catch (e) {

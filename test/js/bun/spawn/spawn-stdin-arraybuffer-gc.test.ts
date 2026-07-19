@@ -80,52 +80,73 @@ describe("Bun.spawn stdin: ArrayBuffer does not create a JSC Strong for the copi
 // Functional coverage independent of node:streams: the bytes the child reads
 // from stdin match what the parent passed, for every ArrayBuffer-ish input
 // Stdio::extract accepts, under both spawn and spawnSync, with and without the
-// Linux memfd fast path.
+// Linux memfd fast path. The memfd decision is made by the process calling
+// Bun.spawn, so the flag must be set on an intermediate subprocess (not on the
+// leaf child) for it to take effect.
 describe("Bun.spawn stdin: ArrayBuffer bytes reach the child intact", () => {
-  const N = 50000;
-  const hugeBuf = Buffer.alloc(N * 5, "hello");
-  const hugeAB = (() => {
+  const fixture = /* js */ `
+    const catScript = ${JSON.stringify(catScript)};
+    const hugeBuf = Buffer.alloc(50000 * 5, "hello");
     const ab = new ArrayBuffer(hugeBuf.length);
     new Uint8Array(ab).set(hugeBuf);
-    return ab;
-  })();
-  const expectedHash = Bun.SHA1.hash(hugeBuf, "hex");
 
-  const inputs = [
-    ["ArrayBuffer", () => hugeAB],
-    ["Uint8Array", () => new Uint8Array(hugeAB)],
-    ["Buffer", () => hugeBuf],
-    ["DataView", () => new DataView(hugeAB)],
-  ] as const;
+    const inputs = {
+      ArrayBuffer: ab,
+      Uint8Array: new Uint8Array(ab),
+      Buffer: hugeBuf,
+      DataView: new DataView(ab),
+    };
 
-  describe.each(["1", "0"])("BUN_FEATURE_FLAG_DISABLE_MEMFD=%s", disableMemfd => {
-    const env = { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: disableMemfd };
-
-    for (const [label, mk] of inputs) {
-      test.concurrent(`spawn with ${label}`, async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", catScript],
-          stdin: mk(),
-          stdout: "pipe",
-          stderr: "pipe",
-          env,
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(stdout.trim()).toBe(expectedHash);
-        expect(exitCode).toBe(0);
+    const results = {};
+    const procs = [];
+    for (const [label, stdin] of Object.entries(inputs)) {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", catScript],
+        stdin,
+        stdout: "pipe",
+        stderr: "inherit",
+        env: process.env,
       });
-
-      test.concurrent(`spawnSync with ${label}`, () => {
-        const { stdout, stderr, exitCode } = Bun.spawnSync({
-          cmd: [bunExe(), "-e", catScript],
-          stdin: mk(),
-          env,
-        });
-        expect(stderr.toString()).toBe("");
-        expect(stdout.toString().trim()).toBe(expectedHash);
-        expect(exitCode).toBe(0);
-      });
+      procs.push(
+        Promise.all([proc.stdout.text(), proc.exited]).then(([out]) => {
+          results["spawn:" + label] = out.trim();
+        }),
+      );
     }
-  });
+    await Promise.all(procs);
+
+    for (const [label, stdin] of Object.entries(inputs)) {
+      const { stdout } = Bun.spawnSync({
+        cmd: [process.execPath, "-e", catScript],
+        stdin,
+        env: process.env,
+      });
+      results["spawnSync:" + label] = stdout.toString().trim();
+    }
+
+    console.log(JSON.stringify(results));
+  `;
+
+  const hash = Bun.SHA1.hash(Buffer.alloc(50000 * 5, "hello"), "hex");
+  const expected = Object.fromEntries(
+    ["ArrayBuffer", "Uint8Array", "Buffer", "DataView"].flatMap(label => [
+      [`spawn:${label}`, hash],
+      [`spawnSync:${label}`, hash],
+    ]),
+  );
+
+  for (const disableMemfd of ["1", "0"]) {
+    test.concurrent(`BUN_FEATURE_FLAG_DISABLE_MEMFD=${disableMemfd}`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: disableMemfd },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+  }
 });

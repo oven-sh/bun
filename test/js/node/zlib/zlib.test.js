@@ -794,19 +794,27 @@ const NativeZstd = zlib.createZstdCompress()._handle.constructor;
 
 const input = Buffer.alloc(256, "in-flight GC root probe");
 
-// Schedule an async write, then force a full GC while the work-pool task holds
-// the only native reference. The JsRef must be held strong across the thread
-// hop; if it is not, the completion callback reads freed write_result storage.
+// Construct + init + write in its own frame so no stale bytecode register holds
+// the wrapper once we return; only the JsRef strong root (set in write()) keeps
+// it alive across the forced GC below.
+function schedule(name, Ctor, mode, init, flush) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const ws = new Uint32Array(2);
+  const out = Buffer.alloc(512);
+  const h = new Ctor(mode);
+  init(h, ws, resolve);
+  h.onerror = (m, e, c) => reject(new Error(name + " " + c + ": " + m));
+  h.write(flush, input, 0, input.length, out, 0, out.length);
+  return { weak: new WeakRef(h), promise, ws, out };
+}
+
 async function checkRooting(name, Ctor, mode, init, flush) {
   for (let i = 0; i < 4; i++) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const ws = new Uint32Array(2);
-    const out = Buffer.alloc(512);
-    const h = new Ctor(mode);
-    init(h, ws, resolve);
-    h.onerror = (m, e, c) => reject(new Error(name + " " + c + ": " + m));
-    h.write(flush, input, 0, input.length, out, 0, out.length);
+    const { weak, promise, ws, out } = schedule(name, Ctor, mode, init, flush);
     Bun.gc(true);
+    if (weak.deref() === undefined) {
+      throw new Error(name + ": wrapper collected while an async write was in flight");
+    }
     await promise;
     const have = out.length - ws[0];
     if (have <= 0) throw new Error(name + ": no output produced");
@@ -827,11 +835,11 @@ await checkRooting("zstd", NativeZstd, ZSTD_COMPRESS,
 // remains: the strong root is dropped in run_from_js_thread, so the live
 // count stays bounded rather than growing by 50 per batch.
 async function batch() {
-  const out = Buffer.alloc(512);
   const done = [];
   for (let i = 0; i < 50; i++) {
     const { promise, resolve } = Promise.withResolvers();
     const ws = new Uint32Array(2);
+    const out = Buffer.alloc(512);
     const h = new NativeZlib(DEFLATE);
     h.init(Z_DEFAULT_WINDOWBITS, Z_DEFAULT_COMPRESSION, Z_DEFAULT_MEMLEVEL, Z_DEFAULT_STRATEGY, ws, resolve, undefined);
     h.write(Z_FINISH, input, 0, input.length, out, 0, out.length);
@@ -859,8 +867,6 @@ console.log("OK");
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("OK\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
   });
 });

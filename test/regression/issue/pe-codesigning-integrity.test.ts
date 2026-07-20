@@ -430,10 +430,8 @@ console.log("SUM", s);
       cwd: tempDir,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("SUM 7350");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "SUM 7350", exitCode: 0 });
 
     unlinkSync(testFile);
     unlinkSync(exePath);

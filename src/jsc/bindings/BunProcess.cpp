@@ -4383,7 +4383,10 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Entered from Rust (ipc.rs message dispatch) with no JS frame below us,
+    // so a pending exception has no caller to check it: report at this
+    // event-loop boundary instead (same pattern as Process_getMainModule).
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // Node reserves the "NODE_" cmd prefix for the channel's own traffic and
     // routes such messages to "internalMessage" on both ends of the channel.
@@ -4391,10 +4394,18 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     JSValue message = JSValue::decode(value);
     if (message.isObject()) {
         JSValue cmd = message.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "cmd"_s));
-        RETURN_IF_EXCEPTION(scope, void());
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(global, exception);
+            return;
+        }
         if (cmd && cmd.isString()) {
             auto cmdString = cmd.toWTFString(global);
-            RETURN_IF_EXCEPTION(scope, void());
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(global, exception);
+                return;
+            }
             if (cmdString.length() > 5 && cmdString.startsWith("NODE_"_s)) {
                 ident = JSC::Identifier::fromString(vm, "internalMessage"_s);
             }
@@ -4406,6 +4417,10 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         args.append(message);
         args.append(JSValue::decode(handle));
         process->wrapped().emit(ident, args);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(global, exception);
+        }
     }
 }
 

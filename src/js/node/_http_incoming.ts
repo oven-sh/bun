@@ -428,9 +428,10 @@ function onDataIncomingMessage(
   socket?._unrefTimer?.();
 
   if (chunk && !this._dumped) {
-    // Like Node's parserOnBody: once the IncomingMessage buffer fills,
-    // pause the connection so it emits 'pause' and stops reading.
-    if (!this.push(chunk)) readStop(socket);
+    // Like Node's parserOnBody: pause the connection once the buffer fills.
+    // Upgrade-with-body excluded for the same reason as _read(): the upgrade
+    // listener owns the socket's flow state for the tunnel bytes that follow.
+    if (!this.push(chunk) && !this.upgrade) readStop(socket);
   }
 
   if (isLast) {

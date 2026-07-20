@@ -6971,35 +6971,6 @@ pub fn normalize_path_windows_opts<'a>(
     Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
 }
 
-/// Open a `\\.\…` device path via kernel32 `CreateFileW`
-/// (NtCreateFile cannot open device paths).
-#[cfg(windows)]
-fn open_windows_device_path(
-    path: &bun_core::WStr,
-    desired_access: u32,
-    creation_disposition: u32,
-    flags_and_attributes: u32,
-) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
-    // SAFETY: path is NUL-terminated UTF-16.
-    let rc = unsafe {
-        w::CreateFileW(
-            path.as_ptr(),
-            desired_access,
-            FILE_SHARE,
-            core::ptr::null_mut(),
-            creation_disposition,
-            flags_and_attributes,
-            core::ptr::null_mut(),
-        )
-    };
-    if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        let errno = windows::Win32Error::get().to_e();
-        return Err(Error::from_code(errno, Tag::open));
-    }
-    Ok(Fd::from_system(rc))
-}
-
 /// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
 /// these get `RootDirectory = null`; any other rooted string stays
 /// dirfd-relative so `NtCreateFile` rejects it (`OBJECT_PATH_SYNTAX_BAD`).
@@ -7045,30 +7016,7 @@ pub fn open_dir_at_windows_nt_path(
         0
     };
 
-    // NtCreateFile seems to not function on device paths. Since it is
-    // absolute, it can just use CreateFileW.
     let p = path.as_slice();
-    if p.len() >= 4
-        && p[0] == b'\\' as u16
-        && p[1] == b'\\' as u16
-        && p[2] == b'.' as u16
-        && p[3] == b'\\' as u16
-    {
-        return open_windows_device_path(
-            path,
-            flags,
-            if options.op != WindowsOpenDirOp::OnlyOpen {
-                w::FILE_OPEN_IF
-            } else {
-                w::FILE_OPEN
-            },
-            w::FILE_DIRECTORY_FILE
-                | w::FILE_SYNCHRONOUS_IO_NONALERT
-                | windows::FILE_OPEN_FOR_BACKUP_INTENT
-                | open_reparse,
-        );
-    }
-
     let path_len_bytes = (p.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -10512,18 +10460,22 @@ mod normalize_path_windows_tests {
         // The compose/None-query failure arms are not constructible from a
         // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
         let nul_path = wide("\\\\.\\NUL\0");
-        let nul = scopeguard::guard(
-            open_windows_device_path(
-                bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
+        // SAFETY: `nul_path` is NUL-terminated and outlives the call.
+        let h = unsafe {
+            w::CreateFileW(
+                nul_path.as_ptr(),
                 w::GENERIC_READ,
+                FILE_SHARE,
+                core::ptr::null_mut(),
                 w::OPEN_EXISTING,
                 0,
+                core::ptr::null_mut(),
             )
-            .expect("open NUL"),
-            |fd| {
-                let _ = close(fd);
-            },
-        );
+        };
+        assert_ne!(h, bun_windows_sys::INVALID_HANDLE_VALUE);
+        let nul = scopeguard::guard(Fd::from_system(h), |fd| {
+            let _ = close(fd);
+        });
         assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
     }
 

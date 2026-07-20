@@ -5,7 +5,10 @@ const { isUint8Array } = require("node:util/types");
 const { validateOneOf } = require("internal/validators");
 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const Uint8ArrayPrototype = Uint8Array.prototype;
+const BufferPrototype = Buffer.prototype;
+// Node pools Buffer allocations smaller than half of Buffer.poolSize
+// (8192 >>> 1 = 4096 by default; see poolSize handling in node lib/buffer.js).
+const kBufferPoolBypassThreshold = Buffer.poolSize >>> 1;
 
 let isError;
 
@@ -116,14 +119,18 @@ function concatBytes(chunks) {
   if (chunks.length === 1) {
     const chunk = chunks[0];
     // If non-zero offset, skip the remaining buffer checks.
-    // Bun's Buffer.from has no shared pool, so a small Buffer covers its whole
-    // backing store and would be returned as-is here, where Node's pooled
-    // Buffer takes the copy path and yields a plain Uint8Array. Restrict the
-    // identity fast path to plain Uint8Arrays so Buffer inputs normalize the
-    // way they observably do in Node.
-    if (chunk.byteOffset === 0 && ObjectGetPrototypeOf(chunk) === Uint8ArrayPrototype) {
-      // Works for both ArrayBuffer and SharedArrayBuffer backings.
-      if (chunk.byteLength === chunk.buffer.byteLength) {
+    // Bun's Buffer.from has no shared pool, so small Buffers cover their whole
+    // backing store here, where Node's pool-backed Buffers (allocations below
+    // Buffer.poolSize >>> 1, node lib/buffer.js) fail the covers-whole-buffer
+    // check and take the copy path to a plain Uint8Array. Emulate that split:
+    // Buffers below the pool threshold always copy; anything else that covers
+    // its backing buffer is returned by identity, exactly like Node (large
+    // zlib/iter output Buffers stay Buffers).
+    if (chunk.byteOffset === 0) {
+      const isSmallBuffer =
+        chunk.byteLength < kBufferPoolBypassThreshold && ObjectGetPrototypeOf(chunk) === BufferPrototype;
+      if (!isSmallBuffer && chunk.byteLength === chunk.buffer.byteLength) {
+        // Works for both ArrayBuffer and SharedArrayBuffer backings.
         return chunk;
       }
     }

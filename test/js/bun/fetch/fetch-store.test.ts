@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -137,9 +137,35 @@ describe("fetch store", () => {
 
   test("store type validation", async () => {
     // @ts-expect-error invalid type
-    expect(fetch("http://example.com", { store: { type: "nope" } })).rejects.toThrow(/store\.type/);
+    await expect(fetch("http://example.com", { store: { type: "nope" } })).rejects.toThrow(/store\.type/);
     // @ts-expect-error missing path
-    expect(fetch("http://example.com", { store: { type: "dir" } })).rejects.toThrow(/store\.path/);
+    await expect(fetch("http://example.com", { store: { type: "dir" } })).rejects.toThrow(/store\.path/);
+  });
+
+  test("streamed request bodies bypass the store", async () => {
+    using cacheDir = tempDir("fetch-store-stream", {});
+    let hits = 0;
+    const bodies: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        hits++;
+        bodies.push(await req.text());
+        return new Response(String(hits));
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const mk = (s: string) =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(s));
+          c.close();
+        },
+      });
+    const a = await (await fetch(`http://localhost:${server.port}/s`, { method: "POST", body: mk("A"), store })).text();
+    const b = await (await fetch(`http://localhost:${server.port}/s`, { method: "POST", body: mk("B"), store })).text();
+    expect({ a, b, hits, bodies }).toEqual({ a: "1", b: "2", hits: 2, bodies: ["A", "B"] });
+    expect(readdirSync(String(cacheDir))).toEqual([]);
   });
 
   test.concurrent("--fetch-cache=<dir> applies to all fetch() calls", async () => {
@@ -164,10 +190,11 @@ describe("fetch store", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const out = JSON.parse(stdout.trim());
-    expect(out).toEqual({ a: "ok1", b: "ok1", hits: 1 });
-    expect(exitCode).toBe(0);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { a: "ok1", b: "ok1", hits: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
     expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(1);
   });
 
@@ -192,9 +219,11 @@ describe("fetch store", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ a: "m1", b: "m1", hits: 1 });
-    expect(exitCode).toBe(0);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { a: "m1", b: "m1", hits: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test.concurrent("bunfig [fetch] cache = <dir>", async () => {
@@ -220,9 +249,11 @@ describe("fetch store", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ a: "bf1", b: "bf1", hits: 1 });
-    expect(exitCode).toBe(0);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { a: "bf1", b: "bf1", hits: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
     expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(1);
   });
 });

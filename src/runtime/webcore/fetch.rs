@@ -2075,15 +2075,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Record/replay store: key the request now that method/url/headers/body
     // are finalised, and either short-circuit on a hit or carry the key into
     // the tasklet so the response can be persisted once fully buffered.
+    // Streamed / sendfile bodies are unhashable, so the store is bypassed for
+    // them entirely (a false hit would replay the wrong body's response).
     let store_request: Option<(FetchStore, store::StoredRequest)> = match fetch_store {
-        Some(store_) if !url.is_s3() => {
-            let body_bytes: Option<&[u8]> = match &body {
-                HTTPRequestBody::AnyBlob(_) => {
-                    let s = body.slice();
-                    if s.is_empty() { None } else { Some(s) }
-                }
-                _ => None,
-            };
+        Some(store_) if !url.is_s3() && matches!(&body, HTTPRequestBody::AnyBlob(_)) => {
+            let s = body.slice();
+            let body_bytes = if s.is_empty() { None } else { Some(s) };
             let empty_headers;
             let req = store::build_request(
                 method,

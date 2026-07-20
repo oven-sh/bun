@@ -220,7 +220,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)"
     ),
     parse_param!(
-        "--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)"
+        "--heap-prof                       Write a heap profile to disk on exit (.heapprofile)"
     ),
     parse_param!("--heap-prof-name <STR>            Specify the name of the heap profile file"),
     parse_param!(
@@ -228,6 +228,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)"
+    ),
+    parse_param!(
+        "--heap-prof-interval <STR>        Specify the average sampling interval in bytes for heap profiling (default: 524288)"
     ),
     parse_param!(
         "--if-present                      Exit without an error if the entrypoint does not exist"
@@ -1290,6 +1293,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else if heap_prof_v8 || heap_prof_md {
+            // --heap-prof-interval is accepted for node CLI parity but unused:
+            // JSC has no allocation-site sampler to configure.
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
@@ -1299,16 +1304,32 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else {
-            // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
+            // Node parity: heap-profiler-scoped options without a profiler flag
+            // exit 9, like the --cpu-prof block above. The default interval
+            // value (512 KiB) is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--heap-prof-name").is_some() {
-                bun_core::warn!(
-                    "--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[0] = Some("--heap-prof-name");
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                bun_core::warn!(
-                    "--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[1] = Some("--heap-prof-dir");
+            }
+            if let Some(interval_str) = args.option(b"--heap-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 512 * 1024 {
+                    bad_flags[2] = Some("--heap-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --heap-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 

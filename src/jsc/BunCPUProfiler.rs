@@ -184,8 +184,9 @@ fn build_output_path(
         path.join(&[config.dir]).expect("unreachable");
     }
 
-    // Append filename
-    path.append(filename).expect("unreachable");
+    // Join filename; `join` resolves an absolute --cpu-prof-name where
+    // `append` asserts on it.
+    path.join(&[filename]).expect("unreachable");
 
     Ok(())
 }
@@ -220,7 +221,7 @@ fn generate_default_filename(
 }
 
 #[cfg(not(windows))]
-fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs()) as libc::time_t;
@@ -238,7 +239,7 @@ fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
 }
 
 #[cfg(windows)]
-fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
     #[repr(C)]
     #[derive(Default)]
     struct SystemTime {

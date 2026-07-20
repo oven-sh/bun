@@ -134,7 +134,7 @@ typedef int mode_t;
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
-extern "C" void Bun__writeCPUProfileBeforeSelfKill();
+extern "C" void Bun__writeProfilesBeforeSelfKill();
 extern "C" int32_t bun_stdio_tty[3];
 
 namespace Bun {
@@ -4302,11 +4302,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     int ownPid = uv_os_getpid();
 #endif
     // Node parity: a self-directed signal with no JS handler will most likely
-    // terminate this process, so flush the CPU profile first (node's Kill
-    // binding runs RunAtExit in this case).
+    // terminate this process, so flush the CPU/heap profiles first (node's
+    // Kill binding runs RunAtExit in this case).
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
         && !(signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
-        Bun__writeCPUProfileBeforeSelfKill();
+        Bun__writeProfilesBeforeSelfKill();
     }
 
 #if !OS(WINDOWS)

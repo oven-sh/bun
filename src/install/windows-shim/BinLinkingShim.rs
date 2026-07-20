@@ -368,12 +368,12 @@ mod host {
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
 
-            // `bytemuck::cast_slice_mut` performs a runtime alignment +
+            // `bun_core::cast::cast_slice_mut` performs a runtime alignment +
             // size-multiple check and panics on mismatch — no
             // `unsafe` needed. (The sole caller, `bin.rs`, passes a stack `[u8; 65536]`
             // whose Rust-guaranteed alignment is 1; it should be changed to a `[u16; N]`
             // buffer to make alignment a compile-time guarantee — tracked separately.)
-            let mut wbuf: &mut [u16] = bytemuck::cast_slice_mut(buf);
+            let mut wbuf: &mut [u16] = bun_core::cast::cast_slice_mut(buf);
 
             wbuf[0..self.bin_path.len()].copy_from_slice(self.bin_path);
             wbuf = &mut wbuf[self.bin_path.len()..];
@@ -451,7 +451,7 @@ mod host {
         // Bounds checked above so the trailing 2-byte slice is in range.
         // `pod_read_unaligned` is the safe equivalent of
         // `ptr.cast::<u16>().read_unaligned()` over a `&[u8]`.
-        let flags = Flags::from_bits(bytemuck::pod_read_unaligned::<u16>(
+        let flags = Flags::from_bits(bun_core::cast::pod_read_unaligned::<u16>(
             &input[input.len() - FLAGS_SIZE..],
         ));
         if !flags.is_valid() {
@@ -460,10 +460,10 @@ mod host {
 
         let bin_path_u8: &[u8] = if flags.has_shebang() {
             'bin_path_u8: {
-                // Bounds checked above; unaligned u32 read via safe `bytemuck`.
+                // Bounds checked above; unaligned u32 read via safe `cast`.
                 let off = input.len() - FLAGS_SIZE - 2 * size_of::<u32>();
                 let bin_path_byte_len =
-                    bytemuck::pod_read_unaligned::<u32>(&input[off..off + size_of::<u32>()])
+                    bun_core::cast::pod_read_unaligned::<u32>(&input[off..off + size_of::<u32>()])
                         as usize;
                 if !bin_path_byte_len.is_multiple_of(2) {
                     return None;

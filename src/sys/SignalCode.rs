@@ -80,13 +80,13 @@ impl SignalCode {
         }
     }
 
-    pub fn from<T: bytemuck::NoUninit>(value: T) -> SignalCode {
+    pub fn from<T: bun_core::cast::NoUninit>(value: T) -> SignalCode {
         // View `value` as bytes and read the
         // first one. `NoUninit` guarantees `T` is `Copy` with no padding/uninit
-        // bytes, so `bytemuck::bytes_of` is the safe equivalent of the raw
+        // bytes, so `bun_core::cast::bytes_of` is the safe equivalent of the raw
         // `*(&raw const value).cast::<u8>()` reinterpret. A ZST `T` panics on
         // the `[0]` index; all callers pass integer types.
-        SignalCode(bytemuck::bytes_of(&value)[0])
+        SignalCode(bun_core::cast::bytes_of(&value)[0])
     }
 
     pub fn fmt(self, enable_ansi_colors: bool) -> Fmt {

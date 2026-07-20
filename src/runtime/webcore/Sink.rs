@@ -240,8 +240,8 @@ impl UTF8Fallback {
     ) -> streams::result::Writable {
         let bytes = input.slice();
         // input.slice() is guaranteed by caller to be u16-aligned UTF-16 bytes;
-        // bytemuck checks alignment + even length at runtime.
-        let str_: &[u16] = bytemuck::cast_slice(bytes);
+        // `cast_slice` checks alignment + even length at runtime.
+        let str_: &[u16] = bun_core::cast::cast_slice(bytes);
 
         if Self::STACK_SIZE >= str_.len() * 2 {
             let mut buf = [0u8; Self::STACK_SIZE];
@@ -914,7 +914,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         let _keep_str = bun_jsc::EnsureStillAlive(str_.to_js());
         if view.is_16bit() {
             let utf16 = view.utf16_slice_aligned();
-            let bytes: &[u8] = bytemuck::cast_slice(utf16);
+            let bytes: &[u8] = bun_core::cast::cast_slice(utf16);
             // Borrowed view over GC-kept JSString.
             let data = bun_ptr::RawSlice::new(bytes);
             return Ok(this

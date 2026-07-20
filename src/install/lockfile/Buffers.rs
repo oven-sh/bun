@@ -188,9 +188,9 @@ where
         stream.write_all(bytes)?;
         let real_end_pos = stream.get_pos()? as u64;
         let positioned: [u64; 2] = [real_start_pos, real_end_pos];
-        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
+        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `cast_ref`
         // gives the byte view without `unsafe`.
-        let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
+        let positioned_bytes: &[u8; 16] = bun_core::cast::cast_ref(&positioned);
         let mut written: usize = 0;
         while written < 16 {
             written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
@@ -198,9 +198,9 @@ where
     } else {
         let real_end_pos = stream.get_pos()? as u64;
         let positioned: [u64; 2] = [real_end_pos, real_end_pos];
-        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
+        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `cast_ref`
         // gives the byte view without `unsafe`.
-        let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
+        let positioned_bytes: &[u8; 16] = bun_core::cast::cast_ref(&positioned);
         let mut written: usize = 0;
         while written < 16 {
             written += stream.pwrite(&positioned_bytes[written..], start_pos + written);

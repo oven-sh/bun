@@ -3512,7 +3512,7 @@ pub fn user_unique_id() -> u32 {
         "username: {}",
         bun_core::fmt::utf16(name)
     );
-    bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
+    bun_wyhash::hash32(bun_core::cast::cast_slice::<u16, u8>(name))
 }
 
 pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(), SystemErrno> {

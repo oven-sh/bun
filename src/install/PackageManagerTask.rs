@@ -123,9 +123,9 @@ impl Id {
     pub fn for_bin_link(package_id: PackageID) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"bin-link:");
-        // `PackageID` is `u32`: `bytemuck::bytes_of` gives the
+        // `PackageID` is `u32`: `bun_core::cast::bytes_of` gives the
         // native-endian byte view.
-        hasher.update(bytemuck::bytes_of(&package_id));
+        hasher.update(bun_core::cast::bytes_of(&package_id));
         Id(hasher.final_())
     }
 

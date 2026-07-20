@@ -318,7 +318,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             // `construct_from_u16`'s utf16le arm, which avoids the same
             // reinterpret for the same reason.
             let mut as_u16 = vec![0u16; usable_len / 2];
-            let dst: &mut [u8] = bytemuck::cast_slice_mut(&mut as_u16);
+            let dst: &mut [u8] = bun_core::cast::cast_slice_mut(&mut as_u16);
             dst.copy_from_slice(&input[..usable_len]);
             create_external_globally_allocated_utf16(as_u16)
         }
@@ -428,7 +428,7 @@ pub(crate) fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunStr
                 return str;
             }
             // chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
-            let output_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
+            let output_bytes: &mut [u8] = bun_core::cast::cast_slice_mut(chars);
             let out_len = output_bytes.len();
             output_bytes[out_len - 1] = 0;
 
@@ -570,12 +570,13 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
             let buf = input_slice;
             let out_units = to_len / 2;
             // `to_slice` already covers `to_ptr[..to_len]`; for the aligned fast
-            // path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]` view (it
+            // path, `cast_slice_mut` gives a safe `&mut [u8] → &mut [u16]` view (it
             // re-checks alignment + even length, both proven here).
             let mut written = if out_units == 0 {
                 0
             } else if (to_slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<u16>()) {
-                let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to_slice[..out_units * 2]);
+                let output: &mut [u16] =
+                    bun_core::cast::cast_slice_mut(&mut to_slice[..out_units * 2]);
                 strings::copy_latin1_into_utf16(output, buf).written as usize * 2
             } else {
                 // Rust `&mut [u16]` requires natural alignment, so inline the
@@ -888,7 +889,7 @@ pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
             // `input_slice: &[u16]` is the source bytes verbatim — copy them
             // out into a fresh u8 Vec (a `Vec<u16>` header reinterpret would be
             // allocator-layout-dependent).
-            bytemuck::cast_slice::<u16, u8>(input_slice).to_vec()
+            bun_core::cast::cast_slice::<u16, u8>(input_slice).to_vec()
         }
 
         Encoding::Hex => {

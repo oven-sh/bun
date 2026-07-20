@@ -1111,8 +1111,8 @@ impl MultiPartUpload {
                     WriteEncoding::Bytes => self.buffered.write(chunk)?,
                     WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
                     WriteEncoding::Utf16 => {
-                        // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
-                        let utf16: &[u16] = bytemuck::cast_slice(chunk);
+                        // @alignCast — caller guarantees chunk is u16-aligned; `cast_slice` checks at runtime.
+                        let utf16: &[u16] = bun_core::cast::cast_slice(chunk);
                         self.buffered.write_utf16(utf16)?
                     }
                 }
@@ -1131,8 +1131,8 @@ impl MultiPartUpload {
                 WriteEncoding::Bytes => self.buffered.write(chunk)?,
                 WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
                 WriteEncoding::Utf16 => {
-                    // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
-                    let utf16: &[u16] = bytemuck::cast_slice(chunk);
+                    // @alignCast — caller guarantees chunk is u16-aligned; `cast_slice` checks at runtime.
+                    let utf16: &[u16] = bun_core::cast::cast_slice(chunk);
                     self.buffered.write_utf16(utf16)?
                 }
             }

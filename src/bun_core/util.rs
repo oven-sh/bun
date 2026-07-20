@@ -3261,33 +3261,15 @@ impl<H: core::hash::Hasher> Hasher for H {
     }
 }
 
-/// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
-/// direct `bytemuck` dep.
-pub use bytemuck::NoUninit;
-
-/// Reinterpret a value's storage as a borrowed byte slice.
-///
-/// Safe: the [`bytemuck::NoUninit`] bound statically guarantees `T` is `Copy`,
-/// `'static`, and contains no uninitialized (padding) bytes, so every byte of
-/// the returned slice is initialized and reading it is defined behaviour.
-#[inline]
-pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
-    bytemuck::bytes_of(v)
-}
-
-/// Mutable counterpart of [`bytes_of`]: reinterpret `&mut T` as `&mut [u8]`.
-///
-/// Safe: the [`bytemuck::Pod`] bound guarantees `T` has no padding bytes and
-/// every bit pattern is a valid `T`, so writing arbitrary bytes through the
-/// returned slice cannot produce an invalid value.
-#[inline]
-pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
-    bytemuck::bytes_of_mut(v)
-}
+/// Re-exports so downstream crates can write `T: bun_core::NoUninit` etc. and
+/// call `bun_core::cast_slice(..)` without reaching into [`crate::cast`].
+pub use crate::cast::{
+    AnyBitPattern, NoUninit, Pod, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut,
+};
 
 // ─── Slice reinterpretation (canonical) ───────────────────────────────────────
 // Split by mutability, with two safety surfaces:
-//   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
+//   - `cast_slice` / `cast_slice_mut`  → SAFE, trait-bounded, panics on
 //     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
 //   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
 //     TRUNCATES trailing bytes. Use only when `T` is not
@@ -3295,34 +3277,15 @@ pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
 // Every current caller targets `u16` over an even-length buffer, so the safe
 // path is the default.
 
-/// Read-only `&[A]` → `&[B]` reinterpretation. Safe: the [`bytemuck::NoUninit`] bound
-/// on `A` guarantees every source byte is initialized, and
-/// [`bytemuck::AnyBitPattern`] on `B` guarantees every byte pattern is a valid
-/// `B`. Panics if size/alignment don't divide evenly (same as `bytemuck`).
-#[inline]
-pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) -> &[B] {
-    bytemuck::cast_slice(a)
-}
-
-/// Mutable counterpart of [`cast_slice`]: reinterpret `&mut [A]` as `&mut [B]`.
-/// Safe: both [`bytemuck::Pod`] bounds guarantee every byte pattern is valid in
-/// both directions and there are no uninitialized bytes. Panics on misalignment
-/// or if `a.len() * size_of::<A>() % size_of::<B>() != 0` (same as `bytemuck`).
-#[inline]
-pub fn cast_slice_mut<A: bytemuck::Pod, B: bytemuck::Pod>(a: &mut [A]) -> &mut [B] {
-    bytemuck::cast_slice_mut(a)
-}
-
 /// Reinterpret `&[T]` as `&[u8]`.
 ///
 /// This is [`cast_slice`] with the output type fixed to `u8`, so callers never
-/// need a `::<_, u8>` turbofish. Safe: [`bytemuck::NoUninit`] guarantees every
-/// byte of `T` is initialized; `align_of::<u8>() == 1` and
-/// `size_of::<T>() % 1 == 0` mean the bytemuck size/align checks are trivially
-/// satisfied and this never panics.
+/// need a `::<_, u8>` turbofish. Safe: [`NoUninit`] guarantees every byte of
+/// `T` is initialized; `align_of::<u8>() == 1` and `size_of::<T>() % 1 == 0`
+/// mean the size/align checks are trivially satisfied and this never panics.
 #[inline]
-pub fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
-    bytemuck::cast_slice(s)
+pub fn slice_as_bytes<T: NoUninit>(s: &[T]) -> &[u8] {
+    crate::cast::cast_slice(s)
 }
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
@@ -3414,7 +3377,7 @@ macro_rules! extern_union_accessors {
 }
 
 /// Feed a value's raw bytes to a hasher. Taking a generic by-value-as-bytes
-/// safely requires a `bytemuck` bound, so this
+/// safely requires a [`NoUninit`] bound, so this
 /// accepts anything that is itself viewable as bytes (covers the actual call
 /// sites: `u8` tags, `usize` lengths, `Index` newtypes).
 #[inline]
@@ -3431,7 +3394,7 @@ macro_rules! as_bytes_pod {
     ($($t:ty),* $(,)?) => { $(
         impl AsBytes for $t {
             #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
-                bytemuck::bytes_of(self)
+                crate::cast::bytes_of(self)
             }
         }
     )* }
@@ -5107,7 +5070,7 @@ pub struct Timespec {
 unsafe impl crate::ffi::Zeroable for Timespec {}
 // SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
 // no interior mutability, `Copy + 'static`. Every byte is initialized.
-unsafe impl bytemuck::NoUninit for Timespec {}
+unsafe impl crate::cast::NoUninit for Timespec {}
 
 /// Lowercase alias (`bun.timespec`).
 #[allow(non_camel_case_types)]
@@ -5434,12 +5397,12 @@ impl From<f16> for f32 {
     }
 }
 // SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
-// `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
-// from `&[u8]` for Float16Array printing (ConsoleObject).
-unsafe impl bytemuck::Zeroable for f16 {}
+// `f16`, no padding, `Copy + 'static`. Enables safe `cast_slice` from `&[u8]`
+// for Float16Array printing (ConsoleObject).
+unsafe impl crate::cast::Zeroable for f16 {}
 // SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
-// valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.
-unsafe impl bytemuck::Pod for f16 {}
+// valid, `Copy + Zeroable + 'static`; satisfies all `Pod` invariants.
+unsafe impl crate::cast::Pod for f16 {}
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_f64().fmt(f)

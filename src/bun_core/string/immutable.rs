@@ -1202,7 +1202,7 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
 pub fn eql_comptime_t<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
     // Branch on size_of (const-folded): 2-byte T → eql_comptime_utf16.
     if core::mem::size_of::<T>() == 2 {
-        // `NoUninit` + size_of::<T>()==2 lets bytemuck prove the &[T]→&[u16]
+        // `NoUninit` + size_of::<T>()==2 lets `cast_slice` prove the &[T]→&[u16]
         // reinterpret is sound (align checked at runtime; T is u16 in practice).
         let s16: &[u16] = crate::cast_slice(self_);
         return eql_comptime_utf16(s16, alt);

@@ -369,9 +369,9 @@ struct StreamPriority {
 }
 // SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
 // every 5-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for StreamPriority {}
+unsafe impl bun_core::cast::Zeroable for StreamPriority {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for StreamPriority {}
+unsafe impl bun_core::cast::Pod for StreamPriority {}
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
     pub(crate) const BYTE_SIZE: usize = 5;
@@ -379,7 +379,7 @@ impl StreamPriority {
     fn write(self, writer: &mut impl WireWriter) -> bool {
         let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
+        writer.write_all(bun_core::cast::bytes_of(&swap)).is_ok()
     }
     #[inline]
     fn from(dst: &mut StreamPriority, src: &[u8]) {
@@ -494,9 +494,9 @@ pub(crate) struct FullSettingsPayload {
 }
 // SAFETY: `#[repr(C, packed)]` with only `u16`/`u32` fields — no padding, no
 // niches, every 42-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for FullSettingsPayload {}
+unsafe impl bun_core::cast::Zeroable for FullSettingsPayload {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for FullSettingsPayload {}
+unsafe impl bun_core::cast::Pod for FullSettingsPayload {}
 const _: () =
     assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
 impl Default for FullSettingsPayload {
@@ -616,7 +616,7 @@ impl FullSettingsPayload {
         swap.max_header_list_size = swap.max_header_list_size.swap_bytes();
         swap._enable_connect_protocol_type = swap._enable_connect_protocol_type.swap_bytes();
         swap.enable_connect_protocol = swap.enable_connect_protocol.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
+        writer.write_all(bun_core::cast::bytes_of(&swap)).is_ok()
     }
 }
 

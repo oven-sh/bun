@@ -167,16 +167,16 @@ pub mod analyze_transpiled_module {
     }
 
     // SAFETY: `#[repr(u8)]` enum with no fields → single initialized byte, no padding.
-    unsafe impl bytemuck::NoUninit for RecordKind {}
+    unsafe impl bun_core::cast::NoUninit for RecordKind {}
 
     /// Index into `ModuleInfo`'s interned-string table. Two reserved sentinels.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     pub struct StringID(pub u32);
     // SAFETY: `#[repr(transparent)]` over `u32`.
-    unsafe impl bytemuck::Zeroable for StringID {}
+    unsafe impl bun_core::cast::Zeroable for StringID {}
     // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
-    unsafe impl bytemuck::Pod for StringID {}
+    unsafe impl bun_core::cast::Pod for StringID {}
     impl StringID {
         pub const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
@@ -187,9 +187,9 @@ pub mod analyze_transpiled_module {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct FetchParameters(pub u32);
     // SAFETY: `#[repr(transparent)]` over `u32`.
-    unsafe impl bytemuck::Zeroable for FetchParameters {}
+    unsafe impl bun_core::cast::Zeroable for FetchParameters {}
     // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
-    unsafe impl bytemuck::Pod for FetchParameters {}
+    unsafe impl bun_core::cast::Pod for FetchParameters {}
     #[allow(non_upper_case_globals)]
     impl FetchParameters {
         pub const None: Self = Self(u32::MAX);
@@ -218,7 +218,7 @@ pub mod analyze_transpiled_module {
         Defer = 1,
     }
     // SAFETY: `#[repr(u8)]` enum with no fields → single initialized byte, no padding.
-    unsafe impl bytemuck::NoUninit for ModulePhase {}
+    unsafe impl bun_core::cast::NoUninit for ModulePhase {}
 
     /// Borrowing view over a finalized/serialized `ModuleInfo`.
     /// Built on demand
@@ -277,7 +277,7 @@ pub mod analyze_transpiled_module {
     /// Heap byte buffer with guaranteed 4-byte alignment.
     ///
     /// `as_ref()` below reinterprets interior ranges as `&[u32]` / `&[StringID]` /
-    /// `&[FetchParameters]` via `bytemuck::cast_slice`. A plain `Box<[u8]>` only
+    /// `&[FetchParameters]` via `bun_core::cast::cast_slice`. A plain `Box<[u8]>` only
     /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. We
     /// instead over-align the allocation by storing `Box<[u32]>` and viewing it as
     /// bytes — no raw alloc/dealloc, and `Send`/`Sync` are auto-derived.
@@ -290,7 +290,7 @@ pub mod analyze_transpiled_module {
     impl AlignedBytes {
         fn copy_from(src: &[u8]) -> Self {
             let mut words = vec![0u32; src.len().div_ceil(4)].into_boxed_slice();
-            bytemuck::cast_slice_mut::<u32, u8>(&mut words)[..src.len()].copy_from_slice(src);
+            bun_core::cast::cast_slice_mut::<u32, u8>(&mut words)[..src.len()].copy_from_slice(src);
             Self {
                 words,
                 len: src.len(),
@@ -301,7 +301,7 @@ pub mod analyze_transpiled_module {
         type Target = [u8];
         #[inline]
         fn deref(&self) -> &[u8] {
-            &bytemuck::cast_slice::<u32, u8>(&self.words)[..self.len]
+            &bun_core::cast::cast_slice::<u32, u8>(&self.words)[..self.len]
         }
     }
 
@@ -412,11 +412,11 @@ pub mod analyze_transpiled_module {
         pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
             let bytes: &[u8] = &self.backing;
             #[inline(always)]
-            fn sub<T: bytemuck::Pod>(bytes: &[u8], (off, len): (usize, usize)) -> &[T] {
+            fn sub<T: bun_core::cast::Pod>(bytes: &[u8], (off, len): (usize, usize)) -> &[T] {
                 // `create` derives every (off, len) from `count * size_of::<T>()`
                 // and pads to 4-byte boundaries; `AlignedBytes` guarantees a
                 // 4-aligned base — so `cast_slice`'s align/size checks pass.
-                bytemuck::cast_slice(&bytes[off..off + len])
+                bun_core::cast::cast_slice(&bytes[off..off + len])
             }
             ModuleInfoDeserialized {
                 record_kinds: &self.record_kinds,
@@ -2648,7 +2648,7 @@ pub mod __gated_printer {
 
         pub fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
             debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
-            let slice: &[u8] = bytemuck::cast_slice(text);
+            let slice: &[u8] = bun_core::cast::cast_slice(text);
             let mut writer = self.writer.std_writer();
             let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf16 }>(
                 slice,

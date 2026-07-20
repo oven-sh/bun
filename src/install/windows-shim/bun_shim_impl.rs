@@ -523,14 +523,14 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let image_path_u16: &[u16] =
         unsafe { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
     // Byte view of the same buffer — `&[u16]` → `&[u8]` is a total, panic-free
-    // `bytemuck` cast (align 1, size always divides).
-    let image_path_u8: &[u8] = bytemuck::cast_slice(image_path_u16);
+    // `cast_slice` (align 1, size always divides).
+    let image_path_u8: &[u8] = bun_core::cast::cast_slice(image_path_u16);
 
     let cmd_line_b_len = command_line.Length as usize;
     // SAFETY: CommandLine.Buffer is valid for Length bytes.
     let cmd_line_u16: &[u16] =
         unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
-    let cmd_line_u8: &[u8] = bytemuck::cast_slice(cmd_line_u16);
+    let cmd_line_u8: &[u8] = bun_core::cast::cast_slice(cmd_line_u16);
 
     debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
 
@@ -682,8 +682,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // `from_raw_parts` from the byte view.
     let (user_arguments_u16, user_arguments_u8): (&[u16], &[u8]) = if !IS_STANDALONE {
         let a = bun_ctx.arguments();
-        // `&[u16]` → `&[u8]` reinterpretation: total, panic-free `bytemuck` cast.
-        (a, bytemuck::cast_slice(a))
+        // `&[u16]` → `&[u8]` reinterpretation: total, panic-free `cast_slice`.
+        (a, bun_core::cast::cast_slice(a))
     } else {
         'find_args: {
             // Windows command line quotes are really silly. This post explains it better than I can:
@@ -1045,7 +1045,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BinLinkingShim.rs and must be even. An odd value (corrupt or
             // tampered shim) would later misalign `write_ptr` (used to store a
             // u16 NUL terminator) and break the even-length invariant relied on
-            // by `bytemuck::cast_slice`. Reject up front.
+            // by `bun_core::cast::cast_slice`. Reject up front.
             if shebang_arg_len_u8 == 0
                 || (shebang_arg_len_u8 & 1) != 0
                 || (shebang_bin_path_len_bytes & 1) != 0
@@ -1160,8 +1160,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // `filename` is a UTF-16 byte view: its base is `buf1_u8 + 2*NT_OBJECT_PREFIX.len()`
             // (even offset from a `*mut u16`-derived pointer ⇒ 2-aligned) and its length is the
             // difference of two `*mut u16`-derived addresses minus an even constant ⇒ even.
-            // `bytemuck::cast_slice` checks both invariants at runtime, so no `unsafe` needed.
-            let filename_u16: &[u16] = bytemuck::cast_slice(filename);
+            // `bun_core::cast::cast_slice` checks both invariants at runtime, so no `unsafe` needed.
+            let filename_u16: &[u16] = bun_core::cast::cast_slice(filename);
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));
                 if !filename_u16.is_empty() {

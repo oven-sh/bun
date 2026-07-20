@@ -165,8 +165,8 @@ impl UInt31WithReserved {
 //
 // `StreamPriority`, `SettingsPayloadUnit` and `FullSettingsPayload` are
 // `#[repr(C, packed)]` with integer-only fields and therefore have no padding
-// bytes and no niches. They implement `bytemuck::Pod`, so the per-`from()`
-// byte-view is the safe `bytemuck::bytes_of_mut`.
+// bytes and no niches. They implement `bun_core::cast::Pod`, so the per-`from()`
+// byte-view is the safe `bun_core::cast::bytes_of_mut`.
 
 /// 5-byte PRIORITY payload: BE stream identifier + weight.
 #[repr(C, packed)]
@@ -177,9 +177,9 @@ pub struct StreamPriority {
 }
 // SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
 // every 5-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for StreamPriority {}
+unsafe impl bun_core::cast::Zeroable for StreamPriority {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for StreamPriority {}
+unsafe impl bun_core::cast::Pod for StreamPriority {}
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 
 impl StreamPriority {
@@ -187,7 +187,7 @@ impl StreamPriority {
 
     #[inline]
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        bytemuck::bytes_of_mut(dst).copy_from_slice(src);
+        bun_core::cast::bytes_of_mut(dst).copy_from_slice(src);
         // Byte-swap each field; `weight: u8` is a no-op.
         // Brace-expr `{packed.field}` performs an unaligned copy;
         // assignment to a packed field is an unaligned store. No `unsafe`.
@@ -198,7 +198,7 @@ impl StreamPriority {
     pub fn encode_into(self, dst: &mut [u8; Self::BYTE_SIZE]) {
         let mut swap = self;
         swap.stream_identifier = u32::swap_bytes(swap.stream_identifier);
-        dst.copy_from_slice(bytemuck::bytes_of(&swap));
+        dst.copy_from_slice(bun_core::cast::bytes_of(&swap));
     }
 }
 
@@ -259,9 +259,9 @@ pub struct SettingsPayloadUnit {
 }
 // SAFETY: `#[repr(C, packed)]` with `u16 + u32` fields — no padding, no
 // niches, every 6-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for SettingsPayloadUnit {}
+unsafe impl bun_core::cast::Zeroable for SettingsPayloadUnit {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for SettingsPayloadUnit {}
+unsafe impl bun_core::cast::Pod for SettingsPayloadUnit {}
 const _: () =
     assert!(core::mem::size_of::<SettingsPayloadUnit>() == SettingsPayloadUnit::BYTE_SIZE);
 
@@ -270,7 +270,7 @@ impl SettingsPayloadUnit {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
-        let bytes = bytemuck::bytes_of_mut(dst);
+        let bytes = bun_core::cast::bytes_of_mut(dst);
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // Byte-swap each field.
@@ -307,9 +307,9 @@ pub(crate) struct FullSettingsPayload {
 }
 // SAFETY: `#[repr(C, packed)]` with only `u16`/`u32` fields — no padding, no
 // niches, every 42-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for FullSettingsPayload {}
+unsafe impl bun_core::cast::Zeroable for FullSettingsPayload {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for FullSettingsPayload {}
+unsafe impl bun_core::cast::Pod for FullSettingsPayload {}
 const _: () =
     assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
 

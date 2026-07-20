@@ -2753,10 +2753,10 @@ impl Data {
         // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
         // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
         // we cannot extend that trait from this crate-file scope. `NoUninit`
-        // bound lets `bytemuck::bytes_of` view the value's bytes safely.
+        // bound lets `bun_core::cast::bytes_of` view the value's bytes safely.
         #[inline(always)]
-        fn raw<H: bun_core::Hasher + ?Sized, T: bytemuck::NoUninit>(h: &mut H, v: T) {
-            h.update(bytemuck::bytes_of(&v));
+        fn raw<H: bun_core::Hasher + ?Sized, T: bun_core::cast::NoUninit>(h: &mut H, v: T) {
+            h.update(bun_core::cast::bytes_of(&v));
         }
         #[inline(always)]
         fn name_of<H: bun_core::Hasher + ?Sized, S: crate::base::SymbolTable + ?Sized>(
@@ -2878,7 +2878,7 @@ impl Data {
                 if current.is_utf8() {
                     hasher.update(&current.data);
                 } else {
-                    hasher.update(bytemuck::cast_slice::<u16, u8>(current.slice16()));
+                    hasher.update(bun_core::cast::cast_slice::<u16, u8>(current.slice16()));
                 }
                 hasher.update(b"\x00");
             }

@@ -374,8 +374,8 @@ pub enum ResultTag {
 impl StreamResult {
     pub fn slice16(&self) -> &[u16] {
         // Caller guarantees bytes are u16-aligned and even length;
-        // bytemuck checks both at runtime.
-        bytemuck::cast_slice(self.slice())
+        // `cast_slice` checks both at runtime.
+        bun_core::cast::cast_slice(self.slice())
     }
 
     pub fn slice(&self) -> &[u8] {
@@ -1778,8 +1778,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        // bytes are u16-aligned per Result.slice16 invariant; bytemuck checks at runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
+        // bytes are u16-aligned per Result.slice16 invariant; `cast_slice` checks at runtime.
+        let utf16: &[u16] = bun_core::cast::cast_slice(bytes);
         let written = match self.buffer.write_utf16(utf16) {
             Ok(n) => n,
             Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),

@@ -19,15 +19,15 @@ use bun_sys;
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{StringJsc as _, bun_string_jsc};
     if T::IS_U16 {
-        // T == u16 when IS_U16; bytemuck statically checks the layout.
-        let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
+        // T == u16 when IS_U16; `cast_slice` statically checks the layout.
+        let s16: &[u16] = bun_core::cast::cast_slice::<T, u16>(s);
         let bs = bun_core::String::clone_utf16(s16);
         let r = bs.to_js(global);
         bs.deref();
         r
     } else {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
+        // T == u8 when !IS_U16; `cast_slice` statically checks the layout.
+        let s8: &[u8] = bun_core::cast::cast_slice::<T, u8>(s);
         bun_string_jsc::create_utf8_for_js(global, s8)
     }
 }
@@ -68,14 +68,14 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
     fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
         if !T::IS_U16 && len <= Self::POOL_MAX {
             // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
-            // is the bytemuck identity cast — never panics, no alignment hazard.
+            // is the identity cast — never panics, no alignment hazard.
             let bytes = &mut pool.get(len)[..len];
-            Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
+            Self::Pooled(bun_core::cast::cast_slice_mut::<u8, T>(bytes))
         } else {
             // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
             // >128 KB) or path-sized (u16), so the zero-fill is negligible and
             // buys a safe `&mut [T]` in `slice()`.
-            Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
+            Self::Spill(vec![<T as bun_core::cast::Zeroable>::zeroed(); len].into_boxed_slice())
         }
     }
 
@@ -95,10 +95,10 @@ const PATH_MIN_WIDE: usize = 4096; // 4 KB
 pub use bun_paths::PathChar;
 
 /// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
-/// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
+/// per-width `get_cwd` plus the `bun_core::cast::Pod`/`Default` bounds this module
 /// needs for `PathScratch`'s `cast_slice` and zero-init. Every generic `_t`
 /// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
-pub trait PathCharCwd: PathChar + Default + bytemuck::Pod {
+pub trait PathCharCwd: PathChar + Default + bun_core::cast::Pod {
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
     fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
 }
@@ -124,9 +124,9 @@ fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let a8: &[u8] = bytemuck::cast_slice::<T, u8>(a);
-        let b8: &[u8] = bytemuck::cast_slice::<T, u8>(b);
+        // T == u8 when !IS_U16; `cast_slice` statically checks the layout.
+        let a8: &[u8] = bun_core::cast::cast_slice::<T, u8>(a);
+        let b8: &[u8] = bun_core::cast::cast_slice::<T, u8>(b);
         return strings::eql_case_insensitive_ascii(a8, b8, true);
     }
     // In practice the only callers instantiate with `T == u8`; provide a sound
@@ -3030,11 +3030,11 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                         // reused arena buffer with arbitrary prior contents past
                         // `buf_size`, so write the terminator explicitly.
                         buf2[buf_size] = T::from_u8(0);
-                        // T == u16 when IS_U16; bytemuck statically checks the layout.
-                        break 'brk bytemuck::cast_slice::<T, u16>(&buf2[..=buf_size]);
+                        // T == u16 when IS_U16; `cast_slice` statically checks the layout.
+                        break 'brk bun_core::cast::cast_slice::<T, u16>(&buf2[..=buf_size]);
                     }
-                    // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                    let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
+                    // T == u8 when !IS_U16; `cast_slice` statically checks the layout.
+                    let key8: &[u8] = bun_core::cast::cast_slice::<T, u8>(&buf2[..buf_size]);
                     // Write the NUL after widening so the LPCWSTR is properly
                     // terminated regardless of `WPathBuffer::uninit()`'s init
                     // state — don't rely on `uninit()` happening to zero-fill
@@ -3048,14 +3048,14 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
                     if T::IS_U16 {
                         buf_size = r.len();
-                        // T == u16 when IS_U16; bytemuck checks the layout at runtime.
+                        // T == u16 when IS_U16; `cast_slice` checks the layout at runtime.
                         let dst: &mut [u16] =
-                            bytemuck::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
+                            bun_core::cast::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
                         memmove(dst, &r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                        let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(&mut buf2[..]);
+                        // T == u8 when !IS_U16; `cast_slice` statically checks the layout.
+                        let dst: &mut [u8] = bun_core::cast::cast_slice_mut::<T, u8>(&mut buf2[..]);
                         buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
                     }
                     env_path_len = Some(buf_size);

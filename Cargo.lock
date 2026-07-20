@@ -207,7 +207,6 @@ dependencies = [
  "bun_ptr",
  "bun_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -383,7 +382,6 @@ dependencies = [
  "bun_url",
  "bun_watcher",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -535,7 +533,6 @@ dependencies = [
  "bun_simdutf_sys",
  "bun_windows_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "itoa",
  "libc",
@@ -768,7 +765,6 @@ dependencies = [
  "bun_core",
  "bun_sha_hmac",
  "bun_sys",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -850,7 +846,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -904,7 +899,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_url",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -989,7 +983,6 @@ dependencies = [
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -1095,7 +1088,6 @@ dependencies = [
  "bun_react_compiler",
  "bun_url",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "criterion",
  "enum-map",
@@ -1157,7 +1149,6 @@ dependencies = [
  "bun_sourcemap",
  "bun_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -1215,7 +1206,6 @@ dependencies = [
  "bun_uws",
  "bun_watcher",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -1248,7 +1238,6 @@ dependencies = [
  "bun_paths",
  "bun_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -1384,7 +1373,6 @@ dependencies = [
  "bun_highway",
  "bun_simdutf_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "criterion",
  "enum-map",
@@ -1447,7 +1435,6 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_simdutf_sys",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -1714,7 +1701,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -1849,7 +1835,6 @@ version = "0.0.0"
 dependencies = [
  "bun_opaque",
  "bun_windows_sys",
- "bytemuck",
 ]
 
 [[package]]
@@ -2073,7 +2058,6 @@ dependencies = [
  "bun_paths",
  "bun_windows_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -2336,12 +2320,6 @@ dependencies = [
  "scopeguard",
  "strum",
 ]
-
-[[package]]
-name = "bytemuck"
-version = "1.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
 name = "byteorder"

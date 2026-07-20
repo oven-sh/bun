@@ -695,6 +695,8 @@ pub mod kernel32 {
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
+        /// No preconditions; writes the thread-local Win32 error slot.
+        pub safe fn SetLastError(dwErrCode: DWORD);
         pub fn VirtualQuery(
             lpAddress: LPCVOID,
             lpBuffer: *mut MEMORY_BASIC_INFORMATION,

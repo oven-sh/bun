@@ -6649,12 +6649,9 @@ pub fn normalize_path_windows_opts<'a>(
 
     let mut path = path;
 
-    // Win32's `RtlGetFullPathName_U` only applies DOS-device translation to
-    // Relative / Rooted / DriveRelative / DriveAbsolute inputs, never to UNC
-    // (`\\server\…`), LocalDevice (`\\.\…`, `\\?\…`) or NT-object (`\??\…`)
-    // paths. node:fs hands every drive-absolute path through with a `\\?\`
-    // prefix (`slice_z_with_force_copy`), so `\\?\X:` is treated as
-    // DriveAbsolute here; `\\?\UNC\…` and `\\?\Volume{…}` stay exempt.
+    // `RtlGetFullPathName_U` applies DOS-device translation only to Relative /
+    // Rooted / Drive* inputs (never UNC, `\\.\`, `\\?\`, `\??\`); `\\?\X:` is
+    // treated as DriveAbsolute since `slice_z_with_force_copy` emits it.
     let win32_normalizes = if path.len() >= 2 && is_sep(path[0]) {
         if is_sep(path[1]) {
             path.len() >= 6
@@ -6690,11 +6687,9 @@ pub fn normalize_path_windows_opts<'a>(
                 }
             });
 
-        // Reserved DOS device names (`NUL`, `CON`, `PRN`, `AUX`, `COM1-9`,
-        // `LPT1-9`) name a device regardless of directory prefix and
-        // case-insensitively; `NtCreateFile` does not know about them, so a
-        // bare `nul` would otherwise create a literal file Explorer/cmd
-        // cannot remove.
+        // Reserved DOS device names (`NUL`, `CON`, `PRN`, `AUX`, `COM/LPT1-9`)
+        // name a device regardless of directory prefix; `NtCreateFile` does
+        // not know about them, so a bare `nul` would create a literal file.
         if let Some(device) = bun_paths::windows_reserved_device_name_t(&path[comp_start..]) {
             let prefix: &[u16] = if opts.add_nt_prefix {
                 bun_core::w!("\\??\\")
@@ -6718,11 +6713,6 @@ pub fn normalize_path_windows_opts<'a>(
         // Two special-cases that must run BEFORE
         // `normalizeStringGenericTZ`, otherwise device paths get mangled:
         if path.len() >= 4 && is_sep(path[1]) && is_sep(path[3]) {
-            // `\\.\…` device path → preserve verbatim so `\\.\pipe\foo` is
-            // not collapsed to `\pipe\foo` by the normalizer. `\\.` is the
-            // Win32 spelling of `\??` (`\DosDevices`); `NtCreateFile` only
-            // accepts the latter, so emit `\??\…` for NT callers and keep
-            // `\\.\…` for kernel32.
             if path[2] == b'.' as u16
                 || (path[2] == b'?' as u16 && !path[4..].iter().any(|&c| is_sep(c)))
             {

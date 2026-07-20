@@ -1189,7 +1189,11 @@ mod draft {
                             // strip the unwind tables a CFI-based capture would need.
                             TraceSeed::Fault(regs) => {
                                 fault_regs = Some(regs);
-                                bun_core::debug::capture_from_context(regs.pc, regs.fp, &mut addr_buf)
+                                bun_core::debug::capture_from_context(
+                                    regs.pc,
+                                    regs.fp,
+                                    &mut addr_buf,
+                                )
                             }
                             TraceSeed::BeginAddr(addr) => {
                                 debug::capture_stack_trace(addr, &mut addr_buf)
@@ -1689,12 +1693,27 @@ mod draft {
             let pc = g[libc::REG_RIP as usize] as usize;
             let mut r = FaultRegisters::empty(pc, g[libc::REG_RBP as usize] as usize);
             for (i, slot) in [
-                libc::REG_RAX, libc::REG_RBX, libc::REG_RCX, libc::REG_RDX,
-                libc::REG_RDI, libc::REG_RSI, libc::REG_RBP, libc::REG_RSP,
-                libc::REG_R8,  libc::REG_R9,  libc::REG_R10, libc::REG_R11,
-                libc::REG_R12, libc::REG_R13, libc::REG_R14, libc::REG_R15,
+                libc::REG_RAX,
+                libc::REG_RBX,
+                libc::REG_RCX,
+                libc::REG_RDX,
+                libc::REG_RDI,
+                libc::REG_RSI,
+                libc::REG_RBP,
+                libc::REG_RSP,
+                libc::REG_R8,
+                libc::REG_R9,
+                libc::REG_R10,
+                libc::REG_R11,
+                libc::REG_R12,
+                libc::REG_R13,
+                libc::REG_R14,
+                libc::REG_R15,
                 libc::REG_RIP,
-            ].into_iter().enumerate() {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 r.values[i] = g[slot as usize] as u64;
             }
             r.count = 17;
@@ -1729,9 +1748,8 @@ mod draft {
             let mut r = FaultRegisters::empty(ss.__rip as usize, ss.__rbp as usize);
             r.values = [
                 ss.__rax, ss.__rbx, ss.__rcx, ss.__rdx, ss.__rdi, ss.__rsi, ss.__rbp, ss.__rsp,
-                ss.__r8,  ss.__r9,  ss.__r10, ss.__r11, ss.__r12, ss.__r13, ss.__r14, ss.__r15,
-                ss.__rip,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                ss.__r8, ss.__r9, ss.__r10, ss.__r11, ss.__r12, ss.__r13, ss.__r14, ss.__r15,
+                ss.__rip, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ];
             r.count = 17;
             Some(r)
@@ -1756,8 +1774,14 @@ mod draft {
             Some(r)
         }
         #[cfg(not(any(
-            all(any(target_os = "linux", target_os = "android"), target_arch = "x86_64"),
-            all(any(target_os = "linux", target_os = "android"), target_arch = "aarch64"),
+            all(
+                any(target_os = "linux", target_os = "android"),
+                target_arch = "x86_64"
+            ),
+            all(
+                any(target_os = "linux", target_os = "android"),
+                target_arch = "aarch64"
+            ),
             all(target_os = "macos", target_arch = "x86_64"),
             all(target_os = "macos", target_arch = "aarch64"),
         )))]
@@ -1770,10 +1794,7 @@ mod draft {
     /// Lift `pc`, `fp` and the general-purpose register file from the Windows
     /// `CONTEXT` record handed to a vectored exception handler.
     #[cfg(windows)]
-    fn fault_context_from_windows_context(
-        ctx: *mut c_void,
-        fallback_pc: usize,
-    ) -> FaultRegisters {
+    fn fault_context_from_windows_context(ctx: *mut c_void, fallback_pc: usize) -> FaultRegisters {
         if ctx.is_null() {
             return FaultRegisters::empty(fallback_pc, 0);
         }
@@ -1797,11 +1818,40 @@ mod draft {
             let rip = read(0xF8);
             let mut r = FaultRegisters::empty(rip as usize, rbp as usize);
             r.values = [
-                rax, rbx, rcx, rdx, rdi, rsi, rbp, rsp,
-                read(0xB8), read(0xC0), read(0xC8), read(0xD0),
-                read(0xD8), read(0xE0), read(0xE8), read(0xF0),
+                rax,
+                rbx,
+                rcx,
+                rdx,
+                rdi,
+                rsi,
+                rbp,
+                rsp,
+                read(0xB8),
+                read(0xC0),
+                read(0xC8),
+                read(0xD0),
+                read(0xD8),
+                read(0xE0),
+                read(0xE8),
+                read(0xF0),
                 rip,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
             ];
             r.count = 17;
             r

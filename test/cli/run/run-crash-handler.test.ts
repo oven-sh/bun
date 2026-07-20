@@ -166,10 +166,7 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     // Reason char '2' + write_u64_as_two_vlqs(0xDEADBEEF) is at most 9 bytes
     // ('2' + VLQ(0)=1 + VLQ(i32)<=7). v3 must have substantially more after
     // it: a StackLine (>=1 byte) + 'I' + 8 VLQs (>=8 bytes).
-    expect(
-      afterReason.length,
-      `v3 register block missing; tail=${afterReason}`,
-    ).toBeGreaterThanOrEqual(9 + 1 + 1 + 8);
+    expect(afterReason.length, `v3 register block missing; tail=${afterReason}`).toBeGreaterThanOrEqual(9 + 1 + 1 + 8);
     // Register count VLQ(4)='I' must appear in the tail.
     expect(afterReason).toContain("I");
 

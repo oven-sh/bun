@@ -112,7 +112,16 @@ if (isWindows) {
     strbuf.copy(buf, 12);
 
     const bytesReturned = Buffer.alloc(4);
-    const ok = k32.symbols.DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, ptr(buf), buf.length, null, 0, ptr(bytesReturned), null);
+    const ok = k32.symbols.DeviceIoControl(
+      h,
+      FSCTL_SET_REPARSE_POINT,
+      ptr(buf),
+      buf.length,
+      null,
+      0,
+      ptr(bytesReturned),
+      null,
+    );
     const err = k32.symbols.GetLastError();
     k32.symbols.CloseHandle(h);
     if (!ok) throw new Error(`DeviceIoControl(FSCTL_SET_REPARSE_POINT) failed: ${err}`);

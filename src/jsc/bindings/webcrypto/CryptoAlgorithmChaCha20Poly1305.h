@@ -23,7 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #pragma once
 
 #include "CryptoAlgorithm.h"

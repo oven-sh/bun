@@ -23,7 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #include "config.h"
 #include "CryptoAlgorithmChaCha20Poly1305.h"
 

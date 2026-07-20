@@ -875,7 +875,17 @@ impl ValkeyClient {
             .channels_subscribed_to_count(&global_this)?;
 
         if kind.is_message() {
-            self.on_valkey_message(&mut push.data);
+            // RESP3 `pmessage` data is [pattern, channel, payload]; skip the
+            // leading pattern so `on_valkey_message` sees [channel, payload].
+            let data: &mut [RESPValue] =
+                if matches!(kind, protocol::SubscriptionPushMessage::PMessage)
+                    && !push.data.is_empty()
+                {
+                    &mut push.data[1..]
+                } else {
+                    &mut push.data
+                };
+            self.on_valkey_message(data);
             return Ok(());
         }
         if kind.is_subscribe_ack() {

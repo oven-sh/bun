@@ -20,7 +20,7 @@
 
 use core::ffi::{c_int, c_void};
 use core::mem::ManuallyDrop;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_collections::VecExt;
 #[cfg(windows)]
@@ -90,6 +90,13 @@ pub struct TarballStream {
     /// running. `on_chunk` sets it before scheduling; `drain` clears it when
     /// it runs out of input and decides to yield.
     draining: AtomicBool,
+
+    /// Number of times `schedule_drain` actually pushed `drain_task` onto
+    /// the thread pool (each push is a `ThreadPool::notify` → futex wake on
+    /// the HTTP thread). Printed in `--verbose` output so tests can assert
+    /// the `drain_threshold` batching keeps this well below the HTTP-chunk
+    /// count.
+    drain_schedules: AtomicU32,
 
     // ---------------------------------------------------------------------
     // Drain-side state (touched only by one drain task at a time)
@@ -179,6 +186,17 @@ impl TarballStream {
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
+    /// Compressed bytes to let accumulate in `pending` before the HTTP
+    /// thread schedules a drain. Without this the drain task tends to empty
+    /// `pending` and yield between every HTTP body chunk, so each chunk
+    /// re-schedules it — one `ThreadPool::notify` → futex wake on the HTTP
+    /// thread per chunk. Batching to `threshold` collapses that into roughly
+    /// one wake per `threshold` bytes.
+    fn drain_threshold() -> usize {
+        usize::try_from(env_var::BUN_INSTALL_STREAMING_DRAIN_THRESHOLD.get().unwrap())
+            .expect("int cast")
+    }
+
     pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
@@ -226,6 +244,7 @@ impl TarballStream {
             http_err: None,
             status_code: 0,
             draining: AtomicBool::new(false),
+            drain_schedules: AtomicU32::new(0),
             reading: Vec::new(),
             read_pos: 0,
             archive: None,
@@ -288,9 +307,17 @@ impl TarballStream {
             if let Some(e) = err {
                 (*this).http_err = Some(e);
             }
+            let pending_len = (*this).pending.len();
             (*this).mutex.unlock();
 
-            Self::schedule_drain(this);
+            // Batch sub-threshold chunks so each one doesn't re-wake a
+            // worker once the drain has yielded (one futex wake per HTTP
+            // chunk otherwise). `is_last`/`err` always schedule so
+            // `finish()` never waits on the threshold; a running drain
+            // picks up sub-threshold `pending` via its own race check.
+            if is_last || err.is_some() || pending_len >= Self::drain_threshold() {
+                Self::schedule_drain(this);
+            }
         }
     }
 
@@ -306,6 +333,7 @@ impl TarballStream {
             if (*this).draining.swap(true, Ordering::AcqRel) {
                 return;
             }
+            (*this).drain_schedules.fetch_add(1, Ordering::Relaxed);
             // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
@@ -1157,10 +1185,11 @@ impl TarballStream {
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(
-                    "[{}] Streamed {} tarball → {} entries<r>",
+                    "[{}] Streamed {} tarball → {} entries, {} drain schedules<r>",
                     bstr::BStr::new(name),
                     bun_fmt::size(self.bytes_received, Default::default()),
                     self.entry_count,
+                    self.drain_schedules.load(Ordering::Relaxed),
                 );
                 Output::flush();
             }

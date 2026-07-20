@@ -137,7 +137,13 @@ function makeEntries(): Entry[] {
 // the BUN_INSTALL_STREAMING_MIN_SIZE gate.
 // -------------------------------------------------------------------
 
-async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number) {
+async function makeRegistry(
+  tgz: Buffer,
+  shasum: string,
+  integrity: string,
+  chunkBytes: number,
+  delayMs: number = 0,
+) {
   let tarballHits = 0;
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
@@ -176,7 +182,8 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
         }
         res.write(tgz.subarray(i, Math.min(i + chunkBytes, tgz.length)));
         i += chunkBytes;
-        setImmediate(step);
+        if (delayMs > 0) setTimeout(step, delayMs);
+        else setImmediate(step);
       };
       step();
       return;
@@ -324,6 +331,56 @@ describe("streaming tarball extraction", () => {
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
     expect(exitCode).not.toBe(0);
+  });
+
+  test("drain schedules are coalesced across many small HTTP chunks", async () => {
+    // Serve the 2.3 MB tarball in 8 KB slices with a short pause between
+    // each so the drain task reliably empties `pending` and yields before
+    // the next chunk arrives. Without the `drain_threshold` batching in
+    // `TarballStream::on_chunk` every one of those ~290 chunks would
+    // re-push `drain_task` onto the thread pool (one `ThreadPool::notify`
+    // futex wake on the HTTP thread apiece). With batching the schedule
+    // count is bounded by roughly ceil(size / threshold) + 1 regardless of
+    // how many body chunks the socket delivers. The pause models network
+    // latency; it is not the thing being waited for.
+    const pacedChunkBytes = 8 * 1024;
+    const threshold = 128 * 1024;
+    await using reg = await makeRegistry(tgz, shasum, integrity, pacedChunkBytes, 2);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-coalesce", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(threshold),
+    });
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+
+    const m = stderr.match(/(\d+) drain schedules/);
+    expect(m).not.toBeNull();
+    const schedules = parseInt(m![1], 10);
+
+    // One schedule per `threshold` compressed bytes plus one for the final
+    // `is_last` chunk, with headroom for the narrow race where a drain
+    // clears `draining` after `on_chunk` has already decided to schedule.
+    const upperBound = Math.ceil(tgz.length / threshold) + 4;
+    expect(schedules).toBeLessThanOrEqual(upperBound);
+    expect(schedules).toBeGreaterThan(0);
+
+    // Correctness is unchanged: every entry extracts byte-for-byte.
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      const got = readFileSync(join(pkgRoot, path));
+      expect([path, got.equals(body)]).toEqual([path, true]);
+    }
+    expect(exitCode).toBe(0);
   });
 });
 

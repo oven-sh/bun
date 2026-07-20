@@ -100,6 +100,7 @@
 #include "DOMURL.h"
 #include "JSDOMURL.h"
 
+#include <cmath>
 #include <string_view>
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Request.h>
@@ -1380,42 +1381,34 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (vector == rightVector) [[unlikely]]
             return true;
 
-        // For Float32Array and Float64Array, when not in strict mode, we need to
-        // handle +0 and -0 as equal, and NaN as not equal to itself.
+        // Float arrays are compared element-wise in non-strict mode. Jest's toEqual
+        // uses Object.is semantics (NaN equals NaN, +0 differs from -0), while node's
+        // loose deepEqual uses == (NaN differs from NaN, +0 equals -0).
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
+            auto floatElementsEqual = [&](const auto* left, const auto* right) -> bool {
+                size_t numElements = byteLength / sizeof(*left);
+                for (size_t i = 0; i < numElements; i++) {
+                    double l = left[i];
+                    double r = right[i];
+                    if constexpr (enableAsymmetricMatchers) {
+                        if (l == r ? std::signbit(l) != std::signbit(r) : !(std::isnan(l) && std::isnan(r))) {
+                            return false;
+                        }
+                    } else {
+                        if (l != r) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            };
+
             if (c1Type == Float16ArrayType) {
-                auto* leftFloat = static_cast<const WTF::Float16*>(vector);
-                auto* rightFloat = static_cast<const WTF::Float16*>(rightVector);
-                size_t numElements = byteLength / sizeof(WTF::Float16);
-
-                for (size_t i = 0; i < numElements; i++) {
-                    if (leftFloat[i] != rightFloat[i]) {
-                        return false;
-                    }
-                }
-                return true;
+                return floatElementsEqual(static_cast<const WTF::Float16*>(vector), static_cast<const WTF::Float16*>(rightVector));
             } else if (c1Type == Float32ArrayType) {
-                auto* leftFloat = static_cast<const float*>(vector);
-                auto* rightFloat = static_cast<const float*>(rightVector);
-                size_t numElements = byteLength / sizeof(float);
-
-                for (size_t i = 0; i < numElements; i++) {
-                    if (leftFloat[i] != rightFloat[i]) {
-                        return false;
-                    }
-                }
-                return true;
-            } else { // Float64Array
-                auto* leftDouble = static_cast<const double*>(vector);
-                auto* rightDouble = static_cast<const double*>(rightVector);
-                size_t numElements = byteLength / sizeof(double);
-
-                for (size_t i = 0; i < numElements; i++) {
-                    if (leftDouble[i] != rightDouble[i]) {
-                        return false;
-                    }
-                }
-                return true;
+                return floatElementsEqual(static_cast<const float*>(vector), static_cast<const float*>(rightVector));
+            } else {
+                return floatElementsEqual(static_cast<const double*>(vector), static_cast<const double*>(rightVector));
             }
         }
 

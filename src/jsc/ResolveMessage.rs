@@ -359,7 +359,8 @@ impl ResolveMessage {
         // the formatted text rather than `resolve.err` to leave InvalidURL /
         // InvalidDataURL / ENAMETOOLONG messages untouched.
         let text: &[u8] = &self.msg.data.text;
-        if !(text.starts_with(b"Cannot find module '") || text.starts_with(b"Cannot find package '"))
+        if !(text.starts_with(b"Cannot find module '")
+            || text.starts_with(b"Cannot find package '"))
         {
             return None;
         }

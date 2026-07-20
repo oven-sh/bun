@@ -46,9 +46,8 @@ if (isWindows) {
     expect(which(exe, { PATH: dir })).toBe(process.execPath);
   });
 
-  // Store-installed CLIs (winget, Store python, pwsh) are IO_REPARSE_TAG_APPEXECLINK
-  // reparse points. Only name-surrogate reparse tags (symlinks, mount points) should
-  // be followed; non-surrogate tags must be treated as existing. bun:ffi is
+  // Non-name-surrogate reparse tags (APPEXECLINK) must be treated as existing;
+  // only name surrogates (symlinks, mount points) are followed. bun:ffi is
   // unavailable on Windows arm64.
   test.skipIf(isArm64)("which resolves Windows app-execution aliases (#17328)", () => {
     using dir = tempDir("which-appexeclink", { "real.exe": "" });

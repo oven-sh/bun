@@ -159,6 +159,23 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
+    /// The server's configured base URL (`scheme://authority[/path]`, no
+    /// trailing `/`). Used by `Request::ensure_url()` to synthesize a valid
+    /// absolute `request.url` when the client's Host header is absent
+    /// (HTTP/1.0) or cannot form a valid URL authority (RFC 9112 §3.3).
+    pub fn fallback_base_url(self) -> Option<&'static [u8]> {
+        dispatch!(self, None, |_T, ctx| {
+            let base = &*ctx.server.as_ref()?.base_url_string_for_joining;
+            if base.is_empty() {
+                return None;
+            }
+            // SAFETY: the server (BACKREF) outlives every RequestContext it
+            // allocates and `base_url_string_for_joining` is assigned once in
+            // `NewServer::init()`, never reassigned.
+            Some(unsafe { bun_ptr::detach_lifetime(base) })
+        })
+    }
+
     pub fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
             ctx.req = None;

@@ -589,29 +589,173 @@ it("request.url should be based on the Host header", async () => {
   );
 });
 
-it.each([
-  ["HTTP/1.0", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
-  ["HTTP/1.1", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],
-])("request.url is the request-target when the %s Host header is not a valid authority", async (_version, payload) => {
-  using server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      return new Response(req.url);
-    },
+// `request.url` must always be a valid absolute URL so the documented
+// `new URL(req.url).pathname` pattern and `new Request(req)` never throw, even
+// when the client sends no Host (legal for HTTP/1.0; haproxy's default
+// `option httpchk` probe does this) or a Host that cannot form a URL authority.
+describe("request.url falls back to the server's authority when Host is unusable", () => {
+  async function play(port: number, payload: string): Promise<string> {
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        socket.on("error", reject);
+        socket.on("data", chunk => chunks.push(chunk));
+        socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
+        socket.write(payload);
+      });
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  const longPath = "/long" + Buffer.alloc(160, "a").toString();
+  it.each([
+    ["HTTP/1.0 with no Host", "/helloooo", "GET /helloooo HTTP/1.0\r\n\r\n"],
+    ["HTTP/1.0 Host containing /", "/helloooo", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
+    [
+      "HTTP/1.1 Host containing a space",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.1 Host with out-of-range port",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: h:99999\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.1 Host with unclosed IPv6 bracket",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: [::1\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.1 Host with bad percent escape",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: a%zz\r\nConnection: close\r\n\r\n",
+    ],
+    ["HTTP/1.1 empty Host", "/helloooo", "GET /helloooo HTTP/1.1\r\nHost: \r\nConnection: close\r\n\r\n"],
+    ["HTTP/1.0 no Host, long path (>128 byte URL)", longPath, `GET ${longPath} HTTP/1.0\r\n\r\n`],
+    [
+      "HTTP/1.1 Host with out-of-range port, long path",
+      longPath,
+      `GET ${longPath} HTTP/1.1\r\nHost: h:99999\r\nConnection: close\r\n\r\n`,
+    ],
+  ])("%s", async (_name, path, payload) => {
+    let observed: { url: string; cloneErr: string | null } | undefined;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        let cloneErr: string | null = null;
+        try {
+          new Request(req);
+        } catch (e) {
+          cloneErr = (e as Error).message;
+        }
+        observed = { url: req.url, cloneErr };
+        return new Response(new URL(req.url).pathname);
+      },
+      error(e) {
+        return new Response("HANDLER-THREW " + (e as Error).message, { status: 500 });
+      },
+    });
+
+    const raw = await play(server.port, payload);
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect({ status: raw.slice(0, raw.indexOf("\r\n")), body, observed }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      body: path,
+      observed: { url: expect.any(String), cloneErr: null },
+    });
+    const url = new URL(observed!.url);
+    expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
+      hostname: "127.0.0.1",
+      pathname: path,
+    });
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
-  const response = await new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    socket.on("error", reject);
-    socket.on("data", chunk => chunks.push(chunk));
-    socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
-    socket.write(payload);
+  it("in the routes: handler (HTTP/1.0 no Host)", async () => {
+    let observed: string | undefined;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        "/app/*": req => {
+          observed = req.url;
+          return new Response(new URL(req.url).pathname);
+        },
+      },
+      fetch: () => new Response("fallback"),
+      error(e) {
+        return new Response("HANDLER-THREW " + (e as Error).message, { status: 500 });
+      },
+    });
+
+    const raw = await play(server.port, "GET /app/x HTTP/1.0\r\n\r\n");
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect({ status: raw.slice(0, raw.indexOf("\r\n")), body }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      body: "/app/x",
+    });
+    expect(new URL(observed!).pathname).toBe("/app/x");
   });
-  socket.destroy();
-  expect(response).toStartWith("HTTP/1.1 200");
-  expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
+
+  // When the fetch handler returns a Promise the url is materialized by
+  // `to_async()` before the uWS request handle is detached; cover that path.
+  it("in an async fetch handler (HTTP/1.0 no Host)", async () => {
+    let observed: string | undefined;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        await 1;
+        observed = req.url;
+        return new Response(new URL(req.url).pathname);
+      },
+      error(e) {
+        return new Response("HANDLER-THREW " + (e as Error).message, { status: 500 });
+      },
+    });
+
+    const raw = await play(server.port, "GET /late HTTP/1.0\r\n\r\n");
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect({ status: raw.slice(0, raw.indexOf("\r\n")), body }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      body: "/late",
+    });
+    expect(new URL(observed!).pathname).toBe("/late");
+  });
+
+  // A valid Host must still take precedence over the fallback.
+  it("still uses a valid Host header verbatim", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => new Response(req.url),
+    });
+    const raw = await play(server.port, "GET /helloooo HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("http://example.com/helloooo");
+  });
+
+  it.each([
+    ["http://[0:0:0:0:0:0:0:1]:3000/", "[::1]"],
+    ["http://example.com:0080/api/v1/", "example.com"],
+    ["http://example.com?tenant=a", "example.com"],
+    ["http://example.com#frag", "example.com"],
+  ])("with a non-canonical baseURI %j (HTTP/1.0 no Host)", async (baseURI, expectedHost) => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      baseURI,
+      fetch: req => new Response(req.url),
+    });
+    const raw = await play(server.port, "GET /x HTTP/1.0\r\n\r\n");
+    const url = new URL(raw.slice(raw.indexOf("\r\n\r\n") + 4));
+    expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
+      hostname: expectedHost,
+      pathname: "/x",
+    });
+  });
 });
 
 describe("streaming", () => {

@@ -3144,27 +3144,12 @@ where
                 ))
             }));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Format
-            // the `https://{host}` prefix while `host` is borrowed so the
-            // second `&mut req` borrow for `url` is unconflicted.
-            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
-                let fmt = bun_fmt::HostFormatter {
-                    is_https: true,
-                    host,
-                    port: None,
-                };
-                let mut s = Vec::new();
-                write!(&mut s, "https://{}", fmt).ok();
-                s
-            });
+            // returned slices alias the same uWS-owned header buffer. Copy
+            // `host` out before taking the second `&mut req` borrow for `url`.
+            let host: Option<Vec<u8>> = ReqLike::header(req, b"host").map(<[u8]>::to_vec);
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(mut s) = prefix {
-                    s.extend_from_slice(path);
-                    request_object.url.set(BunString::clone_utf8(&s));
-                } else {
-                    request_object.url.set(BunString::clone_utf8(path));
-                }
+                request_object.set_url_for_origin_form(host.as_deref(), path);
             } else {
                 request_object.url.set(BunString::clone_utf8(path));
             }

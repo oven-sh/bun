@@ -1428,20 +1428,31 @@ describe("Host header field values in request.url", () => {
     ["example.com#frag"],
     ["example.com\\other:8080"],
     ["[::1]:3000?q"],
-  ])("an HTTP/1.1 request whose Host header is %j is served, with the request-target as request.url", async host => {
-    await using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        return new Response(req.url);
-      },
-    });
+  ])(
+    "an HTTP/1.1 request whose Host header is %j is served, with the server's authority as request.url",
+    async host => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          return new Response(req.url);
+        },
+      });
 
-    const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
-    expect(response).toStartWith("HTTP/1.1 200");
-    // The handler ran, and none of the Host field's bytes were copied into the synthesized URL.
-    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
-  });
+      const response = await sendRawRequest(
+        server,
+        `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(response).toStartWith("HTTP/1.1 200");
+      // The handler ran, and none of the Host field's bytes were copied into the synthesized URL:
+      // the authority is the server's own configured hostname (RFC 9112 3.3 fallback).
+      const url = new URL(response.slice(response.indexOf("\r\n\r\n") + 4));
+      expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
+        hostname: "127.0.0.1",
+        pathname: "/index",
+      });
+    },
+  );
 
   test.each([
     ["example.com", "http://example.com/index"],
@@ -1487,9 +1498,10 @@ describe("Host header field values in request.url", () => {
     }
   });
 
-  test("accepts an empty Host header field value on HTTP/1.1, serving a request URL with no host", async () => {
+  test("accepts an empty Host header field value on HTTP/1.1, falling back to the server's authority", async () => {
     await using server = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       fetch(req) {
         return new Response(req.url);
       },
@@ -1497,7 +1509,11 @@ describe("Host header field values in request.url", () => {
 
     const response = await sendRawRequest(server, "GET /index HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n");
     expect(response).toContain("HTTP/1.1 200");
-    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+    const url = new URL(response.slice(response.indexOf("\r\n\r\n") + 4));
+    expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
+      hostname: "127.0.0.1",
+      pathname: "/index",
+    });
   });
 
   test.each([
@@ -1518,6 +1534,10 @@ describe("Host header field values in request.url", () => {
       // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]".
       // Every byte in [0x7f, 0xff] is outside that set, so neither URL uses any of them.
       const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
+
+      // The url the server falls back to when the Host can't form a valid authority.
+      const fallbackUrl = (await sendRawRequest(server, "GET /p HTTP/1.0\r\n\r\n")).split("\r\n\r\n")[1];
+      expect(new URL(fallbackUrl).pathname).toBe("/p");
 
       async function checkByte(byte: number) {
         const char = String.fromCharCode(byte);
@@ -1546,8 +1566,12 @@ describe("Host header field values in request.url", () => {
       expect(results).toEqual(
         bytes.map(byte => {
           const char = String.fromCharCode(byte);
-          // `req.url` carries the lowercased host (URL host normalization).
-          const url = isHostByte(char) ? `http://a${char.toLowerCase()}b/p` : "/p";
+          // `req.url` carries the lowercased host (URL host normalization) when the Host is in
+          // the RFC 3986 byte set AND forms a parseable URL; otherwise the server's own
+          // authority is substituted. `% : [ ]` pass the byte set but `a%b`/`a:b`/`a[b`/`a]b`
+          // are not valid WHATWG authorities, so they fall back too.
+          const candidate = `http://a${char}b/p`;
+          const url = isHostByte(char) && URL.canParse(candidate) ? new URL(candidate).href : fallbackUrl;
           return {
             char,
             http11Accepted: true,

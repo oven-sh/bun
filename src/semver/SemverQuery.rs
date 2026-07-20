@@ -138,9 +138,7 @@ impl Query {
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let mut node = self;
         loop {
             if !node
@@ -271,9 +269,7 @@ impl List {
     }
 
     pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
         // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
@@ -329,7 +325,6 @@ impl List {
             range: *range,
             next: None,
         });
-        tail.range = *range;
 
         let tail_ptr = NonNull::from(&mut *tail);
 
@@ -466,9 +461,7 @@ impl Group {
             && range.left.op == RangeOp::Eql
             && !range.has_right()
         {
-            if cfg!(debug_assertions) {
-                debug_assert!(self.tail.is_none());
-            }
+            debug_assert!(self.tail.is_none());
             return Some(range.left.version);
         }
 
@@ -988,7 +981,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         break 'possibly_hyphenate false;
                     }
 
-                    if !(i < input.len() && matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*')) {
+                    if !matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*') {
                         break 'possibly_hyphenate false;
                     }
 

@@ -693,9 +693,7 @@ impl Linker {
 
             ImportPathFormat::AbsoluteUrl => {
                 if namespace == b"node" {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(&source_path[0..5] == b"node:");
-                    }
+                    debug_assert!(&source_path[0..5] == b"node:");
 
                     let mut buf: Vec<u8> = Vec::new();
                     // assumption: already starts with "node:"

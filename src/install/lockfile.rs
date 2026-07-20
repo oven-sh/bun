@@ -2237,9 +2237,7 @@ impl Lockfile {
 
         match entry {
             PackageIndexEntry::Id(id) => {
-                if cfg!(debug_assertions) {
-                    debug_assert!((*id as usize) < resolutions.len());
-                }
+                debug_assert!((*id as usize) < resolutions.len());
 
                 if resolutions[*id as usize].eql(resolution, buf, buf) {
                     return Some(*id);
@@ -2251,9 +2249,7 @@ impl Lockfile {
             }
             PackageIndexEntry::Ids(ids) => {
                 for &id in ids.iter() {
-                    if cfg!(debug_assertions) {
-                        debug_assert!((id as usize) < resolutions.len());
-                    }
+                    debug_assert!((id as usize) < resolutions.len());
 
                     if resolutions[id as usize].eql(resolution, buf, buf) {
                         return Some(id);
@@ -2434,9 +2430,7 @@ impl Lockfile {
         self.packages.append(package)?;
         self.get_or_put_id(id, name_hash)?;
 
-        if cfg!(debug_assertions) {
-            debug_assert!(self.get_package_id(name_hash, None, &resolution).is_some());
-        }
+        debug_assert!(self.get_package_id(name_hash, None, &resolution).is_some());
 
         Ok(package)
     }
@@ -2653,11 +2647,9 @@ impl<'a> StringBuilder<'a> {
     }
 
     pub fn clamp(&mut self) {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.cap >= self.len);
-            // assert that no other builder was allocated while this builder was being used
-            debug_assert!(self.string_bytes.len() == self.off + self.cap);
-        }
+        debug_assert!(self.cap >= self.len);
+        // assert that no other builder was allocated while this builder was being used
+        debug_assert!(self.string_bytes.len() == self.off + self.cap);
 
         let excess = self.cap - self.len;
 
@@ -2693,10 +2685,8 @@ impl<'a> StringBuilder<'a> {
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
-        if cfg!(debug_assertions) {
-            debug_assert!(self.len <= self.cap); // didn't count everything
-            debug_assert!(self.ptr.is_some()); // must call allocate first
-        }
+        debug_assert!(self.len <= self.cap); // didn't count everything
+        debug_assert!(self.ptr.is_some()); // must call allocate first
 
         // `allocate()` resized `string_bytes` to `off + cap`; write via safe
         // indexing instead of the cached raw `ptr` + `copy_nonoverlapping`.
@@ -2706,9 +2696,7 @@ impl<'a> StringBuilder<'a> {
         let final_slice = &self.string_bytes[start..end];
         self.len += slice.len();
 
-        if cfg!(debug_assertions) {
-            debug_assert!(self.len <= self.cap);
-        }
+        debug_assert!(self.len <= self.cap);
 
         T::from_init(self.string_bytes.as_slice(), final_slice, hash)
     }
@@ -2718,10 +2706,8 @@ impl<'a> StringBuilder<'a> {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
 
-        if cfg!(debug_assertions) {
-            debug_assert!(self.len <= self.cap); // didn't count everything
-            debug_assert!(self.ptr.is_some()); // must call allocate first
-        }
+        debug_assert!(self.len <= self.cap); // didn't count everything
+        debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
         if !string_entry.found_existing {
@@ -2736,9 +2722,7 @@ impl<'a> StringBuilder<'a> {
             *string_entry.value_ptr = SemverString::init(self.string_bytes.as_slice(), final_slice);
         }
 
-        if cfg!(debug_assertions) {
-            debug_assert!(self.len <= self.cap);
-        }
+        debug_assert!(self.len <= self.cap);
 
         T::from_pooled(*string_entry.value_ptr, hash)
     }
@@ -3203,9 +3187,7 @@ impl Lockfile {
                     PackageIndexEntry::Id(id) => {
                         let resolutions = self.packages.items_resolution();
 
-                        if cfg!(debug_assertions) {
-                            debug_assert!((*id as usize) < resolutions.len());
-                        }
+                        debug_assert!((*id as usize) < resolutions.len());
                         if satisfies(&resolutions[*id as usize]) {
                             return Some(*id);
                         }
@@ -3214,9 +3196,7 @@ impl Lockfile {
                         let resolutions = self.packages.items_resolution();
 
                         for &id in ids.iter() {
-                            if cfg!(debug_assertions) {
-                                debug_assert!((id as usize) < resolutions.len());
-                            }
+                            debug_assert!((id as usize) < resolutions.len());
                             if satisfies(&resolutions[id as usize]) {
                                 return Some(id);
                             }

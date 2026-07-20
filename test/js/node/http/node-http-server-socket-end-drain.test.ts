@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// res.socket.end() half-closes the connection; the server must still drain the
-// unconsumed request body so the peer's FIN arrives and server.close() resolves.
-// A net client is used so the peer's FIN is deterministic (c.end() on 'end');
-// Bun's fetch client may pool the connection after the upload fails, which
-// leaves the server waiting on the peer and is a separate concern.
+// res.socket.end() half-closes the connection; the server must still release the
+// socket (drain the unconsumed body on epoll, or take kqueue's EVFILT_WRITE
+// EV_EOF from its own SHUT_WR) so server.close() resolves. On macOS that early
+// close can RST the still-writing client, so the client's EPIPE is expected and
+// the close wait must not be once(c, "close"), which would reject on it.
 test("server.close() completes after res.socket.end() with a 2 MB upload in flight", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -29,9 +29,9 @@ test("server.close() completes after res.socket.end() with a 2 MB upload in flig
         const c = net.connect(port, "127.0.0.1");
         await once(c, "connect");
         const body = Buffer.alloc(2 * 1024 * 1024, 0x61);
+        c.on("error", () => {});
         c.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: " + body.length + "\\r\\nConnection: close\\r\\n\\r\\n");
         c.write(body);
-        c.on("error", () => {});
         c.on("end", () => c.end());
         // Not once(c, "close"): that also registers an 'error' rejector, and on
         // macOS the 2 MB upload can hit EPIPE once the server's SHUT_WR +

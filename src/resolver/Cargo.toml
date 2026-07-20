@@ -49,4 +49,3 @@ bun_url.workspace = true
 bun_wyhash.workspace = true
 bun_hash.workspace = true
 bun_zstd.workspace = true
-bumpalo.workspace = true

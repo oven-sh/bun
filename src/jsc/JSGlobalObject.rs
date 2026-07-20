@@ -909,9 +909,7 @@ impl JSGlobalObject {
         message: BunString,
         error_array: JSValue,
     ) -> JsResult<JSValue> {
-        if cfg!(debug_assertions) {
-            debug_assert!(error_array.is_array());
-        }
+        debug_assert!(error_array.is_array());
         crate::from_js_host_call(self, || {
             JSC__JSGlobalObject__createAggregateErrorWithArray(
                 self,

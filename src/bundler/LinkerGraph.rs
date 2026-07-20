@@ -698,9 +698,7 @@ impl<'a> LinkerGraph<'a> {
                 .zip(source_indices.iter_mut())
             {
                 let source = &sources[i.get() as usize];
-                if cfg!(debug_assertions) {
-                    debug_assert!(source.index.0 == i.get());
-                }
+                debug_assert!(source.index.0 == i.get());
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)

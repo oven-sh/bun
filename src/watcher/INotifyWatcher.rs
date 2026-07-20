@@ -103,7 +103,6 @@ impl Event {
     // + read_unaligned.
 
     pub fn name(&self) -> &ZStr {
-        #[cfg(debug_assertions)]
         debug_assert!(
             self.name_len > 0,
             "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function."

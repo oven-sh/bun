@@ -873,9 +873,7 @@ fn expand_flat(
             }
             Token::Open(expansion_variants) => {
                 depth += 1;
-                if cfg!(debug_assertions) {
-                    debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
-                }
+                debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
 
                 let variants = &expansion_table
                     [usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];

@@ -3401,10 +3401,8 @@ impl<'a> Parser<'a> {
         // don't call this if css modules is not enabled!
         debug_assert!(self.flags.css_modules());
         debug_assert!(self.extra.is_some());
-        if cfg!(debug_assertions) {
-            // tag should only have one bit set, or none
-            debug_assert!(tag.bits().count_ones() <= 1);
-        }
+        // tag should only have one bit set, or none
+        debug_assert!(tag.bits().count_ones() <= 1);
 
         let extra = self.extra.as_deref_mut().unwrap();
         // Split borrows so the miss arm can grow `symbols` while

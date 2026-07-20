@@ -486,9 +486,7 @@ pub fn enqueue_dependency_to_root(
         let index = lf.dependencies.len();
         lf.dependencies.push(dep);
         lf.resolutions.push(invalid_package_id);
-        if cfg!(debug_assertions) {
-            debug_assert!(lf.dependencies.len() == lf.resolutions.len());
-        }
+        debug_assert!(lf.dependencies.len() == lf.resolutions.len());
         break 'brk index;
     } as DependencyID;
 
@@ -1011,9 +1009,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
                         let task_id = Task::Id::for_manifest(&name_str);
 
-                        if cfg!(debug_assertions) {
-                            debug_assert!(task_id.get() != 0);
-                        }
+                        debug_assert!(task_id.get() != 0);
 
                         if cfg!(debug_assertions) {
                             bun_output::scoped_log!(
@@ -1432,9 +1428,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 // should not trigger a network call
-                if cfg!(debug_assertions) {
-                    debug_assert!(result.task.is_none());
-                }
+                debug_assert!(result.task.is_none());
 
                 if cfg!(debug_assertions) {
                     bun_output::scoped_log!(
@@ -2079,9 +2073,7 @@ fn get_or_put_resolved_package_with_find_result(
         Features::NPM,
     )?)?;
 
-    if cfg!(debug_assertions) {
-        debug_assert!(package.meta.id != invalid_package_id);
-    }
+    debug_assert!(package.meta.id != invalid_package_id);
     // Record exact-version pins so `Lockfile::get_package_id`'s
     // order-independence guard can tell them apart from range-resolved
     // entries (which it treats as network-order artefacts).

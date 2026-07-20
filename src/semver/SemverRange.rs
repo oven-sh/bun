@@ -146,9 +146,7 @@ impl Range {
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let has_left = self.has_left();
         let has_right = self.has_right();
 

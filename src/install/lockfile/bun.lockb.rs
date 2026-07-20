@@ -791,9 +791,7 @@ pub(crate) fn load(
         }
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(stream.pos as u64 == total_buffer_size);
-    }
+    debug_assert!(stream.pos as u64 == total_buffer_size);
 
     Ok(res)
 }

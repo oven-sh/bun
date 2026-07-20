@@ -972,9 +972,7 @@ impl FileReader {
     pub fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
-            if cfg!(debug_assertions) {
-                debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
-            }
+            debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
             return out;
         }
 

@@ -680,9 +680,7 @@ impl Package<u64> {
             package.resolution = Resolution::<u64>::init(TaggedValue::Root);
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
+            debug_assert!(dependencies_list.len() == resolutions_list.len());
 
             let dep_start = dependencies_list.len();
             bun_core::vec::extend_from_fn(
@@ -788,9 +786,7 @@ impl Package<u64> {
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
                 total_dependencies_count += map.value.len;
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
 
                 debug_assert_eq!(keys.len(), version_strings.len());
                 for (key, ver) in keys.iter().zip(version_strings.iter()) {
@@ -835,9 +831,7 @@ impl Package<u64> {
                 }));
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
+            debug_assert!(dependencies_list.len() == resolutions_list.len());
 
             let dep_start = dependencies_list.len();
             bun_core::vec::extend_from_fn(
@@ -854,9 +848,7 @@ impl Package<u64> {
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
                 let is_peer = group.field == b"peer_dependencies";
 
                 debug_assert_eq!(keys.len(), version_strings.len());
@@ -2008,10 +2000,8 @@ impl Package<u64> {
                                 break 'brk rel;
                             }
                         });
-                    if cfg!(debug_assertions) {
-                        debug_assert!(path.len() > 0);
-                        debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
-                    }
+                    debug_assert!(path.len() > 0);
+                    debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
@@ -2511,11 +2501,7 @@ impl Package<u64> {
 
         let off = lockfile.buffers.dependencies.len();
         let total_len = off + total_dependencies_count as usize;
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len()
-            );
-        }
+        debug_assert!(lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len());
 
         // `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
@@ -2629,9 +2615,7 @@ impl Package<u64> {
                                 extern_strings[i] = string_builder.append::<ExternalString>(v);
                                 i += 1;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(i == extern_strings.len());
-                            }
+                            debug_assert!(i == extern_strings.len());
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
                                 value: bin::Value {

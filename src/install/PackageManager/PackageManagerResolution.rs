@@ -298,13 +298,11 @@ impl PackageManager {
 
     pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -319,16 +317,14 @@ impl PackageManager {
 
     pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            debug_assert!(
-                self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
-                    == invalid_package_id
-            );
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        debug_assert!(
+            self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
+                == invalid_package_id
+        );
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();

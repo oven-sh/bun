@@ -3670,9 +3670,7 @@ impl DevServer {
             route_bundle.data,
             route_bundle::Data::Framework(_)
         ));
-        if cfg!(debug_assertions) {
-            debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());
-        }
+        debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
         let _lock = self.graph_safety_lock.guard();

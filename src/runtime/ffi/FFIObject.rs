@@ -477,9 +477,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         ));
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
-    }
+    debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
 
     JSValue::from_ptr_address(addr)
 }

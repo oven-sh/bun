@@ -595,11 +595,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
-        if cfg!(debug_assertions) {
-            debug_assert!(!socket.is_closed());
-            debug_assert!(!socket.is_shutdown());
-            debug_assert!(socket.is_established());
-        }
+        debug_assert!(!socket.is_closed());
+        debug_assert!(!socket.is_shutdown());
+        debug_assert!(socket.is_established());
         debug_assert!(!hostname.is_empty());
         debug_assert!(port > 0);
 

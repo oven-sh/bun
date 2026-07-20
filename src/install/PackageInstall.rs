@@ -2360,12 +2360,10 @@ impl<'a> PackageInstall<'a> {
                                     .as_mut_slice()
                             };
 
-                            if cfg!(debug_assertions) {
-                                debug_assert!(bun_core::is_slice_in_buffer(
-                                    self.cache_dir_subpath.as_bytes(),
-                                    buf
-                                ));
-                            }
+                            debug_assert!(bun_core::is_slice_in_buffer(
+                                self.cache_dir_subpath.as_bytes(),
+                                buf
+                            ));
 
                             let subpath_len =
                                 strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())

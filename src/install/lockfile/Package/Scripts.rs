@@ -468,9 +468,7 @@ impl List {
     }
 
     pub fn first(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.items[self.first_index as usize].is_some());
-        }
+        debug_assert!(self.items[self.first_index as usize].is_some());
         self.items[self.first_index as usize].as_ref().unwrap()
     }
 

@@ -2191,9 +2191,7 @@ pub(super) extern "C" fn napi_delete_async_work(
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     napi_async_work::destroy(work_);
     env.ok()
 }
@@ -2209,9 +2207,7 @@ pub(super) extern "C" fn napi_queue_async_work(
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     work.schedule();
     env.ok()
 }
@@ -2227,9 +2223,7 @@ pub(super) extern "C" fn napi_cancel_async_work(
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     if work.cancel() {
         return env.ok();
     }

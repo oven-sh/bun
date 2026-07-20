@@ -861,9 +861,7 @@ where
         }
 
         ctx_log!("deinit<d> ({:p})<r>", self);
-        if cfg!(debug_assertions) {
-            debug_assert!(self.flags.has_finalized());
-        }
+        debug_assert!(self.flags.has_finalized());
 
         // A response body stream suspended inside its `pull()` never settles the promise
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),

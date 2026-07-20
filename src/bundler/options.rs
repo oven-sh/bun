@@ -924,9 +924,7 @@ pub fn defines_from_transform_options(
             break 'load_env;
         };
 
-        if cfg!(debug_assertions) {
-            debug_assert!(framework.behavior != api::DotEnvBehavior::None);
-        }
+        debug_assert!(framework.behavior != api::DotEnvBehavior::None);
 
         behavior = framework.behavior;
         if behavior == api::DotEnvBehavior::LoadAllWithoutInlining

@@ -1750,9 +1750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
         if !self.is_control_flow_dead {
-            if cfg!(debug_assertions) {
-                debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
-            }
+            debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
             // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
             self.symbol_uses

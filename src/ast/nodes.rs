@@ -820,19 +820,17 @@ impl InlinedEnumValue {
                 }
             },
         };
-        if cfg!(debug_assertions) {
-            debug_assert!(match encoded.decode() {
-                InlinedEnumValueDecoded::String(str_) => match decoded {
-                    InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
-                    _ => false,
-                },
-                InlinedEnumValueDecoded::Number(num) => match decoded {
-                    InlinedEnumValueDecoded::Number(orig) =>
-                        num.to_bits() == Self::purify_nan(orig).to_bits(),
-                    _ => false,
-                },
-            });
-        }
+        debug_assert!(match encoded.decode() {
+            InlinedEnumValueDecoded::String(str_) => match decoded {
+                InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
+                _ => false,
+            },
+            InlinedEnumValueDecoded::Number(num) => match decoded {
+                InlinedEnumValueDecoded::Number(orig) =>
+                    num.to_bits() == Self::purify_nan(orig).to_bits(),
+                _ => false,
+            },
+        });
         encoded
     }
 

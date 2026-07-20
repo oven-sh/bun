@@ -836,9 +836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut property_opts,
                     Some(&mut self_errors),
                 )? {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(prop.key.is_some() || prop.value.is_some());
-                    }
+                    debug_assert!(prop.key.is_some() || prop.value.is_some());
                     properties.push(prop);
                 }
             }

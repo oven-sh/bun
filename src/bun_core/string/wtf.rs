@@ -156,9 +156,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     /// Caller must ensure that the string is 8-bit and ASCII.
     #[inline]
     fn utf8_slice(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.can_use_as_utf8());
-        }
+        debug_assert!(self.can_use_as_utf8());
         self.raw_bytes(self.length() as usize)
     }
 }

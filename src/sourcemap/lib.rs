@@ -247,11 +247,9 @@ impl LineColumnOffset {
 
         let remain = &input[offset as usize..];
 
-        if cfg!(debug_assertions) {
-            debug_assert!(strings::is_all_ascii(remain));
-            debug_assert!(strings::index_of_char(remain, b'\n').is_none());
-            debug_assert!(strings::index_of_char(remain, b'\r').is_none());
-        }
+        debug_assert!(strings::is_all_ascii(remain));
+        debug_assert!(strings::index_of_char(remain, b'\n').is_none());
+        debug_assert!(strings::index_of_char(remain, b'\r').is_none());
 
         this.columns = this
             .columns

@@ -3201,8 +3201,8 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 // storage the worker is reading.
 //
 //   0  Detached/null — nothing to read.
-//   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
-//      should dupe `out_ptr[0..out_len]`; no unpin.
+//   1  Caller must dupe `out_ptr[0..out_len]` synchronously; no unpin.
+//      (FastTypedArray — GC-movable; or resizable non-shared — can shrink.)
 //   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
 //      MUST `unpinArrayBuffer(v)` when done.
 //

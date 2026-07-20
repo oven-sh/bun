@@ -129,10 +129,9 @@ pub enum Source {
 // pipeline) and have no `bun_jsc` wrapper.
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
+    /// 0 = detached/null, 1 = caller must dupe synchronously (FastTypedArray or
+    /// resizable non-shared — no unpin), 2 = pinned ArrayBuffer (caller must
+    /// unpin). For OversizeTypedArray the helper adopts in-place and pins.
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -728,9 +727,8 @@ impl Image {
                     JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
                 } {
                     0 => Err(PinError::Detached),
-                    // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
-                    // by definition — dupe instead of forcing JSC to copy via
-                    // tryCreate(span()) + allocate a butterfly.
+                    // FastTypedArray (GC-movable) or resizable non-shared (can
+                    // shrink): dupe synchronously on the JS thread.
                     1 => {
                         if len == 0 {
                             Err(PinError::Detached)

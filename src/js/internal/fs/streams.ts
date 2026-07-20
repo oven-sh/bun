@@ -460,6 +460,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   this.start = start;
   this.pos = undefined;
   this.bytesWritten = 0;
+  this[kIsPerformingIO] = false;
 
   if (start !== undefined) {
     validateInteger(start, "start", 0);
@@ -572,10 +573,13 @@ function _write(data, encoding, cb) {
       return true; // No backpressure
     }
   } else {
+    this[kIsPerformingIO] = true;
     writeAll.$call(this, data, data.length, this.pos, er => {
+      this[kIsPerformingIO] = false;
       if (this.destroyed) {
+        // Tell ._destroy() that it's safe to close the fd now.
         cb(er);
-        return;
+        return this.emit(kIoDone, er);
       }
       cb(er);
     });
@@ -706,10 +710,13 @@ writeStreamPrototype._writev = function (data, cb) {
       return true;
     }
   } else {
+    this[kIsPerformingIO] = true;
     writevAll.$call(this, chunks, size, this.pos, er => {
+      this[kIsPerformingIO] = false;
       if (this.destroyed) {
+        // Tell ._destroy() that it's safe to close the fd now.
         cb(er);
-        return;
+        return this.emit(kIoDone, er);
       }
       cb(er);
     });
@@ -728,7 +735,17 @@ writeStreamPrototype._destroy = function (err, cb) {
       return;
     }
   }
-  close(this, err, cb);
+  // Usually for async IO it is safe to close a file descriptor
+  // even when there are pending operations. However, due to platform
+  // differences file IO is implemented using synchronous operations
+  // running in a thread pool. Therefore, file descriptors are not safe
+  // to close while used in a pending read or write operation. Wait for
+  // any pending IO (kIsPerformingIO) to complete (kIoDone).
+  if (this[kIsPerformingIO]) {
+    this.once(kIoDone, er => close(this, err || er, cb));
+  } else {
+    close(this, err, cb);
+  }
 };
 
 writeStreamPrototype.close = function (this: FSStream, cb) {

@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -123,7 +123,8 @@ it("process.chdir() on root dir", () => {
 // Windows stores each drive's cwd in a hidden `=X:` env var that
 // SetCurrentDirectoryW does not update; process.chdir must write it (as
 // libuv's uv_chdir does) so drive-relative paths see the new directory.
-it.skipIf(!isWindows)("process.chdir() updates the per-drive cwd environment variable on Windows", () => {
+// bun:ffi dlopen is unavailable on Windows arm64 (TinyCC is disabled there).
+it.skipIf(!isWindows || isArm64)("process.chdir() updates the per-drive cwd environment variable on Windows", () => {
   const k32 = dlopen("kernel32.dll", {
     GetEnvironmentVariableW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
   });
@@ -138,14 +139,12 @@ it.skipIf(!isWindows)("process.chdir() updates the per-drive cwd environment var
   const cwd = process.cwd();
   using dir = tempDir("chdir-drive-env", { "placeholder.txt": "" });
   const target = String(dir);
-  const drive = target[0].toUpperCase();
   try {
     process.chdir(target);
-    const got = readDriveCwd(drive);
-    expect(got?.toLowerCase()).toBe(process.cwd().toLowerCase());
+    expect(readDriveCwd(target[0].toUpperCase())?.toLowerCase()).toBe(process.cwd().toLowerCase());
 
     process.chdir(cwd);
-    expect(readDriveCwd(drive)?.toLowerCase()).toBe(cwd.toLowerCase());
+    expect(readDriveCwd(cwd[0].toUpperCase())?.toLowerCase()).toBe(cwd.toLowerCase());
   } finally {
     process.chdir(cwd);
   }

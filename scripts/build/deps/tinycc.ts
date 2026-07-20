@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const TINYCC_COMMIT = "8a6cbc12ca192b9068e18b2d805a80fe86d0c712";
+const TINYCC_COMMIT = "05f0fafaa3be31e31d7b4b5c17dc60f62c991171";
 
 export const tinycc: Dependency = {
   name: "tinycc",
@@ -27,7 +27,7 @@ export const tinycc: Dependency = {
     commit: TINYCC_COMMIT,
   }),
 
-  patches: ["patches/tinycc/tcc.h.patch", "patches/tinycc/tccrun-shf-tls.patch"],
+  patches: ["patches/tinycc/tcc.h.patch"],
 
   build: cfg => {
     const sources = ["libtcc.c", "tccpp.c", "tccgen.c", "tccdbg.c", "tccelf.c", "tccasm.c", "tccrun.c"];

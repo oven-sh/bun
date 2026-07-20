@@ -1427,7 +1427,7 @@ impl ValkeyClient {
     ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
-        checked_command.meta = command.meta.check(command);
+        checked_command.meta = command.meta.check(command.command);
 
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 

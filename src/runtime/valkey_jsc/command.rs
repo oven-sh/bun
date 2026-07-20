@@ -167,16 +167,28 @@ bun_core::comptime_string_set! {
         b"SUBSCRIBE",
         b"PSUBSCRIBE",
         b"UNSUBSCRIBE",
-        b"UNPSUBSCRIBE",
+        b"PUNSUBSCRIBE",
     };
 }
 
 impl Meta {
-    pub fn check(self, command: &Command<'_>) -> Self {
+    pub fn check(self, command_name: &[u8]) -> Self {
         let mut new = self;
+        // Case-insensitive probe: all disallowed entries are ≤12 bytes, so any
+        // name longer than our 32-byte scratch cannot match and can skip the copy.
+        let mut upper = [0u8; 32];
+        let n = command_name.len().min(32);
+        for i in 0..n {
+            upper[i] = command_name[i].to_ascii_uppercase();
+        }
+        let probe: &[u8] = if command_name.len() <= 32 {
+            &upper[..n]
+        } else {
+            command_name
+        };
         new.set(
             Meta::SUPPORTS_AUTO_PIPELINING,
-            !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
+            !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(probe),
         );
         new
     }

@@ -9,7 +9,7 @@ use bun_jsc::{
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
 use super::protocol_jsc as protocol;
 use super::valkey;
-use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
+use super::command::{Args as CommandArgs, Command, Meta as CommandMeta};
 
 type Slice = bun_jsc::ZigStringSlice;
 
@@ -466,9 +466,7 @@ impl JSValkeyClient {
             args: CommandArgs::Args(&args),
             meta: CommandMeta::default(),
         };
-        // Note: reshaped for borrowck (cmd.meta = cmd.meta.check(&cmd))
-        let checked_meta = cmd.meta.check(&cmd);
-        cmd.meta = checked_meta;
+        cmd.meta = cmd.meta.check(cmd_str.slice());
         // Send command with slices directly
         let promise = match this.send(global, frame.this(), &cmd) {
             Ok(p) => p,

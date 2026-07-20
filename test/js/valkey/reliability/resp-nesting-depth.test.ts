@@ -349,7 +349,9 @@ describe("Valkey: RESP push frame routing", () => {
         const psubscribed = client.psubscribe("news.*");
         const pinged = client.send("PING", []);
 
-        expect(await psubscribed).toEqual({ type: "psubscribe", data: ["news.*", 1] });
+        // psubscribe ack now routes through the subscribe-ack path and resolves
+        // with the handler-map count, matching subscribe()'s shape.
+        expect(await psubscribed).toEqual(0);
         expect(await pinged).toBe("PONG");
       } finally {
         client.close();

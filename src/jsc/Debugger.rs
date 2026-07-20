@@ -191,6 +191,9 @@ pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 /// or 0 when none is. Contexts are what inspector connections are keyed by, so
 /// a waiting worker must not answer for the main thread. Read from the debugger
 /// thread to answer `NodeRuntime.enable`, hence atomic.
+/// A single slot suffices because only one context can wait today (workers
+/// publish no CDP target); with two simultaneous waiters the second store
+/// would win.
 static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
 
 impl Debugger {

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import inspector from "node:inspector";
 
 // Node prints this and blocks while a CDP frontend is still attached at exit.
@@ -1163,4 +1165,120 @@ test("JSC-protocol clients keep seeing generated positions and Bun's source map"
   expect(scriptSource.split("\n")[0]).toBe("debugger;");
   expect(userScript.sourceMapURL).toStartWith("data:application/json");
   await done();
+}, 30_000);
+// The lazy module reuses the fixture's shift-inducing shape (quote rewrite,
+// blank-line collapse) so its original coordinates differ from the
+// transpiler's output; `poke` runs on a timer so the parse-time breakpoint
+// re-resolution has completed before the line executes.
+const lazyShiftFixture = `// leading comment
+
+const value = 'single quotes';
+
+
+if (1 > 0) {
+  // folded
+}
+
+export function poke() {
+  return value.length;
+}
+setTimeout(poke, 500);
+`;
+
+test("a by-URL breakpoint set before its script parses is re-resolved through the map", async () => {
+  const dir = tempDir("inspector-preparse-bp", {
+    "main.js": `await import("./lazy.js");\n`,
+    "lazy.js": lazyShiftFixture,
+  });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect-brk=0", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  try {
+    const decoder = new TextDecoder();
+    const stderrReader = proc.stderr.getReader();
+    let stderrText = "";
+    let wsUrl: string | undefined;
+    while (!wsUrl) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`stderr closed before the banner: ${stderrText}`);
+      stderrText += decoder.decode(value);
+      wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+    }
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = err => reject(err);
+    });
+    let nextId = 1;
+    let awaiting = "";
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const pauses: any[] = [];
+    let wantPauses = 1;
+    let sawPauses = Promise.withResolvers<void>();
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+      } else if (msg.method === "Debugger.paused") {
+        pauses.push(msg.params);
+        if (pauses.length >= wantPauses) sawPauses.resolve();
+      }
+    };
+    const abandon = (why: string) => {
+      const err = new Error(`${why} while awaiting ${awaiting}; stderr: ${stderrText}`);
+      sawPauses.reject(err);
+      for (const p of pending.values()) p.reject(err);
+      pending.clear();
+    };
+    ws.onerror = () => abandon("inspector websocket errored");
+    ws.onclose = () => abandon("inspector websocket closed");
+    proc.exited.then(code => abandon(`child exited (code ${code})`));
+    function send(method: string, params?: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        awaiting = method;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    }
+
+    await send("Runtime.enable", {});
+    await send("Debugger.enable", {});
+
+    // lazy.js has not parsed yet: the breakpoint names original line 10
+    // (\`return value.length;\`), which only lands there if the adapter
+    // re-translates once the script's map exists.
+    const fileUrl = pathToFileURL(join(String(dir), "lazy.js")).href;
+    const set = await send("Debugger.setBreakpointByUrl", { lineNumber: 10, url: fileUrl });
+    expect(typeof set.breakpointId).toBe("string");
+
+    await send("Runtime.runIfWaitingForDebugger", {});
+    awaiting = "the break-on-start pause";
+    await sawPauses.promise;
+
+    wantPauses = 2;
+    sawPauses = Promise.withResolvers<void>();
+    ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume", params: {} }));
+    awaiting = "the pre-parse breakpoint pause";
+    await sawPauses.promise;
+
+    const hit = pauses[1];
+    // The pause reports the line the user named, in original coordinates,
+    // and credits the breakpointId the client was originally given.
+    expect(hit.callFrames[0].location.lineNumber).toBe(10);
+    expect(hit.hitBreakpoints).toEqual([set.breakpointId]);
+    ws.close();
+  } finally {
+    proc.kill();
+    // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
+    await proc.exited;
+    dir[Symbol.dispose]();
+  }
 }, 30_000);

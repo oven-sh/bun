@@ -1,4 +1,5 @@
 import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type { InspectorCDPAdapter } from "./inspector/cdp";
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -359,11 +360,12 @@ class Debugger {
   // Shared by every CDP session on this server so the exit handshake's
   // notify-vs-executionContextDestroyed choice is made across sessions, as
   // Node's notifyWaitingForDisconnect does. `adapters` is populated by cdp.ts.
-  #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: any } = {
-    handshakeStarted: false,
-    retaining: 0,
-    adapters: undefined,
-  };
+  #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: Set<InspectorCDPAdapter> | undefined } =
+    {
+      handshakeStarted: false,
+      retaining: 0,
+      adapters: undefined,
+    };
   #server?: WebSocketServer;
   // Secondary loopback listener; see #listen().
   #loopbackServer?: WebSocketServer;

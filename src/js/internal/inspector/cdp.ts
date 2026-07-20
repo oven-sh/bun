@@ -357,6 +357,26 @@ class InspectorCDPAdapter {
   // Every spelling of a script's URL, so a console message or a breakpoint
   // request that names one can be matched back to its sourcemap.
   #scriptIdsByUrl = new Map<string, string>();
+  // By-URL breakpoints set before their script parsed, keyed by the
+  // breakpointId the client was given. When the script arrives with a source
+  // map they are re-set through it (V8 re-resolves by-URL breakpoints at
+  // scriptParsed the same way); the client keeps the original id, so events
+  // and removeBreakpoint are mapped through jscId.
+  #preParseBreakpoints = new Map<
+    string,
+    {
+      jscId: string;
+      url: string | undefined;
+      urlRegex: string | undefined;
+      lineNumber: number;
+      columnNumber: number | undefined;
+      condition: string | undefined;
+      resolved: boolean;
+    }
+  >();
+  // Current backend breakpointId -> the id the client knows (only entries that
+  // were re-set diverge).
+  #breakpointIdAliases = new Map<string, string>();
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
@@ -469,6 +489,68 @@ class InspectorCDPAdapter {
     const translated: AnyObject = { scriptId: location.scriptId, lineNumber: position.lineNumber };
     translated.columnNumber = position.columnNumber;
     return translated;
+  }
+
+  #toClientBreakpointId(breakpointId: string): string {
+    return this.#breakpointIdAliases.$get(breakpointId) ?? breakpointId;
+  }
+
+  // Re-sets by-URL breakpoints that predate their script through the script's
+  // map, now that there is one. JSC keys a URL breakpoint on one generated
+  // coordinate, so the first matching script with a map wins; later scripts
+  // for the same URL keep that binding.
+  #retranslatePreParseBreakpoints(url: string, cdpUrl: string, scriptId: string): void {
+    if (this.#preParseBreakpoints.size === 0) return;
+    const script = this.#scripts.$get(scriptId);
+    // Without a map the original coordinates were already the right ones.
+    if (!script || script.mappings === undefined) return;
+    for (const [clientBreakpointId, bp] of this.#preParseBreakpoints) {
+      if (bp.resolved) continue;
+      const { url: bpUrl, urlRegex: bpUrlRegex } = bp;
+      let matches = false;
+      if (bpUrl !== undefined) {
+        matches = bpUrl === url || bpUrl === cdpUrl;
+      } else if (bpUrlRegex !== undefined) {
+        try {
+          const pattern = new RegExp(bpUrlRegex);
+          matches = pattern.test(url) || pattern.test(cdpUrl);
+        } catch {
+          matches = false;
+        }
+      }
+      if (!matches) continue;
+      bp.resolved = true;
+      const generated = this.#toGeneratedLocation({
+        scriptId,
+        lineNumber: bp.lineNumber,
+        columnNumber: bp.columnNumber ?? 0,
+      }) as AnyObject;
+      if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
+        continue; // The map is an identity for this position.
+      }
+      this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
+      const options: AnyObject = {};
+      const { condition } = bp;
+      if (condition) options.condition = condition;
+      this.#sendToBackend(
+        "Debugger.setBreakpointByUrl",
+        {
+          lineNumber: generated.lineNumber,
+          columnNumber: generated.columnNumber,
+          options,
+          urlRegex: bpUrlRegex ?? breakpointUrlRegex(bpUrl!),
+        },
+        null,
+        "Debugger.setBreakpointByUrl",
+        (result, error) => {
+          if (error || typeof result.breakpointId !== "string") return;
+          const { breakpointId } = result;
+          this.#breakpointIdAliases.$delete(bp.jscId);
+          bp.jscId = breakpointId;
+          if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
+        },
+      );
+    }
   }
 
   // A client may address a script by pattern rather than by URL. Matching it
@@ -759,9 +841,22 @@ class InspectorCDPAdapter {
       case "Debugger.stepOut":
       case "Debugger.stepOver":
       case "Debugger.setBreakpointsActive":
-      case "Debugger.removeBreakpoint":
         this.#sendToBackend(method, params, id, method);
         return;
+
+      case "Debugger.removeBreakpoint": {
+        // The client removes by the id it was originally given; a re-set
+        // breakpoint lives in JSC under a newer id.
+        const tracked = this.#preParseBreakpoints.$get(params.breakpointId);
+        if (tracked) {
+          this.#preParseBreakpoints.$delete(params.breakpointId);
+          this.#breakpointIdAliases.$delete(tracked.jscId);
+          this.#sendToBackend(method, { breakpointId: tracked.jscId }, id, method);
+          return;
+        }
+        this.#sendToBackend(method, params, id, method);
+        return;
+      }
 
       case "Debugger.continueToLocation":
         this.#sendToBackend(
@@ -821,6 +916,30 @@ class InspectorCDPAdapter {
           jscParams.urlRegex = breakpointUrlRegex(url);
         } else {
           this.#replyErrorToClient(id, -32602, "Either url or urlRegex must be specified.");
+          return;
+        }
+        if (known === undefined) {
+          // No script (and so no map) yet: remember the original coordinates
+          // so the breakpoint can be re-set through the map at scriptParsed.
+          this.#sendToBackend("Debugger.setBreakpointByUrl", jscParams, null, method, (result, error) => {
+            if (error) {
+              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+              return;
+            }
+            const breakpointId = result.breakpointId;
+            if (typeof breakpointId === "string") {
+              this.#preParseBreakpoints.$set(breakpointId, {
+                jscId: breakpointId,
+                url,
+                urlRegex,
+                lineNumber: params.lineNumber ?? 0,
+                columnNumber: params.columnNumber,
+                condition,
+                resolved: false,
+              });
+            }
+            this.#replyToClient(id, this.#translateResult(method, result));
+          });
           return;
         }
         this.#sendToBackend("Debugger.setBreakpointByUrl", jscParams, id, method);
@@ -1034,6 +1153,7 @@ class InspectorCDPAdapter {
         });
         if (url) this.#scriptIdsByUrl.$set(url, params.scriptId);
         if (cdpUrl) this.#scriptIdsByUrl.$set(cdpUrl, params.scriptId);
+        this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
@@ -1075,7 +1195,7 @@ class InspectorCDPAdapter {
             cdpParams.reason = "assert";
             break;
           case "Breakpoint":
-            if (data?.breakpointId) cdpParams.hitBreakpoints = [data.breakpointId];
+            if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
             break;
         }
         if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
@@ -1089,7 +1209,7 @@ class InspectorCDPAdapter {
 
       case "Debugger.breakpointResolved":
         this.#emitToClient("Debugger.breakpointResolved", {
-          breakpointId: params.breakpointId,
+          breakpointId: this.#toClientBreakpointId(params.breakpointId),
           location: this.#toOriginalLocation(params.location),
         });
         return;
@@ -1201,6 +1321,8 @@ class InspectorCDPAdapter {
     });
   }
 }
+
+export type { InspectorCDPAdapter };
 
 export default {
   InspectorCDPAdapter,

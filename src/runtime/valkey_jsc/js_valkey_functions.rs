@@ -687,30 +687,15 @@ impl JSValkeyClient {
         )
     }
 
-    // Implement sismember (check if value is member of a set)
-    #[bun_jsc::host_fn(method)]
-    pub fn sismember(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, "sismember")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
-        };
-        let Some(value) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
-                "sismember",
-                "value",
-                "string or buffer",
-            ));
-        };
-        send_cmd(
-            this,
-            global,
-            b"SISMEMBER",
-            CommandArgs::Args(&[key, value]),
-            CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send SISMEMBER command",
-        )
-    }
+    cmd_key_value!(
+        sismember,
+        "sismember",
+        "SISMEMBER",
+        "key",
+        "member",
+        NotSubscriber,
+        CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING
+    );
 
     // Implement hmget (get multiple values from hash)
     #[bun_jsc::host_fn(method)]
@@ -773,55 +758,24 @@ impl JSValkeyClient {
         )
     }
 
-    // Implement hincrby (increment hash field by integer value)
-    #[bun_jsc::host_fn(method)]
-    pub fn hincrby(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, "hincrby")?;
-
-        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
-        let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
-        let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
-
-        let key_slice = key.to_utf8_without_ref();
-        let field_slice = field.to_utf8_without_ref();
-        let value_slice = value.to_utf8_without_ref();
-
-        send_cmd(
-            this,
-            global,
-            b"HINCRBY",
-            CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
-            CommandMeta::default(),
-            "Failed to send HINCRBY command",
-        )
-    }
-
-    // Implement hincrbyfloat (increment hash field by float value)
-    #[bun_jsc::host_fn(method)]
-    pub fn hincrbyfloat(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, "hincrbyfloat")?;
-
-        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
-        let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
-        let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
-
-        let key_slice = key.to_utf8_without_ref();
-        let field_slice = field.to_utf8_without_ref();
-        let value_slice = value.to_utf8_without_ref();
-
-        send_cmd(
-            this,
-            global,
-            b"HINCRBYFLOAT",
-            CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
-            CommandMeta::default(),
-            "Failed to send HINCRBYFLOAT command",
-        )
-    }
+    cmd_key_value_value2!(
+        hincrby,
+        "hincrby",
+        "HINCRBY",
+        "key",
+        "field",
+        "increment",
+        NotSubscriber
+    );
+    cmd_key_value_value2!(
+        hincrbyfloat,
+        "hincrbyfloat",
+        "HINCRBYFLOAT",
+        "key",
+        "field",
+        "increment",
+        NotSubscriber
+    );
 
     fn hset_impl(
         this: &Self,
@@ -970,49 +924,25 @@ impl JSValkeyClient {
     cmd_strings_varargs!(hpttl, "hpttl", "HPTTL", NotSubscriber);
     cmd_strings_varargs!(httl, "httl", "HTTL", NotSubscriber);
 
-    #[bun_jsc::host_fn(method)]
-    pub fn hsetnx(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, "hsetnx")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
-        };
-        let Some(field) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
-        };
-        let Some(value) = from_js(global, frame.argument(2))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            b"HSETNX",
-            CommandArgs::Args(&[key, field, value]),
-            CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send HSETNX command",
-        )
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn hexists(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, "hexists")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
-        };
-
-        let Some(field) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            b"HEXISTS",
-            CommandArgs::Args(&[key, field]),
-            CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send HEXISTS command",
-        )
-    }
+    cmd_key_value_value2!(
+        hsetnx,
+        "hsetnx",
+        "HSETNX",
+        "key",
+        "field",
+        "value",
+        NotSubscriber,
+        CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING
+    );
+    cmd_key_value!(
+        hexists,
+        "hexists",
+        "HEXISTS",
+        "key",
+        "field",
+        NotSubscriber,
+        CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING
+    );
 
     // Implement ping (send a PING command with an optional message)
     #[bun_jsc::host_fn(method)]
@@ -1346,32 +1276,16 @@ impl JSValkeyClient {
         NotSubscriber
     );
 
-    #[bun_jsc::host_fn(method)]
-    pub fn smove(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, "smove")?;
-
-        let Some(source) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
-        };
-        let Some(destination) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
-                "smove",
-                "destination",
-                "string or buffer",
-            ));
-        };
-        let Some(member) = from_js(global, frame.argument(2))? else {
-            return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            b"SMOVE",
-            CommandArgs::Args(&[source, destination, member]),
-            CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send SMOVE command",
-        )
-    }
+    cmd_key_value_value2!(
+        smove,
+        "smove",
+        "SMOVE",
+        "source",
+        "destination",
+        "member",
+        NotSubscriber,
+        CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING
+    );
 
     cmd_key_value_value2!(
         substr,

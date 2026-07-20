@@ -107,9 +107,9 @@ pub mod parent_death_watchdog {
         unsafe {
             // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
             // ...])` self-arms its own Job and parent-watch (POSIX parity).
-            let _ = windows::SetEnvironmentVariableA(
-                c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr().cast(),
-                c"1".as_ptr().cast(),
+            let _ = windows::SetEnvironmentVariableW(
+                bun_core::w!("BUN_FEATURE_FLAG_NO_ORPHANS\0").as_ptr(),
+                bun_core::w!("1\0").as_ptr(),
             );
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
             if !job.is_null() {

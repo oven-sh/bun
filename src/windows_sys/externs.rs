@@ -1468,7 +1468,7 @@ unsafe extern "system" {
 
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
-    pub fn SetEnvironmentVariableA(lpName: LPCSTR, lpValue: LPCSTR) -> BOOL;
+    pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
 
     pub fn GetTempPathW(
         nBufferLength: DWORD, // [in]

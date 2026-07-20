@@ -3442,7 +3442,7 @@ pub use bun_windows_sys::externs::GetCurrentProcess;
 
 pub use bun_windows_sys::externs::{
     PROCESS_BASIC_INFORMATION, ProcessBasicInformation, RegisterWaitForSingleObject,
-    SetEnvironmentVariableA, WAITORTIMERCALLBACK, WT_EXECUTEONLYONCE,
+    SetEnvironmentVariableW, WAITORTIMERCALLBACK, WT_EXECUTEONLYONCE,
 };
 
 pub use bun_windows_sys::externs::ResumeThread;

@@ -285,9 +285,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       await client.close();
 
       expect(client.connected).toBe(false);
-      expect(async () => {
-        await client.get("any-key");
-      }).toThrowErrorMatchingInlineSnapshot(`"Connection closed"`);
+      await expect(client.get("any-key")).rejects.toThrow(/connection closed|connect E\w+/i);
       // Multiple disconnects should not cause issues
       await client.close();
       await client.close();

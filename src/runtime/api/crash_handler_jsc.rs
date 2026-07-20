@@ -102,21 +102,24 @@ pub mod js_bindings {
         crash_handler::suppress_core_dumps_if_necessary();
         #[cfg(unix)]
         {
-            // Under ASAN the POSIX handler is normally not installed and ASAN
-            // owns SIGSEGV. Exercise the classification directly with this
-            // thread's real guard-page address so the fault → reason mapping
-            // (`posix_fault_reason`) is what the test observes.
+            // Under ASAN the POSIX handler is not installed (`reset_on_posix`
+            // early-returns so ASAN keeps SIGSEGV): exercise the classifier
+            // directly with a fault address one page below the current SP.
             if Environment::ENABLE_ASAN {
-                let addr = crash_handler::stack_guard_range()
-                    .map(|r| r.start)
-                    .unwrap_or(0);
+                let probe = 0u8;
+                let sp = core::hint::black_box(&probe) as *const u8 as usize;
+                let addr = sp.saturating_sub(bun_alloc::page_size());
                 crash_handler::crash_handler(
-                    crash_handler::posix_fault_reason(libc::SIGSEGV, addr),
+                    crash_handler::posix_fault_reason(libc::SIGSEGV, addr, sp),
                     crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
                 );
             }
-            // Non-ASAN: take the real signal path.
-            crash_handler::install_posix_handler_for_testing();
+            // JSC's wasm-fault `jscSignalHandler` is installed over Bun's at VM
+            // init without `SA_ONSTACK`, so a guard-page SIGSEGV can't be
+            // delivered on the exhausted stack and the process dies before any
+            // handler runs. Re-arm Bun's handler (now with `SA_ONSTACK` on a
+            // second call) so the real signal path is what the test observes.
+            crash_handler::reset_on_posix();
         }
         #[inline(never)]
         #[allow(unconditional_recursion)]

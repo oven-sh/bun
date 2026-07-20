@@ -1606,27 +1606,41 @@ mod draft {
         },
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
+    #[cfg(unix)]
+    #[derive(Clone, Copy)]
+    struct FaultRegs {
+        pc: usize,
+        fp: usize,
+        sp: usize,
+    }
+
+    /// Extract `pc`/`fp`/`sp` from the `ucontext_t` the kernel hands the signal
     /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
     /// `None` on arch/OS combos we don't have register offsets for (the caller
     /// then falls back to a current-stack capture).
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<FaultRegs> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            let pc = mc.gregs[libc::REG_RIP as usize] as usize;
-            let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            Some(FaultRegs {
+                pc: mc.gregs[libc::REG_RIP as usize] as usize,
+                fp: mc.gregs[libc::REG_RBP as usize] as usize,
+                sp: mc.gregs[libc::REG_RSP as usize] as usize,
+            })
         }
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            Some(FaultRegs {
+                pc: mc.pc as usize,
+                fp: mc.regs[29] as usize,
+                sp: mc.sp as usize,
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1635,7 +1649,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            Some(FaultRegs {
+                pc: (*mc).__ss.__rip as usize,
+                fp: (*mc).__ss.__rbp as usize,
+                sp: (*mc).__ss.__rsp as usize,
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1644,7 +1662,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            Some(FaultRegs {
+                pc: (*mc).__ss.__pc as usize,
+                fp: (*mc).__ss.__fp as usize,
+                sp: (*mc).__ss.__sp as usize,
+            })
         }
         #[cfg(not(any(
             all(target_os = "linux", target_arch = "x86_64"),
@@ -1658,68 +1680,21 @@ mod draft {
         }
     }
 
-    /// Guard region immediately below the current thread's stack. A SIGSEGV /
-    /// SIGBUS whose `si_addr` lands here is a native stack overflow, not a
-    /// stray pointer dereference; classifying it as `StackOverflow` lets
-    /// bun.report bucket it separately and gives users the right hint.
-    /// `None` when the bounds are unavailable (e.g. musl's main thread).
+    /// `si_addr` within this distance of the faulting thread's stack pointer
+    /// is classified as a stack overflow rather than a stray dereference.
+    /// x86 exceptions are precise, so `push`/`call` fault with SP still at its
+    /// pre-decrement value and `addr == sp - 8`; explicit `sub rsp, N` runs
+    /// before the faulting store so `addr` is near the already-lowered SP
+    /// regardless of frame size.
     #[cfg(unix)]
-    pub fn stack_guard_range() -> Option<core::ops::Range<usize>> {
-        let page = bun_alloc::page_size();
+    const STACK_OVERFLOW_SP_SLOP: usize = 0x10000;
 
-        #[cfg(target_os = "linux")]
-        // SAFETY: `pthread_getattr_np` fills a zeroed attr for the current
-        // thread; accessors read from that attr; `destroy` releases it.
-        unsafe {
-            let mut attr: libc::pthread_attr_t = core::mem::zeroed();
-            if libc::pthread_getattr_np(libc::pthread_self(), &raw mut attr) != 0 {
-                return None;
-            }
-            let mut stackaddr: *mut c_void = core::ptr::null_mut();
-            let mut stacksize: libc::size_t = 0;
-            let mut guardsize: libc::size_t = 0;
-            let ok = libc::pthread_attr_getstack(
-                &raw const attr,
-                &raw mut stackaddr,
-                &raw mut stacksize,
-            ) == 0
-                && libc::pthread_attr_getguardsize(&raw const attr, &raw mut guardsize) == 0;
-            libc::pthread_attr_destroy(&raw mut attr);
-            if !ok {
-                return None;
-            }
-            if guardsize == 0 {
-                guardsize = page;
-            }
-            // `stackaddr` is the lowest usable byte; the guard sits just below.
-            let low = stackaddr as usize;
-            Some(low.saturating_sub(guardsize)..low.saturating_add(page))
-        }
-        #[cfg(target_os = "macos")]
-        // SAFETY: `pthread_self()` is valid for the calling thread; both `_np`
-        // accessors are documented thread-safe for it.
-        unsafe {
-            let th = libc::pthread_self();
-            let top = libc::pthread_get_stackaddr_np(th) as usize;
-            let size = libc::pthread_get_stacksize_np(th);
-            if top == 0 || size == 0 {
-                return None;
-            }
-            let low = top.saturating_sub(size);
-            Some(low.saturating_sub(page)..low.saturating_add(page))
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            let _ = page;
-            None
-        }
-    }
-
+    /// Async-signal-safe: reads only the kernel-provided `si_addr` and `sp`.
     #[cfg(unix)]
-    pub fn posix_fault_reason(sig: c_int, addr: usize) -> CrashReason {
+    pub fn posix_fault_reason(sig: c_int, addr: usize, sp: usize) -> CrashReason {
         match sig {
             libc::SIGSEGV | libc::SIGBUS
-                if addr != 0 && stack_guard_range().is_some_and(|r| r.contains(&addr)) =>
+                if addr != 0 && sp != 0 && addr.abs_diff(sp) < STACK_OVERFLOW_SP_SLOP =>
             {
                 CrashReason::StackOverflow
             }
@@ -1737,11 +1712,12 @@ mod draft {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
+        let regs = fault_context_from_ucontext(ctx);
 
         crash_handler(
-            posix_fault_reason(sig, addr),
-            match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+            posix_fault_reason(sig, addr, regs.map_or(0, |r| r.sp)),
+            match regs {
+                Some(r) => TraceSeed::Fault { pc: r.pc, fp: r.fp },
                 None => TraceSeed::None,
             },
         );
@@ -1770,10 +1746,12 @@ mod draft {
 
                 // SAFETY: stack points to a valid static buffer
                 if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
-                    act_.sa_flags |= libc::SA_ONSTACK;
                     // SAFETY: single global; only mutated during signal-handler setup
                     DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
                 }
+            }
+            if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
+                act_.sa_flags |= libc::SA_ONSTACK;
             }
         }
 
@@ -1796,22 +1774,6 @@ mod draft {
     // crate reads/writes/swaps that same atomic; no local mirror (a second copy
     // would go stale after T0's swap-to-null and trip the `debug_assert!(rc != 0)`
     // in `reset_segfault_handler` on a double-remove).
-
-    /// Install the POSIX fault handler unconditionally. `reset_on_posix`
-    /// skips installation under ASAN so ASAN's own report stays in charge of
-    /// real faults; the `stackOverflow` test hook needs the real signal path.
-    #[cfg(unix)]
-    pub fn install_posix_handler_for_testing() {
-        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-        let mut act: libc::sigaction = bun_core::ffi::zeroed();
-        act.sa_sigaction = handle_segfault_posix as *const () as usize;
-        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
-        let _ = update_posix_segfault_handler(Some(&mut act));
-    }
 
     #[cfg(unix)]
     pub fn reset_on_posix() {

@@ -135,7 +135,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
-            p.forbid_lexical_decl(loc)?;
+            p.forbid_lexical_decl(loc);
         }
 
         p.parse_class_stmt(loc, opts)
@@ -168,7 +168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
-            p.forbid_lexical_decl(loc)?;
+            p.forbid_lexical_decl(loc);
         }
         // p.markSyntaxFeature(compat.Const, p.lexer.Range())
 
@@ -1007,10 +1007,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ref_: name.ref_,
                                 }
                             } else {
-                                p.create_default_name(default_loc)?
+                                p.create_default_name(default_loc)
                             }
                         } else {
-                            p.create_default_name(default_loc)?
+                            p.create_default_name(default_loc)
                         };
 
                         let value = js_ast::StmtOrExpr::Stmt(stmt);
@@ -1023,7 +1023,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ));
                     }
 
-                    let default_name = p.create_default_name(loc)?;
+                    let default_name = p.create_default_name(loc);
 
                     let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
@@ -1096,7 +1096,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        p.create_default_name(default_loc).expect("unreachable")
+                        p.create_default_name(default_loc)
                     };
                     p.has_export_default = true;
                     p.has_es_module_syntax = true;
@@ -1155,7 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => {}
                         }
 
-                        p.create_default_name(default_loc).expect("unreachable")
+                        p.create_default_name(default_loc)
                     };
                     p.has_export_default = true;
                     return Ok(p.s(
@@ -1214,7 +1214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export * as ns from 'path'"
                     p.lexer.next()?;
                     let name = p.parse_clause_alias(b"export")?;
-                    namespace_ref = p.store_name_in_ref(name)?;
+                    namespace_ref = p.store_name_in_ref(name);
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
                         original_name: bun_ast::StoreStr::new(name),
@@ -1235,7 +1235,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("unreachable");
                         p.arena.alloc_slice_copy(&buf)
                     };
-                    namespace_ref = p.store_name_in_ref(name)?;
+                    namespace_ref = p.store_name_in_ref(name);
                 }
 
                 let import_record_index = p.add_import_record(
@@ -1329,7 +1329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
                         )
                         .expect("unreachable");
-                        p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))?
+                        p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))
                     };
 
                     if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1455,7 +1455,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
-                    namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                    namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                     star_name_loc: p.lexer.loc(),
                     import_record_index: u32::MAX,
                     ..Default::default()
@@ -1507,7 +1507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
                         loc: p.lexer.loc(),
-                        ref_: p.store_name_in_ref(default_name)?,
+                        ref_: p.store_name_in_ref(default_name),
                     }),
                     ..Default::default()
                 };
@@ -1541,7 +1541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
-                        namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                        namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                         star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
                         phase_defer: true,
@@ -1630,7 +1630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         T::TAsterisk => {
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
-                            stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
+                            stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier);
                             stmt.star_name_loc = p.lexer.loc();
                             p.lexer.expect(T::TIdentifier)?;
                         }

@@ -1788,11 +1788,9 @@ pub mod __gated_printer {
             }
 
             // Special-case "#foo in bar"
-            if matches!(e.left.data, ExprData::EPrivateIdentifier(_)) && e.op == Op::Code::BinIn {
-                let private = match &e.left.data {
-                    ExprData::EPrivateIdentifier(p) => p,
-                    _ => unreachable!(),
-                };
+            if let ExprData::EPrivateIdentifier(private) = &e.left.data
+                && e.op == Op::Code::BinIn
+            {
                 let name = self.name_for_symbol(private.ref_);
                 self.add_source_mapping_for_name(e.left.loc, name, private.ref_);
                 self.print_identifier(name);
@@ -2280,11 +2278,7 @@ pub mod __gated_printer {
                     let first_decl = &decls[0];
                     let second_decl = &decls[1];
 
-                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_)) {
-                        break 'brk;
-                    }
-                    if second_decl.value.is_none()
-                        || !matches!(second_decl.value.as_ref().unwrap().data, ExprData::EDot(_))
+                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
                         || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
                     {
                         break 'brk;
@@ -2296,32 +2290,24 @@ pub mod __gated_printer {
                     let ExprData::EDot(target_e_dot) = &target_value.data else {
                         break 'brk;
                     };
-                    let target_ref = if matches!(target_e_dot.target.data, ExprData::EIdentifier(_))
-                        && target_e_dot.optional_chain.is_none()
-                    {
-                        match &target_e_dot.target.data {
-                            ExprData::EIdentifier(id) => id.ref_,
-                            _ => unreachable!(),
-                        }
-                    } else {
+                    let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
                         break 'brk;
                     };
-
-                    let second_e_dot = match &second_decl.value.as_ref().unwrap().data {
-                        ExprData::EDot(d) => d,
-                        _ => unreachable!(),
-                    };
-                    if !matches!(second_e_dot.target.data, ExprData::EIdentifier(_))
-                        || second_e_dot.optional_chain.is_some()
-                    {
+                    if target_e_dot.optional_chain.is_some() {
                         break 'brk;
                     }
+                    let target_ref = target_id.ref_;
 
-                    let second_ref = match &second_e_dot.target.data {
-                        ExprData::EIdentifier(id) => id.ref_,
-                        _ => unreachable!(),
+                    let Some(second_value) = &second_decl.value else {
+                        break 'brk;
                     };
-                    if !second_ref.eql(target_ref) {
+                    let ExprData::EDot(second_e_dot) = &second_value.data else {
+                        break 'brk;
+                    };
+                    let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
+                        break 'brk;
+                    };
+                    if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref) {
                         break 'brk;
                     }
 
@@ -2352,28 +2338,19 @@ pub mod __gated_printer {
                         while !decls.is_empty() {
                             let decl = &decls[0];
 
-                            if decl.value.is_none()
-                                || !matches!(decl.value.as_ref().unwrap().data, ExprData::EDot(_))
-                                || !matches!(decl.binding.data, BindingData::BIdentifier(_))
-                            {
+                            if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
                                 break;
                             }
-
-                            let e_dot = match &decl.value.as_ref().unwrap().data {
-                                ExprData::EDot(d) => *d,
-                                _ => unreachable!(),
-                            };
-                            if !matches!(e_dot.target.data, ExprData::EIdentifier(_))
-                                || e_dot.optional_chain.is_some()
-                            {
+                            let Some(value) = &decl.value else {
                                 break;
-                            }
-
-                            let ref_ = match &e_dot.target.data {
-                                ExprData::EIdentifier(id) => id.ref_,
-                                _ => unreachable!(),
                             };
-                            if !ref_.eql(target_ref) {
+                            let ExprData::EDot(e_dot) = &value.data else {
+                                break;
+                            };
+                            let ExprData::EIdentifier(id) = &e_dot.target.data else {
+                                break;
+                            };
+                            if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
                                 break;
                             }
 

@@ -982,9 +982,6 @@ impl<'a> Parser<'a> {
     fn parse_expansion(&mut self) -> Result<ast::Expansion, ParserError> {
         let mut variants: BumpVec<'a, ast::Group> = BumpVec::new_in(self.bump);
         while !self.match_any(&[TokenTag::Close, TokenTag::Eof]) {
-            if self.r#match(TokenTag::Eof) {
-                break;
-            }
             let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
             let mut close = false;
             while !self.r#match(TokenTag::Eof) {

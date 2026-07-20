@@ -8,7 +8,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 pub mod generated_perf_trace_events;
-pub mod hw_timer;
 pub mod system_timer;
 pub mod tracy;
 

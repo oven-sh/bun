@@ -15,7 +15,7 @@ use crate::{
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
     // bun.ptr.ThreadSafeRefCount → intrusive atomic count; managed via
-    // `bun_ptr::IntrusiveArc<ParsedSourceMap>`. `ref`/`deref` are methods on IntrusiveArc.
+    // `bun_ptr::RefPtr<ParsedSourceMap>`. `ref`/`deref` are methods on RefPtr.
     pub ref_count: AtomicU32,
 
     pub input_line_count: usize,

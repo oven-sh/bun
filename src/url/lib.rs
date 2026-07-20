@@ -1269,9 +1269,8 @@ impl QueryStringMap {
     }
 }
 
-// Browsers typically limit URL lengths to around 64k
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
-// pick ArrayBitSet directly. 2048 / 64 == 32 masks.
+// Browsers typically limit URL lengths to around 64k.
+// IntegerBitSet caps at ≤64 bits, so pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
 /// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
 /// out of bounds.

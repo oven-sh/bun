@@ -3,7 +3,6 @@
 use core::cell::UnsafeCell;
 
 use crate::Mutex;
-use bun_safety::ThreadLock;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// This type uses `bun_threading::Mutex` internally.
@@ -16,9 +15,6 @@ pub type Guarded<Value> = GuardedBy<Value, Mutex>;
 /// Named here (not at crate root) to avoid colliding with the bare
 /// [`crate::mutex::MutexGuard`] returned by `Mutex::lock_guard()`.
 pub type MutexGuard<'a, Value> = GuardedLock<'a, Value, Mutex>;
-
-/// Uses `bun_safety::ThreadLock`.
-pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
@@ -165,16 +161,5 @@ impl RawMutex for Mutex {
     #[inline]
     fn unlock(&self) {
         Mutex::unlock(self)
-    }
-}
-
-impl RawMutex for ThreadLock {
-    #[inline]
-    fn lock(&self) {
-        ThreadLock::lock(self)
-    }
-    #[inline]
-    fn unlock(&self) {
-        ThreadLock::unlock(self)
     }
 }

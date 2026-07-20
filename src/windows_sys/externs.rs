@@ -636,6 +636,16 @@ pub mod ntdll {
         /// linking kernel32 in the standalone PE.
         pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
 
+        /// `NtQueryInformationProcess` (`winternl.h`). With
+        /// `ProcessBasicInformation` (0), fills a [`PROCESS_BASIC_INFORMATION`].
+        pub fn NtQueryInformationProcess(
+            ProcessHandle: HANDLE,
+            ProcessInformationClass: ULONG,
+            ProcessInformation: *mut c_void,
+            ProcessInformationLength: ULONG,
+            ReturnLength: *mut ULONG,
+        ) -> NTSTATUS;
+
         pub fn NtReadFile(
             FileHandle: HANDLE,
             Event: HANDLE,
@@ -695,6 +705,8 @@ pub mod kernel32 {
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
+        /// No preconditions; writes the thread-local Win32 error slot.
+        pub safe fn SetLastError(dwErrCode: DWORD);
         pub fn VirtualQuery(
             lpAddress: LPCVOID,
             lpBuffer: *mut MEMORY_BASIC_INFORMATION,
@@ -1458,6 +1470,8 @@ unsafe extern "system" {
 
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
+    pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
+
     pub fn GetTempPathW(
         nBufferLength: DWORD, // [in]
         lpBuffer: LPCWSTR,    // [out]
@@ -1507,6 +1521,27 @@ pub const JobObjectExtendedLimitInformation: DWORD = 9;
 /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — kill all job processes when the
 /// last job handle closes.
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
+
+/// `WAITORTIMERCALLBACK` (`winnt.h`) — thread-pool callback for
+/// `RegisterWaitForSingleObject`. `TimerOrWaitFired` is `TRUE` on timeout.
+pub type WAITORTIMERCALLBACK =
+    unsafe extern "system" fn(lpParameter: LPVOID, TimerOrWaitFired: BOOLEAN);
+/// `WT_EXECUTEONLYONCE` (`winnt.h`) — fire once; caller does not unregister.
+pub const WT_EXECUTEONLYONCE: ULONG = 0x0000_0008;
+
+/// `PROCESS_BASIC_INFORMATION` (`winternl.h`). Only
+/// `InheritedFromUniqueProcessId` is read; the rest are layout padding.
+#[repr(C)]
+pub struct PROCESS_BASIC_INFORMATION {
+    pub ExitStatus: NTSTATUS,
+    pub PebBaseAddress: *mut c_void,
+    pub AffinityMask: usize,
+    pub BasePriority: i32,
+    pub UniqueProcessId: usize,
+    pub InheritedFromUniqueProcessId: usize,
+}
+/// `PROCESSINFOCLASS::ProcessBasicInformation` (`winternl.h`).
+pub const ProcessBasicInformation: ULONG = 0;
 
 /// `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (`winnt.h`).
 #[repr(C)]
@@ -1862,6 +1897,19 @@ unsafe extern "system" {
         out_lpExitTime: *mut FILETIME,
         out_lpKernelTime: *mut FILETIME,
         out_lpUserTime: *mut FILETIME,
+    ) -> BOOL;
+
+    /// `RegisterWaitForSingleObject` (`winbase.h`). Queues `Callback` to the
+    /// system thread pool once `hObject` is signaled (or `dwMilliseconds`
+    /// elapses). Returns non-zero on success; `*phNewWaitObject` receives the
+    /// wait handle.
+    pub fn RegisterWaitForSingleObject(
+        phNewWaitObject: *mut HANDLE,
+        hObject: HANDLE,
+        Callback: WAITORTIMERCALLBACK,
+        Context: LPVOID,
+        dwMilliseconds: ULONG,
+        dwFlags: ULONG,
     ) -> BOOL;
 
     pub fn GetFileAttributesExW(

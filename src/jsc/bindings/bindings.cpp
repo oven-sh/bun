@@ -6606,8 +6606,8 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
         uint64_t result = notFound;
         if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
             for (const auto& entry : *map) {
-                if (entry.key >= start && entry.key < result)
-                    result = entry.key;
+                if (entry.index() >= start && entry.index() < result)
+                    result = entry.index();
             }
         }
         return result;

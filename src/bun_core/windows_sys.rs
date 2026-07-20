@@ -41,7 +41,6 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // `bun_windows_sys` leaf and are re-exported here for the
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
 pub use bun_windows_sys::{
     CURDIR, Curdir, PEB, PebView, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
 };
@@ -53,10 +52,8 @@ pub use bun_windows_sys::{
 unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
-// so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.
+// so existing `crate::windows_sys::kernel32::*` callers resolve.
 pub use bun_windows_sys::kernel32;
-// `c::` alias used by `output.rs`.
-pub use kernel32 as c;
 
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
 /// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.

@@ -194,6 +194,7 @@ export async function spawnWithAnnotations(
     console.error(`Command exited: code ${exitCode}`);
   }
 
+  utils.markBuildkiteStepReported();
   process.exit(exitCode ?? 1);
 }
 

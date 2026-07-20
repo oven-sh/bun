@@ -13,15 +13,6 @@ pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 /// the impl since the type is foreign — defined in `bun_alloc`).
 pub use crate::external_shared::WTFString;
 
-/// `WTF::RefPtr<T>` — a nullable owning reference into an externally-refcounted
-/// object. Generic re-export so callers can write `wtf::RefPtr<StringImpl>`
-/// (matching the C++ spelling) without reaching into `bun_ptr` directly.
-pub type RefPtr<T> = crate::external_shared::ExternalShared<T>;
-
-/// `WTF::StringImpl` — alias to the layout-mirroring struct so call sites can
-/// spell `wtf::StringImpl` (used by `wtf::RefPtr<StringImpl>`).
-pub type StringImpl = WTFStringImplStruct;
-
 /// Extension methods on [`WTFStringImplStruct`] that depend on
 /// `bun_string` types ([`ZigStringSlice`], `crate::ZBox`) or
 /// `crate::strings::*` transcoding. Kept as a trait because the struct is

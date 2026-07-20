@@ -1,8 +1,5 @@
 import { JSCallback, viewSource } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isWindows } from "harness";
-
-const isFFIUnavailable = isWindows && isArm64;
 
 // Captures what a call throws, or undefined if it returned normally. Written
 // explicitly so the assertions below distinguish a thrown Error from a
@@ -16,7 +13,7 @@ function thrown(fn: () => unknown): unknown {
   return undefined;
 }
 
-describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
+describe("FFI viewSource", () => {
   // Descriptor values must be objects like { args: [...], returns: "void" }.
   // https://github.com/oven-sh/bun/pull/28361, https://github.com/oven-sh/bun/pull/34396
   test.each([42, "not_an_object", true])("throws on non-object symbol descriptor value %p", value => {
@@ -54,7 +51,7 @@ describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
   });
 });
 
-describe.skipIf(isFFIUnavailable)("FFI JSCallback", () => {
+describe("FFI JSCallback", () => {
   test.each([null, undefined, 42, "str", true])("throws on non-object options %p", value => {
     const err = thrown(() => new JSCallback(() => {}, value as any));
     expect(err).toBeInstanceOf(TypeError);

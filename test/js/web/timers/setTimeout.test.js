@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
@@ -528,4 +529,16 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(stderrLines).toBe("");
   expect(stdout).toBe("converted: ok\nsurvived\n");
   expect(exitCode).toBe(0);
+});
+
+it("timer heap clock is monotonic, not wall-clock", () => {
+  // The clock that schedules setTimeout/setInterval deadlines must be monotonic
+  // (boot-relative) on every platform so NTP steps / user clock changes can't
+  // stall or mass-fire timers. A wall-clock reading here would be ~= Date.now().
+  const t0 = timerInternals.timerClockMs();
+  const t1 = timerInternals.timerClockMs();
+  const wallNow = Date.now();
+  expect(t0).toBeGreaterThan(0);
+  expect(t1).toBeGreaterThanOrEqual(t0);
+  expect(t1).toBeLessThan(wallNow / 2);
 });

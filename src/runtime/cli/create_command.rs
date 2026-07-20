@@ -2795,7 +2795,7 @@ impl GitHandler {
 
     pub(crate) fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
-            let _ = Futex::wait(&SUCCESS, 0, Some(1000));
+            Futex::wait_forever(&SUCCESS, 0);
         }
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;

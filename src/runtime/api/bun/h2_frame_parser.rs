@@ -107,7 +107,7 @@ enum BunSocket {
     // shared-only deref safe at every read site (all `NewSocket` methods used
     // here take `&self`). LIFETIMES.tsv: SHARED — intrusive refcount, *T
     // crosses FFI; `NewSocket<SSL>` does not implement `bun_ptr::RefCounted`
-    // (hand-rolled `ref_()/deref()` on a `Cell<u32>`), so `IntrusiveArc` cannot
+    // (hand-rolled `ref_()/deref()` on a `Cell<u32>`), so `RefPtr` cannot
     // wrap it.
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),

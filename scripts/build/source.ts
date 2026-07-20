@@ -446,7 +446,7 @@ export interface Dependency {
 
   /**
    * Whether this dep participates in the build at all. Defaults to always-on.
-   * E.g. libuv is windows-only, tinycc is disabled on windows-arm64.
+   * E.g. libuv is windows-only, tinycc is disabled on Android/FreeBSD.
    */
   enabled?: (cfg: Config) => boolean;
 

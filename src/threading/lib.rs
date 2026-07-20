@@ -32,17 +32,12 @@ pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
-pub use guarded::Debug as DebugGuarded;
 pub use guarded::RawMutex;
 pub use guarded::{Guarded, GuardedBy, GuardedLock};
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub use semaphore::Semaphore;
-/// `parking_lot::Once` parity. Bun has no custom `Once`,
-/// and `std::sync::Once` has no poisoning concern, so
-/// just re-export it for callers migrating off `parking_lot::Once`.
-pub use std::sync::Once;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;

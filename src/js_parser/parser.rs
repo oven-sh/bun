@@ -996,7 +996,7 @@ impl<'a> JSXTag<'a> {
 
         // Otherwise, this is an identifier
         // <Button>
-        let ref_ = p.store_name_in_ref(name)?;
+        let ref_ = p.store_name_in_ref(name);
         let mut tag = p.new_expr(
             E::Identifier {
                 ref_,

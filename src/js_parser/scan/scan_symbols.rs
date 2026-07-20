@@ -77,7 +77,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break 'brk *existing;
                                 }
                                 let arg_ref = ts.arg_ref;
-                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
+                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
                                 // Re-borrow ts_namespace mutably after &mut self.
                                 let ts_mut = &mut *ts_namespace;
                                 ts_mut.property_accesses.insert(name, new_ref);
@@ -119,9 +119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // gpe borrows self.module_scope while self.new_symbol needs &mut self.
             // Drop gpe, allocate, then re-insert.
-            let new_ref = self
-                .new_symbol(js_ast::symbol::Kind::Unbound, name)
-                .expect("unreachable");
+            let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
 
             *self
                 .module_scope_mut()

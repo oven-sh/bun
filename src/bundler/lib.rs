@@ -202,7 +202,6 @@ pub mod linker_context {
 // modules above.
 // ---------------------------------------------------------------------------
 
-pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
 /// See `chunk` module.
@@ -247,7 +246,6 @@ pub mod options {
     /// `OutputFile.init` argument struct.
     pub use super::output_file::Options as OutputFileInit;
     pub use super::output_file::OptionsData as OutputFileData;
-    pub use super::output_file::Value as OutputValue;
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
@@ -314,7 +312,6 @@ pub mod options {
 /// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
 /// live on `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
-pub use cache::Set as Cache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from

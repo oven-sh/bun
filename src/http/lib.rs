@@ -77,19 +77,14 @@ pub use bun_uws::ssl_wrapper::SSLWrapper;
 // `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
-pub use h2_client as H2;
 pub use h3_client as h3;
 pub use h3_client as H3;
-pub use http_context as new_http_context;
 pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type NewHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type HttpsContext = http_context::HTTPContext<true>;
-pub type HttpContext = http_context::HTTPContext<false>;
 pub type HttpClient<'a> = HTTPClient<'a>;
-pub type HttpThread = HTTPThread;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
-pub use HTTPClientResult as http_client_result;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
@@ -966,9 +961,9 @@ use crate::internal_state::{RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-/// Generic `HttpContext<const SSL>` alias — `crate::HttpContext` /
-/// `crate::HttpsContext` (above) are concrete-SSL aliases; the state machine
-/// needs a const-generic spelling for `get_ssl_ctx<IS_SSL>()`.
+/// Generic `HttpContext<const SSL>` alias — `crate::HttpsContext` (above) is
+/// the concrete-SSL alias; the state machine needs a const-generic spelling
+/// for `get_ssl_ctx<IS_SSL>()`.
 pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 
 // ── header constants ────────────────────────────────────────────────────

@@ -2787,6 +2787,31 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
 }
 
 /**
+ * Mark this Buildkite job as having handled its own failure reporting.
+ *
+ * The repository `.buildkite/hooks/pre-exit` hook posts a generic fallback
+ * annotation for any step that exits non-zero without this marker set, so
+ * infra failures that happen before (or crash) the runner/build scripts are
+ * still surfaced in the build's annotation list instead of being visible only
+ * in the raw job log. Call this from every controlled exit path that has
+ * already posted (or had nothing to post) so the fallback stays quiet. The
+ * marker is build meta-data, which is server-side and so remains visible to
+ * the host pre-exit hook even when the reporter ran inside an ephemeral VM.
+ */
+export function markBuildkiteStepReported() {
+  if (!isBuildkite) return;
+  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  if (!jobId) return;
+  const { status } = nodeSpawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
+    stdio: "ignore",
+    timeout: 30_000,
+  });
+  if (status !== 0) {
+    console.error(`buildkite-agent meta-data set reported-${jobId} failed (non-fatal)`);
+  }
+}
+
+/**
  * @param {object} obj
  * @param {number} indent
  * @returns {string}

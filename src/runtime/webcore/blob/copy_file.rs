@@ -1331,7 +1331,7 @@ impl<'a> CopyFileWindows<'a> {
                 if is_reading {
                     bun_sys::O::RDONLY
                 } else {
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
                 },
                 0,
             ) {

@@ -76,16 +76,13 @@ impl HandshakeV10 {
         );
 
         // Length of auth plugin data
-        let mut auth_plugin_data_len = reader.int::<u8>()?;
-        if auth_plugin_data_len < 21 {
-            auth_plugin_data_len = 21;
-        }
+        let auth_plugin_data_len = reader.int::<u8>()?.max(21);
 
         // Skip reserved bytes
         reader.skip(10);
 
         // Auth plugin data part 2
-        let remaining_auth_len = (auth_plugin_data_len - 8).max(13);
+        let remaining_auth_len = auth_plugin_data_len - 8;
         let auth_data_2 = reader.read(remaining_auth_len as usize)?;
         self.auth_plugin_data_part_2 = Box::<[u8]>::from(auth_data_2.slice());
 

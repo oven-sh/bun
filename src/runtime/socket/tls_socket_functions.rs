@@ -68,10 +68,17 @@ pub(super) mod ffi {
         pub(crate) safe fn SSL_get_peer_certificate(ssl: &SSL) -> *mut X509;
         pub(crate) safe fn SSL_get_certificate(ssl: &SSL) -> *mut X509;
         pub(crate) safe fn SSL_set_max_send_fragment(ssl: &SSL, max_send_fragment: usize) -> c_int;
+        /// The Finished message this side sent / received. `SSL_get_finished` and
+        /// `SSL_get_peer_finished` report zero at TLS 1.3; these report it on every
+        /// version, the way node:tls expects (see `patches/boringssl/`).
         // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
-        pub(crate) fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        pub(crate) fn SSL_get_finished_all_versions(
+            ssl: *const SSL,
+            buf: *mut c_void,
+            count: usize,
+        ) -> usize;
         // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
-        pub(crate) fn SSL_get_peer_finished(
+        pub(crate) fn SSL_get_peer_finished_all_versions(
             ssl: *const SSL,
             buf: *mut c_void,
             count: usize,
@@ -642,7 +649,7 @@ pub(super) fn get_tls_finished_message(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // We cannot just pass nullptr to SSL_get_finished()
+    // We cannot just pass nullptr to SSL_get_finished_all_versions()
     // because it would further be propagated to memcpy(),
     // where the standard requirements as described in ISO/IEC 9899:2011
     // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
@@ -650,7 +657,7 @@ pub(super) fn get_tls_finished_message(
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
-        ffi::SSL_get_finished(
+        ffi::SSL_get_finished_all_versions(
             ssl_ptr,
             dummy.as_mut_ptr().cast::<c_void>(),
             core::mem::size_of_val(&dummy),
@@ -665,7 +672,8 @@ pub(super) fn get_tls_finished_message(
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { ffi::SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size) };
+    let result_size =
+        unsafe { ffi::SSL_get_finished_all_versions(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -834,7 +842,7 @@ pub(super) fn get_tls_peer_finished_message(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // We cannot just pass nullptr to SSL_get_peer_finished()
+    // We cannot just pass nullptr to SSL_get_peer_finished_all_versions()
     // because it would further be propagated to memcpy(),
     // where the standard requirements as described in ISO/IEC 9899:2011
     // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
@@ -842,7 +850,7 @@ pub(super) fn get_tls_peer_finished_message(
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
-        ffi::SSL_get_peer_finished(
+        ffi::SSL_get_peer_finished_all_versions(
             ssl_ptr,
             dummy.as_mut_ptr().cast::<c_void>(),
             core::mem::size_of_val(&dummy),
@@ -857,7 +865,8 @@ pub(super) fn get_tls_peer_finished_message(
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { ffi::SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size) };
+    let result_size =
+        unsafe { ffi::SSL_get_peer_finished_all_versions(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }

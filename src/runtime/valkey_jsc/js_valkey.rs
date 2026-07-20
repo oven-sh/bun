@@ -56,11 +56,16 @@ impl Drop for OwnedSslCtx {
 // SubscriptionCtx
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
+pub struct SavedFlags {
+    pub enable_offline_queue: bool,
+    pub enable_auto_pipelining: bool,
+}
+
 #[derive(Default)]
 pub struct SubscriptionCtx {
-    pub is_subscriber: bool,
-    pub original_enable_offline_queue: bool,
-    pub original_enable_auto_pipelining: bool,
+    /// `Some` while in subscriber mode; holds the flag values to restore on exit.
+    pub saved_flags: Option<SavedFlags>,
 }
 
 /// The generate-classes.ts output emits a
@@ -81,41 +86,34 @@ impl SubscriptionCtx {
             callback_map,
         );
 
-        SubscriptionCtx {
-            original_enable_offline_queue: valkey_parent.client.get().flags.enable_offline_queue,
-            original_enable_auto_pipelining: valkey_parent
-                .client
-                .get()
-                .flags
-                .enable_auto_pipelining,
-            is_subscriber: false,
-        }
+        SubscriptionCtx { saved_flags: None }
     }
 
-    fn subscription_callback_map(&self) -> &mut JSMap {
-        let parent_this = self
-            .parent()
-            .this_value
-            .get()
-            .try_get()
-            .expect("unreachable");
-        let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
+    #[inline]
+    pub fn is_subscriber(&self) -> bool {
+        self.saved_flags.is_some()
+    }
+
+    /// `None` once the JS wrapper has been finalized (or before `init()`).
+    fn subscription_callback_map(&self) -> Option<&mut JSMap> {
+        let parent_this = self.parent().this_value.get().try_get()?;
+        let value_js = Js::subscription_callback_map_get_cached(parent_this)?;
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // `from_js` returns a non-null heap cell when the slot was set by
-        // `init()`; single JS thread.
-        JSMap::opaque_mut(JSMap::from_js(value_js).unwrap().as_ptr())
+        Some(JSMap::opaque_mut(JSMap::from_js(value_js)?.as_ptr()))
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
-    pub fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> JsResult<u32> {
-        let count = self.subscription_callback_map().size(global_object)?;
-        Ok(count)
+    pub fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> u32 {
+        let Some(map) = self.subscription_callback_map() else {
+            return 0;
+        };
+        map.size(global_object).unwrap_or(0)
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
-    pub fn has_subscriptions(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
-        Ok(self.channels_subscribed_to_count(global_object)? > 0)
+    pub fn has_subscriptions(&self, global_object: &JSGlobalObject) -> bool {
+        self.channels_subscribed_to_count(global_object) > 0
     }
 
     pub fn clear_receive_handlers(
@@ -123,13 +121,18 @@ impl SubscriptionCtx {
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<()> {
-        let map = self.subscription_callback_map();
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(());
+        };
         let _ = map.remove(global_object, channel_name)?;
         Ok(())
     }
 
     pub fn clear_all_receive_handlers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        self.subscription_callback_map().clear(global_object)
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(());
+        };
+        map.clear(global_object)
     }
 
     /// Remove a specific receive handler.
@@ -144,7 +147,9 @@ impl SubscriptionCtx {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<Option<usize>> {
-        let map = self.subscription_callback_map();
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(None);
+        };
 
         let existing = map.get(global_object, channel_name)?;
         if existing.is_undefined_or_null() {
@@ -196,7 +201,9 @@ impl SubscriptionCtx {
         let _guard = scopeguard::guard(parent_br, |p| {
             p.on_new_subscription_callback_insert();
         });
-        let map = self.subscription_callback_map();
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(());
+        };
 
         let existing = map.get(global_object, channel_name)?;
         let handlers_array = if existing.is_undefined_or_null() {
@@ -219,9 +226,10 @@ impl SubscriptionCtx {
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<Option<JSValue>> {
-        let result = self
-            .subscription_callback_map()
-            .get(global_object, channel_name)?;
+        let Some(map) = self.subscription_callback_map() else {
+            return Ok(None);
+        };
+        let result = map.get(global_object, channel_name)?;
         if result == JSValue::UNDEFINED {
             return Ok(None);
         }
@@ -722,19 +730,17 @@ impl JSValkeyClient {
                     // If the user manually closed the connection, then duplicating a closed client
                     // means the new client remains finalized.
                     is_manually_closed: client.flags.is_manually_closed,
-                    enable_offline_queue: if sub_ctx.is_subscriber {
-                        sub_ctx.original_enable_offline_queue
-                    } else {
-                        client.flags.enable_offline_queue
-                    },
+                    enable_offline_queue: sub_ctx
+                        .saved_flags
+                        .map(|s| s.enable_offline_queue)
+                        .unwrap_or(client.flags.enable_offline_queue),
                     needs_to_open_socket: true,
                     enable_auto_reconnect: client.flags.enable_auto_reconnect,
                     is_reconnecting: false,
-                    enable_auto_pipelining: if sub_ctx.is_subscriber {
-                        sub_ctx.original_enable_auto_pipelining
-                    } else {
-                        client.flags.enable_auto_pipelining
-                    },
+                    enable_auto_pipelining: sub_ctx
+                        .saved_flags
+                        .map(|s| s.enable_auto_pipelining)
+                        .unwrap_or(client.flags.enable_auto_pipelining),
                     // Duplicating a finalized client means it stays finalized.
                     finalized: client.flags.finalized,
                     ..Default::default()
@@ -764,26 +770,31 @@ impl JSValkeyClient {
     pub fn add_subscription(&self) {
         debug!(
             "addSubscription: entering, current subscriber state: {}",
-            self._subscription_ctx.get().is_subscriber
+            self._subscription_ctx.get().is_subscriber()
         );
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         let _guard = self.ref_scope();
 
-        if !self._subscription_ctx.get().is_subscriber {
-            let flags = &self.client.get().flags;
-            let (q, p) = (flags.enable_offline_queue, flags.enable_auto_pipelining);
-            self._subscription_ctx.with_mut(|s| {
-                s.original_enable_offline_queue = q;
-                s.original_enable_auto_pipelining = p;
-            });
+        let flags = &self.client.get().flags;
+        let (q, p) = (flags.enable_offline_queue, flags.enable_auto_pipelining);
+        let entered = self._subscription_ctx.with_mut(|s| {
+            if s.saved_flags.is_none() {
+                s.saved_flags = Some(SavedFlags {
+                    enable_offline_queue: q,
+                    enable_auto_pipelining: p,
+                });
+                true
+            } else {
+                false
+            }
+        });
+        if entered {
             debug!("addSubscription: calling updatePollRef");
             self.update_poll_ref();
         }
-
-        self._subscription_ctx.with_mut(|s| s.is_subscriber = true);
         debug!(
             "addSubscription: exiting, new subscriber state: {}",
-            self._subscription_ctx.get().is_subscriber
+            self._subscription_ctx.get().is_subscriber()
         );
     }
 
@@ -793,7 +804,6 @@ impl JSValkeyClient {
             self._subscription_ctx
                 .get()
                 .has_subscriptions(&self.global_object)
-                .unwrap_or(false)
         );
         let _guard = self.ref_scope();
 
@@ -802,18 +812,12 @@ impl JSValkeyClient {
             ._subscription_ctx
             .get()
             .has_subscriptions(&self.global_object)
-            .unwrap_or(false)
         {
-            let (q, p) = {
-                let s = self._subscription_ctx.get();
-                (
-                    s.original_enable_offline_queue,
-                    s.original_enable_auto_pipelining,
-                )
-            };
-            self.client_mut().flags.enable_offline_queue = q;
-            self.client_mut().flags.enable_auto_pipelining = p;
-            self._subscription_ctx.with_mut(|s| s.is_subscriber = false);
+            if let Some(saved) = self._subscription_ctx.get().saved_flags {
+                self.client_mut().flags.enable_offline_queue = saved.enable_offline_queue;
+                self.client_mut().flags.enable_auto_pipelining = saved.enable_auto_pipelining;
+                self._subscription_ctx.with_mut(|s| s.saved_flags = None);
+            }
             debug!("removeSubscription: calling updatePollRef");
             self.update_poll_ref();
         }
@@ -821,7 +825,7 @@ impl JSValkeyClient {
     }
 
     pub fn is_subscriber(&self) -> bool {
-        self._subscription_ctx.get().is_subscriber
+        self._subscription_ctx.get().is_subscriber()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1404,11 +1408,9 @@ impl JSValkeyClient {
         this.this_value.with_mut(|t| t.finalize());
         this.client_mut().flags.finalized = true;
         this.close_socket_next_tick();
-        // `_subscription_ctx` is three inline bools (no allocation, no GC
-        // ref); `is_subscriber` can legitimately still be set here if the
-        // server never confirmed UNSUBSCRIBE before disconnect, since
-        // `update_poll_ref()` gates on the JS handler map, not this flag.
-        // Nothing to release.
+        // `_subscription_ctx` is an inline `Option<SavedFlags>` (no allocation,
+        // no GC ref); nothing to release. `update_poll_ref()` gates on the JS
+        // handler map, not this flag.
     }
 
     pub fn stop_timers(&self) {
@@ -1485,7 +1487,7 @@ impl JSValkeyClient {
             // `on_valkey_close()` consumes the socket ref; hand it over so it
             // isn't released twice.
             socket_ref.forget();
-            self.client_mut().on_valkey_close()?;
+            self.on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
         }
@@ -1618,21 +1620,10 @@ impl JSValkeyClient {
         // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        // isDeletable may throw an exception, and if it does, we have to assume
-        // that the object still has references. Best we can do is hope nothing
-        // catastrophic happens.
-        //
-        // Once the JS wrapper has been finalized, the subscription callback map
-        // (stored on the JS object) is gone. Reading it would hit `unreachable`
-        // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
-        // null for a finalized ref. Short-circuit here: a finalized client has
-        // no subscriptions by definition.
-        let subs_deletable: bool = self.client.get().flags.finalized
-            || !self
-                ._subscription_ctx
-                .get()
-                .has_subscriptions(&self.global_object)
-                .unwrap_or(false);
+        let subs_deletable = !self
+            ._subscription_ctx
+            .get()
+            .has_subscriptions(&self.global_object);
 
         let has_activity =
             has_pending_commands || !subs_deletable || self.client.get().flags.is_reconnecting;

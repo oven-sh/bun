@@ -360,5 +360,6 @@ const errors: ErrorCodeMapping = [
   // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
+  ["ERR_NOT_BUILDING_SNAPSHOT", Error],
 ];
 export default errors;

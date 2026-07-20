@@ -2,6 +2,7 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { validateString, validateOneOf } = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
 function notimpl(message) {
@@ -26,8 +27,14 @@ class GCProfiler {
   }
 }
 
+// Node derives this tag from the V8 version, command-line flags, and CPU
+// features; Bun mirrors that with its own version plus the flags recorded by
+// setFlagsFromString, so the tag is stable until the flags change.
+let versionTagFlags = "";
+let versionTag: number | undefined;
 function cachedDataVersionTag() {
-  notimpl("cachedDataVersionTag");
+  versionTag ??= Bun.hash.crc32(`bun ${Bun.version}-${Bun.revision}${versionTagFlags}`);
+  return versionTag;
 }
 var HeapSnapshotReadable_;
 function getHeapSnapshot() {
@@ -70,6 +77,7 @@ function getHeapStatistics() {
     total_physical_size: memory.peak,
     total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
+    total_allocated_bytes: stats.heapCapacity,
     heap_size_limit: Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
@@ -85,14 +93,72 @@ function getHeapStatistics() {
     external_memory: stats.extraMemorySize,
   };
 }
+// V8 divides its heap into fixed spaces; JSC manages one undivided heap, so
+// the JSC totals are reported under "old_space" and the other V8 space names
+// exist for shape compatibility.
+const kHeapSpaces = [
+  "read_only_space",
+  "new_space",
+  "old_space",
+  "code_space",
+  "shared_space",
+  "trusted_space",
+  "new_large_object_space",
+  "large_object_space",
+  "code_large_object_space",
+  "shared_large_object_space",
+  "shared_trusted_space",
+  "shared_trusted_large_object_space",
+  "trusted_large_object_space",
+];
 function getHeapSpaceStatistics() {
-  notimpl("getHeapSpaceStatistics");
+  const stats = jsc.heapStats();
+  const spaces = [];
+  for (let i = 0; i < kHeapSpaces.length; i++) {
+    const space_name = kHeapSpaces[i];
+    const isHeap = space_name === "old_space";
+    const used = isHeap ? stats.heapSize : 0;
+    const size = isHeap ? stats.heapCapacity : 0;
+    $arrayPush(spaces, {
+      space_name,
+      space_size: size,
+      space_used_size: used,
+      space_available_size: size > used ? size - used : 0,
+      physical_space_size: size,
+    });
+  }
+  return spaces;
 }
+// JSC does not expose a per-category code size breakdown; report zeros rather
+// than invented numbers, like node does for counters V8 is not tracking
+// (e.g. cpu_profiler_metadata_size).
 function getHeapCodeStatistics() {
-  notimpl("getHeapCodeStatistics");
+  return {
+    code_and_metadata_size: 0,
+    bytecode_and_metadata_size: 0,
+    external_script_source_size: 0,
+    cpu_profiler_metadata_size: 0,
+  };
 }
-function setFlagsFromString() {
-  notimpl("setFlagsFromString");
+function setFlagsFromString(flags) {
+  validateString(flags, "flags");
+  // V8 flags have no JSC equivalent; record them so cachedDataVersionTag
+  // changes like node's does, and otherwise ignore them.
+  versionTagFlags += ` ${flags}`;
+  versionTag = undefined;
+}
+// Bun has no cppgc (Oilpan) C++ heap, so the statistics are always empty;
+// this matches node's shape with nothing allocated through cppgc.
+function getCppHeapStatistics(type = "detailed") {
+  validateOneOf(type, "type", ["brief", "detailed"]);
+  return {
+    committed_size_bytes: 0,
+    resident_size_bytes: 0,
+    used_size_bytes: 0,
+    space_statistics: [],
+    type_names: [],
+    detail_level: type,
+  };
 }
 function deserialize(value) {
   return jsc.deserialize(value);
@@ -149,6 +215,10 @@ function writeHeapSnapshot(path, _options) {
 function setHeapSnapshotNearHeapLimit() {
   notimpl("setHeapSnapshotNearHeapLimit");
 }
+function throwNotBuildingSnapshot() {
+  throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
+}
+
 const promiseHooks = {
     createHook: () => {
       notimpl("createHook");
@@ -167,9 +237,9 @@ const promiseHooks = {
     },
   },
   startupSnapshot = {
-    addDeserializeCallback: () => notimpl("addDeserializeCallback"),
-    addSerializeCallback: () => notimpl("addSerializeCallback"),
-    setDeserializeMainFunction: () => notimpl("setDeserializeMainFunction"),
+    addDeserializeCallback: throwNotBuildingSnapshot,
+    addSerializeCallback: throwNotBuildingSnapshot,
+    setDeserializeMainFunction: throwNotBuildingSnapshot,
     // Bun never builds a V8 startup snapshot, so this is always false, matching
     // Node's behavior during normal execution.
     isBuildingSnapshot: () => false,
@@ -181,6 +251,7 @@ export default {
   getHeapStatistics,
   getHeapSpaceStatistics,
   getHeapCodeStatistics,
+  getCppHeapStatistics,
   setFlagsFromString,
   deserialize,
   takeCoverage,
@@ -198,11 +269,13 @@ export default {
 
 hideFromStack(
   notimpl,
+  throwNotBuildingSnapshot,
   cachedDataVersionTag,
   getHeapSnapshot,
   getHeapStatistics,
   getHeapSpaceStatistics,
   getHeapCodeStatistics,
+  getCppHeapStatistics,
   setFlagsFromString,
   deserialize,
   takeCoverage,

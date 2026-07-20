@@ -30,7 +30,7 @@ On older Windows, fall back to timeBeginPeriod(1).
 +typedef NTSTATUS (NTAPI *sNtCreateWaitCompletionPacket)
 +                 (PHANDLE WaitCompletionPacketHandle,
 +                  ACCESS_MASK DesiredAccess,
-+                  POBJECT_ATTRIBUTES ObjectAttributes);
++                  PVOID ObjectAttributes);
 +
 +typedef NTSTATUS (NTAPI *sNtAssociateWaitCompletionPacket)
 +                 (HANDLE WaitCompletionPacketHandle,

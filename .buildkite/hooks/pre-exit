@@ -28,12 +28,15 @@ status="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
 # build annotating every running job is noise, not signal. The agent's
 # Executor.Cancel() sets BUILDKITE_JOB_CANCELLED=true in the shell env
 # (buildkite/agent@3ab8ab31, v3.94.0+), and additionally
-# BUILDKITE_JOB_TIMED_OUT=true when the cancel was a job-level timeout. The
-# exit-code fallback covers agents still on v3.87.0 (the linux queue=ci image
-# at the time of writing): -1 is the posix agent-killed code, 3221225786 is
-# Windows STATUS_CONTROL_C_EXIT, both observed on cancel in build 76127.
-# Drop the fallback once every agent is v3.94.0+.
+# BUILDKITE_JOB_TIMED_OUT=true when the cancel was a job-level timeout.
 if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
+# TODO(ci): the exit-code fallback below is only needed while agents older than
+# v3.94.0 remain in the fleet (as of 2026-07: the linux queue=ci image is still
+# on v3.87.0 and several bare-metal darwin boxes are on v3.87.0/v3.94.0;
+# scripts/bootstrap.sh already pins 3.114.0, those images just need rebaking).
+# -1 is the posix agent-killed code, 3221225786 is Windows STATUS_CONTROL_C_EXIT,
+# both observed on cancel in build 76127. Delete this `case` once every agent is
+# v3.94.0+.
 case "$status" in -1|3221225786) exit 0 ;; esac
 
 if buildkite-agent meta-data exists "reported-${BUILDKITE_JOB_ID}" 2>/dev/null; then

@@ -463,9 +463,12 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "SREM requires at least a key and one member"
-            )));
+            return Err(global
+                .err(
+                    ErrorCode::MISSING_ARGS,
+                    format_args!("SREM requires at least a key and one member"),
+                )
+                .throw());
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -554,9 +557,12 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "SADD requires at least a key and one member"
-            )));
+            return Err(global
+                .err(
+                    ErrorCode::MISSING_ARGS,
+                    format_args!("SADD requires at least a key and one member"),
+                )
+                .throw());
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -589,9 +595,12 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "HMGET requires at least a key and one field"
-            )));
+            return Err(global
+                .err(
+                    ErrorCode::MISSING_ARGS,
+                    format_args!("HMGET requires at least a key and one field"),
+                )
+                .throw());
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -602,9 +611,12 @@ impl JSValkeyClient {
         if second_arg.is_array() {
             let array_len = second_arg.get_length(global)?;
             if array_len == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "HMGET requires at least one field"
-                )));
+                return Err(global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
+                        format_args!("HMGET requires at least one field"),
+                    )
+                    .throw());
             }
 
             let mut array_iter = second_arg.array_iterator(global)?;
@@ -708,10 +720,15 @@ impl JSValkeyClient {
             // Pattern 2: Variadic - hset(key, field, value, ...)
             let args_count = frame.arguments_count();
             if args_count < 3 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "{} requires at least key, field, and value arguments",
-                    bstr::BStr::new(command)
-                )));
+                return Err(global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
+                        format_args!(
+                            "{} requires at least key, field, and value arguments",
+                            bstr::BStr::new(command)
+                        ),
+                    )
+                    .throw());
             }
 
             let field_value_count = args_count - 1; // Exclude key
@@ -732,10 +749,15 @@ impl JSValkeyClient {
         }
 
         if args.len() == 1 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "{} requires at least one field-value pair",
-                bstr::BStr::new(command)
-            )));
+            return Err(global
+                .err(
+                    ErrorCode::MISSING_ARGS,
+                    format_args!(
+                        "{} requires at least one field-value pair",
+                        bstr::BStr::new(command)
+                    ),
+                )
+                .throw());
         }
 
         send_cmd(
@@ -1226,9 +1248,12 @@ impl JSValkeyClient {
         if channel_or_many.is_array() {
             let len = channel_or_many.get_length(global)?;
             if len == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "subscribe requires at least one channel"
-                )));
+                return Err(global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
+                        format_args!("subscribe requires at least one channel"),
+                    )
+                    .throw());
             }
             redis_channels.ensure_total_capacity(len as usize);
 
@@ -1410,9 +1435,12 @@ impl JSValkeyClient {
         if channel_or_many.is_array() {
             let len = channel_or_many.get_length(global)?;
             if len == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "unsubscribe requires at least one channel"
-                )));
+                return Err(global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
+                        format_args!("unsubscribe requires at least one channel"),
+                    )
+                    .throw());
             }
 
             redis_channels.reserve((len as usize).saturating_sub(redis_channels.len()));

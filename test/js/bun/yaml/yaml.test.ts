@@ -614,7 +614,9 @@ parent: &ref
 
       test("a merge key cannot alias a mapping whose body is still being parsed", () => {
         expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: *outer\n  extra: 1\n")).toThrow("Unresolved alias");
-        expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: [*outer]\n  extra: 1\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: [*outer]\n  extra: 1\n")).toThrow(
+          "Unresolved alias",
+        );
       });
 
       test("a merge key can alias a fully-parsed cyclic mapping", () => {

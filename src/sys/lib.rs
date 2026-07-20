@@ -838,7 +838,6 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
             path,
             WindowsOpenDirOptions {
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         )
@@ -3380,14 +3379,15 @@ mod posix_impl {
     }
 
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns a process-lifetime mmap slice; caller is responsible for
-    /// `munmap`.
+    /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
+    /// `delta = offset % page_size` is the byte offset into `map` at which the
+    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<&'static mut [u8]> {
+    ) -> Maybe<(&'static mut [u8], usize)> {
         let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
@@ -3396,22 +3396,36 @@ mod posix_impl {
             let result = fstat(fd)?;
             usize::try_from(result.st_size).unwrap_or(0)
         };
+
+        // mmap requires a page-aligned file offset. Map from the aligned
+        // offset and report the delta so the caller can slice to the
+        // requested byte.
+        let page = bun_alloc::page_size();
+        let delta = offset % page;
+        let aligned_offset = offset - delta;
+
         let mut size = stat_size.saturating_sub(offset);
         if let Some(size_) = wanted_size {
             size = size.min(size_);
         }
+        // When size == 0 (offset at/past EOF or size: 0) pass 0 so mmap
+        // returns EINVAL instead of mapping the leading delta bytes.
+        let map_len = if size == 0 { 0 } else { size + delta };
 
         match mmap(
             core::ptr::null_mut(),
-            size,
+            map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags,
             fd,
-            offset as i64,
+            aligned_offset as i64,
         ) {
             Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `size` bytes.
-                Ok(unsafe { core::slice::from_raw_parts_mut(ptr, size) })
+                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
+                Ok((
+                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
+                    delta,
+                ))
             }
             Err(err) => Err(err),
         }
@@ -6468,7 +6482,6 @@ pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<F
         WindowsOpenDirOptions {
             iterable: true,
             can_rename_or_delete: false,
-            read_only: true,
             ..Default::default()
         },
     )
@@ -6499,7 +6512,6 @@ pub struct WindowsOpenDirOptions {
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
     pub op: WindowsOpenDirOp,
-    pub read_only: bool,
 }
 #[cfg(windows)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -6941,6 +6953,9 @@ pub fn open_dir_at_windows_nt_path(
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
+    // No FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY: child creates via RootDirectory
+    // check the directory's ACL, not this handle's access mask, so requesting
+    // them only narrows where this open is admitted.
     let base_flags = w::STANDARD_RIGHTS_READ
         | w::FILE_READ_ATTRIBUTES
         | w::FILE_READ_EA
@@ -6956,12 +6971,7 @@ pub fn open_dir_at_windows_nt_path(
     } else {
         0
     };
-    let read_only_flag: u32 = if options.read_only {
-        0
-    } else {
-        w::FILE_ADD_FILE | w::FILE_ADD_SUBDIRECTORY
-    };
-    let flags = iterable_flag | base_flags | rename_flag | read_only_flag;
+    let flags = iterable_flag | base_flags | rename_flag;
     let open_reparse: u32 = if options.no_follow {
         w::FILE_OPEN_REPARSE_POINT
     } else {
@@ -7227,9 +7237,11 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     }
 
     let nonblock = (flags & O::NONBLOCK) != 0;
-    let overwrite = (flags & O::WRONLY) != 0 && (flags & O::APPEND) == 0;
 
-    let mut access_mask: u32 = w::READ_CONTROL | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
+    // Matches libuv fs__open: O_RDONLY asks for read access only. GENERIC_WRITE
+    // already includes FILE_WRITE_ATTRIBUTES for the write-mode branches; the
+    // fs.futimes path goes through uv_fs_futime which ReOpenFiles for it.
+    let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
         access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
     } else if (flags & O::APPEND) != 0 {
@@ -7240,22 +7252,17 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         access_mask |= w::GENERIC_READ;
     }
 
-    let disposition: u32 = 'blk: {
-        if (flags & O::CREAT) != 0 {
-            if (flags & O::EXCL) != 0 {
-                break 'blk w::FILE_CREATE;
-            }
-            break 'blk if overwrite {
-                w::FILE_OVERWRITE_IF
-            } else {
-                w::FILE_OPEN_IF
-            };
-        }
-        if overwrite {
-            w::FILE_OVERWRITE
-        } else {
-            w::FILE_OPEN
-        }
+    // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
+    // read/write access mode only affects `access_mask` above.
+    let creat = (flags & O::CREAT) != 0;
+    let excl = (flags & O::EXCL) != 0;
+    let truncate = (flags & O::TRUNC) != 0;
+    let disposition: u32 = match (creat, excl, truncate) {
+        (true, true, _) => w::FILE_CREATE,
+        (true, false, true) => w::FILE_OVERWRITE_IF,
+        (true, false, false) => w::FILE_OPEN_IF,
+        (false, _, true) => w::FILE_OVERWRITE,
+        (false, _, false) => w::FILE_OPEN,
     };
 
     let blocking_flag: u32 = if !nonblock {
@@ -7369,7 +7376,22 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             return false;
         }
         if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
-            // Check if the underlying file exists by opening it.
+            // Only name-surrogate reparse points (symlinks, mount points) stand in for
+            // another path. Non-surrogate tags such as IO_REPARSE_TAG_APPEXECLINK are
+            // opaque: the entry exists as-is and following it can fail spuriously.
+            let mut fd: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+            // SAFETY: path is NUL-terminated UTF-16; fd is valid for write.
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut fd) };
+            if find != bun_windows_sys::INVALID_HANDLE_VALUE {
+                // SAFETY: valid find handle from FindFirstFileW.
+                unsafe {
+                    let _ = w::FindClose(find);
+                }
+                if !w::is_reparse_tag_name_surrogate(fd.dwReserved0) {
+                    return true;
+                }
+            }
+            // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
             let rc = unsafe {
                 w::CreateFileW(

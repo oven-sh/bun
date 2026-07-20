@@ -2080,17 +2080,21 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     memcpy(owned, span.data(), span.size());
 
     // Invalidate every existing statement first — after the schema
-    // swap they reference tables that no longer exist. Bumping the
-    // open-generation makes every live JSStatementSync report
-    // isFinalized() without us having to track them explicitly (same
-    // mechanism close()+open() relies on), and Node finalizes its
-    // statements before deserializing too, so the bump stays ahead of
-    // the fallible call. We leave the underlying sqlite3_stmt* alone:
-    // the JS wrappers still own those handles and will
-    // sqlite3_finalize() them on GC, so finalizing here would make the
-    // wrapper double-free a dangling pointer. sqlite3_deserialize
-    // tolerates the outstanding stmts — they simply fail if stepped,
-    // which the generation check prevents.
+    // swap they reference tables that no longer exist. Node
+    // sqlite3_finalize()s its tracked statements here; we can't
+    // (the JS wrappers still own those handles and finalize on GC, so
+    // a pre-emptive finalize would double-free), but an un-reset
+    // iterate() cursor holds a read transaction that makes
+    // sqlite3_deserialize()'s internal ATTACH return SQLITE_BUSY.
+    // Reset every outstanding stmt on the connection so the swap
+    // succeeds, then bump the open-generation so every JSStatementSync
+    // reports isFinalized() (same mechanism close()+open() uses). The
+    // bump stays ahead of the fallible call to match Node, which
+    // finalizes unconditionally before deserializing.
+    for (sqlite3_stmt* s = sqlite3_next_stmt(self->connection(), nullptr); s;
+        s = sqlite3_next_stmt(self->connection(), s)) {
+        sqlite3_reset(s);
+    }
     self->bumpOpenGeneration();
 
     int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,
@@ -2121,16 +2125,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
+    // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
+    // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
     int capacity = 1000;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNumber()) {
-        capacity = arg0.toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (capacity < 1) capacity = 1;
+        capacity = JSC::toInt32(arg0.asNumber());
     }
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSNodeSqliteTagStoreClassStructure.get(zigGlobal);
-    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<unsigned>(capacity));
+    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<size_t>(capacity));
     return JSValue::encode(store);
 }
 
@@ -2612,7 +2617,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         RETURN_IF_EXCEPTION(scope, false);
         auto cmp = JSBigInt::compare(value, roundTrip);
         if (cmp != JSBigInt::ComparisonResult::Equal) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind"_s);
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind."_s);
             return false;
         }
         r = sqlite3_bind_int64(m_stmt, index, iv);
@@ -2626,7 +2631,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         r = sqlite3_bind_blob64(m_stmt, index, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT);
     } else {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-            makeString("Provided value cannot be bound to SQLite parameter "_s, index));
+            makeString("Provided value cannot be bound to SQLite parameter "_s, index, '.'));
         return false;
     }
     if (r != SQLITE_OK) {
@@ -3524,7 +3529,7 @@ void JSNodeSqliteLimits::getOwnPropertyNames(JSObject* object, JSGlobalObject* g
 const ClassInfo JSNodeSqliteTagStore::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStore) };
 const ClassInfo JSNodeSqliteTagStorePrototype::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStorePrototype) };
 
-JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, unsigned capacity)
+JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, size_t capacity)
 {
     auto* ptr = new (NotNull, allocateCell<JSNodeSqliteTagStore>(vm)) JSNodeSqliteTagStore(vm, structure);
     ptr->finishCreation(vm, db, capacity);
@@ -3535,7 +3540,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsTagStoreCapacity);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreDb);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreSize);
 
-void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, unsigned capacity)
+void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, size_t capacity)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -3689,11 +3694,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
 
         {
             WTF::Locker locker { cellLock() };
-            if (m_order.size() >= m_capacity) m_order.removeLast();
             Entry e;
             e.sql = sqlStr;
             e.stmt.set(vm, this, stmtObj);
             m_order.insert(0, std::move(e));
+            // Node's LRUCache::Put inserts then evicts with `size > capacity`,
+            // so capacity=0 prepares but never caches.
+            if (m_order.size() > m_capacity) m_order.removeLast();
         }
     }
 
@@ -3799,13 +3806,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsTagStoreCapacity, (JSGlobalObject*, EncodedJSValue th
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->capacity()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->capacity())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreSize, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->size()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->size())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreDb, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {

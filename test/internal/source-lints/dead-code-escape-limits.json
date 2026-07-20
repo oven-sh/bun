@@ -16,7 +16,7 @@
   "src/jsc_macros/lib.rs": 2,
   "src/opaque/lib.rs": 5,
   "src/patch/lib.rs": 2,
-  "src/runtime/api/bun/Terminal.rs": 2,
+  "src/runtime/api/bun/Terminal.rs": 1,
   "src/runtime/cli/test/ChangedFilesFilter.rs": 1,
   "src/runtime/dns_jsc/dns.rs": 5,
   "src/runtime/image/backend_coregraphics.rs": 14,

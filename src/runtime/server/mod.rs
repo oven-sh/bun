@@ -2078,7 +2078,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The packed `AnyServer` is a pure function of the (now-stable) heap
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
-        // `TaggedPointer::init`.
+        // `TaggedPtr::init`.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
         unsafe {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
@@ -2305,18 +2305,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // --- 4. Register negative routes ---
+        // A `false` route means "fall through to the default handler": same
+        // ladder as the `/*` fallback in step 9. H3 stays on on_h3_request,
+        // which already falls back to on_h3_404 when on_request is empty.
+        let negative_h1 = if !self.config.on_node_http_request.is_empty() {
+            trampoline::on_node_http_request::<SSL, DEBUG>
+        } else if !self.config.on_request.is_empty() {
+            trampoline::on_request::<SSL, DEBUG>
+        } else {
+            trampoline::on_404::<SSL, DEBUG>
+        };
         for route_path in self.config.negative_routes.iter() {
             let p = route_path.as_bytes();
-            app.head(
-                p,
-                Some(trampoline::on_request::<SSL, DEBUG>),
-                self_ptr.cast(),
-            );
-            app.any(
-                p,
-                Some(trampoline::on_request::<SSL, DEBUG>),
-                self_ptr.cast(),
-            );
+            app.head(p, Some(negative_h1), self_ptr.cast());
+            app.any(p, Some(negative_h1), self_ptr.cast());
             if Self::HAS_H3 {
                 if let Some(h3_app) = self.h3_app {
                     // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -3686,7 +3688,7 @@ impl AnyServer {
             AnyServerTag::DebugHTTPSServer => 1021,
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
-        bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
+        bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
     }
 
     /// Shared borrow of the process-static VM. Routes through
@@ -3959,7 +3961,7 @@ pub mod http_server_agent {
                 this.next_server_id,
                 (*instance.vm()).hot_reload_counter as i32,
                 &url,
-                bun_core::Timespec::now_allow_mocked_time().ms() as f64,
+                bun_core::time::milli_timestamp() as f64,
                 instance.ptr.cast(),
             );
         }

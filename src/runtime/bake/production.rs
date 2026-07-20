@@ -710,12 +710,10 @@ pub(super) fn build_with_vm(
             // wrapper functions like `__esm`) is marked as server side, but it is
             // also used by client
             if file.bake_extra.bake_is_runtime {
-                if cfg!(debug_assertions) {
-                    debug_assert!(
-                        maybe_runtime_file_index.is_none(),
-                        "Runtime file should only be in one chunk."
-                    );
-                }
+                debug_assert!(
+                    maybe_runtime_file_index.is_none(),
+                    "Runtime file should only be in one chunk."
+                );
                 maybe_runtime_file_index = Some(u32::try_from(i).expect("int cast"));
             }
 
@@ -1380,9 +1378,7 @@ pub(super) extern "C" fn BakeProdResolve(
         return BunString::dead();
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
-    }
+    debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
 
     // dirname semantics: returns None for the root / no-parent.
     let after_scheme = &referrer.slice()[5..];

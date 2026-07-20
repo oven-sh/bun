@@ -1024,8 +1024,6 @@ impl Default for IntegerRange {
         }
     }
 }
-/// Back-compat alias — earlier ports spelled this `IntegerRangeOptions`.
-pub type IntegerRangeOptions = IntegerRange;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ResolvedSource — `#[repr(C)]` mirror of the C struct in
@@ -1518,8 +1516,6 @@ pub mod module_loader;
 pub use self::module_loader as ModuleLoader;
 
 pub type ErrorableResolvedSource = Errorable<ResolvedSource>;
-pub type ErrorableZigString = Errorable<bun_core::ZigString>;
-pub type ErrorableJSValue = Errorable<JSValue>;
 pub type ErrorableString = Errorable<bun_core::String>;
 
 #[path = "hot_reloader.rs"]

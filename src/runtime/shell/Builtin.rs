@@ -578,9 +578,6 @@ impl Builtin {
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
 
-                // Regular files are not pollable on linux/macos.
-                let is_pollable_default: bool = cfg!(windows);
-
                 let mut pollable = false;
                 let mut is_socket = false;
                 let mut is_nonblocking = false;
@@ -671,15 +668,13 @@ impl Builtin {
                     return None;
                 }
 
-                // The IOWriter receives the hardcoded platform const
-                // `is_pollable` (false on POSIX, true on Windows); the
-                // `pollable` out-param populated by `open_for_writing_impl`
-                // is intentionally ignored.
-                let _ = pollable;
+                // Honor the `pollable` computed by `open_for_writing_impl` on
+                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
+                // takes the pollable path; Windows keeps the async writer.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: is_pollable_default,
+                        pollable: if cfg!(windows) { true } else { pollable },
                         nonblock: is_nonblocking,
                         is_socket,
                         ..Default::default()

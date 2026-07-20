@@ -323,7 +323,7 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
 //   fallback                 → libc-malloc + zeroing wrapper
-//   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
+//   maybe_owned              → prefer `std::borrow::Cow` / `Box<T>`
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //

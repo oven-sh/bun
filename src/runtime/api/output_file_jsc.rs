@@ -6,7 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
@@ -124,7 +124,6 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                    sourcemap: StrongOptional::empty(),
                 });
 
                 // Ownership transfers to the JS `BuildArtifact` wrapper
@@ -162,7 +161,6 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
-                    sourcemap: StrongOptional::empty(),
                 });
 
                 // See `Copy` arm.
@@ -185,7 +183,6 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path,
-                    sourcemap: StrongOptional::empty(),
                 });
 
                 // See `Copy` arm.

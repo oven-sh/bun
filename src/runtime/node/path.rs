@@ -3057,9 +3057,8 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                         memmove(dst, &r[..buf_size]);
                     } else {
                         // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                        let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(
-                            &mut tmp_buf[resolved_device_len..],
-                        );
+                        let dst: &mut [u8] =
+                            bytemuck::cast_slice_mut::<T, u8>(&mut tmp_buf[resolved_device_len..]);
                         buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
                     }
                     env_path_len = Some(buf_size);

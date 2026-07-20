@@ -456,7 +456,7 @@ impl JSValkeyClient {
         let promise = match this.send(global, &cmd) {
             Ok(p) => p,
             Err(err) => {
-                return send_err_to_js(global, "Failed to send command", &err);
+                return send_err_to_js(global, "Failed to send command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -1680,7 +1680,7 @@ impl JSValkeyClient {
                         .get()
                         .clear_receive_handlers(global, *ch)?;
                 }
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
+                return send_err_to_js(global, "Failed to send SUBSCRIBE command", err);
             }
         };
 

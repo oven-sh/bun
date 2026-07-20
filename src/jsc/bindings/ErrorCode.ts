@@ -301,6 +301,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_INVALID_PASSWORD", Error, "RedisError"],
   ["ERR_REDIS_INVALID_RESPONSE", Error, "RedisError"],
   ["ERR_REDIS_INVALID_RESPONSE_TYPE", Error, "RedisError"],
+  ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_REDIS_INVALID_SIMPLE_STRING", Error, "RedisError"],
   ["ERR_REDIS_INVALID_STATE", Error, "RedisError"],
   ["ERR_REDIS_INVALID_USERNAME", Error, "RedisError"],

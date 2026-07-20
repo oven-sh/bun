@@ -20,21 +20,17 @@ pub fn valkey_error_to_js(
         RedisError::ConnectionClosed => JscError::REDIS_CONNECTION_CLOSED,
         RedisError::InvalidResponse => JscError::REDIS_INVALID_RESPONSE,
         RedisError::InvalidBulkString => JscError::REDIS_INVALID_BULK_STRING,
-        RedisError::InvalidArray => JscError::REDIS_INVALID_ARRAY,
         RedisError::InvalidInteger => JscError::REDIS_INVALID_INTEGER,
-        RedisError::InvalidSimpleString => JscError::REDIS_INVALID_SIMPLE_STRING,
-        RedisError::InvalidErrorString => JscError::REDIS_INVALID_ERROR_STRING,
         RedisError::InvalidDouble
         | RedisError::InvalidBoolean
-        | RedisError::InvalidNull
         | RedisError::InvalidMap
         | RedisError::InvalidSet
-        | RedisError::InvalidBigNumber
         | RedisError::InvalidVerbatimString
         | RedisError::InvalidBlobError
         | RedisError::InvalidAttribute
         | RedisError::InvalidPush => JscError::REDIS_INVALID_RESPONSE,
         RedisError::AuthenticationFailed => JscError::REDIS_AUTHENTICATION_FAILED,
+        RedisError::ServerError => JscError::REDIS_SERVER_ERROR,
         RedisError::InvalidCommand => JscError::REDIS_INVALID_COMMAND,
         RedisError::InvalidArgument => JscError::REDIS_INVALID_ARGUMENT,
         RedisError::UnsupportedProtocol => JscError::REDIS_INVALID_RESPONSE,
@@ -43,12 +39,7 @@ pub fn valkey_error_to_js(
         RedisError::IdleTimeout => JscError::REDIS_IDLE_TIMEOUT,
         RedisError::NestingDepthExceeded => JscError::REDIS_INVALID_RESPONSE,
         RedisError::LineTooLong => JscError::REDIS_INVALID_RESPONSE,
-        RedisError::JSError => return global.take_exception(JsError::Thrown),
-        RedisError::OutOfMemory => {
-            let _ = global.throw_out_of_memory();
-            return global.take_exception(JsError::Thrown);
-        }
-        RedisError::JSTerminated => return global.take_exception(JsError::Terminated),
+        RedisError::OutOfMemory => return global.take_exception(JsError::OutOfMemory),
     };
 
     let msg = message.as_ref();
@@ -98,7 +89,7 @@ pub fn resp_value_to_js_with_options(
         RESPValue::Error(str) => Ok(valkey_error_to_js(
             global,
             &**str,
-            RedisError::InvalidResponse,
+            RedisError::ServerError,
         )),
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
@@ -119,7 +110,7 @@ pub fn resp_value_to_js_with_options(
         RESPValue::BlobError(str) => Ok(valkey_error_to_js(
             global,
             &**str,
-            RedisError::InvalidBlobError,
+            RedisError::ServerError,
         )),
         RESPValue::VerbatimString(verbatim) => {
             valkey_str_to_js_value(global, &mut verbatim.content, options)

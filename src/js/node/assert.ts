@@ -621,8 +621,7 @@ function isIndexKey(key) {
 // Own enumerable check on both sides, matching node's partial mode.
 function compareBranchOwnProperty(actual, expected, key, comparedObjects) {
   return (
-    ObjectPrototypePropertyIsEnumerable.$call(actual, key) &&
-    compareBranch(actual[key], expected[key], comparedObjects)
+    ObjectPrototypePropertyIsEnumerable.$call(actual, key) && compareBranch(actual[key], expected[key], comparedObjects)
   );
 }
 

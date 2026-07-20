@@ -868,9 +868,7 @@ mod draft {
 
     /// GP register snapshot at the fault, lifted from `ucontext_t` / `CONTEXT`
     /// and encoded into the v3/v4 trace string so the remapper has register
-    /// state when the stack walk is short. Slot order is shared with bun.report:
-    ///   x86_64:  rax rbx rcx rdx rdi rsi rbp rsp r8 r9 r10 r11 r12 r13 r14 r15 rip
-    ///   aarch64: x0..x28 fp lr sp pc
+    /// state when the stack walk is short. Slot order: `NAMES` (bun.report).
     #[derive(Clone, Copy)]
     pub struct FaultRegisters {
         /// Faulting instruction pointer (raw, ASLR not removed). Becomes stack
@@ -904,7 +902,6 @@ mod draft {
         pub const NAMES: &[&str] = &[];
 
         pub const COUNT: u8 = Self::NAMES.len() as u8;
-        const _CHECK: () = assert!(Self::NAMES.len() <= Self::MAX);
 
         const fn empty(pc: usize, fp: usize) -> Self {
             Self {
@@ -930,6 +927,10 @@ mod draft {
             &self.values[..self.count as usize]
         }
     }
+
+    // Free const: associated `impl` consts are lazy, so the bound check lives
+    // at module scope where it is always evaluated.
+    const _: () = assert!(FaultRegisters::NAMES.len() <= FaultRegisters::MAX);
 
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]

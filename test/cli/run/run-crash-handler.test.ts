@@ -213,7 +213,6 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     // Non-fault reasons stay byte-identical to v1 (so '0'/'8' remain
     // end-of-string terminated): body ends at reason '9', no `_A` suffix.
     expect(body.endsWith("A9"), `payload=${body}`).toBe(true);
-    expect(body.endsWith("_A"), `payload=${body}`).toBe(false);
 
     expect(exitCode).not.toBe(0);
   });

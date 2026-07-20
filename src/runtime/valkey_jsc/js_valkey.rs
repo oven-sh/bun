@@ -707,7 +707,7 @@ impl JSValkeyClient {
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
-                tls: if options.tls != valkey::TLS::None {
+                tls: if !options.tls.is_none() {
                     options.tls
                 } else if uri.is_tls() {
                     valkey::TLS::Enabled
@@ -1562,7 +1562,7 @@ impl JSValkeyClient {
         // Forgotten on success (the socket adopts it).
         let socket_ref = self.ref_scope();
 
-        let is_tls = self.client.get().tls != valkey::TLS::None;
+        let is_tls = !self.client.get().tls.is_none();
         // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
         // is `&'static`. Cast through raw — the per-thread VM is single-owner
         // on the JS thread, and `valkey_group` only touches the embedded

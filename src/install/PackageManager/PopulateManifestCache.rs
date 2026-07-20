@@ -54,7 +54,7 @@ fn start_manifest_task(
     // before `scope_for_package_name` so a crafted lockfile name like
     // `@priv%2fx` can't bypass `[install.scopes]`.
     if !bun_core::strings::is_url_safe_package_name(pkg_name) {
-        if dep.behavior.is_required() {
+        if !dep.behavior.contains(Behavior::OPTIONAL) {
             manager.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,

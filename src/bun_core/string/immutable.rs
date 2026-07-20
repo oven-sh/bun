@@ -629,6 +629,9 @@ pub fn is_url_safe_package_name(target: &[u8]) -> bool {
             return false;
         };
         let slash = slash as usize;
+        if slash < 2 || slash + 1 >= target.len() {
+            return false;
+        }
         return target[1..slash].iter().all(|&c| is_uri_component_char(c))
             && target[slash + 1..]
                 .iter()

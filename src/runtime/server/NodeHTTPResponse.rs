@@ -652,11 +652,12 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // The body is fully received once either body_read_state left Pending
-        // or its fin was captured during a pause (the LAST flag is set without
-        // transitioning body_read_state).
+        // The body is fully received once body_read_state left Pending, or fin
+        // was captured during a pause and nothing is left in that buffer (so
+        // mark_request_as_done's clear_and_free does not drop user data).
         let body_pending = self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+            && !(flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+                && self.buffered_request_body_data_during_pause.get().is_empty());
 
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP

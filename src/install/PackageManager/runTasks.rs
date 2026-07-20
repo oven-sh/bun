@@ -203,9 +203,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // — reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
@@ -335,9 +333,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
@@ -911,9 +907,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if task_ptr.is_null() {
             break;
         }
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         // raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.

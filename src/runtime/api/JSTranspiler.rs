@@ -647,8 +647,6 @@ impl Config {
     }
 }
 
-// Legacy alias for backwards compatibility during migration
-
 // Mimalloc gets unstable if we try to move this to a different thread
 // threadlocal var transform_buffer: bun.MutableString = undefined;
 // threadlocal var transform_buffer_loaded: bool = false;

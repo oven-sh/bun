@@ -307,6 +307,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_TLS_NOT_AVAILABLE", Error, "RedisError"],
   ["ERR_REDIS_TLS_UPGRADE_FAILED", Error, "RedisError"],
   ["HPE_UNEXPECTED_CONTENT_LENGTH", Error],
+  ["HPE_INVALID_CONTENT_LENGTH", Error],
   ["HPE_INVALID_TRANSFER_ENCODING", Error],
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],
@@ -359,5 +360,6 @@ const errors: ErrorCodeMapping = [
   // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
+  ["ERR_NOT_BUILDING_SNAPSHOT", Error],
 ];
 export default errors;

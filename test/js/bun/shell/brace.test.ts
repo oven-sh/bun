@@ -214,17 +214,16 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
   test("shell: literal {} inside an expanding group keeps the tail", async () => {
     // Run in a subprocess so the pre-fix index-out-of-bounds panic on
     // `}{,` / `{foo},x` is observed as a non-zero exit instead of killing
-    // the test runner.
+    // the test runner. `echo` is a shell builtin so the argv words are
+    // observed exactly as the expander produced them on every platform.
     const script = `
       const { $ } = require("bun");
       $.nothrow();
-      const cases = ${JSON.stringify(cases)};
-      for (const [input, expected] of cases) {
-        const { stdout } = await $\`printf '[%s]' \${{ raw: input }}\`.quiet();
-        console.log(JSON.stringify([input, stdout.toString()]));
+      const cases = ${JSON.stringify([...cases, ["}{,", ["}{,"]]])};
+      for (const [input] of cases) {
+        const { stdout } = await $\`echo \${{ raw: input }}\`.quiet();
+        console.log(JSON.stringify([input, stdout.toString().slice(0, -1)]));
       }
-      const { stdout } = await $\`printf '[%s]' }{,\`.quiet();
-      console.log(JSON.stringify(["}{,", stdout.toString()]));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -232,16 +231,24 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const lines = stdout
       .trim()
       .split("\n")
       .map(l => JSON.parse(l));
-    expect(lines).toEqual([
-      ...cases.map(([input, expected]) => [input, expected.map(s => `[${s}]`).join("")]),
-      ["}{,", "[}{,]"],
-    ]);
-    expect(stderr).toBe("");
+    expect(lines).toEqual([...cases.map(([input, expected]) => [input, expected.join(" ")]), ["}{,", "}{,"]]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a word with a comma-less brace group and a glob keeps its pattern", async () => {
+    // `{x},*.txt` sets both the brace and glob hints; after the lexer demotes
+    // `{x}` to text the brace-expand count is 0. The original pattern must
+    // still reach the glob walker rather than being taken as the literal word.
+    using dir = tempDir("shell-brace-literal-glob", { "a.txt": "" });
+    const { stderr, exitCode } = await $`echo {x},*.txt`.cwd(String(dir)).nothrow().quiet();
+    expect({ stderr: stderr.toString(), exitCode }).toEqual({
+      stderr: "bun: no matches found: {x},*.txt\n",
+      exitCode: 1,
+    });
   });
 });

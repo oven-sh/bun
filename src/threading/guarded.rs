@@ -3,7 +3,6 @@
 use core::cell::UnsafeCell;
 
 use crate::Mutex;
-use bun_safety::ThreadLock;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// This type uses `bun_threading::Mutex` internally.
@@ -162,16 +161,5 @@ impl RawMutex for Mutex {
     #[inline]
     fn unlock(&self) {
         Mutex::unlock(self)
-    }
-}
-
-impl RawMutex for ThreadLock {
-    #[inline]
-    fn lock(&self) {
-        ThreadLock::lock(self)
-    }
-    #[inline]
-    fn unlock(&self) {
-        ThreadLock::unlock(self)
     }
 }

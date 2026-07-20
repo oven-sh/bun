@@ -155,9 +155,9 @@ export function serialize(message, handle, _options) {
     if (!native) return null;
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
   }
-  if (handle instanceof require("node:dgram").Socket) {
-    return null;
-  }
+  // dgram.Socket transfer (supported by node) is not implemented yet; it
+  // falls through to the loud error rather than silently sending the
+  // message without its handle.
   throw $ERR_INVALID_HANDLE_TYPE();
 }
 /**

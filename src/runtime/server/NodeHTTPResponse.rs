@@ -188,9 +188,15 @@ pub enum BodyReadState {
 
 unsafe extern "C" {
     // `socket` is the opaque uSockets handle from `AnyResponse::socket()`; C++
-    // only reads its ext slot. Module-private — the sole callers below pass a
-    // live handle, so no caller-side precondition remains.
-    safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
+    // only reads its ext slot. `ctx` is this NodeHTTPResponse's own heap address
+    // so a pipelined response resolves to its own JS wrapper (not the
+    // connection's in-flight `currentResponseObject`). Module-private — the sole
+    // callers below pass a live handle, so no caller-side precondition remains.
+    safe fn Bun__getNodeHTTPResponseThisValue(
+        is_ssl: bool,
+        socket: *mut c_void,
+        ctx: *mut c_void,
+    ) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
     // Moves the connection's captured node:http request-trailer section out.
@@ -423,7 +429,11 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
-        Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
+        Bun__getNodeHTTPResponseThisValue(
+            any_response_is_ssl(&raw),
+            raw.socket().cast(),
+            (self as *const Self).cast_mut().cast(),
+        )
     }
 
     pub(crate) fn get_server_socket_value(&self) -> JSValue {
@@ -1351,6 +1361,10 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
+            // This request's body is already fully delivered: re-arming onData
+            // would overwrite a pipelined request's userData on the shared
+            // HttpResponseData and route that request's body chunks here.
+            || self.body_read_state.get() != BodyReadState::Pending
         {
             return Ok(JSValue::FALSE);
         }
@@ -1416,6 +1430,10 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
+            // This request's body is already fully delivered: re-arming onData /
+            // onTimeout would overwrite a pipelined request's userData on the
+            // shared HttpResponseData and route that request's body chunks here.
+            || self.body_read_state.get() != BodyReadState::Pending
         {
             return JSValue::FALSE;
         }

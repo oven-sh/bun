@@ -2726,6 +2726,85 @@ it("pipelined responses buffered past the high water mark pause reads on the con
   }
 });
 
+describe("pipelined POST bodies behind an async handler", () => {
+  // Two POSTs arrive in one TCP segment; the first handler defers res.end() so
+  // the second is dispatched while the first response is still in flight. The
+  // second request's 'data'/'end' must still fire, matching Node.
+  async function check(payload: string, expected: Record<string, string>) {
+    const results: Record<string, string> = {};
+    const urls = Object.keys(expected);
+    const last = urls[urls.length - 1];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", c => (body += c));
+      req.on("end", () => {
+        results[req.url!] = body;
+        if (req.url === last) {
+          res.setHeader("Content-Length", "1");
+          res.end("x");
+          resolve();
+        } else {
+          setTimeout(() => {
+            res.setHeader("Content-Length", "1");
+            res.end("x");
+          }, 20);
+        }
+      });
+    });
+    server.on("clientError", (err, sock) => {
+      sock.destroy();
+      reject(err);
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1", () => socket.write(payload));
+      socket.on("error", () => {});
+      socket.resume();
+      await promise;
+      expect(results).toEqual(expected);
+      socket.destroy();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  it("Content-Length bodies", async () => {
+    await check(
+      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nxyz",
+      { "/a": "abc", "/b": "xyz" },
+    );
+  });
+
+  it("chunked bodies", async () => {
+    await check(
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nxyz\r\n0\r\n\r\n",
+      { "/a": "abc", "/b": "xyz" },
+    );
+  });
+
+  it("three pipelined POSTs", async () => {
+    await check(
+      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\naaa" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nbbb" +
+        "POST /c HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nccc",
+      { "/a": "aaa", "/b": "bbb", "/c": "ccc" },
+    );
+  });
+
+  it("GET then POST", async () => {
+    await check(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nxyz",
+      { "/a": "", "/b": "xyz" },
+    );
+  });
+});
+
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
   // The native parser exempts Upgrade requests from the Host check so genuine
   // upgrades can reach the 'upgrade' event, but a request that falls through

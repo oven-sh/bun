@@ -150,14 +150,6 @@ pub fn resp_value_to_js_with_options(
 
             Ok(js_obj)
         }
-        RESPValue::BigNumber(str) => {
-            // Try to parse as number if possible
-            if let Ok(int) = bun_core::fmt::parse_int::<i64>(str, 10) {
-                Ok(JSValue::js_number(int as f64))
-            } else {
-                // If it doesn't fit in an i64, return as string
-                bun_string_jsc::create_utf8_for_js(global, str)
-            }
-        }
+        RESPValue::BigNumber(str) => bun_string_jsc::create_utf8_for_js(global, str),
     }
 }

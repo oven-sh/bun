@@ -386,7 +386,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = self.read_integer()?;
                 if len < 0 {
-                    return Ok(RESPValue::Array(Vec::new()));
+                    return Ok(RESPValue::Null);
                 }
                 let len = usize::try_from(len).expect("int cast");
                 let mut array =
@@ -401,7 +401,9 @@ impl<'a> ValkeyReader<'a> {
 
             // RESP3 types
             RESPType::Null => {
-                let _ = self.read_until_crlf()?; // Read and discard CRLF
+                if !self.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidResponseType);
+                }
                 Ok(RESPValue::Null)
             }
             RESPType::Double => {

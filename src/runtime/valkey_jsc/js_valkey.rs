@@ -562,7 +562,7 @@ impl JSValkeyClient {
             && !arguments[1].is_undefined_or_null()
             && arguments[1].is_object()
         {
-            Options::from_js(&global_object, arguments[1])?
+            parse_valkey_options_from_js(&global_object, arguments[1])?
         } else {
             valkey::Options::default()
         };
@@ -1903,84 +1903,70 @@ impl<const SSL: bool> SocketHandler<SSL> {
 // ───────────────────────────────────────────────────────────────────────────
 
 // Parse JavaScript options into Valkey client options
-struct Options;
+fn parse_valkey_options_from_js(
+    global_object: &JSGlobalObject,
+    options_obj: JSValue,
+) -> JsResult<valkey::Options> {
+    let mut this = valkey::Options::default();
 
-impl Options {
-    pub(crate) fn from_js(
-        global_object: &JSGlobalObject,
-        options_obj: JSValue,
-    ) -> JsResult<valkey::Options> {
-        let mut this = valkey::Options {
-            enable_auto_pipelining:
-                !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
-                    .get()
-                    .unwrap_or(false),
-            ..Default::default()
-        };
-
-        if let Some(idle_timeout) =
-            options_obj.get_optional_int::<u32>(global_object, "idleTimeout")?
-        {
-            this.idle_timeout_ms = idle_timeout;
-        }
-
-        if let Some(connection_timeout) =
-            options_obj.get_optional_int::<u32>(global_object, "connectionTimeout")?
-        {
-            this.connection_timeout_ms = connection_timeout;
-        }
-
-        if let Some(auto_reconnect) =
-            options_obj.get_if_property_exists(global_object, "autoReconnect")?
-        {
-            this.enable_auto_reconnect = auto_reconnect.to_boolean();
-        }
-
-        if let Some(max_retries) =
-            options_obj.get_optional_int::<u32>(global_object, "maxRetries")?
-        {
-            this.max_retries = max_retries;
-        }
-
-        if let Some(enable_offline_queue) =
-            options_obj.get_if_property_exists(global_object, "enableOfflineQueue")?
-        {
-            this.enable_offline_queue = enable_offline_queue.to_boolean();
-        }
-
-        if let Some(enable_auto_pipelining) =
-            options_obj.get_if_property_exists(global_object, "enableAutoPipelining")?
-        {
-            this.enable_auto_pipelining = enable_auto_pipelining.to_boolean();
-        }
-
-        if let Some(tls) = options_obj.get_if_property_exists(global_object, "tls")? {
-            if tls.is_boolean() || tls.is_undefined_or_null() {
-                this.tls = if tls.to_boolean() {
-                    valkey::TLS::Enabled
-                } else {
-                    valkey::TLS::None
-                };
-            } else if tls.is_object() {
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
-                if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
-                {
-                    this.tls = valkey::TLS::Custom(Box::new(ssl_config));
-                } else {
-                    return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
-                }
-            } else {
-                return Err(global_object.throw_invalid_argument_type(
-                    "tls",
-                    "tls",
-                    "boolean or object",
-                ));
-            }
-        }
-
-        Ok(this)
+    if let Some(idle_timeout) = options_obj.get_optional_int::<u32>(global_object, "idleTimeout")? {
+        this.idle_timeout_ms = idle_timeout;
     }
+
+    if let Some(connection_timeout) =
+        options_obj.get_optional_int::<u32>(global_object, "connectionTimeout")?
+    {
+        this.connection_timeout_ms = connection_timeout;
+    }
+
+    if let Some(auto_reconnect) =
+        options_obj.get_if_property_exists(global_object, "autoReconnect")?
+    {
+        this.enable_auto_reconnect = auto_reconnect.to_boolean();
+    }
+
+    if let Some(max_retries) = options_obj.get_optional_int::<u32>(global_object, "maxRetries")? {
+        this.max_retries = max_retries;
+    }
+
+    if let Some(enable_offline_queue) =
+        options_obj.get_if_property_exists(global_object, "enableOfflineQueue")?
+    {
+        this.enable_offline_queue = enable_offline_queue.to_boolean();
+    }
+
+    if let Some(enable_auto_pipelining) =
+        options_obj.get_if_property_exists(global_object, "enableAutoPipelining")?
+    {
+        this.enable_auto_pipelining = enable_auto_pipelining.to_boolean();
+    }
+
+    if let Some(tls) = options_obj.get_if_property_exists(global_object, "tls")? {
+        if tls.is_boolean() || tls.is_undefined_or_null() {
+            this.tls = if tls.to_boolean() {
+                valkey::TLS::Enabled
+            } else {
+                valkey::TLS::None
+            };
+        } else if tls.is_object() {
+            // SAFETY: `bun_vm()` returns the live per-global VM pointer.
+            if let Some(ssl_config) =
+                SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
+            {
+                this.tls = valkey::TLS::Custom(Box::new(ssl_config));
+            } else {
+                return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
+            }
+        } else {
+            return Err(global_object.throw_invalid_argument_type(
+                "tls",
+                "tls",
+                "boolean or object",
+            ));
+        }
+    }
+
+    Ok(this)
 }
 
 impl JSValkeyClient {

@@ -173,7 +173,10 @@ impl Default for Options {
             enable_auto_reconnect: true,
             max_retries: 20,
             enable_offline_queue: true,
-            enable_auto_pipelining: true,
+            enable_auto_pipelining:
+                !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
+                    .get()
+                    .unwrap_or(false),
             tls: TLS::None,
         }
     }
@@ -1097,15 +1100,6 @@ impl ValkeyClient {
             return Ok(());
         };
 
-        // Handle the response based on command type
-        if pair.meta.contains(command::Meta::RETURN_AS_BOOL) {
-            // EXISTS returns 1 if key exists, 0 if not - we convert to boolean
-            if let RESPValue::Integer(int_value) = *value {
-                *value = RESPValue::Boolean(int_value > 0);
-            }
-        }
-
-        // Resolve the promise with the potentially transformed value
         let global_this = self.global_object();
 
         let _exit = self.vm.enter_event_loop_scope();

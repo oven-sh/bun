@@ -115,12 +115,9 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
   test.each(LONG_SPLITS)("BlobError (!) torn at byte %i decodes instead of failing the connection", async splitAt => {
     const server = createTornReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`, splitAt);
     await withClient(server, async client => {
-      // A parsed BlobError resolves (not rejects) with an Error carrying the
-      // server's message. Before the fix this rejected with
-      // "Failed to read data (stack path)" and killed the connection.
-      const result = await client.get("k");
-      expect(result).toBeInstanceOf(Error);
-      expect((result as unknown as Error).message).toBe("SYNTAX invalid syntax");
+      // A parsed BlobError rejects the command promise with the server's
+      // message but leaves the connection open for subsequent commands.
+      await expect(client.get("k")).rejects.toThrow("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });

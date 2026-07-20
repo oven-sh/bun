@@ -318,7 +318,7 @@ function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[]
   const results = new Set<string>();
   for (const pattern of patterns) {
     for (const match of new Bun.Glob(pattern).scanSync({ cwd, onlyFiles: true })) {
-      if (match.split("/").includes("node_modules") || match.split(require("node:path").sep).includes("node_modules")) {
+      if (match.split("/").includes("node_modules") || match.split(path.sep).includes("node_modules")) {
         continue;
       }
       results.add(path.resolve(cwd, match));
@@ -356,13 +356,20 @@ function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
 }
 
+// Per-run bookkeeping for SIGINT/SIGTERM: kept as a closure local so two
+// overlapping run() calls cannot clobber each other's child/interrupt state.
+type RunInterruptState = {
+  interrupted: boolean;
+  childProc: { kill: () => void } | null;
+  fileNode: Record<string, unknown> | null;
+};
+
 // Runs each file in its own `bun test` child and republishes the child's events
 // on the parent's stream, then emits the run-level plan/diagnostics/summary.
 async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
   const started = performance.now();
   const counts = makeRunCounts();
-  runInterrupted = false;
-  activeRunFileNode = null;
+  const state: RunInterruptState = { interrupted: false, childProc: null, fileNode: null };
 
   // run() returns the stream before any file starts, and callers attach their
   // listeners synchronously on the returned stream. Yield first so the earliest
@@ -376,28 +383,28 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     // path as passed (node's runner), while discovery yields absolute paths.
     const files = opts.files !== undefined ? (opts.files as string[]) : discoverRunFiles(opts);
     const onInterrupt = () => {
-      runInterrupted = true;
-      activeRunChildProc?.kill();
+      state.interrupted = true;
+      state.childProc?.kill();
     };
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onInterrupt);
     try {
       for (let i = 0; i < files.length; i++) {
-        if (runInterrupted) break;
-        await runOneFile(files[i], opts, reporter, counts);
+        if (state.interrupted) break;
+        await runOneFile(files[i], opts, reporter, counts, state);
       }
     } finally {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
     }
 
-    if (runInterrupted) {
+    if (state.interrupted) {
       // node reports the file-level tests that were still running.
       counts.failed++;
       reporter.emitMessage("test:interrupted", {
         __proto__: null,
         nesting: 0,
-        tests: activeRunFileNode !== null ? [activeRunFileNode] : [],
+        tests: state.fileNode !== null ? [state.fileNode] : [],
       });
     }
 
@@ -421,16 +428,12 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   reporter.endStream();
 }
 
-// The child currently running under runFiles, for SIGINT interruption.
-let activeRunChildProc: { kill: () => void } | null = null;
-let activeRunFileNode: Record<string, unknown> | null = null;
-let runInterrupted = false;
-
 async function runOneFile(
   file: string,
   opts: ReturnType<typeof validateRunOptions>,
   reporter: TestsStream,
   counts: Record<string, number>,
+  state: RunInterruptState,
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
@@ -464,8 +467,8 @@ async function runOneFile(
     stdout: "pipe",
     stderr: "pipe",
   });
-  activeRunChildProc = proc;
-  activeRunFileNode = fileNode;
+  state.childProc = proc;
+  state.fileNode = fileNode;
 
   let stderrText = "";
   const drainStderr = (async () => {
@@ -506,8 +509,8 @@ async function runOneFile(
 
   await drainStderr;
   const exitCode = await proc.exited;
-  activeRunChildProc = null;
-  if (!runInterrupted) activeRunFileNode = null;
+  state.childProc = null;
+  if (!state.interrupted) state.fileNode = null;
 
   // Two failure shapes: the file died before reporting anything (top-level
   // throw — node emits a file-level test:fail and no per-file summary), or its
@@ -539,7 +542,7 @@ async function runOneFile(
 
   // node emits the file node's completion before its verdict, and a failed
   // completion carries the error too.
-  if (runInterrupted) {
+  if (state.interrupted) {
     // The interrupted file's verdict is replaced by the test:interrupted
     // report that runFiles emits; suppress the synthesized failure.
     addRunCounts(counts, fileCounts);
@@ -654,8 +657,10 @@ function republishChildEvent(
 }
 
 // Child side: with kRunChildEnv set, stream one JSON event per line so the
-// spawning parent can rebuild node's event stream.
-const runChildReporterEnabled = process.env[kRunChildEnv] !== undefined;
+// spawning parent can rebuild node's event stream. Exact-value so a foreign
+// runner's NODE_TEST_CONTEXT cannot reroute this process (matches the Rust
+// is_node_test_child() gate).
+const runChildReporterEnabled = process.env[kRunChildEnv] === kRunChildEnvValue;
 
 // Registers this process as a run() child with the native runner, so genuine
 // uncaught errors route to the process listeners installed below (spawned
@@ -3665,7 +3670,18 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : () => {
-          const built = runWithNode(suiteNode, () => invokeSuiteFn(fn, suiteNode.getSuiteCtx()));
+          let built: unknown;
+          try {
+            built = runWithNode(suiteNode, () => invokeSuiteFn(fn, suiteNode.getSuiteCtx()));
+          } catch (err) {
+            // Settle so the suite (and every enclosing suite's childrenDone
+            // accounting) still completes; bun:test's own describe-error path
+            // reports the throw.
+            suiteNode.childrenFailed++;
+            suiteNode.error = err;
+            noteSuiteCollectionSettled(suiteNode);
+            throw err;
+          }
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
             return (built as Promise<unknown>).finally(() => noteSuiteCollectionSettled(suiteNode));
           }

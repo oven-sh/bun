@@ -584,3 +584,137 @@ describe("X25519 JWK import", () => {
     }).toEqual({ extFalse: "DataError", extTrue: "imported" });
   });
 });
+
+// RFC 7517 §4.3: "Duplicate key operation values MUST NOT be present in the array."
+// WebCrypto importKey step: if key_ops "is invalid according to the requirements of
+// JSON Web Key ... then throw a DataError."
+describe("JWK key_ops duplicate values", () => {
+  const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
+  const outcome = (p: Promise<CryptoKey>) =>
+    p.then(
+      key => (key instanceof CryptoKey ? "imported" : "other"),
+      e => e.name,
+    );
+
+  it("importKey rejects a JWK with duplicate key_ops entries across all key types", async () => {
+    const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const ecPub = await crypto.subtle.exportKey("jwk", ec.publicKey);
+    const ed = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const edPub = await crypto.subtle.exportKey("jwk", (ed as CryptoKeyPair).publicKey);
+    const rsa = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+      true,
+      ["sign", "verify"],
+    );
+    const rsaPub = await crypto.subtle.exportKey("jwk", rsa.publicKey);
+    const octAes: JsonWebKey = { kty: "oct", k: b64u(new Uint8Array(16).fill(9)), ext: true };
+    const octHmac: JsonWebKey = { kty: "oct", k: b64u(new Uint8Array(32).fill(9)), ext: true };
+
+    expect({
+      aes: await outcome(
+        crypto.subtle.importKey(
+          "jwk",
+          { ...octAes, key_ops: ["encrypt", "encrypt", "decrypt"] },
+          { name: "AES-GCM" },
+          true,
+          ["encrypt"],
+        ),
+      ),
+      hmac: await outcome(
+        crypto.subtle.importKey(
+          "jwk",
+          { ...octHmac, key_ops: ["sign", "sign"] },
+          { name: "HMAC", hash: "SHA-256" },
+          true,
+          ["sign"],
+        ),
+      ),
+      ec: await outcome(
+        crypto.subtle.importKey(
+          "jwk",
+          { ...ecPub, key_ops: ["verify", "verify"] },
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["verify"],
+        ),
+      ),
+      okp: await outcome(
+        crypto.subtle.importKey("jwk", { ...edPub, key_ops: ["verify", "verify"] }, { name: "Ed25519" }, true, [
+          "verify",
+        ]),
+      ),
+      rsa: await outcome(
+        crypto.subtle.importKey(
+          "jwk",
+          { ...rsaPub, key_ops: ["verify", "verify"] },
+          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+          true,
+          ["verify"],
+        ),
+      ),
+      // Same JWKs without duplicates still import (prove the rejection is about duplicates, not shape).
+      aesNoDup: await outcome(
+        crypto.subtle.importKey("jwk", { ...octAes, key_ops: ["encrypt", "decrypt"] }, { name: "AES-GCM" }, true, [
+          "encrypt",
+        ]),
+      ),
+      ecNoDup: await outcome(
+        crypto.subtle.importKey(
+          "jwk",
+          { ...ecPub, key_ops: ["verify"] },
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["verify"],
+        ),
+      ),
+      // The usages argument itself is allowed to contain duplicates; only JWK key_ops is constrained.
+      usagesDup: await outcome(
+        crypto.subtle.importKey("raw", new Uint8Array(16).fill(9), { name: "AES-GCM" }, true, [
+          "encrypt",
+          "encrypt",
+          "decrypt",
+        ]),
+      ),
+    }).toEqual({
+      aes: "DataError",
+      hmac: "DataError",
+      ec: "DataError",
+      okp: "DataError",
+      rsa: "DataError",
+      aesNoDup: "imported",
+      ecNoDup: "imported",
+      usagesDup: "imported",
+    });
+  });
+
+  it("unwrapKey rejects a wrapped JWK with duplicate key_ops entries", async () => {
+    const keyData = new Uint8Array(32).fill(1);
+    const iv = new Uint8Array(12).fill(2);
+    const wrapper = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
+      "encrypt",
+      "decrypt",
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const wrap = async (jwk: JsonWebKey) =>
+      crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrapper, new TextEncoder().encode(JSON.stringify(jwk)));
+    const unwrap = (wrapped: ArrayBuffer) =>
+      crypto.subtle.unwrapKey("jwk", wrapped, wrapper, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt"]);
+
+    const dup: JsonWebKey = {
+      kty: "oct",
+      k: b64u(new Uint8Array(16).fill(9)),
+      ext: true,
+      key_ops: ["encrypt", "encrypt", "decrypt"],
+    };
+    const noDup: JsonWebKey = { ...dup, key_ops: ["encrypt", "decrypt"] };
+
+    expect({
+      dup: await outcome(unwrap(await wrap(dup))),
+      noDup: await outcome(unwrap(await wrap(noDup))),
+    }).toEqual({
+      dup: "DataError",
+      noDup: "imported",
+    });
+  });
+});

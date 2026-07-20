@@ -547,10 +547,24 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
     ASSERT_NOT_REACHED();
 }
 
-static void normalizeJsonWebKey(JsonWebKey& webKey)
+// Returns false if key_ops contains duplicate entries. RFC 7517 §4.3 requires
+// "Duplicate key operation values MUST NOT be present in the array"; callers
+// reject with DataError on false.
+static bool normalizeJsonWebKey(JsonWebKey& webKey)
 {
-    // Maybe we shouldn't silently bypass duplicated usages?
-    webKey.usages = webKey.key_ops ? toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
+    if (!webKey.key_ops) {
+        webKey.usages = 0;
+        return true;
+    }
+    CryptoKeyUsageBitmap result = 0;
+    for (auto usage : webKey.key_ops.value()) {
+        auto bit = toCryptoKeyUsageBitmap(usage);
+        if (result & bit)
+            return false;
+        result |= bit;
+    }
+    webKey.usages = result;
+    return true;
 }
 
 // FIXME: This returns an std::optional<KeyData> and takes a promise, rather than returning an
@@ -580,8 +594,11 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
     case SubtleCrypto::KeyFormat::Jwk:
         return std::visit(
             WTF::makeVisitor(
-                [](JsonWebKey& webKey) -> std::optional<KeyData> {
-                    normalizeJsonWebKey(webKey);
+                [&promise](JsonWebKey& webKey) -> std::optional<KeyData> {
+                    if (!normalizeJsonWebKey(webKey)) {
+                        promise->reject(DataError, "Duplicate key operation in JWK \"key_ops\" member"_s);
+                        return std::nullopt;
+                    }
                     return KeyData { webKey };
                 },
                 [&promise](auto&) -> std::optional<KeyData> {
@@ -1320,7 +1337,11 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
-                    normalizeJsonWebKey(jwk);
+                    if (!normalizeJsonWebKey(jwk)) {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(DataError, "Duplicate key operation in JWK \"key_ops\" member"_s);
+                        return;
+                    }
 
                     keyData = jwk;
                     break;

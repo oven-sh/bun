@@ -1388,11 +1388,11 @@ impl JSValkeyClient {
                 return match this.send(global, &command) {
                     Ok(p) => Ok(promise_to_js(p)),
                     Err(err) => {
-                        let _ = this._subscription_ctx.get().upsert_receive_handler(
+                        this._subscription_ctx.get().upsert_receive_handler(
                             global,
                             channel,
                             listener_cb,
-                        );
+                        )?;
                         send_err_to_js(global, "Failed to send UNSUBSCRIBE command", err)
                     }
                 };

@@ -461,7 +461,7 @@ const res2 = await fetch(url, { store: { type: "memory", ttl: 60_000, max: 1000 
 
 Two requests share a cache entry when their method, URL, request headers and (buffered) request body are identical. For the `dir` backend, each entry is a standalone JSON file containing the full request and response; bodies that are not valid UTF-8 text are base64-encoded.
 
-The store is bypassed when the request body is a `ReadableStream` (the body bytes are not available to hash upfront) and for `s3://` URLs. A `Bun.file()` request body is read into memory so it can participate. Responses are recorded once the body has been fully consumed, whether you read it via `.text()`/`.json()`/`.bytes()` or as a stream.
+The store is bypassed when the request body is a `ReadableStream` (the body bytes are not available to hash upfront), when the body is a `FormData` (its multipart boundary is random per call), and for `s3://` URLs. A `Bun.file()` request body is read into memory so it can participate. The `unix` socket path is included in the cache key. Responses are recorded once the body has been fully consumed, whether you read it via `.text()`/`.json()`/`.bytes()` or as a stream.
 
 To enable the store for every `fetch()` in a process, use `bun --fetch-cache=<path>` (or `--fetch-cache=memory`), or set `cache` under `[fetch]` in `bunfig.toml`.
 

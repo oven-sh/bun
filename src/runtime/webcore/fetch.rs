@@ -2082,17 +2082,27 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Record/replay store: key the request now that method/url/headers/body
     // are finalised, and either short-circuit on a hit or carry the key into
     // the tasklet so the response can be persisted once fully buffered.
-    // s3:// is bypassed (the signing block above has already rewritten `url`
-    // to https:// and installed per-second SigV4 headers, which would give a
-    // fresh key on every call). Streamed bodies are bypassed too (unhashable).
+    // Bypassed for s3:// (SigV4 installs per-second headers), streamed bodies
+    // (unhashable), and multipart/form-data (FormData serialises with a fresh
+    // random boundary in both the body bytes and Content-Type on every call).
     let store_request: Option<(FetchStore, store::StoredRequest)> = match fetch_store {
-        Some(store_) if !is_s3 && matches!(&body, HTTPRequestBody::AnyBlob(_)) => {
+        Some(store_)
+            if !is_s3
+                && matches!(&body, HTTPRequestBody::AnyBlob(_))
+                && !body.get_any_blob().is_some_and(|b| {
+                    bun_core::strings::has_prefix_comptime(
+                        b.content_type(),
+                        b"multipart/form-data",
+                    )
+                }) =>
+        {
             let s = body.slice();
             let body_bytes = if s.is_empty() { None } else { Some(s) };
             let empty_headers;
             let req = store::build_request(
                 method,
                 url.href,
+                unix_socket_path.slice(),
                 match headers.as_ref() {
                     Some(h) => h,
                     None => {

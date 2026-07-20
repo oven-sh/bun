@@ -96,6 +96,7 @@ impl StoredResponse {
 pub fn build_request(
     method: Method,
     url: &[u8],
+    unix_socket_path: &[u8],
     headers: &Headers,
     body: Option<&[u8]>,
 ) -> StoredRequest {
@@ -118,6 +119,12 @@ pub fn build_request(
     buf.push(b'\n');
     buf.extend_from_slice(url);
     buf.push(b'\n');
+    if !unix_socket_path.is_empty() {
+        // Leading NUL so this line cannot alias a header (names can't be NUL).
+        buf.extend_from_slice(b"\0unix:");
+        buf.extend_from_slice(unix_socket_path);
+        buf.push(b'\n');
+    }
     for (n, v) in &hv {
         buf.extend_from_slice(n);
         buf.push(b':');
@@ -397,8 +404,25 @@ fn write_dir_entry(dir: &[u8], req: &StoredRequest, resp: &StoredResponse) -> bu
     let _ = write!(&mut out, "{}", bun_core::time::milli_timestamp());
     out.extend_from_slice(b"}\n");
 
-    let file = bun_sys::File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::TRUNC, 0o644)?;
-    file.write_all(&out)?;
+    // Write to a sibling temp file and rename over the target so concurrent
+    // readers (Workers, `bun test --parallel`) and crash-interrupted writes
+    // never observe a truncated entry.
+    let mut tmp_path = path.clone();
+    tmp_path.extend_from_slice(b".tmp");
+    {
+        let file =
+            bun_sys::File::openat(Fd::cwd(), &tmp_path, O::WRONLY | O::CREAT | O::TRUNC, 0o644)?;
+        file.write_all(&out)?;
+    }
+    tmp_path.push(0);
+    let mut path = path;
+    path.push(0);
+    bun_sys::renameat(
+        Fd::cwd(),
+        bun_core::ZStr::from_slice_with_nul(&tmp_path),
+        Fd::cwd(),
+        bun_core::ZStr::from_slice_with_nul(&path),
+    )?;
     Ok(())
 }
 

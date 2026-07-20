@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -293,6 +293,55 @@ describe("fetch store", () => {
 
     const files = readdirSync(String(cacheDir)).filter(f => f.endsWith(".json"));
     expect(files.length).toBe(1);
+  });
+
+  test("FormData request bodies bypass the store", async () => {
+    using cacheDir = tempDir("fetch-store-formdata", {});
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        hits++;
+        return new Response(String(hits));
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const fd = new FormData();
+    fd.set("q", "hello");
+    const a = await (await fetch(`http://localhost:${server.port}/fd`, { method: "POST", body: fd, store })).text();
+    const b = await (await fetch(`http://localhost:${server.port}/fd`, { method: "POST", body: fd, store })).text();
+    expect({ a, b, hits }).toEqual({ a: "1", b: "2", hits: 2 });
+    expect(readdirSync(String(cacheDir))).toEqual([]);
+  });
+
+  test.skipIf(isWindows)("unix socket path is part of the cache key", async () => {
+    using dir = tempDir("fetch-store-unix", {});
+    using cacheDir = tempDir("fetch-store-unix-cache", {});
+    let hitsA = 0;
+    let hitsB = 0;
+    await using serverA = Bun.serve({
+      unix: join(String(dir), "a.sock"),
+      fetch() {
+        hitsA++;
+        return new Response("A");
+      },
+    });
+    await using serverB = Bun.serve({
+      unix: join(String(dir), "b.sock"),
+      fetch() {
+        hitsB++;
+        return new Response("B");
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const url = "http://localhost/x";
+    const a1 = await (await fetch(url, { unix: join(String(dir), "a.sock"), store })).text();
+    const b1 = await (await fetch(url, { unix: join(String(dir), "b.sock"), store })).text();
+    expect({ a1, b1, hitsA, hitsB }).toEqual({ a1: "A", b1: "B", hitsA: 1, hitsB: 1 });
+    const a2 = await (await fetch(url, { unix: join(String(dir), "a.sock"), store })).text();
+    const b2 = await (await fetch(url, { unix: join(String(dir), "b.sock"), store })).text();
+    expect({ a2, b2, hitsA, hitsB }).toEqual({ a2: "A", b2: "B", hitsA: 1, hitsB: 1 });
+    expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(2);
   });
 
   test("ReadableStream request bodies bypass the store", async () => {

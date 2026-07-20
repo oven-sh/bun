@@ -141,9 +141,9 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.24" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.24" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.24" },
   // Android: cross-compiled from glibc amazonlinux via NDK sysroot. Host arch
   // matches target arch so only --abi/--target/--sysroot are cross.
   { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -198,9 +198,9 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.24", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.24", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.24", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
@@ -423,7 +423,7 @@ function getRustPlatform() {
     arch: "aarch64",
     abi: "musl",
     distro: "alpine",
-    release: "3.23",
+    release: "3.24",
   };
 }
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 39
+# Version: 41
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1205,12 +1205,18 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
+		# alpine 3.24 ships clang22/llvm22/lld22 at 22.1.3; edge has 22.1.8.
+		# Tag the edge main repo so only the llvm packages come from there
+		# (musl is the same version in both, so edge's binaries run on 3.24).
+		if ! grep -q '@edge' /etc/apk/repositories 2>/dev/null; then
+			execute_sudo /usr/bin/sh -c 'echo "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main" >> /etc/apk/repositories'
+		fi
 		install_packages \
-			"llvm$(llvm_version)" \
-			"clang$(llvm_version)" \
-			"scudo-malloc" \
-			"lld$(llvm_version)" \
-			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+			"llvm$(llvm_version)@edge" \
+			"clang$(llvm_version)@edge" \
+			"lld$(llvm_version)@edge" \
+			"llvm$(llvm_version)-dev@edge" \
+			"scudo-malloc"
 		;;
 	esac
 }

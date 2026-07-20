@@ -128,9 +128,6 @@ describe("bun", () => {
 
     test("getcompletes z pairs each script with its own description", () => {
       using dir = tempDir("getcompletes-z-desc", {
-        // Keys deliberately out of alphabetical order so the internal sort
-        // would mis-pair them with a parallel description array that was
-        // left unsorted.
         "package.json": JSON.stringify({
           scripts: {
             zeta: "echo zeta-cmd",

@@ -4560,14 +4560,12 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     {
         debug_assert!(vals.len() <= u32::MAX as usize);
         if vals.len() <= INLINED_MAX {
-            let mut this = Self::zeroes();
-            if let SmolList::Inlined(inlined) = &mut this {
-                for (i, v) in vals.iter().enumerate() {
-                    inlined.items[i].write(v.clone());
-                }
-                inlined.len += u32::try_from(vals.len()).expect("int cast");
+            let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+            for (i, v) in vals.iter().enumerate() {
+                inlined.items[i].write(v.clone());
             }
-            return this;
+            inlined.len = u32::try_from(vals.len()).expect("int cast");
+            return SmolList::Inlined(inlined);
         }
         let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
         heap.extend_from_slice(vals);

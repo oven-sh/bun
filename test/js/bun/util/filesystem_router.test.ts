@@ -490,6 +490,17 @@ it("dir should be validated", async () => {
   }).toThrow("Expected dir to be a string");
 });
 
+it("dir with an interior null byte is rejected", () => {
+  const { dir } = make(["index.tsx"]);
+  // The C path stops at the first NUL, so "<dir>\0suffix" would otherwise
+  // list <dir> while route resolution used a different JS-level path.
+  const nulError = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  expect(() => new FileSystemRouter({ style: "nextjs", dir: `${dir}\0suffix` })).toThrow(nulError);
+  expect(() => new FileSystemRouter({ style: "nextjs", dir: `${dir}\0suffix` })).toThrow(
+    "must be a string without null bytes",
+  );
+});
+
 it("origin should be validated", async () => {
   const { dir } = make(["posts.tsx"]);
 
@@ -716,21 +727,14 @@ it("caps the number of parsed query string parameters instead of crashing", asyn
 });
 
 it("does not match a dynamic route whose static segment merely collides on length and 32-bit hash", () => {
-  const low32 = (input: string) => Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(input))));
-  const seen = new Map<number, string>();
-  let pair: [string, string] | null = null;
-  for (let i = 0; i < 600_000; i++) {
-    const candidate = "s" + i.toString(36).padStart(9, "0");
-    const h = low32(candidate);
-    const prev = seen.get(h);
-    if (prev !== undefined) {
-      pair = [prev, candidate];
-      break;
-    }
-    seen.set(h, candidate);
-  }
-  expect(pair).not.toBeNull();
-  const [routeSegment, collidingSegment] = pair!;
+  // Route segment matching must compare bytes, not just (length, truncated
+  // 32-bit wyhash). Bun.hash.wyhash(s, 0) is the same hash the router stores
+  // for static route segments. This equal-length pair was found by a birthday
+  // search; the hash32 assertion keeps the test honest if wyhash ever changes.
+  const routeSegment = "s000000io9";
+  const collidingSegment = "s000001eqf";
+  const hash32 = (s: string) => Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(s))));
+  expect(hash32(collidingSegment)).toBe(hash32(routeSegment));
   expect(collidingSegment).not.toBe(routeSegment);
   expect(collidingSegment.length).toBe(routeSegment.length);
 
@@ -742,7 +746,7 @@ it("does not match a dynamic route whose static segment merely collides on lengt
 
   expect(router.match(`/${routeSegment}/42`)?.name).toBe(`/${routeSegment}/[id]`);
   expect(router.match(`/${collidingSegment}/42`)).toBeNull();
-}, 60_000);
+});
 
 it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
   // URLPath::parse assumed the decoded pathname was non-empty and had a leading

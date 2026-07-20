@@ -146,6 +146,13 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(() => Bun.mmap(path, null)).not.toThrow();
   });
 
+  it("mmap rejects paths with interior null bytes", () => {
+    // The C path stops at the first NUL, so "a\0b" would silently map "a".
+    const evil = path + "\0.does-not-exist";
+    expect(() => Bun.mmap(evil)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() => Bun.mmap(evil)).toThrow("must be a string without null bytes");
+  });
+
   it("mmap handles non-number offset/size without crashing", () => {
     // These should not crash - non-number values coerce to 0 per JavaScript semantics
     // Previously these caused assertion failures (issue ENG-22413)

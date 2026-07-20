@@ -1801,6 +1801,7 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                             global_this.throw_invalid_arguments(format_args!("Path too long"))
                         );
                     }
+                    node::Valid::no_null_bytes(path_str.slice(), "path", "a string", global_this)?;
                     let paths = &[path_str.slice()];
                     break 'brk bun_paths::resolve_path::join_abs_string_buf::<
                         bun_paths::resolve_path::platform::Auto,

@@ -1686,7 +1686,7 @@ function getDefaultCiphers() {
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tls_exports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1728,8 +1728,15 @@ export default {
   Server,
   TLSSocket,
   checkServerIdentity,
-  get rootCertificates() {
-    return cacheBundledRootCertificates();
-  },
   getCACertificates,
 } as any as typeof import("node:tls");
+
+// Non-configurable so it cannot be deleted and replaced (matches Node.js).
+Object.defineProperty(tls_exports, "rootCertificates", {
+  __proto__: null,
+  configurable: false,
+  enumerable: true,
+  get: cacheBundledRootCertificates,
+});
+
+export default tls_exports;

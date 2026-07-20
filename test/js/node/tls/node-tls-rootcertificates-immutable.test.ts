@@ -64,4 +64,39 @@ describe("tls", () => {
     // Check if the array is actually frozen
     expect(Object.isFrozen(tls.rootCertificates)).toBe(true);
   });
+
+  test("rootCertificates property descriptor is non-configurable", () => {
+    const tls = require("tls");
+
+    const desc = Object.getOwnPropertyDescriptor(tls, "rootCertificates");
+    expect({
+      hasGet: typeof desc!.get === "function",
+      set: desc!.set,
+      enumerable: desc!.enumerable,
+      configurable: desc!.configurable,
+    }).toEqual({
+      hasGet: true,
+      set: undefined,
+      enumerable: true,
+      configurable: false,
+    });
+
+    const originalLength = tls.rootCertificates.length;
+    const originalFirstCert = tls.rootCertificates[0];
+
+    expect(() => {
+      "use strict";
+      // @ts-expect-error
+      delete tls.rootCertificates;
+    }).toThrow(TypeError);
+
+    expect(() => {
+      Object.defineProperty(tls, "rootCertificates", {
+        value: ["-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----"],
+      });
+    }).toThrow(TypeError);
+
+    expect(tls.rootCertificates.length).toBe(originalLength);
+    expect(tls.rootCertificates[0]).toBe(originalFirstCert);
+  });
 });

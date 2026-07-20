@@ -35,13 +35,8 @@ test("await import('bun')", async () => {
   expect(BunESM.default).toBe(Bun);
 });
 
-// When a lazy Bun.* property's builder throws, reifyStaticProperty must not
-// store the empty JSValue into the property slot: a later read of the property
-// would hand that empty value to JS and dereference a null cell.
+// https://github.com/oven-sh/bun/issues/19650
 describe.concurrent("a lazy Bun.* getter that throws reifies the property as undefined", () => {
-  // Replacing the global `Error` makes `class ShellError extends Error` (and
-  // `class SQLError extends Error`) in the builtins throw during reification;
-  // replacing the global `Symbol` makes their `Symbol(...)` calls throw.
   test.each(["Error = 1", "Symbol = Bun"])(
     "Bun.$ / Bun.sql / Bun.SQL / Bun.postgres after `%s` (builtin module fails to evaluate)",
     async tamper => {

@@ -1316,6 +1316,16 @@ pub struct Options<'a> {
     /// builder (`ManuallyDrop`, never freed on the bundler path).
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
+    /// When `Some`, the bundler input file carried an inline
+    /// `//# sourceMappingURL=data:...` comment. The chunk builder
+    /// remaps each emitted mapping through this inner map so the final
+    /// output's `source_index`/`(original_line, original_column)` refer
+    /// to the authored source instead of the intermediate input.
+    /// `None` for files that don't carry an inline sourcemap, or for
+    /// the DevServer HMR path (which uses a separate stitcher that
+    /// hard-codes one `sources[]` slot per file).
+    pub input_source_map: Option<&'a SourceMap::InputSourceMap>,
+
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
 
@@ -1375,6 +1385,7 @@ impl<'a> Default for Options<'a> {
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
             line_offset_tables: None,
+            input_source_map: None,
             mangled_props: None,
         }
     }
@@ -7828,6 +7839,22 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     }
 
     let precomputed = opts.line_offset_tables.take();
+    let input_source_map: Option<&'static crate::SourceMap::InputSourceMap> =
+        opts.input_source_map.take().map(|r| {
+            // SAFETY: the referent lives in
+            // `Graph::input_files[i].input_source_map` (an `Option<Box<..>>`
+            // owned by the bundle graph), which is not dropped until after the
+            // whole chunk — including every `add_source_mapping` call that
+            // reads this borrow — has finished. Extending the borrow to
+            // `'static` only erases the lifetime tracked by the `Builder`
+            // field; the underlying `Box` outlives it.
+            unsafe {
+                core::mem::transmute::<
+                    &crate::SourceMap::InputSourceMap,
+                    &'static crate::SourceMap::InputSourceMap,
+                >(r)
+            }
+        });
     let mut builder = SourceMap::chunk::Builder {
         source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
@@ -7836,6 +7863,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+        input_source_map,
         // `Options.line_offset_tables` is a borrow into shared linker
         // state; copy it bitwise via `ptr::read` into a
         // `ManuallyDrop` so dropping the `Builder` never frees borrowed

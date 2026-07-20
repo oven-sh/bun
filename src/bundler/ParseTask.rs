@@ -178,6 +178,14 @@ pub struct Success {
 
     /// The package name from package.json, used for barrel optimization.
     pub package_name: ast::StoreStr,
+
+    /// Decoded trailing inline `//# sourceMappingURL=data:...` inner map,
+    /// parsed from the source bytes. `None` when the file had no inline
+    /// sourcemap comment, when sourcemaps are disabled on the build, or
+    /// when the inline payload was malformed (caller silently falls back
+    /// to the raw file bytes). Moved into `graph.input_files.input_source_map`
+    /// by `on_parse_task_complete`.
+    pub input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 
 pub struct ResultError {
@@ -2583,6 +2591,12 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
+        // Hoist the `source_map` flag before the tombstone: we need it
+        // below after `get_ast` runs, but reading `topts.source_map` there
+        // would touch the invalidated shared borrow (get_ast reborrows
+        // `(*transpiler).options` mutably via raw pointer, which pops
+        // `topts`'s tag under Stacked Borrows). Copy it out now.
+        let source_map_option = topts.source_map;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
@@ -2643,6 +2657,26 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
+        // Chain any inline `//# sourceMappingURL=data:...` map the input
+        // file carries (e.g. a `.vue`/`.svelte` compiler's trailing
+        // comment on the intermediate `.js`) into the output sourcemap.
+        // This scan runs on `source.contents` whether they came from a
+        // file read or a plugin `onLoad` return, so this covers #6173
+        // too. Gated on:
+        //   - source maps enabled on the build (no cost otherwise)
+        //   - loader can have source maps (js/ts/jsx/tsx; skip binary/asset)
+        //   - non-empty contents (the scanner would find nothing)
+        // Malformed payloads return `None` and fall back cleanly.
+        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if source_map_option
+            != options::SourceMapOption::None
+            && loader.can_have_source_map()
+            && !source.contents.is_empty()
+        {
+            bun_sourcemap::InputSourceMap::parse_from_source(&source.contents)
+        } else {
+            None
+        };
+
         Ok(Success {
             ast,
             source: source.clone(),
@@ -2659,6 +2693,8 @@ pub mod parse_worker {
             } else {
                 0
             },
+
+            input_source_map,
         })
     }
 

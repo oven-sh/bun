@@ -1231,14 +1231,16 @@ impl JSValkeyClient {
         });
 
         if let Err(err) = self.connect() {
-            self.fail_with_js_value(
-                self.global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!("{} reconnecting", err.name()),
-                    )
-                    .to_js(),
-            );
+            let err_js = self
+                .global_object
+                .err(
+                    jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
+                    format_args!("{} reconnecting", err.name()),
+                )
+                .to_js();
+            let _ = self
+                .client_mut()
+                .fail_with_js_value(&self.global_object, err_js);
             self.poll_ref.with_mut(|r| r.disable());
             return;
         }
@@ -1350,28 +1352,28 @@ impl JSValkeyClient {
         }
 
         // Extract channel and message
-        let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], &global_object)
-        else {
-            debug!("Failed to convert channel to JS");
-            return;
+        let channel_value = match protocol_jsc::resp_value_to_js(&mut value[0], &global_object) {
+            Ok(v) => v,
+            Err(e) => {
+                global_object.report_active_exception_as_unhandled(e);
+                return;
+            }
         };
-        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], &global_object)
-        else {
-            debug!("Failed to convert message to JS");
-            return;
+        let message_value = match protocol_jsc::resp_value_to_js(&mut value[1], &global_object) {
+            Ok(v) => v,
+            Err(e) => {
+                global_object.report_active_exception_as_unhandled(e);
+                return;
+            }
         };
 
         // Invoke callbacks for this channel with message and channel as arguments
-        if self
-            ._subscription_ctx
-            .get()
-            .invoke_callbacks(
-                &global_object,
-                channel_value,
-                &[message_value, channel_value],
-            )
-            .is_err()
-        {
+        if let Err(e) = self._subscription_ctx.get().invoke_callbacks(
+            &global_object,
+            channel_value,
+            &[message_value, channel_value],
+        ) {
+            global_object.report_active_exception_as_unhandled(e);
             return;
         }
 
@@ -1452,7 +1454,7 @@ impl JSValkeyClient {
         narrow_terminated(self.client_mut().fail(message, err))
     }
 
-    pub fn fail_with_js_value(&self, value: JSValue) {
+    pub fn call_onclose_handler(&self, value: JSValue) {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };

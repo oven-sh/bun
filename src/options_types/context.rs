@@ -557,26 +557,28 @@ impl FetchStoreConfig {
         if value == b"memory" {
             return FetchStoreConfig::Memory { ttl_ms: 0, max: 0 };
         }
-        let path = if bun_paths::is_absolute(value) {
-            value.to_vec().into_boxed_slice()
-        } else {
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            match bun_sys::getcwd(&mut cwd_buf) {
-                Ok(len) => {
-                    let mut out = bun_paths::path_buffer_pool::get();
-                    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-                        &cwd_buf[..len],
-                        &mut out,
-                        &[value],
-                    )
-                    .to_vec()
-                    .into_boxed_slice()
-                }
-                Err(_) => value.to_vec().into_boxed_slice(),
-            }
-        };
-        FetchStoreConfig::Dir { path }
+        FetchStoreConfig::Dir {
+            path: resolve_against_cwd(value),
+        }
     }
+}
+
+/// Resolve `path` to absolute against the process cwd. Shared by the CLI /
+/// bunfig parser and the per-call `store: { path }` option so both freeze the
+/// directory at the moment the user names it.
+pub fn resolve_against_cwd(path: &[u8]) -> Box<[u8]> {
+    if bun_paths::is_absolute(path) {
+        return path.to_vec().into_boxed_slice();
+    }
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd = match bun_sys::getcwd(&mut cwd_buf) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => return path.to_vec().into_boxed_slice(),
+    };
+    let mut out = bun_paths::path_buffer_pool::get();
+    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(cwd, &mut out, &[path])
+        .to_vec()
+        .into_boxed_slice()
 }
 
 pub struct RuntimeOptions {

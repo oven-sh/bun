@@ -188,34 +188,14 @@ pub fn build_request(
 
 // ─── config resolution ────────────────────────────────────────────────────
 
-/// Resolve a store directory path to absolute against the current cwd so a
-/// later `process.chdir()` does not silently retarget the dir backend.
-fn to_abs_path(path: &[u8]) -> Box<[u8]> {
-    if bun_paths::is_absolute(path) {
-        return path.to_vec().into_boxed_slice();
-    }
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd = match bun_sys::getcwd(&mut cwd_buf) {
-        Ok(len) => &cwd_buf[..len],
-        Err(_) => return path.to_vec().into_boxed_slice(),
-    };
-    let mut out_buf = bun_paths::path_buffer_pool::get();
-    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        cwd,
-        &mut out_buf,
-        &[path],
-    )
-    .to_vec()
-    .into_boxed_slice()
-}
+use bun_options_types::context::resolve_against_cwd;
 
 impl FetchStore {
     pub fn from_config(cfg: &FetchStoreConfig) -> Option<Self> {
         match cfg {
             FetchStoreConfig::None => None,
-            FetchStoreConfig::Dir { path } => Some(FetchStore::Dir {
-                path: to_abs_path(path),
-            }),
+            // `FetchStoreConfig::parse` has already absolutised the path.
+            FetchStoreConfig::Dir { path } => Some(FetchStore::Dir { path: path.clone() }),
             FetchStoreConfig::Memory { ttl_ms, max } => Some(FetchStore::Memory {
                 ttl_ms: *ttl_ms,
                 max: *max,
@@ -262,7 +242,7 @@ impl FetchStore {
                 )));
             }
             return Ok(Some(FetchStore::Dir {
-                path: to_abs_path(path.slice()),
+                path: resolve_against_cwd(path.slice()),
             }));
         }
         if ty.eql_comptime(b"memory") {

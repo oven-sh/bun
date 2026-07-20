@@ -325,7 +325,6 @@ pub(crate) fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     T::get_cwd(buf)
 }
 
-
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
 pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {

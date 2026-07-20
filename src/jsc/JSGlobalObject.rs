@@ -797,38 +797,6 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
-        // The format string of an already-captured `Arguments<'_>` can't be
-        // rewritten, so render first, then run the `<tag>` → ANSI/strip pass
-        // at runtime via `pretty_fmt_rt`.
-        //
-        // Formatting can fail mid-write (e.g. user `Symbol.toPrimitive` throws
-        // while stringifying the Received value). `pretty_fmt_rt` would
-        // `format!` into a `String`, and `format!` panics if a `Display` impl
-        // returns `fmt::Error` when the underlying writer didn't — so render
-        // via fallible `write!` here: on failure, clear the pending JS
-        // exception and throw with whatever was written so far.
-        let enabled = Output::enable_ansi_colors_stderr();
-        use core::fmt::Write;
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            // if an exception occurs in the middle of formatting the error
-            // message, it's better to just return what we have than an error
-            // about an error. Clear any pending JS exception (e.g. from
-            // Symbol.toPrimitive) so that throwValue doesn't hit
-            // assertNoException.
-            let _ = self.clear_exception_except_termination();
-        }
-        #[allow(clippy::disallowed_methods)] // template built at runtime from caller args
-        let pretty = Output::pretty_fmt_rt(buf.as_slice(), enabled);
-        let instance = ZigString::init_utf8(&pretty).to_error_instance(self);
-        if instance.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
-        self.throw_value(instance)
-    }
-
     /// Queue a native callback as a microtask. Callers supply the C-ABI
     /// trampoline directly; the wrapper only erases the context pointer type.
     pub fn queue_microtask_callback<C>(
@@ -941,9 +909,7 @@ impl JSGlobalObject {
         message: BunString,
         error_array: JSValue,
     ) -> JsResult<JSValue> {
-        if cfg!(debug_assertions) {
-            debug_assert!(error_array.is_array());
-        }
+        debug_assert!(error_array.is_array());
         crate::from_js_host_call(self, || {
             JSC__JSGlobalObject__createAggregateErrorWithArray(
                 self,

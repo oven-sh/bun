@@ -359,9 +359,7 @@ where
     }
 
     pub fn push(pooled: T) {
-        if cfg!(debug_assertions) {
-            debug_assert!(!Self::full());
-        }
+        debug_assert!(!Self::full());
 
         let new_node = bun_core::heap::into_raw(Box::new(Node::<T> {
             next: ptr::null_mut(),

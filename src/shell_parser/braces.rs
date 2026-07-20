@@ -873,9 +873,7 @@ fn expand_flat(
             }
             Token::Open(expansion_variants) => {
                 depth += 1;
-                if cfg!(debug_assertions) {
-                    debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
-                }
+                debug_assert!(expansion_variants.end - expansion_variants.idx >= 1);
 
                 let variants = &expansion_table
                     [usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];
@@ -982,9 +980,6 @@ impl<'a> Parser<'a> {
     fn parse_expansion(&mut self) -> Result<ast::Expansion, ParserError> {
         let mut variants: BumpVec<'a, ast::Group> = BumpVec::new_in(self.bump);
         while !self.match_any(&[TokenTag::Close, TokenTag::Eof]) {
-            if self.r#match(TokenTag::Eof) {
-                break;
-            }
             let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
             let mut close = false;
             while !self.r#match(TokenTag::Eof) {

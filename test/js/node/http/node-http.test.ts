@@ -3137,6 +3137,139 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
+  it.each([
+    ["method token followed by CRLF", "BOGUS\r\n\r\n"],
+    ["known method followed by CRLF", "GET\r\n\r\n"],
+    ["CONNECT followed by CRLF", "CONNECT\r\n\r\n"],
+    ["CONNECT-prefixed token followed by CRLF", "CONNECTX\r\n\r\n"],
+    ["single method char followed by CRLF", "G\r\n\r\n"],
+    ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+  ])("%s", async (_name, payload) => {
+    const events: string[] = [];
+    const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      events.push("request");
+      res.end("should not reach here");
+      onErroredFail(new Error("unexpected request"));
+    });
+    server.on("connection", () => events.push("connection"));
+    server.on("clientError", (err: any, s) => {
+      events.push("clientError " + err.code);
+      try {
+        expect(s.writable).toBe(true);
+        expect(s.destroyed).toBe(false);
+        expect(err.rawPacket).toEqual(Buffer.from(payload));
+      } catch (e) {
+        onErroredFail(e);
+        return;
+      }
+      s.end("HTTP/1.1 418 I'm a teapot\r\nConnection: close\r\n\r\n");
+      onErrored();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      let wire = "";
+      socket.on("data", d => (wire += d));
+      socket.on("error", () => {});
+      const closed = new Promise<void>(r => socket.on("close", () => r()));
+      await once(socket, "connect");
+      socket.write(payload);
+
+      await errored;
+      await closed;
+
+      expect(events).toEqual(["connection", "clientError HPE_INVALID_METHOD"]);
+      expect(wire).toContain("HTTP/1.1 418");
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
+
+  it("a method fragmented across writes still parses", async () => {
+    const events: string[] = [];
+    const { promise: gotRequest, resolve: onRequest, reject: onRequestFail } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      events.push("request " + req.method + " " + req.url);
+      res.end("ok");
+      onRequest();
+    });
+    server.on("connection", () => events.push("connection"));
+    server.on("clientError", (err: any, s) => {
+      s.destroy();
+      onRequestFail(new Error("unexpected clientError " + err.code));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      socket.setNoDelay(true);
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GE");
+      await new Promise(r => setImmediate(r));
+      socket.write("T /path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+
+      await gotRequest;
+      socket.end();
+      expect(events).toEqual(["connection", "request GET /path"]);
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
+
+  // Node accepts some of these (asterisk-form, HTTP/0.9) and fires 'request';
+  // Bun rejects them and fires 'clientError'. Either is observable. The bug
+  // was that the parser returned short-read on complete input and nothing
+  // surfaced at all while the connection sat idle.
+  it.each([
+    ["target followed by CRLF with no HTTP version", "GET /\r\nHost: localhost\r\n\r\n"],
+    ["asterisk target followed by CRLF", "GET *\r\n\r\n"],
+    ["asterisk target after a 7-char method", "OPTIONS *\r\n\r\n"],
+    ["short non-origin target followed by CRLF", "POST x\r\n\r\n"],
+  ])("%s surfaces to JS", async (_name, payload) => {
+    const events: string[] = [];
+    const { promise: surfaced, resolve: onSurfaced } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      events.push("request");
+      res.end("ok");
+      onSurfaced();
+    });
+    server.on("connection", () => events.push("connection"));
+    server.on("clientError", (err: any, s) => {
+      events.push("clientError");
+      s.destroy();
+      onSurfaced();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(payload);
+
+      await surfaced;
+      expect(events[0]).toBe("connection");
+      expect(["request", "clientError"]).toContain(events[1]);
+      socket.destroy();
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
+});
+
 it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () => {
   // true inside the 'upgrade' listener; false for an Upgrade-carrying request
   // that falls through to 'request' (no Connection: upgrade token here).

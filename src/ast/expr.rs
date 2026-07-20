@@ -1460,11 +1460,12 @@ impl Tag {
     }
 }
 
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Tag {
+    /// Human-readable variant name for diagnostics (`"string"`, `"boolean"`, …).
+    pub fn type_name(self) -> &'static str {
+        match self {
             Tag::EString => "string",
-            Tag::EArray => "array",
+            Tag::EArray | Tag::EArrayJSON => "array",
             Tag::EUnary => "unary",
             Tag::EBinary => "binary",
             Tag::EBoolean | Tag::EBranchBoolean => "boolean",
@@ -1486,7 +1487,7 @@ impl fmt::Display for Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EObject => "object",
+            Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",
@@ -1498,8 +1499,14 @@ impl fmt::Display for Tag {
             Tag::EThis => "this",
             Tag::EClass => "class",
             Tag::ERequireString => "require",
-            other => <&'static str>::from(*other),
-        })
+            other => <&'static str>::from(other),
+        }
+    }
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.type_name())
     }
 }
 
@@ -1586,9 +1593,9 @@ impl Expr {
                 }));
             }
             Data::EBigInt(b) => {
-                return Some(expr.at(E::Boolean {
-                    value: b.value == b"0",
-                }));
+                if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
+                    return Some(expr.at(E::Boolean { value: equal }));
+                }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
@@ -1658,7 +1665,13 @@ impl Expr {
             Data::EBoolean(data) | Data::EBranchBoolean(data) => {
                 Some(if data.value { b"true" } else { b"false" })
             }
-            Data::EBigInt(bigint) => Some(bigint.value.slice()),
+            Data::EBigInt(bigint) => {
+                if E::BigInt::has_radix(&bigint.value) {
+                    None
+                } else {
+                    Some(bigint.value.slice())
+                }
+            }
             Data::ENumber(num) => num.to_string(bump).map(|s| s.slice()),
             Data::ERegExp(regexp) => Some(regexp.value.slice()),
             Data::EDot(dot) => 'brk: {
@@ -2356,7 +2369,7 @@ impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
     pub fn tag_name(&self) -> &'static str {
-        self.tag().into()
+        self.tag().type_name()
     }
 
     // Per-variant `as_*` accessors live alongside the enum decl above
@@ -3400,13 +3413,16 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if bun_core::strings::eql_long(&l.value, &r.value, true) {
-                        return Equality::TRUE;
-                    }
-                    // 0x0000n == 0n is true
-                    return Equality {
-                        ok: false,
-                        ..Default::default()
+                    return match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality {
+                            ok: true,
+                            equal,
+                            ..Default::default()
+                        },
+                        None => Equality {
+                            ok: false,
+                            ..Default::default()
+                        },
                     };
                 } else {
                     return Equality {

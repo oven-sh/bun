@@ -719,7 +719,7 @@ pub(crate) fn to_bytes(
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
         string_builder.count_z(prefix);
-        if let options::OutputValue::Buffer { bytes } = &output_file.value {
+        if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
                 // This is an over-estimation to ensure that we allocate
                 // enough memory for the source-map contents. Calculating
@@ -769,7 +769,7 @@ pub(crate) fn to_bytes(
             continue;
         }
 
-        let options::OutputValue::Buffer { bytes: buf_bytes } = &output_file.value else {
+        let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
             continue;
         };
 

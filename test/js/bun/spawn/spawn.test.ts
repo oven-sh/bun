@@ -753,20 +753,27 @@ describe("should not hang", () => {
   }
 });
 
-describe("await exited resolves after unref() when nothing else is ref'd (Windows)", () => {
+describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: uv_unref() drops the uv_process_t from active_handles; with
-  // nothing else ref'd, uv_run() skips its body and never dequeues the IOCP
-  // exit packet, so the children below used to busy-spin forever.
+  // nothing else ref'd, uv_run() used to skip its body and never dequeue the
+  // IOCP exit packet, so these children busy-spun forever with exited never
+  // resolving. us_loop_pump now forces one non-blocking iteration, matching
+  // POSIX's us_loop_run_bun_tick.
   for (const [name, body] of [
-    ["unref() then .exited", `p.unref(); await p.exited;`],
-    [".exited then unref()", `const done = p.exited; p.unref(); await done;`],
+    ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
+    [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
+    [
+      "onExit then unref()",
+      `const { promise, resolve } = Promise.withResolvers();
+       const p = Bun.spawn({ ...opts, onExit: resolve }); p.unref(); await promise;`,
+    ],
   ] as const) {
     it(name, async () => {
       await using child = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const p = Bun.spawn({ cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
+          `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
            ${body}
            console.log("resolved");`,
         ],

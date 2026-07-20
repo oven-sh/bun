@@ -302,10 +302,6 @@ bitflags::bitflags! {
         /// by the caller). Owned terminals are closed when the subprocess exits
         /// so the exit callback fires; borrowed terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
-        /// `.exited` was observed while the child was still running. On Windows
-        /// this keeps the uv_process_t ref'd so its IOCP exit packet is dequeued
-        /// (see `get_exited` / `js_unref`).
-        const EXITED_PROMISE_PENDING       = 1 << 7;
     }
 }
 
@@ -547,15 +543,7 @@ impl Subprocess<'_> {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn js_unref(&self) {
-        // See `get_exited`: on Windows the uv_process_t stays ref'd while a
-        // pending `.exited` promise exists so uv_run() dequeues its exit packet.
-        #[cfg(windows)]
-        let skip_poller = self.flags.get().contains(Flags::EXITED_PROMISE_PENDING);
-        #[cfg(not(windows))]
-        let skip_poller = false;
-        if !skip_poller {
-            self.process_mut().disable_keeping_event_loop_alive();
-        }
+        self.process_mut().disable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
             self.stdin.with_mut(|s| s.unref());
@@ -1374,14 +1362,6 @@ impl Subprocess<'_> {
                 )
             }
             _ => {
-                // Windows: an unref'd uv_process_t drops out of active_handles,
-                // uv_run() skips its body, and the IOCP exit packet is never
-                // dequeued. Re-ref so awaiting this promise actually resolves.
-                #[cfg(windows)]
-                {
-                    self.update_flags(|f| f.insert(Flags::EXITED_PROMISE_PENDING));
-                    self.process_mut().enable_keeping_event_loop_alive();
-                }
                 let promise = JSPromise::create(global_this).to_js();
                 js::exited_promise_set_cached(this_value, global_this, promise);
                 promise

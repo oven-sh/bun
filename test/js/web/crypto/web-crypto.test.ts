@@ -207,6 +207,102 @@ describe("Web Crypto", () => {
   });
 });
 
+// https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues
+describe("crypto.getRandomValues", () => {
+  const typeMismatch = {
+    name: "TypeMismatchError",
+    code: 17,
+    message: "The data argument must be an integer-type TypedArray",
+  };
+  const quotaExceeded = {
+    name: "QuotaExceededError",
+    code: 22,
+    message: "The requested length exceeds 65,536 bytes",
+  };
+
+  const bytesOf = (view: ArrayBufferView) =>
+    new Uint8Array(view.buffer as ArrayBuffer, view.byteOffset, view.byteLength);
+
+  function expectRejected(argument: unknown, expected: typeof typeMismatch) {
+    let error: any;
+    try {
+      crypto.getRandomValues(argument as any);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(DOMException);
+    expect({ name: error.name, code: error.code, message: error.message }).toEqual(expected);
+  }
+
+  const integerViews: [string, new (length: number) => ArrayBufferView][] = [
+    ["Int8Array", Int8Array],
+    ["Uint8Array", Uint8Array],
+    ["Uint8ClampedArray", Uint8ClampedArray],
+    ["Int16Array", Int16Array],
+    ["Uint16Array", Uint16Array],
+    ["Int32Array", Int32Array],
+    ["Uint32Array", Uint32Array],
+    ["BigInt64Array", BigInt64Array],
+    ["BigUint64Array", BigUint64Array],
+  ];
+
+  for (const [name, ctor] of integerViews) {
+    it(`fills a ${name}`, () => {
+      const view = new ctor(8);
+      expect(crypto.getRandomValues(view)).toBe(view);
+      expect(bytesOf(view).some(byte => byte !== 0)).toBe(true);
+    });
+  }
+
+  const rejectedArguments: [string, () => unknown][] = [
+    ["Float16Array", () => new Float16Array(4)],
+    ["Float32Array", () => new Float32Array(4)],
+    ["Float64Array", () => new Float64Array(4)],
+    ["DataView", () => new DataView(new ArrayBuffer(8))],
+    ["ArrayBuffer", () => new ArrayBuffer(8)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(8)],
+    ["plain object", () => ({})],
+    ["null", () => null],
+  ];
+
+  for (const [name, make] of rejectedArguments) {
+    it(`throws TypeMismatchError for ${name}`, () => {
+      expectRejected(make(), typeMismatch);
+    });
+  }
+
+  it("leaves a non-integer view untouched", () => {
+    const view = new Float64Array(4);
+    expectRejected(view, typeMismatch);
+    expect(bytesOf(view).every(byte => byte === 0)).toBe(true);
+  });
+
+  it("allows exactly 65536 bytes", () => {
+    const view = new Uint8Array(65536);
+    expect(crypto.getRandomValues(view)).toBe(view);
+    expect(view.some(byte => byte !== 0)).toBe(true);
+  });
+
+  const oversized: [string, () => ArrayBufferView][] = [
+    ["Uint8Array", () => new Uint8Array(65537)],
+    ["Uint32Array", () => new Uint32Array(16385)],
+    ["BigInt64Array", () => new BigInt64Array(8193)],
+    ["Buffer", () => Buffer.alloc(65537)],
+  ];
+
+  for (const [name, make] of oversized) {
+    it(`throws QuotaExceededError for an oversized ${name}`, () => {
+      const view = make();
+      expectRejected(view, quotaExceeded);
+      expect(bytesOf(view).every(byte => byte === 0)).toBe(true);
+    });
+  }
+
+  it("checks the view type before the quota", () => {
+    expectRejected(new DataView(new ArrayBuffer(65537)), typeMismatch);
+  });
+});
+
 describe("oversized inputs", () => {
   // Every SubtleCrypto entry point copies its BufferSource argument into a
   // WTF::Vector<uint8_t>, whose capacity is capped below the maximum legal

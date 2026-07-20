@@ -1,8 +1,13 @@
 use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSType, JSUint8Array, JSValue, JsClass, JsError, JsResult, StringJsc,
+};
 
 use crate::node::Encoding;
+
+/// <https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues> step 2.
+const MAX_RANDOM_VALUES_BYTE_LENGTH: usize = 65536;
 
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
@@ -68,23 +73,24 @@ impl Crypto {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        if arguments.is_empty() {
-            return Err(global.throw_dom_exception(
-                bun_jsc::DOMExceptionCode::TypeMismatchError,
-                format_args!("The data argument must be an integer-type TypedArray"),
-            ));
-        }
 
-        let Some(mut array_buffer) = arguments[0].as_array_buffer(global) else {
+        let array = arguments
+            .first()
+            .and_then(|value| value.as_array_buffer(global))
+            .filter(|array| is_integer_typed_array(array.typed_array_type));
+
+        let Some(mut array) = array else {
             return Err(global.throw_dom_exception(
                 bun_jsc::DOMExceptionCode::TypeMismatchError,
                 format_args!("The data argument must be an integer-type TypedArray"),
             ));
         };
 
-        let slice = array_buffer.byte_slice_mut();
+        if array.byte_len > MAX_RANDOM_VALUES_BYTE_LENGTH {
+            return Err(throw_quota_exceeded(global));
+        }
 
-        random_data(global, slice);
+        random_data(global, array.byte_slice_mut());
 
         Ok(arguments[0])
     }
@@ -95,6 +101,13 @@ impl Crypto {
         global: &JSGlobalObject,
         array: &JSUint8Array,
     ) -> JSValue {
+        if array.len() > MAX_RANDOM_VALUES_BYTE_LENGTH {
+            // Throw, then return the empty value — the DOMJIT wrapper surfaces the
+            // pending exception (the C-ABI shim encodes it as zero).
+            let _ = throw_quota_exceeded(global);
+            return JSValue::ZERO;
+        }
+
         // `JSUint8Array::slice()` takes
         // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
@@ -148,6 +161,30 @@ impl Crypto {
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor("Crypto"))
     }
+}
+
+fn throw_quota_exceeded(global: &JSGlobalObject) -> JsError {
+    global.throw_dom_exception(
+        bun_jsc::DOMExceptionCode::QuotaExceededError,
+        format_args!("The requested length exceeds 65,536 bytes"),
+    )
+}
+
+/// Step 1 of `getRandomValues`: `Float16Array`, `Float32Array`, `Float64Array`,
+/// `DataView` and `ArrayBuffer` are excluded.
+fn is_integer_typed_array(ty: JSType) -> bool {
+    matches!(
+        ty,
+        JSType::Int8Array
+            | JSType::Uint8Array
+            | JSType::Uint8ClampedArray
+            | JSType::Int16Array
+            | JSType::Uint16Array
+            | JSType::Int32Array
+            | JSType::Uint32Array
+            | JSType::BigInt64Array
+            | JSType::BigUint64Array
+    )
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {

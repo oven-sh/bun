@@ -85,6 +85,34 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   expect(wasi.FD_MAP.has(4)).toBe(false);
 });
 
+it("random_get succeeds and only writes the requested range of memory", () => {
+  const WASI_ESUCCESS = 0;
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = new Uint8Array(wasi.memory.buffer);
+
+  const bufPtr = 1024;
+  const bufLen = 32;
+
+  expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+  expect(memory.subarray(bufPtr, bufPtr + bufLen).some(byte => byte !== 0)).toBe(true);
+  expect(memory.subarray(0, bufPtr).every(byte => byte === 0)).toBe(true);
+  expect(memory.subarray(bufPtr + bufLen).every(byte => byte === 0)).toBe(true);
+});
+
+it("random_get returns an errno for a span outside of guest memory", () => {
+  const WASI_EINVAL = 28;
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = new Uint8Array(wasi.memory.buffer);
+  const pageSize = memory.length;
+
+  // A guest can hand us any pointer and length; the span must not escape as a throw.
+  expect(wasi.wasiImport.random_get(pageSize - 4, 100)).toBe(WASI_EINVAL);
+  expect(wasi.wasiImport.random_get(-1, 8)).toBe(WASI_EINVAL);
+  expect(memory.every(byte => byte === 0)).toBe(true);
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

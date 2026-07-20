@@ -32,9 +32,23 @@
 // #include "Logging.h"
 #include <wtf/text/Base64.h>
 #include <openssl/curve25519.h>
+#include <openssl/evp.h>
 #include "CommonCryptoDERUtilities.h"
+#include "OpenSSLCryptoUniquePtr.h"
 
 namespace WebCore {
+
+static int namedCurveToNID(CryptoKeyOKP::NamedCurve namedCurve)
+{
+    switch (namedCurve) {
+    case CryptoKeyOKP::NamedCurve::X25519:
+        return EVP_PKEY_X25519;
+    case CryptoKeyOKP::NamedCurve::Ed25519:
+        return EVP_PKEY_ED25519;
+    }
+    ASSERT_NOT_REACHED();
+    return EVP_PKEY_NONE;
+}
 
 bool CryptoKeyOKP::isPlatformSupportedCurve(NamedCurve namedCurve)
 {
@@ -74,60 +88,26 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
+    const uint8_t* ptr = keyData.begin();
 
-    // Read SEQUENCE
-    size_t index = 1;
-    if (keyData.size() < index + 1)
+    auto pkey = EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
+    if (!pkey)
+        return nullptr;
+    if (ptr - keyData.begin() != (ptrdiff_t)keyData.size())
+        return nullptr;
+    if (EVP_PKEY_id(pkey.get()) != namedCurveToNID(namedCurve))
         return nullptr;
 
-    // Read length and SEQUENCE
-    // FIXME: Check length is 5 + 1 + 1 + 1 + keyByteSize.
-    index += bytesUsedToEncodedLength(keyData[index]) + 1;
-    if (keyData.size() < index + 1)
+    size_t rawLen = 0;
+    if (EVP_PKEY_get_raw_public_key(pkey.get(), nullptr, &rawLen) != 1)
         return nullptr;
 
-    // Read length
-    // FIXME: Check length is 5.
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 5)
+    Vector<uint8_t> raw(rawLen);
+    if (EVP_PKEY_get_raw_public_key(pkey.get(), raw.begin(), &rawLen) != 1)
         return nullptr;
+    raw.shrink(rawLen);
 
-    // Read OID
-    // FIXME: spec says this is 1 3 101 11X but WPT tests expect 6 3 43 101 11X.
-    if (keyData[index++] != 6 || keyData[index++] != 3 || keyData[index++] != 43 || keyData[index++] != 101)
-        return nullptr;
-
-    switch (namedCurve) {
-    case NamedCurve::X25519:
-        if (keyData[index++] != 110)
-            return nullptr;
-        break;
-    case NamedCurve::Ed25519:
-        if (keyData[index++] != 112)
-            return nullptr;
-        break;
-    };
-
-    // Read BIT STRING
-    if (keyData.size() < index + 2)
-        return nullptr;
-    if (keyData[index++] != 3)
-        return nullptr;
-
-    // Read length
-    // FIXME: Check length is keyByteSize + 1.
-    index += bytesUsedToEncodedLength(keyData[index]);
-
-    if (keyData.size() < index + 1)
-        return nullptr;
-
-    // Initial octet
-    if (!!keyData[index])
-        return nullptr;
-    ++index;
-
-    return create(identifier, namedCurve, CryptoKeyType::Public, std::span<const uint8_t> { keyData.begin() + index, keyData.size() - index }, extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(raw), extractable, usages);
 }
 
 constexpr uint8_t OKPOIDFirstByte = 6;
@@ -193,68 +173,28 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
+    const uint8_t* ptr = keyData.begin();
 
-    // Read SEQUENCE
-    size_t index = 1;
-    if (keyData.size() < index + 1)
+    auto p8inf = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
+    if (!p8inf)
+        return nullptr;
+    if (ptr - keyData.begin() != (ptrdiff_t)keyData.size())
         return nullptr;
 
-    // Read length
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 1)
+    auto pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
+    if (!pkey || EVP_PKEY_id(pkey.get()) != namedCurveToNID(namedCurve))
         return nullptr;
 
-    // Read version
-    index += 3;
-    if (keyData.size() < index + 1)
+    size_t rawLen = 0;
+    if (EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &rawLen) != 1)
         return nullptr;
 
-    // Read SEQUENCE
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 1)
+    Vector<uint8_t> raw(rawLen);
+    if (EVP_PKEY_get_raw_private_key(pkey.get(), raw.begin(), &rawLen) != 1)
         return nullptr;
+    raw.shrink(rawLen);
 
-    // Read length
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 5)
-        return nullptr;
-
-    // Read OID
-    if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte)
-        return nullptr;
-
-    switch (namedCurve) {
-    case NamedCurve::X25519:
-        if (keyData[index++] != OKPOIDX25519Byte)
-            return nullptr;
-        break;
-    case NamedCurve::Ed25519:
-        if (keyData[index++] != OKPOIDEd25519Byte)
-            return nullptr;
-        break;
-    };
-
-    // Read OCTET STRING
-    if (keyData.size() < index + 2)
-        return nullptr;
-
-    if (keyData[index++] != 4)
-        return nullptr;
-
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 2)
-        return nullptr;
-
-    // Read OCTET STRING
-    if (keyData[index++] != 4)
-        return nullptr;
-
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 1)
-        return nullptr;
-
-    return create(identifier, namedCurve, CryptoKeyType::Private, std::span<const uint8_t> { keyData.begin() + index, keyData.size() - index }, extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(raw), extractable, usages);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const

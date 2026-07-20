@@ -545,6 +545,103 @@ describe("SubtleCrypto.deriveBits length", () => {
   });
 });
 
+// The W3C Web Crypto importKey algorithm for Ed25519/X25519 requires running
+// the "parse a PrivateKeyInfo/SubjectPublicKeyInfo" step and throwing DataError
+// on any structural error. Bun's hand-rolled offset walker skipped tag and
+// length validation entirely, accepting structurally invalid ASN.1.
+describe.each(["Ed25519", "X25519"] as const)("%s pkcs8/spki DER import", alg => {
+  const isEd = alg === "Ed25519";
+  const pkcs8 = Buffer.from(
+    isEd
+      ? "302e020100300506032b657004220420133c1261257a68b5209403da57a229cbea6d7ca891d5666229d6089b880fb974"
+      : "302e020100300506032b656e04220420285a9b6fe4de7886429ee2ad9aaba765dc60938119dc41b04fa22de8014c9d52",
+    "hex",
+  );
+  const spki = Buffer.from(
+    isEd
+      ? "302a300506032b65700321008f0654c04944427e905bcc7e0b7ea660e0e3004d495ebbdfe6d61d8fbb6ac950"
+      : "302a300506032b656e032100fdf82ab3e8778354c50c6bf9fe7c98ffaca0fc5bf5c614ba58f40c1c5e7fd176",
+    "hex",
+  );
+  const set = (b: Buffer, i: number, v: number) => {
+    const x = Buffer.from(b);
+    x[i] = v;
+    return x;
+  };
+  const privUsages: KeyUsage[] = isEd ? ["sign"] : ["deriveBits"];
+  const pubUsages: KeyUsage[] = isEd ? ["verify"] : [];
+  const outcome = (fmt: "pkcs8" | "spki", der: Buffer) =>
+    crypto.subtle.importKey(fmt, der, alg, true, fmt === "pkcs8" ? privUsages : pubUsages).then(
+      k => (k instanceof CryptoKey ? "imported" : "other"),
+      e => e.name,
+    );
+
+  it("imports well-formed pkcs8 and round-trips exactly", async () => {
+    const key = await crypto.subtle.importKey("pkcs8", pkcs8, alg, true, privUsages);
+    const exported = Buffer.from(await crypto.subtle.exportKey("pkcs8", key));
+    expect(exported.toString("hex")).toBe(pkcs8.toString("hex"));
+  });
+
+  it("imports well-formed spki and round-trips exactly", async () => {
+    const key = await crypto.subtle.importKey("spki", spki, alg, true, pubUsages);
+    const exported = Buffer.from(await crypto.subtle.exportKey("spki", key));
+    expect(exported.toString("hex")).toBe(spki.toString("hex"));
+  });
+
+  it("rejects structurally invalid pkcs8 DER with DataError", async () => {
+    expect({
+      "outer SEQUENCE len + 1": await outcome("pkcs8", set(pkcs8, 1, pkcs8[1] + 1)),
+      "outer SEQUENCE len - 1": await outcome("pkcs8", set(pkcs8, 1, pkcs8[1] - 1)),
+      "outer SEQUENCE len = 127": await outcome("pkcs8", set(pkcs8, 1, 127)),
+      "version = 255": await outcome("pkcs8", set(pkcs8, 4, 255)),
+      "version tag = SEQUENCE": await outcome("pkcs8", set(pkcs8, 2, 0x30)),
+      "trailing garbage": await outcome("pkcs8", Buffer.concat([pkcs8, Buffer.of(0)])),
+      "well-formed": await outcome("pkcs8", pkcs8),
+    }).toEqual({
+      "outer SEQUENCE len + 1": "DataError",
+      "outer SEQUENCE len - 1": "DataError",
+      "outer SEQUENCE len = 127": "DataError",
+      "version = 255": "DataError",
+      "version tag = SEQUENCE": "DataError",
+      "trailing garbage": "DataError",
+      "well-formed": "imported",
+    });
+  });
+
+  it("rejects structurally invalid spki DER with DataError", async () => {
+    expect({
+      "outer SEQUENCE len + 1": await outcome("spki", set(spki, 1, spki[1] + 1)),
+      "outer SEQUENCE len - 1": await outcome("spki", set(spki, 1, spki[1] - 1)),
+      "trailing garbage": await outcome("spki", Buffer.concat([spki, Buffer.of(0)])),
+      "well-formed": await outcome("spki", spki),
+    }).toEqual({
+      "outer SEQUENCE len + 1": "DataError",
+      "outer SEQUENCE len - 1": "DataError",
+      "trailing garbage": "DataError",
+      "well-formed": "imported",
+    });
+  });
+
+  it("rejects pkcs8/spki carrying the wrong OID", async () => {
+    const other = isEd ? "X25519" : "Ed25519";
+    expect({
+      "pkcs8 wrong OID": await crypto.subtle
+        .importKey("pkcs8", pkcs8, other, true, isEd ? ["deriveBits"] : ["sign"])
+        .then(
+          () => "imported",
+          e => e.name,
+        ),
+      "spki wrong OID": await crypto.subtle.importKey("spki", spki, other, true, isEd ? [] : ["verify"]).then(
+        () => "imported",
+        e => e.name,
+      ),
+    }).toEqual({
+      "pkcs8 wrong OID": "DataError",
+      "spki wrong OID": "DataError",
+    });
+  });
+});
+
 describe("X25519 JWK import", () => {
   const x25519Public: JsonWebKey = {
     kty: "OKP",

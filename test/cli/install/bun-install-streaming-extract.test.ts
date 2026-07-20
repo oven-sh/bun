@@ -137,13 +137,7 @@ function makeEntries(): Entry[] {
 // the BUN_INSTALL_STREAMING_MIN_SIZE gate.
 // -------------------------------------------------------------------
 
-async function makeRegistry(
-  tgz: Buffer,
-  shasum: string,
-  integrity: string,
-  chunkBytes: number,
-  delayMs: number = 0,
-) {
+async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number, delayMs: number = 0) {
   let tarballHits = 0;
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url!, "http://x");

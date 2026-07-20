@@ -193,8 +193,12 @@ impl TarballStream {
     /// thread per chunk. Batching to `threshold` collapses that into roughly
     /// one wake per `threshold` bytes.
     fn drain_threshold() -> usize {
-        usize::try_from(env_var::BUN_INSTALL_STREAMING_DRAIN_THRESHOLD.get().unwrap())
-            .expect("int cast")
+        usize::try_from(
+            env_var::BUN_INSTALL_STREAMING_DRAIN_THRESHOLD
+                .get()
+                .unwrap(),
+        )
+        .expect("int cast")
     }
 
     pub(crate) fn init(

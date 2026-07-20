@@ -1022,8 +1022,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         None,
                                         bun_ast::Loc::EMPTY,
                                         format_args!(
-                                            "Invalid package name \"{}\" (package names may only contain URL-friendly characters)",
-                                            bstr::BStr::new(&name_str),
+                                            "Invalid package name {} (package names may only contain URL-friendly characters)",
+                                            bun_fmt::quote(&name_str),
                                         ),
                                     );
                                 }

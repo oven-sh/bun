@@ -59,8 +59,8 @@ fn start_manifest_task(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "Invalid package name \"{}\" (package names may only contain URL-friendly characters)",
-                    bstr::BStr::new(pkg_name),
+                    "Invalid package name {} (package names may only contain URL-friendly characters)",
+                    bun_core::fmt::quote(pkg_name),
                 ),
             );
         }

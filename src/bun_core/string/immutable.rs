@@ -621,7 +621,7 @@ pub fn is_url_safe_package_name(target: &[u8]) -> bool {
         matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
             | b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')')
     }
-    if target.is_empty() {
+    if target.is_empty() || matches!(target[0], b'.' | b'_') {
         return false;
     }
     if target[0] == b'@' {

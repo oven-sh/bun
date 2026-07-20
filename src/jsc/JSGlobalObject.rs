@@ -1396,6 +1396,11 @@ impl JSGlobalObject {
 
         // JSC might mess with the stack size.
         StackCheck::configure_thread();
+        // The first `JSC::VM::tryCreate` runs `WTF::Config::finalize()` →
+        // `SignalHandlers::finalize()`, which installs SIGSEGV/SIGBUS actions
+        // with `sa_flags = SA_SIGINFO` only. Reapply `SA_ONSTACK` so the crash
+        // handler can still run after a guard-page fault.
+        bun_crash_handler::ensure_sa_onstack();
 
         global
     }

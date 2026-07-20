@@ -185,6 +185,22 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
+/// Register a per-thread alternate signal stack. Dispatches to
+/// `bun_crash_handler::init_thread` via a link-time `extern "Rust"` symbol so
+/// `bun_core` does not depend on the crash-handler crate. Under `cfg(test)`
+/// (this crate's standalone test binary does not link `bun_crash_handler`) it
+/// is a no-op.
+#[inline]
+pub fn crash_handler_init_thread() {
+    #[cfg(not(test))]
+    {
+        unsafe extern "Rust" {
+            safe fn __bun_crash_handler_init_thread();
+        }
+        __bun_crash_handler_init_thread()
+    }
+}
+
 /// Capture and dump the current call stack. Dispatches to
 /// `bun_crash_handler::dump_current_stack_trace`.
 /// The upward call is routed through a link-time `extern "Rust"`

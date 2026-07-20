@@ -1028,7 +1028,10 @@ impl TranspilerJob {
                     if len == 0 {
                         (ptr::null(), 0)
                     } else {
-                        (bun_core::heap::into_raw(bytes).cast::<u8>().cast_const(), len)
+                        (
+                            bun_core::heap::into_raw(bytes).cast::<u8>().cast_const(),
+                            len,
+                        )
                     }
                 }
                 _ => (ptr::null(), 0),

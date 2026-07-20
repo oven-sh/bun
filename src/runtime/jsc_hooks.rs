@@ -2753,7 +2753,10 @@ fn transpile_source_code_inner(
                                 (core::ptr::null(), 0)
                             } else {
                                 // C++ side becomes the owner.
-                                (bun_core::heap::into_raw(bytes).cast::<u8>().cast_const(), len)
+                                (
+                                    bun_core::heap::into_raw(bytes).cast::<u8>().cast_const(),
+                                    len,
+                                )
                             }
                         }
                         _ => (core::ptr::null(), 0),

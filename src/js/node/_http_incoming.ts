@@ -429,9 +429,9 @@ function onDataIncomingMessage(
 
   if (chunk && !this._dumped) {
     // Like Node's parserOnBody: pause the connection once the buffer fills.
-    // Upgrade-with-body excluded for the same reason as _read(): the upgrade
-    // listener owns the socket's flow state for the tunnel bytes that follow.
-    if (!this.push(chunk) && !this.upgrade) readStop(socket);
+    // Skipped for upgrade (the listener owns socket flow) and once writable
+    // has ended (socketHandle.end() resumed the poll so kqueue sees EV_EOF).
+    if (!this.push(chunk) && !this.upgrade && !socket?.writableEnded) readStop(socket);
   }
 
   if (isLast) {

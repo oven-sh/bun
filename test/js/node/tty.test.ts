@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows } from "harness";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -190,6 +190,124 @@ describe("ReadStream.prototype.setRawMode", () => {
     });
     expect(await proc.exited).toBe(0);
   });
+
+  // On Windows, setRawMode on process.stdin requests UV_TTY_MODE_RAW_VT so
+  // the terminal supplies VT input sequences, but a tty.ReadStream on any
+  // other console fd (e.g. CONIN$) either failed outright ("not a TTY") or,
+  // via Source::set_raw_mode, would have used plain UV_TTY_MODE_RAW, which
+  // leaves ENABLE_VIRTUAL_TERMINAL_INPUT off and routes input through libuv's
+  // own INPUT_RECORD translator. The console input mode must be the same
+  // whichever fd the program raw-moded. bun:ffi has no Windows/arm64 backend.
+  test.skipIf(!isWindows || isArm64)(
+    "uses the same VT raw console mode for CONIN$ as for stdin on Windows",
+    async () => {
+      const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
+
+      let output = "";
+      const decoder = new TextDecoder();
+      const done = Promise.withResolvers<void>();
+      const eof = Promise.withResolvers<void>();
+
+      const proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const fs = require("node:fs");
+            const tty = require("node:tty");
+            const { dlopen, ptr } = require("bun:ffi");
+
+            const k32 = dlopen("kernel32.dll", {
+              GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+              GetStdHandle: { args: ["u32"], returns: "ptr" },
+              GetLastError: { args: [], returns: "u32" },
+            });
+
+            // Console input mode is per input buffer (not per handle), so the
+            // stdin handle observes the same mode whichever console handle
+            // uv_tty_set_mode was called on.
+            const STD_INPUT_HANDLE = 0xfffffff6; // (DWORD)-10
+            const probe = k32.symbols.GetStdHandle(STD_INPUT_HANDLE);
+            if (!probe) throw new Error("GetStdHandle failed");
+            const out = new Uint32Array(1);
+            const mode = () => {
+              if (!k32.symbols.GetConsoleMode(probe, ptr(out)))
+                throw new Error("GetConsoleMode failed: " + k32.symbols.GetLastError());
+              return out[0];
+            };
+
+            let err;
+            process.stdin.on("error", e => (err = String(e)));
+            process.stdin.setRawMode(true);
+            const stdinRawMode = mode();
+            process.stdin.setRawMode(false);
+            const stdinNormalMode = mode();
+
+            const fd = fs.openSync("CONIN$", "r");
+            const stream = new tty.ReadStream(fd);
+            stream.on("error", e => (err = String(e)));
+            stream.setRawMode(true);
+            const coninRawMode = mode();
+            const coninIsRaw = stream.isRaw;
+            stream.setRawMode(false);
+            const coninNormalMode = mode();
+
+            process.stdout.write(
+              "RESULT " +
+                JSON.stringify({
+                  fd,
+                  isTTY: stream.isTTY,
+                  stdinRawMode,
+                  coninRawMode,
+                  stdinNormalMode,
+                  coninNormalMode,
+                  coninIsRaw,
+                  ...(err ? { err } : {}),
+                }),
+            );
+            process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        terminal: {
+          cols: 200,
+          rows: 24,
+          data(_t, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (output.includes("RESULT ") && output.includes("}")) done.resolve();
+          },
+          exit() {
+            eof.resolve();
+          },
+        },
+      });
+
+      await Promise.race([done.promise, eof.promise]);
+      proc.kill();
+      await proc.exited;
+      proc.terminal?.close();
+      output += decoder.decode();
+
+      const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+      const match = stripped.match(/RESULT (\{[^}]*\})/);
+      if (!match) {
+        throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
+      }
+      const result = JSON.parse(match[1]);
+      expect(result).toEqual({
+        fd: expect.any(Number),
+        isTTY: true,
+        stdinRawMode: result.stdinRawMode,
+        coninRawMode: result.stdinRawMode,
+        stdinNormalMode: result.stdinNormalMode,
+        coninNormalMode: result.stdinNormalMode,
+        coninIsRaw: true,
+      });
+      expect(result.fd).not.toBe(0);
+      expect(result.stdinRawMode & ENABLE_VIRTUAL_TERMINAL_INPUT).toBe(ENABLE_VIRTUAL_TERMINAL_INPUT);
+      expect(result.coninRawMode & ENABLE_VIRTUAL_TERMINAL_INPUT).toBe(ENABLE_VIRTUAL_TERMINAL_INPUT);
+    },
+  );
 });
 
 describe("WriteStream.prototype.getColorDepth", () => {

@@ -31,7 +31,7 @@
 
 #if OS(WINDOWS)
 
-extern "C" int Source__setRawModeStdin(uv_loop_t* uv_loop, bool raw);
+extern "C" int Source__setRawModeTty(uv_loop_t* uv_loop, int fd, bool raw);
 
 namespace UV {
 
@@ -195,13 +195,13 @@ JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* g
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 #if OS(WINDOWS)
-    ASSERT(callFrame->argumentCount() == 1);
-    auto flag = callFrame->argument(0);
-    bool raw = flag.asBoolean();
+    ASSERT(callFrame->argumentCount() == 2);
+    int fd = callFrame->argument(0).asInt32();
+    bool raw = callFrame->argument(1).asBoolean();
 
     Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
-    return JSValue::encode(jsNumber(Source__setRawModeStdin(global->uvLoop(), raw)));
+    return JSValue::encode(jsNumber(Source__setRawModeTty(global->uvLoop(), fd, raw)));
 #else
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

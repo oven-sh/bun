@@ -2876,8 +2876,8 @@ pub mod args {
     }
     pub type Readv = FdVectorIo;
 
-    /// Transparent so the `args_as!` identity cast in the Windows
-    /// `UVFSRequest` dispatch stays a pure reinterpretation.
+    /// Newtype over [`FdVectorIo`] so writev's `from_js` can snapshot resizable
+    /// inputs on the async path; `Readv` stays the plain alias.
     #[repr(transparent)]
     pub struct Writev(pub FdVectorIo);
     impl core::ops::Deref for Writev {
@@ -3924,12 +3924,16 @@ pub mod args {
                 if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
                     if pinned.resizable && !pinned.shared {
                         // pin() blocks transfer(), not resize(); a shrink
-                        // decommits pages the threadpool hands to write(2),
-                        // which then returns EFAULT. Snapshot the call-time
-                        // bytes instead.
-                        let owned = pinned.byte_slice().to_vec();
+                        // decommits pages the threadpool hands to write(2) and
+                        // returns EFAULT. Snapshot the call-time bytes instead.
+                        let view = pinned.byte_slice();
+                        let off = (args.offset as usize).min(view.len());
+                        let len = (args.length as usize).min(view.len() - off);
+                        let owned = view[off..off + len].to_vec();
                         pinned.unpin();
                         ctx.vm().report_extra_memory(owned.len());
+                        args.offset = 0;
+                        args.length = owned.len() as u64;
                         args.buffer =
                             StringOrBuffer::EncodedSlice(ZigStringSlice::init_owned(owned));
                     } else {

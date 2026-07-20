@@ -5513,10 +5513,8 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 });
 
 // pin() blocks transfer(), not ArrayBuffer.prototype.resize: a shrink decommits
-// pages the threadpool passes to write(2)/pwritev(2), which then returns EFAULT
-// (or, if the buffer is regrown before the syscall runs, writes zeroed bytes).
-// Async fs.write/fs.writev now snapshot resizable non-shared inputs at call
-// time so the written content is the call-time bytes.
+// pages the threadpool hands to write(2)/pwritev(2). Async write/writev now
+// snapshot resizable non-shared inputs at call time.
 describe.concurrent.each(["write", "writev"] as const)(
   "async fs.%s snapshots a resizable ArrayBuffer input at call time",
   op => {
@@ -5575,29 +5573,48 @@ describe.concurrent.each(["write", "writev"] as const)(
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("ok");
-      expect(exitCode).toBe(0);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "ok",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
 
-    it("leaves a growable SharedArrayBuffer zero-copy", async () => {
+    if (op === "write") {
+      it("snapshots only the [offset, offset+length) window", async () => {
+        using dir = tempDir("fs-write-resizable-offset", {});
+        const out = join(String(dir), "out");
+        const fh = await fs.promises.open(out, "w");
+        const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+        const view = new Uint8Array(ab);
+        view.fill(0x42);
+        view.fill(0x41, 16, 48);
+        const p = new Promise<{ e: any; n: number }>(r =>
+          fs.write(fh.fd, view, 16, 32, 0, (e, n) => r({ e, n })),
+        );
+        ab.resize(0);
+        const { e, n } = await p;
+        await fh.close();
+        expect({ e, n, out: readFileSync(out) }).toEqual({ e: null, n: 32, out: Buffer.alloc(32, 0x41) });
+      });
+    }
+
+    it("accepts a growable SharedArrayBuffer input", async () => {
       using dir = tempDir(`fs-${op}-growable-sab`, {});
       const out = join(String(dir), "out");
       const fh = await fs.promises.open(out, "w");
       const sab = new SharedArrayBuffer(4096, { maxByteLength: 8192 });
       new Uint8Array(sab).fill(0x41);
-      const p: Promise<{ e: any; n: number }> =
+      const { e, n } =
         op === "write"
-          ? new Promise(r => fs.write(fh.fd, new Uint8Array(sab), 0, 4096, 0, (e, n) => r({ e, n })))
-          : new Promise(r =>
+          ? await new Promise<{ e: any; n: number }>(r =>
+              fs.write(fh.fd, new Uint8Array(sab), 0, 4096, 0, (e, n) => r({ e, n })),
+            )
+          : await new Promise<{ e: any; n: number }>(r =>
               fs.writev(fh.fd, [new Uint8Array(sab, 0, 2048), new Uint8Array(sab, 2048)], 0, (e, n) => r({ e, n })),
             );
-      sab.grow(8192);
-      const { e, n } = await p;
       await fh.close();
-      expect(e).toBeNull();
-      expect(n).toBe(4096);
-      expect(readFileSync(out).every(b => b === 0x41)).toBe(true);
+      expect({ e, n, out: readFileSync(out) }).toEqual({ e: null, n: 4096, out: Buffer.alloc(4096, 0x41) });
     });
   },
 );

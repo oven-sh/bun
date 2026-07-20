@@ -149,3 +149,13 @@ FFI_EXPORT uint64_t cb_identity_42_uint64_t(uint64_t (*cb)()) { return cb(); }
 FFI_EXPORT int16_t cb_identity_neg_42_int16_t(int16_t (*cb)()) { return cb(); }
 FFI_EXPORT int32_t cb_identity_neg_42_int32_t(int32_t (*cb)()) { return cb(); }
 FFI_EXPORT int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) { return cb(); }
+
+// Numeric-boundary returns for the INT64/UINT64_TO_JSVALUE encoding (#7007 /
+// #33340). Exercised through dlopen so they run under ASan (the cc() variants
+// in cc.test.ts are ASan-skipped).
+FFI_EXPORT int64_t ffi_bound_i64_2p31(void) { return 2147483648LL; }
+FFI_EXPORT uint64_t ffi_bound_u64_2p31(void) { return 2147483648ULL; }
+FFI_EXPORT uint64_t ffi_bound_u64_int32_max(void) { return 2147483647ULL; }
+FFI_EXPORT int64_t ffi_bound_i64_max_safe(void) { return 9007199254740991LL; }
+FFI_EXPORT uint64_t ffi_bound_u64_max_safe(void) { return 9007199254740991ULL; }
+FFI_EXPORT uint64_t ffi_bound_u64_2p53(void) { return 9007199254740992ULL; }

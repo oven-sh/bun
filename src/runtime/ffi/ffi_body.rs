@@ -269,7 +269,9 @@ impl Source {
     pub(crate) fn first(&self) -> &ZStr {
         match self {
             Source::File(f) => f,
-            Source::Files(files) => &files[0],
+            // Defensive: callers reject an empty `source: []` before compile, but
+            // never index blindly here (a panic would abort the process).
+            Source::Files(files) => files.first().map(|f| &**f).unwrap_or(zstr!("")),
         }
     }
 
@@ -439,6 +441,16 @@ static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::n
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
+/// TinyCC's in-memory error messages sometimes carry leading non-printable
+/// garbage bytes; skip to the first printable ASCII byte (`0x21..=0x7e`).
+fn strip_leading_nonprintable(msg: &[u8]) -> &[u8] {
+    let start = msg
+        .iter()
+        .position(|&b| (0x21..=0x7e).contains(&b))
+        .unwrap_or(msg.len());
+    &msg[start..]
+}
+
 impl CompileC {
     /// # Safety
     /// `this_` is the `ConfigErr::ctx` pointer round-tripped through TinyCC; it
@@ -455,7 +467,7 @@ impl CompileC {
         // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
         // the unique borrow for the duration of the callback.
         let this = unsafe { &mut *this_ };
-        let mut msg: &[u8] = if message.is_null() {
+        let msg: &[u8] = if message.is_null() {
             b""
         } else {
             // SAFETY: TCC guarantees `message` is a valid NUL-terminated string when non-null.
@@ -465,17 +477,7 @@ impl CompileC {
             return;
         }
 
-        let mut offset: usize = 0;
-        // the message we get from TCC sometimes has garbage in it
-        // i think because we're doing in-memory compilation
-        while offset < msg.len() {
-            if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                break;
-            }
-            offset += 1;
-        }
-        msg = &msg[offset..];
-
+        let msg = strip_leading_nonprintable(msg);
         this.deferred_errors.push(Box::<[u8]>::from(msg));
     }
 
@@ -612,7 +614,9 @@ impl CompileC {
             tcc_options_owned = ZBox::from_bytes(tcc_options);
             &tcc_options_owned
         } else {
-            zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
+            // Derive from the single source of truth rather than repeating the literal.
+            tcc_options_owned = ZBox::from_bytes(Self::DEFAULT_TCC_OPTIONS.as_bytes());
+            &tcc_options_owned
         };
 
         // TODO: correctly handle invalid user-provided options
@@ -633,9 +637,18 @@ impl CompileC {
                 return Err(crate::Error::DeferredErrors);
             }
         };
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
-        // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        // `TCC::State` has no `Drop`; ownership of the handle is now ours and it
+        // must be `destroy`ed. Guard it so every error return below frees it
+        // (mirrors `Function::compile`); disarmed on the success path where
+        // ownership transfers to the caller. Otherwise a failed cc() compile
+        // (invalid C, missing symbol, bad include path) leaks a full TCC context.
+        let state_guard = scopeguard::guard(state_ptr, |p| {
+            // SAFETY: `p` came from `TCC::State::init` and is not yet destroyed.
+            unsafe { TCC::State::destroy(p.as_ptr()) };
+        });
+        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`; the
+        // raw-pointer deref does not borrow the guard, so it can still be moved out.
+        let state: &mut TCC::State = unsafe { &mut *state_guard.as_ptr() };
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
@@ -784,7 +797,10 @@ impl CompileC {
             .map_err(|_| crate::Error::DeferredErrors)?;
 
         for symbol in self.symbols.map.values() {
-            if symbol.needs_napi_env() {
+            // `needs_handle_scope` (superset of `needs_napi_env`): the generated
+            // wrapper compiled into this same state opens a NapiHandleScope — and
+            // references Bun__thisFFIModuleNapiEnv — for a `napi_value` return too.
+            if symbol.needs_handle_scope() {
                 // napi env is process-lifetime; valid for JIT'd code.
                 state
                     .add_symbol(
@@ -873,7 +889,8 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        Ok(state_ptr)
+        // Success: hand the (now-compiled) state to the caller; don't destroy it.
+        Ok(scopeguard::ScopeGuard::into_inner(state_guard))
     }
 }
 
@@ -1062,9 +1079,18 @@ impl FFI {
                     ));
                 }
 
-                let str = flags_value.get_zig_string(global_this)?;
-                if str.len > 0 {
-                    compile_c.flags = str.to_owned_slice_z();
+                let slice = flags_value.to_slice(global_this)?;
+                if !slice.slice().is_empty() {
+                    // Match the array branch (and the documented example, which
+                    // adds -framework flags): keep the default flags — notably
+                    // -Wl,--export-all-symbols, without which the FFI symbols
+                    // never resolve — and append the user's instead of replacing.
+                    let mut flags: Vec<u8> = Vec::new();
+                    flags.extend_from_slice(CompileC::DEFAULT_TCC_OPTIONS.as_bytes());
+                    flags.push(b' ');
+                    flags.extend_from_slice(slice.slice());
+                    flags.push(0);
+                    compile_c.flags = ZBox::from_vec_with_nul(flags);
                 }
             }
         }
@@ -1132,6 +1158,13 @@ impl FFI {
                     if let Source::Files(files) = &mut compile_c.source {
                         files.push(value.get_zig_string(global_this)?.to_owned_slice_z());
                     }
+                }
+                // An empty `source: []` has nothing to compile; `Source::first()`
+                // would index `[0]` and panic (a process abort). Reject it here.
+                if matches!(&compile_c.source, Source::Files(files) if files.is_empty()) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected \"source\" to contain at least one file path"
+                    )));
                 }
             } else if !source_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -1210,7 +1243,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global_this);
+                    let res = failed_step_error(global_this, msg);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1283,6 +1316,18 @@ impl FFI {
             return Ok(val);
         }
 
+        // A `buffer`/`napi_env` arg can't be reconstructed for a JS callback (the
+        // callback-direction codegen would emit invalid C — `0.asZigRepr` etc.),
+        // so reject them here with a clear message instead of a compile failure.
+        for arg in func.arg_types.iter() {
+            if matches!(arg, ABIType::Buffer | ABIType::NapiEnv) {
+                return Ok(global_this.create_error_instance(format_args!(
+                    "\"{}\" is not a supported argument type for a JSCallback",
+                    <&'static str>::from(*arg)
+                )));
+            }
+        }
+
         // TODO: WeakRefHandle that automatically frees it?
         func.base_name = Some(ZBox::from_bytes(b""));
         js_callback.ensure_still_alive();
@@ -1294,10 +1339,7 @@ impl FFI {
             return Ok(ZigString::init(b"Out of memory").to_error_instance(global_this));
         }
         match &func.step {
-            Step::Failed { msg, .. } => {
-                let message = ZigString::init(msg).to_error_instance(global_this);
-                Ok(message)
-            }
+            Step::Failed { msg, .. } => Ok(failed_step_error(global_this, msg)),
             Step::Pending => Ok(ZigString::init(
                 b"Failed to compile, but not sure why. Please report this bug",
             )
@@ -1421,6 +1463,13 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
     global.to_invalid_arguments(format_args!("Expected an options object with symbol names"))
 }
 
+/// Error instance for a `Step::Failed` compile message. `create_error_instance`
+/// copies `msg` into an owned buffer; `ZigString::init` would only borrow it, and
+/// `msg` is freed with its `Function` before JS reads `.message` (a UAF).
+fn failed_step_error(global: &JSGlobalObject, msg: &[u8]) -> JSValue {
+    global.create_error_instance(format_args!("{}", BStr::new(msg)))
+}
+
 impl FFI {
     pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
         if !bun_core::Environment::ENABLE_TINYCC {
@@ -1430,7 +1479,6 @@ impl FFI {
             return JSValue::ZERO;
         }
         jsc::mark_binding();
-        let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -1459,7 +1507,6 @@ impl FFI {
             // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
             // can't see the bunfs virtual FS. The helper lives in
             // `crate::jsc_hooks` — same crate, so a direct call.
-            let _ = vm;
             if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
                 name_slice.slice(),
                 ext,
@@ -1571,7 +1618,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
+                    let res = failed_step_error(global, msg);
                     dylib.close();
                     return res;
                 }
@@ -1667,10 +1714,7 @@ impl FFI {
                 return ret;
             }
             match &function.step {
-                Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
-                    return res;
-                }
+                Step::Failed { msg, .. } => return failed_step_error(global, msg),
                 Step::Pending => {
                     return ZigString::static_(b"Failed to compile (nothing happend!)")
                         .to_error_instance(global);
@@ -1723,7 +1767,10 @@ pub(super) fn generate_symbol_for_function(
 
         let mut array = args.array_iterator(global)?;
 
-        abi_types.reserve_exact(array.len as usize);
+        // `array.len` is the attacker-controlled JS `args.length` (up to u32::MAX):
+        // a sparse `new Array(0xFFFFFFFF)` would otherwise reserve ~16 GB up front.
+        // Cap the hint; the Vec still grows past it for any legitimate arg count.
+        abi_types.reserve_exact((array.len as usize).min(64));
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
@@ -1734,8 +1781,7 @@ pub(super) fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Reject Buffer (20); only the string-label path accepts it.
-                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
+                if let Some(t) = ABIType::from_int(int) {
                     abi_types.push(t);
                     continue;
                 } else {
@@ -1775,8 +1821,7 @@ pub(super) fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, "returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Reject Buffer (20); only the string-label path accepts it.
-                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
+                if let Some(t) = ABIType::from_int(int) {
                     return_type = t;
                     break 'brk;
                 } else {
@@ -1814,7 +1859,7 @@ pub(super) fn generate_symbol_for_function(
         ));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
+    if threadsafe && return_type != ABIType::Void {
         return Ok(Some(
             ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
         ));
@@ -1947,7 +1992,6 @@ impl Function {
         if !matches!(self.step, Step::Failed { .. }) {
             self.step = Step::Failed {
                 msg: Box::<[u8]>::from(msg),
-                allocated: false,
             };
         }
     }
@@ -1966,23 +2010,11 @@ impl Function {
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
         let this = unsafe { &mut *ctx };
         // SAFETY: TCC passes a valid NUL-terminated string
-        let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
-        if !msg.is_empty() {
-            let mut offset: usize = 0;
-            // the message we get from TCC sometimes has garbage in it
-            // i think because we're doing in-memory compilation
-            while offset < msg.len() {
-                if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                    break;
-                }
-                offset += 1;
-            }
-            msg = &msg[offset..];
-        }
+        let msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
+        let msg = strip_leading_nonprintable(msg);
 
         this.step = Step::Failed {
             msg: Box::<[u8]>::from(msg),
-            allocated: true,
         };
     }
 
@@ -2089,6 +2121,23 @@ impl Function {
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
         let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
+        // Null means the value was callable but not a real JSFunction (a callable
+        // Proxy or InternalFunction). Reject before baking the wrapper ptr into
+        // the trampoline — otherwise the callback would jump through a null ctx.
+        if ffi_wrapper.is_null() {
+            self.fail(b"Expected callback to be a function");
+            return Ok(());
+        }
+        // The wrapper pins a Strong<JSFunction> + Strong<GlobalObject> (a GC root
+        // for the whole realm) and is only adopted by Step::Compiled on success.
+        // Free it on every early failure/`?`/return below; disarmed once ownership
+        // transfers, so a compile/relocate/link failure can't leak it (repeatably).
+        let mut wrapper_guard = scopeguard::guard(true, |armed| {
+            if armed {
+                // SAFETY: ffi_wrapper is the live wrapper from Bun__createFFICallbackFunction.
+                unsafe { FFICallbackFunctionWrapper_destroy(ffi_wrapper) };
+            }
+        });
         self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
 
         #[cfg(all(debug_assertions, unix))]
@@ -2210,12 +2259,11 @@ impl Function {
             return Ok(());
         };
 
+        // Ownership of the wrapper transfers to Step::Compiled (freed in
+        // Function::drop); disarm the guard so it isn't double-freed.
+        *wrapper_guard = false;
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
-            // SAFETY: opaque-handle storage only. Never
-            // dereferenced or written through on the Rust side; stored as
-            // NonNull to avoid laundering &T → *mut T provenance.
-            js_context: Some(NonNull::from(js_context)),
             ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
         });
         Ok(())
@@ -2255,7 +2303,7 @@ impl Function {
                 writer.write_all(b", ")?;
             }
             first = false;
-            arg.param_typename(writer)?;
+            arg.typename(writer)?;
             write!(writer, " arg{}", i)?;
         }
         writer.write_all(
@@ -2524,7 +2572,7 @@ unsafe extern "C" {
 pub enum Step {
     Pending,
     Compiled(Compiled),
-    Failed { msg: Box<[u8]>, allocated: bool },
+    Failed { msg: Box<[u8]> },
 }
 
 /// Stores no JS function value: symbol functions are rooted by the
@@ -2532,9 +2580,6 @@ pub enum Step {
 /// `JSC::Strong` inside `FFICallbackFunctionWrapper`.
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // Opaque storage, never dereferenced. NonNull avoids
-    // a &T → *mut T cast at the assignment site in compile_callback().
-    pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
 
@@ -2542,7 +2587,6 @@ impl Default for Compiled {
     fn default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
-            js_context: None,
             ffi_callback_function_wrapper: None,
         }
     }
@@ -2768,7 +2812,12 @@ fn make_napi_env_if_needed<'a>(
     // to `'a` (the iterator borrow) is over-restrictive and blocks the
     // immediate-after `values_mut()` loop at every call site.
     for function in functions {
-        if function.needs_napi_env() {
+        // `needs_handle_scope`, not `needs_napi_env`: the generated wrapper opens a
+        // NapiHandleScope (referencing `Bun__thisFFIModuleNapiEnv`) whenever a handle
+        // scope is needed — which includes `returns: "napi_value"` with no napi args.
+        // Gating on args-only left that env symbol unresolved, so the symbol failed
+        // to relocate. `needs_handle_scope` is a strict superset, so nothing regresses.
+        if function.needs_handle_scope() {
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
             // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
             // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.

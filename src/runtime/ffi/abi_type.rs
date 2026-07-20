@@ -120,18 +120,17 @@ bun_core::comptime_string_map! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-variant string table — single source of truth for the four exhaustive
-// matches that previously lived in typename_label / param_typename_label /
-// ToCFormatter / ToJSFormatter. Indexed by `self as usize` (discriminants are
-// contiguous 0..=20).
+// Per-variant string table — single source of truth for the exhaustive matches
+// behind `typename_label` / `ToCFormatter` / `ToJSFormatter`. Indexed by
+// `self as usize` (discriminants are contiguous 0..=20).
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct AbiRow {
-    /// C type name for return/decl position (`typename_label`).
+    /// C type name for both return/decl and parameter position. A parameter is
+    /// declared with the same C type as the value it receives; the extraction
+    /// macro (`to_c_macro`) plus the `exact` cast (`to_c_cast`) handle any
+    /// re-interpretation, so no separate param-position type is needed.
     c_type: &'static [u8],
-    /// C type name for parameter position (`param_typename_label`). Differs
-    /// from `c_type` only for Uint32T (int32_t — see ffi.ts) and Buffer.
-    c_param_type: &'static [u8],
     /// `(T)` cast prefix emitted by `ToCFormatter` when `exact` is set. Empty
     /// when no cast is wanted (Buffer) or the row is unreachable (Void/Napi*).
     to_c_cast: &'static str,
@@ -147,35 +146,34 @@ struct AbiRow {
 static ABI_TABLE: [AbiRow; 21] = {
     const fn r(
         c_type: &'static [u8],
-        c_param_type: &'static [u8],
         to_c_cast: &'static str,
         to_c_macro: Option<&'static str>,
         to_js: Option<(&'static str, &'static str)>,
     ) -> AbiRow {
-        AbiRow { c_type, c_param_type, to_c_cast, to_c_macro, to_js }
+        AbiRow { c_type, to_c_cast, to_c_macro, to_js }
     }
     [
-    /* Char      */ r(b"char",       b"char",       "(char)",     Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int8T     */ r(b"int8_t",     b"int8_t",     "(int8_t)",   Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint8T    */ r(b"uint8_t",    b"uint8_t",    "(uint8_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int16T    */ r(b"int16_t",    b"int16_t",    "(int16_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint16T   */ r(b"uint16_t",   b"uint16_t",   "(uint16_t)", Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int32T    */ r(b"int32_t",    b"int32_t",    "(int32_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint32T   */ r(b"uint32_t",   b"int32_t",    "(uint32_t)", Some("JSVALUE_TO_INT32("),               Some(("UINT32_TO_JSVALUE(", ")"))),
-    /* Int64T    */ r(b"int64_t",    b"int64_t",    "(int64_t)",  Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Uint64T   */ r(b"uint64_t",   b"uint64_t",   "(uint64_t)", Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Double    */ r(b"double",     b"double",     "(double)",   Some("JSVALUE_TO_DOUBLE("),              Some(("DOUBLE_TO_JSVALUE(", ")"))),
-    /* Float     */ r(b"float",      b"float",      "(float)",    Some("JSVALUE_TO_FLOAT("),               Some(("FLOAT_TO_JSVALUE(", ")"))),
-    /* Bool      */ r(b"bool",       b"bool",       "(bool)",     Some("JSVALUE_TO_BOOL("),                Some(("BOOLEAN_TO_JSVALUE(", ")"))),
-    /* Ptr       */ r(b"void*",      b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* Void      */ r(b"void",       b"void",       "",           None,                                    None),
-    /* CString   */ r(b"void*",      b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* I64Fast   */ r(b"int64_t",    b"int64_t",    "(int64_t)",  Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
-    /* U64Fast   */ r(b"uint64_t",   b"uint64_t",   "(uint64_t)", Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Function  */ r(b"void*",      b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* NapiEnv   */ r(b"napi_env",   b"napi_env",   "",           None,                                    None),
-    /* NapiValue */ r(b"napi_value", b"napi_value", "",           None,                                    Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
-    /* Buffer    */ r(b"void*",      b"buffer",     "",           Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),  None),
+    /* Char      */ r(b"char",       "(char)",     Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int8T     */ r(b"int8_t",     "(int8_t)",   Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint8T    */ r(b"uint8_t",    "(uint8_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int16T    */ r(b"int16_t",    "(int16_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint16T   */ r(b"uint16_t",   "(uint16_t)", Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int32T    */ r(b"int32_t",    "(int32_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint32T   */ r(b"uint32_t",   "(uint32_t)", Some("JSVALUE_TO_INT32("),               Some(("UINT32_TO_JSVALUE(", ")"))),
+    /* Int64T    */ r(b"int64_t",    "(int64_t)",  Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Uint64T   */ r(b"uint64_t",   "(uint64_t)", Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Double    */ r(b"double",     "(double)",   Some("JSVALUE_TO_DOUBLE("),              Some(("DOUBLE_TO_JSVALUE(", ")"))),
+    /* Float     */ r(b"float",      "(float)",    Some("JSVALUE_TO_FLOAT("),               Some(("FLOAT_TO_JSVALUE(", ")"))),
+    /* Bool      */ r(b"bool",       "(bool)",     Some("JSVALUE_TO_BOOL("),                Some(("BOOLEAN_TO_JSVALUE(", ")"))),
+    /* Ptr       */ r(b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* Void      */ r(b"void",       "",           None,                                    None),
+    /* CString   */ r(b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* I64Fast   */ r(b"int64_t",    "(int64_t)",  Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
+    /* U64Fast   */ r(b"uint64_t",   "(uint64_t)", Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Function  */ r(b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* NapiEnv   */ r(b"napi_env",   "",           None,                                    None),
+    /* NapiValue */ r(b"napi_value", "",           None,                                    Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
+    /* Buffer    */ r(b"void*",      "",           Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),  None),
     ]
 };
 
@@ -187,8 +185,6 @@ impl ABIType {
 }
 
 impl ABIType {
-    pub const MAX: i32 = ABIType::NapiValue as i32;
-
     /// See [`ABI_TYPE_LABEL`].
     pub const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
@@ -268,34 +264,6 @@ impl ABIType {
 
     pub fn typename_label(self) -> &'static [u8] {
         self.row().c_type
-    }
-
-    pub fn param_typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
-        writer.write_all(self.typename_label())?;
-        Ok(())
-    }
-
-    pub fn param_typename_label(self) -> &'static [u8] {
-        self.row().c_param_type
-    }
-}
-
-pub struct EnumMapFormatter<'a> {
-    pub name: &'a [u8],
-    pub entry: ABIType,
-}
-
-impl fmt::Display for EnumMapFormatter<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("['")?;
-        // these are not all valid identifiers
-        fmt::Display::fmt(BStr::new(self.name), f)?;
-        f.write_str("']:")?;
-        write!(f, "{}", self.entry as i32)?;
-        f.write_str(",'")?;
-        write!(f, "{}", self.entry as i32)?;
-        f.write_str("':")?;
-        write!(f, "{}", self.entry as i32)
     }
 }
 

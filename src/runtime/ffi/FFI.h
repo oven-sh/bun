@@ -89,8 +89,9 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
-#define MAX_INT52 9007199254740991
+#define MAX_INT32 2147483647            // INT32_MAX
+#define MIN_INT32 (-2147483647 - 1)     // INT32_MIN (distinct: it is not -MAX_INT32)
+#define MAX_INT52 9007199254740991      // Number.MAX_SAFE_INTEGER (2^53 - 1)
 
 // If all bits in the mask are set, this indicates an integer number,
 // if any but not all are set this value is a double precision number.
@@ -237,9 +238,15 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
   }
 
-  // Assume the JSValue is a double
+  // Assume the JSValue is a double. (uintptr_t)d is C undefined behavior for NaN,
+  // negative, or d >= 2^64; clamp so the conversion is defined and identical on
+  // x86/arm64 (mirrors JSVALUE_TO_INT64/UINT64). A bad pointer is still the
+  // caller's problem when the C function dereferences it, but decoding it is not UB.
   val.asInt64 -= DoubleEncodeOffset;
-  return (void*)(uintptr_t)val.asDouble;
+  double d = val.asDouble;
+  if (d != d || d < 0.0) return 0;
+  if (d >= 18446744073709551616.0) return (void*)(uintptr_t)-1;
+  return (void*)(uintptr_t)d;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
@@ -278,7 +285,9 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 
 static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
   EncodedJSValue res;
-  if(val <= MAX_INT32) {
+  // A uint32_t in 2^31..2^32-1 doesn't fit in int32_t; route it to the double
+  // encoding so JSC doesn't read it back as a negative int32. See issue #7007.
+  if (val <= MAX_INT32) {
     res.asInt64 = NumberTag | val;
     return res;
   } else {
@@ -327,7 +336,13 @@ static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (uint64_t)JSVALUE_TO_DOUBLE(value);
+    // (uint64_t)d is undefined in C when d is outside [0, 2^64) or NaN, and the
+    // result differs across x86 (indefinite) and arm64 (saturating). Clamp so a
+    // u64_fast arg like 1e30 is defined and identical on every target.
+    double d = JSVALUE_TO_DOUBLE(value);
+    if (d >= 18446744073709551616.0) return 0xFFFFFFFFFFFFFFFFULL;
+    if (d < 0.0 || d != d) return 0;
+    return (uint64_t)d;
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {
@@ -342,18 +357,27 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (int64_t)JSVALUE_TO_DOUBLE(value);
+    // (int64_t)d is undefined in C when d is outside [-2^63, 2^63) or NaN, and
+    // the result differs across x86 (indefinite) and arm64 (saturating). Clamp
+    // so an i64_fast arg like 1e30 is defined and identical on every target.
+    double d = JSVALUE_TO_DOUBLE(value);
+    if (d >= 9223372036854775808.0) return 9223372036854775807LL;
+    if (d < -9223372036854775808.0) return (-9223372036854775807LL - 1);
+    if (d != d) return 0;
+    return (int64_t)d;
   }
 
   return JSVALUE_TO_INT64_SLOW(value);
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val < MAX_INT52) {
+  // `<=` so exactly Number.MAX_SAFE_INTEGER stays a JS number, matching
+  // INT64_TO_JSVALUE; only values that lose precision as a double become BigInt.
+  if (val <= MAX_INT52) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
@@ -361,7 +385,7 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+  if (val >= MIN_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 

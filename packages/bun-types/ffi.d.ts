@@ -258,7 +258,8 @@ declare module "bun:ffi" {
     /**
      * Boolean value
      *
-     * Must be `true` or `false`. `0` and `1` type coercion is not supported.
+     * Arguments are coerced with `!!value`, so any truthy value becomes `true`
+     * and any falsy value (`0`, `""`, `null`, `NaN`, …) becomes `false`.
      *
      * In C, this corresponds to:
      * ```c
@@ -357,9 +358,9 @@ declare module "bun:ffi" {
     [FFIType.double]: number;
     [FFIType.float]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: NodeJS.TypedArray | Pointer | CString | null;
+    [FFIType.ptr]: NodeJS.TypedArray | DataView | Pointer | CString | null;
     [FFIType.void]: undefined;
-    [FFIType.cstring]: NodeJS.TypedArray | Pointer | CString | null;
+    [FFIType.cstring]: NodeJS.TypedArray | DataView | Pointer | CString | null;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | JSCallback; // cannot be null
@@ -386,9 +387,12 @@ declare module "bun:ffi" {
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | null;
-    [FFIType.napi_env]: unknown;
+    // A `buffer`/`napi_env` return is rejected at bind time by the runtime
+    // (byteLength/byteOffset are unknown for a buffer; napi_env can't cross to
+    // JS), so declaring them as a return type is a compile-time error.
+    [FFIType.napi_env]: never;
     [FFIType.napi_value]: unknown;
-    [FFIType.buffer]: NodeJS.TypedArray | DataView;
+    [FFIType.buffer]: never;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;
@@ -418,12 +422,22 @@ declare module "bun:ffi" {
     ["pointer"]: FFIType.pointer;
     ["void"]: FFIType.void;
     ["cstring"]: FFIType.cstring;
-    ["function"]: FFIType.pointer; // for now
+    ["function"]: FFIType.function;
     ["usize"]: FFIType.uint64_t; // for now
-    ["callback"]: FFIType.pointer; // for now
+    ["size_t"]: FFIType.uint64_t;
+    ["callback"]: FFIType.function;
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;
+    // Fast 64-bit variants and C aliases the runtime's ABI_TYPE_LABEL accepts.
+    ["i64_fast"]: FFIType.i64_fast;
+    ["u64_fast"]: FFIType.u64_fast;
+    ["c_int"]: FFIType.int32_t;
+    ["c_uint"]: FFIType.uint32_t;
+    ["isize"]: FFIType.int64_t;
+    ["char*"]: FFIType.ptr;
+    ["void*"]: FFIType.ptr;
+    ["fn"]: FFIType.function;
   }
 
   type FFITypeOrString = FFIType | keyof FFITypeStringToType;
@@ -784,8 +798,19 @@ declare module "bun:ffi" {
    * @param ptr The memory address to read
    * @param byteOffset bytes to skip before reading
    * @param byteLength bytes to read
+   * @param finalizationCtxOrPtr optional user-data pointer passed to
+   *   `finalizationCallback` (or, when `finalizationCallback` is omitted, the
+   *   deallocator itself)
+   * @param finalizationCallback optional C function pointer invoked once with
+   *   `(ptr, finalizationCtxOrPtr)` when the Buffer is garbage-collected
    */
-  function toBuffer(ptr: Pointer, byteOffset?: number, byteLength?: number): Buffer;
+  function toBuffer(
+    ptr: Pointer,
+    byteOffset?: number,
+    byteLength?: number,
+    finalizationCtxOrPtr?: Pointer | bigint,
+    finalizationCallback?: Pointer | bigint,
+  ): Buffer;
 
   /**
    * Read a pointer as an {@link ArrayBuffer}
@@ -799,8 +824,19 @@ declare module "bun:ffi" {
    * @param ptr The memory address to read
    * @param byteOffset bytes to skip before reading
    * @param byteLength bytes to read
+   * @param finalizationCtxOrPtr optional user-data pointer passed to
+   *   `finalizationCallback` (or, when `finalizationCallback` is omitted, the
+   *   deallocator itself)
+   * @param finalizationCallback optional C function pointer invoked once with
+   *   `(ptr, finalizationCtxOrPtr)` when the ArrayBuffer is garbage-collected
    */
-  function toArrayBuffer(ptr: Pointer, byteOffset?: number, byteLength?: number): ArrayBuffer;
+  function toArrayBuffer(
+    ptr: Pointer,
+    byteOffset?: number,
+    byteLength?: number,
+    finalizationCtxOrPtr?: Pointer | bigint,
+    finalizationCallback?: Pointer | bigint,
+  ): ArrayBuffer;
 
   /**
    * Read a value directly from a memory address, without creating a

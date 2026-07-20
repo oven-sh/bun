@@ -23,6 +23,12 @@ unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocato
     unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
+/// No-op typed-array bytes deallocator. `JSBuffer__bufferFromPointerAndLengthAndDeinit`
+/// requires a non-null deallocator (a null one asserts in debug and is a null call on
+/// GC in release), so `toBuffer(ptr)` without a finalizer installs this to get a
+/// non-owning Buffer view that never frees the caller's memory.
+unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void) {}
+
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
 /// memory is only freed by the user-supplied callback.
@@ -261,12 +267,25 @@ pub mod reader {
         if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
-        let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
+        let off = if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
+            // Guard the type before `to_int64`, matching ptr()/toBuffer()/
+            // toArrayBuffer(): a non-number here would hit `JSC__JSValue__toInt64`,
+            // whose ASSERT(isHeapBigInt||isNumber) aborts in debug and is UB in
+            // release. `to_int32` (the previous form) had the same hazard.
+            if !arguments[1].is_number() {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
+            }
+            let off_i64 = arguments[1].to_int64();
+            if off_i64 < 0 {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("byteOffset must be non-negative")));
+            }
+            off_i64 as usize
         } else {
             0usize
         };
-        Ok(arguments[0].as_ptr_address() + off)
+        Ok(arguments[0].as_ptr_address().saturating_add(off))
     }
 
     /// Read a `T` from a user-supplied raw address (unaligned).
@@ -447,17 +466,23 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
                 return global_this
                     .to_invalid_arguments(format_args!("Expected number for byteOffset"));
             }
-        }
 
-        let bytei64 = off.to_int64();
-        if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
-        } else {
-            addr += usize::try_from(bytei64).expect("int cast");
-        }
+            // `to_int64` saturates non-finite / out-of-range doubles to i64::MIN,
+            // so negating one would overflow (a process abort). A negative
+            // byteOffset also points before the view. Reject both up front.
+            if !off.as_number().is_finite() {
+                return global_this
+                    .to_invalid_arguments(format_args!("byteOffset must be a finite number"));
+            }
+            let bytei64 = off.to_int64();
+            if bytei64 < 0 {
+                return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
+            }
+            addr = addr.saturating_add(usize::try_from(bytei64).unwrap_or(usize::MAX));
 
-        if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
-            return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
+            if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
+                return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
+            }
         }
     }
 
@@ -471,7 +496,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         return global_this.to_invalid_arguments(format_args!("Pointer must not be 0"));
     }
 
-    if addr == 0xDEADBEEF || addr == 0xaaaaaaaa || addr == 0xAAAAAAAA {
+    if addr == 0xDEADBEEF || addr == 0xAAAAAAAA || addr == 0xAAAAAAAAAAAAAAAA {
         return global_this.to_invalid_arguments(format_args!(
             "ptr to invalid memory, that would segfault Bun :("
         ));
@@ -487,12 +512,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 /// `union(enum)` → Rust enum.
 /// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
 /// of unknown lifetime.
-// Consumer audit: `new_cstring` copies the bytes into a JS string;
-// `to_array_buffer` wraps the pointer with the caller's optional finalizer and
-// never frees it from Rust; `to_buffer` does the same when a finalizer is
-// given, but WITHOUT one it falls back to `JSValue::create_buffer`, which
-// installs `MarkedArrayBuffer_deallocator` and `mi_free`s the caller-owned
-// slice on GC — free-foreign-memory footgun, see PR #31753.
+// Consumer audit: `new_cstring` copies the bytes into a JS string; both
+// `to_array_buffer` and `to_buffer` wrap the pointer non-owningly — the caller's
+// finalizer when one is given, otherwise a no-op deallocator (`to_buffer`) or a
+// null deallocator (`to_array_buffer`) — so Rust never frees caller-owned memory.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -521,11 +544,20 @@ fn get_ptr_slice(
 
     if let Some(byte_off) = byte_offset {
         if byte_off.is_number() {
+            // Validate finiteness before the arithmetic: `to_int64` saturates a
+            // non-finite / out-of-range double to i64::MIN, and negating i64::MIN
+            // overflows (a process abort). `unsigned_abs` maps it safely.
+            if !byte_off.as_number().is_finite() {
+                return ValueOrError::Err(
+                    global_this
+                        .to_invalid_arguments(format_args!("byteOffset must be a finite number")),
+                );
+            }
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
+                addr = addr.saturating_sub(off.unsigned_abs() as usize);
             } else {
-                addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
+                addr = addr.saturating_add(off as usize);
             }
 
             if addr == 0 {
@@ -533,24 +565,27 @@ fn get_ptr_slice(
                     "ptr cannot be zero, that would segfault Bun :("
                 )));
             }
-
-            if !byte_off.as_number().is_finite() {
-                return ValueOrError::Err(
-                    global_this.to_invalid_arguments(format_args!("ptr must be a finite number.")),
-                );
-            }
         } else if !byte_off.is_empty_or_undefined_or_null() {
-            // do nothing
-        } else {
+            // A non-number, non-nullish byteOffset is a caller error (matches
+            // `ptr_`); an explicit undefined/null means "no offset".
             return ValueOrError::Err(
                 global_this.to_invalid_arguments(format_args!("Expected number for byteOffset")),
             );
         }
     }
 
-    if addr == 0xDEADBEEF || addr == 0xaaaaaaaa || addr == 0xAAAAAAAA {
+    if addr == 0xDEADBEEF || addr == 0xAAAAAAAA || addr == 0xAAAAAAAAAAAAAAAA {
         return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
             "ptr to invalid memory, that would segfault Bun :("
+        )));
+    }
+
+    // Match `ptr_`: reject an address past the addressable range before it is
+    // dereferenced. A huge (but finite) byteOffset like 2^63 otherwise reaches
+    // the NUL scan / buffer creation below and segfaults on a wild pointer.
+    if addr > MAX_ADDRESSABLE_MEMORY {
+        return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+            "Pointer is outside max addressible memory, which usually means a bug in your program."
         )));
     }
 
@@ -575,9 +610,12 @@ fn get_ptr_slice(
                 )));
             }
 
-            if length_i > i64::try_from(MAX_ADDRESSABLE_MEMORY).expect("int cast") {
+            // An ArrayBuffer/Buffer length is a u32 in JSC (`ArrayBuffer::from_bytes`
+            // does `u32::try_from(len).expect(...)`); reject a larger length here so
+            // it can't panic-abort there. A CString length this large is absurd too.
+            if length_i > u32::MAX as i64 {
                 return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
-                    "length exceeds max addressable memory. This usually means a bug in your code."
+                    "length exceeds the maximum ArrayBuffer size (2^32-1). This usually means a bug in your code."
                 )));
             }
 
@@ -591,6 +629,13 @@ fn get_ptr_slice(
     let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
         .len();
+    // Same u32 ceiling as the explicit-length branch: `to_array_buffer` feeds
+    // this into `ArrayBuffer::from_bytes`, which does `u32::try_from(len).expect(...)`.
+    if len > u32::MAX as usize {
+        return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+            "length exceeds the maximum ArrayBuffer size (2^32-1). This usually means a bug in your code."
+        )));
+    }
     ValueOrError::Slice(addr as *mut u8, len)
 }
 
@@ -716,18 +761,18 @@ pub(crate) fn to_buffer(
 
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            if callback.is_some() || ctx.is_some() {
-                return Ok(create_buffer_with_ctx(
-                    global_this,
-                    slice,
-                    ctx.unwrap_or(core::ptr::null_mut()),
-                    callback,
-                ));
-            }
-
-            // `JSValue::create_buffer` installs `MarkedArrayBuffer_deallocator` so
-            // the slice is `mi_free`d on GC (including the free-foreign-memory footgun).
-            Ok(JSValue::create_buffer(global_this, slice))
+            // `toBuffer(ptr)` is a non-owning view, like `toArrayBuffer`. Routing
+            // the no-finalizer case through `JSValue::create_buffer` would install
+            // `MarkedArrayBuffer_deallocator` and `mi_free` the foreign pointer on
+            // GC — heap corruption on memory Bun never owned. Use the caller's
+            // deallocator when given, else a no-op (a null deallocator is invalid).
+            let deallocator = callback.or(Some(noop_bytes_deallocator));
+            Ok(create_buffer_with_ctx(
+                global_this,
+                slice,
+                ctx.unwrap_or(core::ptr::null_mut()),
+                deallocator,
+            ))
         }
     }
 }

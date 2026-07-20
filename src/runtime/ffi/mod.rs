@@ -1,20 +1,9 @@
 //! `Bun.FFI` / `bun:ffi`.
 //!
-//! `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled` structs,
-//! formatters, dlopen data path, and the JSC host-fn entry points
-//! (`open`/`close`/`compile`/`generate_symbols`) are real. The full TinyCC
-//! compile bodies (`CompileC`, `Function::compile`, `cc`/`linkSymbols`/
-//! `callback`) live in `ffi_body` on top of `bun_tcc_sys::State`.
-
-use core::ffi::{c_char, c_void};
-use core::ptr::NonNull;
-
-use bun_core::ZBox;
-
-use crate::jsc::JSGlobalObject;
-
-mod host_fns;
-pub use host_fns::{generate_symbol_for_function, generate_symbols};
+//! `ABIType`, the DOM-call slowpath shims, and the dlopen error helper live here.
+//! The `FFI`/`Function`/`Step`/`Compiled` structs and the full TinyCC compile
+//! bodies (`CompileC`, `cc`/`linkSymbols`/`callback`, the symbol-spec parsers,
+//! the JSC offsets) live in `ffi_body`.
 
 // ─── implementation modules ──────────────────────────────────────────────────
 
@@ -103,10 +92,6 @@ mod dom_call_slowpath {
     }
 }
 
-// `bun_tcc_sys` provides the method-ful `State` (compile_string/relocate/
-// add_symbol/…) with per-target link stubs where TinyCC isn't built — see
-// `tcc_externs!` in `src/tcc_sys/tcc.rs`.
-use bun_tcc_sys as TCC;
 
 /// Get the last dynamic-library loading error message in a cross-platform way.
 /// On POSIX systems, this calls `dlerror()`.
@@ -149,126 +134,13 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
 
 pub use ffi_body::FFI;
 
-// The full `CompileC`/`Source`/`SymbolsMap`/`StringArray`/`CompilerRT` port
-// lives in `ffi_body`; the draft duplicates that used to sit here were unused
-// and have been removed.
-
-// ─── Function ────────────────────────────────────────────────────────────────
-
-pub struct Function {
-    pub symbol_from_dynamic_library: Option<*mut c_void>,
-    pub base_name: Option<ZBox>,
-    pub state: Option<NonNull<TCC::State>>,
-
-    pub return_type: ABIType,
-    pub arg_types: Vec<ABIType>,
-    pub step: Step,
-    pub threadsafe: bool,
-    // allocator field dropped — global mimalloc
-}
-
-impl Default for Function {
-    fn default() -> Self {
-        Self {
-            symbol_from_dynamic_library: None,
-            base_name: None,
-            state: None,
-            return_type: ABIType::Void,
-            arg_types: Vec::new(),
-            step: Step::Pending,
-            threadsafe: false,
-        }
-    }
-}
-
-// PORTING.md §Global mutable state: written once at startup with the
-// resolved tinycc lib dir; read by the FFI compile path. RacyCell over the
-// raw C-string pointer (no concurrent writers).
-pub static LIB_DIR_Z: bun_core::RacyCell<*const c_char> = bun_core::RacyCell::new(c"".as_ptr());
-
-unsafe extern "C" {
-    fn FFICallbackFunctionWrapper_destroy(_: *mut c_void);
-}
-
-impl Drop for Function {
-    fn drop(&mut self) {
-        // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
-        if let Some(state) = self.state.take() {
-            // SAFETY: `state` is the live TCCState* allocated for this Function's
-            // trampoline; ownership is unique here (taken from self).
-            unsafe { TCC::State::destroy(state.as_ptr()) };
-        }
-        if let Step::Compiled(compiled) = &mut self.step {
-            if let Some(wrapper) = compiled.ffi_callback_function_wrapper.take() {
-                // SAFETY: wrapper was created by Bun__createFFICallbackFunction
-                unsafe { FFICallbackFunctionWrapper_destroy(wrapper.as_ptr()) };
-            }
-        }
-    }
-}
-
-impl Function {
-    pub fn needs_handle_scope(&self) -> bool {
-        for arg in self.arg_types.iter() {
-            if *arg == ABIType::NapiEnv || *arg == ABIType::NapiValue {
-                return true;
-            }
-        }
-        self.return_type == ABIType::NapiValue
-    }
-
-    pub fn needs_napi_env(&self) -> bool {
-        for arg in self.arg_types.iter() {
-            if *arg == ABIType::NapiEnv || *arg == ABIType::NapiValue {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn ffi_header() -> &'static [u8] {
-        // Embedded under
-        // `codegen_embed`, reloaded from disk otherwise (dev fast iteration).
-        bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
-    }
-}
-
-// ─── Step ────────────────────────────────────────────────────────────────────
-
-pub enum Step {
-    Pending,
-    Compiled(Compiled),
-    Failed { msg: Box<[u8]>, allocated: bool },
-}
-
-/// Draft-path sibling of `ffi_body::Compiled`; see it for JS function rooting.
-pub struct Compiled {
-    pub ptr: *mut c_void,
-    pub js_context: Option<*mut JSGlobalObject>,
-    pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
-}
-
-impl Default for Compiled {
-    fn default() -> Self {
-        Self {
-            ptr: core::ptr::null_mut(),
-            js_context: None,
-            ffi_callback_function_wrapper: None,
-        }
-    }
-}
-
-impl Step {
-    pub fn compiled_ptr(&self) -> *mut c_void {
-        match self {
-            Step::Compiled(c) => c.ptr,
-            _ => core::ptr::null_mut(),
-        }
-    }
-}
+// The `Function`/`Step`/`Compiled` structs, `CompileC`/`Source`/`SymbolsMap`/
+// `StringArray`/`CompilerRT`, and the symbol-spec parsers all live in `ffi_body`
+// (the live implementation). The draft duplicates that used to sit here — plus
+// the parallel copy in `host_fns.rs` — were unused and have been removed.
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ABIType — single source of truth lives in abi_type.rs
 // ═════════════════════════════════════════════════════════════════════════════
 mod abi_type;
-pub use abi_type::{ABI_TYPE_LABEL, ABIType, EnumMapFormatter, ToCFormatter, ToJSFormatter};
+pub use abi_type::{ABI_TYPE_LABEL, ABIType, ToCFormatter, ToJSFormatter};

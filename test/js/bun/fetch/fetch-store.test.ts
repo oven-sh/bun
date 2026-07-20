@@ -190,7 +190,80 @@ describe("fetch store", () => {
     await expect(fetch("http://example.com", { store: { type: "dir" } })).rejects.toThrow(/store\.path/);
   });
 
-  test("streamed request bodies bypass the store", async () => {
+  test("Bun.file() request bodies are buffered and persist into the store", async () => {
+    using cacheDir = tempDir("fetch-store-bunfile", {});
+    using dataDir = tempDir("fetch-store-bunfile-src", {
+      "a.bin": Buffer.alloc(40 * 1024, "A").toString(),
+      "b.bin": Buffer.alloc(40 * 1024, "B").toString(),
+    });
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        hits++;
+        const first = (await req.bytes())[0];
+        return new Response(String.fromCharCode(first) + hits);
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const url = `http://localhost:${server.port}/file`;
+
+    const a1 = await (
+      await fetch(url, { method: "POST", body: Bun.file(join(String(dataDir), "a.bin")), store })
+    ).text();
+    const b1 = await (
+      await fetch(url, { method: "POST", body: Bun.file(join(String(dataDir), "b.bin")), store })
+    ).text();
+    expect(hits).toBe(2);
+    const a2 = await (
+      await fetch(url, { method: "POST", body: Bun.file(join(String(dataDir), "a.bin")), store })
+    ).text();
+    const b2 = await (
+      await fetch(url, { method: "POST", body: Bun.file(join(String(dataDir), "b.bin")), store })
+    ).text();
+    expect({ a1, b1, a2, b2, hits }).toEqual({ a1: "A1", b1: "B2", a2: "A1", b2: "B2", hits: 2 });
+    expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(2);
+  });
+
+  test("response bodies read as a stream still persist", async () => {
+    using cacheDir = tempDir("fetch-store-resp-stream", {});
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        hits++;
+        const body = Buffer.alloc(8000, "x").toString() + hits;
+        return new Response(
+          new ReadableStream({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode(body.slice(0, 4000)));
+              await Bun.sleep(0);
+              c.enqueue(new TextEncoder().encode(body.slice(4000)));
+              c.close();
+            },
+          }),
+        );
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const url = `http://localhost:${server.port}/stream-resp`;
+
+    const r1 = await fetch(url, { store });
+    let got = "";
+    for await (const chunk of r1.body!) got += new TextDecoder().decode(chunk);
+    expect(got.length).toBe(8001);
+    expect(got.endsWith("1")).toBe(true);
+    expect(hits).toBe(1);
+
+    const r2 = await fetch(url, { store });
+    expect(await r2.text()).toBe(got);
+    expect(hits).toBe(1);
+
+    const files = readdirSync(String(cacheDir)).filter(f => f.endsWith(".json"));
+    expect(files.length).toBe(1);
+  });
+
+  test("ReadableStream request bodies bypass the store", async () => {
     using cacheDir = tempDir("fetch-store-stream", {});
     let hits = 0;
     const bodies: string[] = [];

@@ -124,9 +124,12 @@ pub struct FetchTasklet {
 
     pub tracker: AsyncTaskTracker,
 
-    /// Record/replay store carried from `fetch()`; consumed once the body is
-    /// fully buffered (`on_body_received` with `!has_more`).
+    /// Record/replay store carried from `fetch()`; consumed once the full
+    /// body has been observed (buffered or streamed).
     pub store_request: Option<(super::store::FetchStore, super::store::StoredRequest)>,
+    /// Response bytes teed while delivering to a JS ReadableStream consumer,
+    /// so a streamed body can still be persisted to `store_request`.
+    pub store_body_accumulator: Vec<u8>,
 
     pub ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
@@ -492,6 +495,7 @@ impl FetchTasklet {
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
         self.store_request = None;
+        self.store_body_accumulator = Vec::new();
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -716,6 +720,7 @@ impl FetchTasklet {
                 bytes.size_hint.set(self.get_size_hint());
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
+                    self.tee_stream_chunk_for_store(false);
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     bytes.on_data(Self::temporary_chunk(chunk, false))?;
                     self.drop_backpressure_if_unobserved(&readable, &bytes);
@@ -724,6 +729,7 @@ impl FetchTasklet {
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
+                    self.tee_stream_chunk_for_store(true);
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     bytes.on_data(Self::temporary_chunk(chunk, true))?;
                     drop(prev);
@@ -742,6 +748,8 @@ impl FetchTasklet {
                     "onBodyReceived CurrentResponse BodyReadableStream"
                 );
                 if let Some(bytes) = readable.ptr.bytes() {
+                    let done = !self.result.has_more;
+                    self.tee_stream_chunk_for_store(done);
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
@@ -1622,6 +1630,10 @@ impl FetchTasklet {
 
         // This means we have received part of the body but not the whole thing
         if !this.scheduled_response_buffer.list.is_empty() {
+            if this.store_request.is_some() {
+                this.store_body_accumulator
+                    .extend_from_slice(this.scheduled_response_buffer.list.as_slice());
+            }
             let scheduled_response_buffer = core::mem::take(&mut this.scheduled_response_buffer);
             this.mutex.unlock();
 
@@ -1753,20 +1765,39 @@ impl FetchTasklet {
         response
     }
 
-    /// Commit the record/replay store entry once a full buffered body is
-    /// available. Called from both fast-path (`to_body_value`, body arrived
-    /// with headers) and slow-path (`on_body_received`, body streamed in).
+    /// Tee the current streaming chunk into the store accumulator (when a
+    /// store is configured), and on the terminal chunk persist from it.
+    fn tee_stream_chunk_for_store(&mut self, done: bool) {
+        if self.store_request.is_none() {
+            return;
+        }
+        self.store_body_accumulator
+            .extend_from_slice(self.scheduled_response_buffer.list.as_slice());
+        if done {
+            let body = core::mem::take(&mut self.store_body_accumulator);
+            self.persist_to_store_with(&body);
+        }
+    }
+
+    /// Buffered-body path: the whole body is already in
+    /// `scheduled_response_buffer`.
     fn persist_to_store(&mut self) {
+        if self.store_request.is_none() {
+            return;
+        }
+        let mut body = core::mem::take(&mut self.store_body_accumulator);
+        body.extend_from_slice(self.scheduled_response_buffer.list.as_slice());
+        self.persist_to_store_with(&body);
+    }
+
+    fn persist_to_store_with(&mut self, body: &[u8]) {
         let Some((store_, req)) = self.store_request.take() else {
             return;
         };
         let Some(metadata) = self.metadata.as_ref() else {
             return;
         };
-        let mut resp = super::store::capture_response(
-            metadata,
-            self.scheduled_response_buffer.list.as_slice(),
-        );
+        let mut resp = super::store::capture_response(metadata, body);
         resp.redirected = self.result.redirected;
         store_.persist(&req, resp);
     }
@@ -1940,6 +1971,7 @@ impl FetchTasklet {
             // bumps a counter on the VM.
             tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
             store_request: fetch_options.store_request,
+            store_body_accumulator: Vec::new(),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 

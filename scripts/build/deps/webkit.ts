@@ -7,7 +7,7 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "a0e65bf298499d828f0c60d4557899b94a69d7ae";
+export const WEBKIT_VERSION = "a36c18878be56526d7468982d694ca920c8b6790";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -62,11 +62,11 @@ function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
   if (cfg.linux && cfg.abi === "android") s += "-android";
-  // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
-  // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
-  // arm64 or macOS. Suffix order matches the release asset names:
-  // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
-  if (cfg.baseline && cfg.x64) s += "-baseline";
+  // Baseline WebKit artifacts (-march=nehalem) exist for Linux amd64
+  // (glibc + musl) release/-lto only; windows -lto has no -baseline variant.
+  if (cfg.baseline && cfg.x64 && !cfg.asan && !cfg.debug && cfg.linux && cfg.abi !== "android") {
+    s += "-baseline";
+  }
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
@@ -237,7 +237,7 @@ export const webkit: Dependency = {
     // forward:
     //   - CPU target (-march/-mcpu): WebKit never sets this — without it,
     //     local builds target generic x86-64 while bun + prebuilt WebKit
-    //     target haswell/nehalem.
+    //     target nehalem.
     //   - LTO/PGO: WebKit's cmake doesn't set those itself.
     //
     // Windows: ICU built from source via preBuild before cmake configure.

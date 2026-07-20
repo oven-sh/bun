@@ -69,13 +69,8 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     flag: "-march=nehalem",
-    when: c => c.x64 && c.baseline,
-    desc: "x64 baseline: Nehalem (2008) — no AVX, broadest compatibility",
-  },
-  {
-    flag: "-march=haswell",
-    when: c => c.x64 && !c.baseline,
-    desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
+    when: c => c.x64,
+    desc: "x64: Nehalem (2008) — no AVX, broadest compatibility",
   },
 ];
 
@@ -472,30 +467,11 @@ export const globalFlags: Flag[] = [
     // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
     // both ThinLTO-summaried, so this makes the whole link one uniform
     // ThinLTO graph with cross-module importing across C++/Rust/JSC
-    // boundaries. Darwin only for now — see the -flto=full entry below.
+    // boundaries. All platforms now use ThinLTO (the linux JSC ThinLTO
+    // miscompile was fixed in the WebKit prebuilt).
     flag: "-flto=thin",
-    when: c => c.darwin && c.lto,
+    when: c => c.unix && c.lto,
     desc: "Thin link-time optimization",
-  },
-  {
-    // Linux stays on full LTO: the LLVM 22 ThinLTO backend pipeline
-    // (rust-lld) miscompiles JavaScriptCore on linux at every opt level
-    // above --lto-O0 — a JIT-tier correctness bug plus several bundler hangs
-    // in the test suite, on both x64 and aarch64, with cross-module
-    // importing disabled, ICF ruled out, and WPD ruled out. The same
-    // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
-    // (regular-LTO) pass pipeline over one merged module and has shipped
-    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
-    // Rust<->C++ cross-language inlining still happens: the Rust side emits
-    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
-    // under -Clinker-plugin-lto — see rust.ts) that joins the same
-    // regular-LTO partition as the C++, so nothing goes through the
-    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
-    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
-    // in the DFG tier.
-    flag: "-flto=full",
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
@@ -876,13 +852,8 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.darwin && c.lto,
+    when: c => c.unix && c.lto,
     desc: "LTO at link time (matches compile-side -flto=thin)",
-  },
-  {
-    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=full)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.
@@ -1135,10 +1106,15 @@ export const linkerFlags: Flag[] = [
 
   // ─── Linux ───
   {
-    // Wrap glibc symbols whose default version on a modern build host is
-    // > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
+    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
+    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+  },
+  {
+    // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
+    // is > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
     // 2.2.5/2.17 compat version (or a raw syscall) so the binary's verneed
-    // never exceeds the floor regardless of the host's glibc.
+    // never exceeds the floor.
     flag: [
       "exp",
       "exp2",
@@ -1682,7 +1658,7 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 /**
  * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
  * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets haswell.
+ * end up targeting generic x86-64 while the rest of bun targets nehalem.
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];

@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
-import { rustCanCrossFromLinux, rustTarget } from "../../../scripts/build/rust.ts";
+import { rustTarget } from "../../../scripts/build/rust.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -84,8 +84,9 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(cfg.lto).toBe(false);
     expect(cfg.crossLangLto).toBe(false);
 
-    // The toolchain support is still wired up behind --lto=on.
-    const opted = resolveWindowsCross({ lto: true });
+    // The toolchain support is still wired up behind --lto=on --baseline=off
+    // (x64 defaults to baseline now, and no -baseline-lto prebuilt exists).
+    const opted = resolveWindowsCross({ lto: true, baseline: false });
     expect(opted.lto).toBe(true);
     // Rust↔C++ inlining: rustc emits bitcode (-Clinker-plugin-lto) and the
     // final lld-link runs one ThinLTO graph across both halves.
@@ -112,13 +113,13 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   test("local (non-ci) release builds stay non-LTO unless asked", () => {
     const local = resolveWindowsCross({ ci: false });
     expect(local.lto).toBe(false);
-    const explicit = resolveWindowsCross({ ci: false, lto: true });
+    const explicit = resolveWindowsCross({ ci: false, lto: true, baseline: false });
     expect(explicit.lto).toBe(true);
     expect(explicit.crossLangLto).toBe(true);
   });
 
   test("compile flags use clang-cl ThinLTO without whole-program vtables", () => {
-    const flags = computeFlags(resolveWindowsCross({ lto: true }));
+    const flags = computeFlags(resolveWindowsCross({ lto: true, baseline: false }));
     expect(flags.cxxflags).toContain("-flto=thin");
     expect(flags.cflags).toContain("-flto=thin");
     // Every summaried module must agree on EnableSplitLTOUnit; rustc's
@@ -151,7 +152,10 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
       "gcc-ld/lld-link": "",
     });
     const rustLld = join(String(dir), "gcc-ld", "ld.lld");
-    const cfg = resolveWindowsCross({ lto: true }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
+    const cfg = resolveWindowsCross(
+      { lto: true, baseline: false },
+      mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
+    );
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
     // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
     // treats a linker inside its own gcc-ld/ as rust-lld and prepends
@@ -168,23 +172,28 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // configure time instead of an opaque "Invalid record" at link time.
     using bare = tempDir("win-cross-rust-lld-bare", { "gcc-ld/ld.lld": "" });
     const bareCfg = resolveWindowsCross(
-      { lto: true },
+      { lto: true, baseline: false },
       mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
     );
     expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
   });
 
   test("LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {
-    const lto = webkit.source(resolveWindowsCross({ lto: true }));
+    const lto = webkit.source(resolveWindowsCross({ lto: true, baseline: false }));
     if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
     expect(lto.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
     expect(lto.destDir).toContain("-windows");
     expect(lto.destDir).toEndWith("-lto");
 
-    const plain = webkit.source(resolveWindowsCross({ lto: false }));
+    const plain = webkit.source(resolveWindowsCross({ lto: false, baseline: false }));
     if (plain.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${plain.kind}`);
     expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
     expect(plain.destDir).not.toEndWith("-lto");
+
+    // x64 defaults to baseline now: the default config fetches the -baseline prebuilt.
+    const def = webkit.source(resolveWindowsCross());
+    if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
+    expect(def.url).toContain("bun-webkit-windows-amd64-baseline.tar.gz");
 
     const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64" }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);
@@ -195,20 +204,16 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     const cfg = resolveWindowsCross();
     expect(rustTarget(cfg)).toBe("x86_64-pc-windows-msvc");
     expect(rustTarget(resolveWindowsCross({ arch: "aarch64" }))).toBe("aarch64-pc-windows-msvc");
-    // The shared CI rust-only box intentionally does NOT take windows targets
-    // (no winsysroot provisioned there) — the cross lanes do the full build,
-    // including the cargo step, on their own agent.
-    expect(rustCanCrossFromLinux(cfg)).toBe(false);
   });
 
   test("linux LTO config is unaffected", () => {
     const linux = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false },
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false, linuxSysroot: "/fake" },
       mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
     );
     expect(linux.lto).toBe(true);
     const linuxFlags = computeFlags(linux);
-    expect(linuxFlags.cxxflags).toContain("-flto=full");
+    expect(linuxFlags.cxxflags).toContain("-flto=thin");
     expect(linuxFlags.cxxflags).toContain("-fwhole-program-vtables");
     expect(linuxFlags.cxxflags).not.toContain("-fno-split-lto-unit");
   });

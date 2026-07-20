@@ -17,7 +17,7 @@ import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
-import { rustCanCrossFromLinux, rustTarget } from "../../scripts/build/rust.ts";
+import { rustTarget } from "../../scripts/build/rust.ts";
 import { machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
@@ -181,7 +181,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
 
   test("native links don't get a postlink command", () => {
     const linux = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release" },
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" },
       mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined }),
     );
     expect(machoPostlinkCommand(linux)).toBe("");
@@ -197,7 +197,6 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   test("rust side cross-compiles to apple-darwin triples from linux", () => {
     const cfg = resolveDarwin();
     expect(rustTarget(cfg)).toBe("aarch64-apple-darwin");
-    expect(rustCanCrossFromLinux(cfg)).toBe(true);
     expect(rustTarget(resolveDarwin({ arch: "x64" }))).toBe("x86_64-apple-darwin");
   });
 
@@ -213,15 +212,13 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
   });
 
-  test("native linux configs are unaffected", () => {
+  test("linux configs don't pick up darwin cross machinery", () => {
     const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release" },
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" },
       mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined }),
     );
-    expect(cfg.crossTarget).toBeUndefined();
     expect(cfg.osxSysroot).toBeUndefined();
     expect(cfg.ld).toBe("/fake/llvm/bin/ld.lld");
-    expect(cfg.strip).toBe("/fake/bin/strip");
 
     const flags = computeFlags(cfg);
     expect(flags.cxxflags.some(f => f.includes("apple-macosx"))).toBe(false);

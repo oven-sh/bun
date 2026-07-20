@@ -217,51 +217,47 @@ fn validate_bigint<T: bun_core::Integer>(
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
-        let pos: usize;
-        match self {
+
+        let pos: usize = match self {
             Value::Null => return Ok(Data::Empty),
             Value::Bool(b) => {
                 buffer[0] = if *b { 1 } else { 0 };
-                pos = 1;
+                1
             }
             Value::Short(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Ushort(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Int(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Uint(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Long(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Ulong(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Float(f) => {
                 buffer[0..4].copy_from_slice(&f.to_bits().to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Double(d) => {
                 buffer[0..8].copy_from_slice(&d.to_bits().to_le_bytes());
-                pos = 8;
+                8
             }
-            Value::Date(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            Value::Time(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
+            Value::Date(d) => d.to_binary(field_type, &mut buffer) as usize,
+            Value::Time(d) => d.to_binary(field_type, &mut buffer) as usize,
             Value::StringData(data) | Value::BytesData(data) => {
                 // `bun_sql::shared::Data` is not
                 // `Clone`, so return a `Temporary` aliasing the
@@ -290,7 +286,7 @@ impl Value {
                     Data::Temporary(bun_ptr::RawSlice::new(s))
                 });
             }
-        }
+        };
 
         Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }

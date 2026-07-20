@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 39
+# Version: 41
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -262,10 +262,6 @@ check_features() {
 		*--ci*)
 			ci=1
 			print "CI: enabled"
-			;;
-		*--osxcross*)
-			osxcross=1
-			print "Cross-compiling to macOS: enabled"
 			;;
 		*--gcc-13*)
 			gcc_version="13"
@@ -705,6 +701,8 @@ install_common_software() {
 		fi
 		# https://packages.debian.org
 		# https://packages.ubuntu.com
+		# lsb-release: apt.llvm.org/llvm.sh greps `lsb_release -cs`; debian
+		# slim images don't ship it (ubuntu cloud images do).
 		install_packages \
 			bash \
 			ca-certificates \
@@ -712,6 +710,7 @@ install_common_software() {
 			htop \
 			gnupg \
 			git \
+			lsb-release \
 			unzip \
 			wget \
 			libc6-dbg
@@ -1092,6 +1091,9 @@ install_build_essentials() {
 			pkg-config \
 			golang
 		install_packages apache2-utils
+		# QEMU user-mode for baseline CPU verification in CI (parity with
+		# the apk arm below; debian ships all target arches in one package).
+		install_packages qemu-user
 		;;
 	dnf | yum)
 		install_packages \
@@ -1148,14 +1150,27 @@ install_build_essentials() {
 
 	install_cmake
 	install_llvm
-	install_osxcross
 	install_gcc
 	install_rust
-	install_android_ndk
-	install_freebsd_sysroot
-	install_windows_sysroot
+	# Cross-compile sysroots + runtimes are only needed on the single build
+	# host (buildHostPlatform in .buildkite/ci.mjs); test images never
+	# cross-compile, so skip the ~3GB of NDK/SDK/sysroot downloads there.
+	if is_ci_build_host; then
+		install_cross_compiler_rt
+		install_android_ndk
+		install_freebsd_sysroot
+		install_linux_glibc_sysroot
+		install_linux_musl_sysroot
+		install_windows_sysroot
+		install_macos_sdk
+	fi
 	install_ccache
 	install_docker
+}
+
+is_ci_build_host() {
+	# Must match buildHostPlatform in .buildkite/ci.mjs.
+	[ "$os-$distro-$arch-$ci" = "linux-debian-aarch64-1" ]
 }
 
 llvm_version_exact() {
@@ -1196,6 +1211,16 @@ install_llvm() {
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
+}
+
+install_cross_compiler_rt() {
+	# x64 asan cross needs amd64 compiler-rt. Best-effort: raw calls, never
+	# abort (apt.llvm.org may not carry amd64 on every arm64 repo).
+	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi
+	$_s dpkg --add-architecture amd64 || return
+	$_s apt-get update -qq || return
+	$_s apt-get install --yes --no-install-recommends \
+		"libclang-rt-$(llvm_version)-dev:amd64" || true
 }
 
 install_gcc() {
@@ -1305,14 +1330,6 @@ install_rust() {
 	# Ensure all rustup files are accessible (for CI builds where different users run builds)
 	grant_to_user "$rust_home"
 
-	case "$osxcross" in
-	1)
-		rustup="$(require rustup)"
-		execute_as_user "$rustup" target add aarch64-apple-darwin
-		execute_as_user "$rustup" target add x86_64-apple-darwin
-		;;
-	esac
-
 	case "$os" in
 	linux)
 		rustup="$rust_home/bin/rustup"
@@ -1333,6 +1350,12 @@ install_rust() {
 		# Windows cross-compile targets (--os=windows from a linux host).
 		execute_as_user "$rustup" target add x86_64-pc-windows-msvc
 		execute_as_user "$rustup" target add aarch64-pc-windows-msvc
+		# Linux cross-arch/cross-abi targets so an arm64 glibc host can
+		# cargo-build all four linux triples (x64/aarch64 × gnu/musl).
+		execute_as_user "$rustup" target add x86_64-unknown-linux-gnu
+		execute_as_user "$rustup" target add aarch64-unknown-linux-gnu
+		execute_as_user "$rustup" target add x86_64-unknown-linux-musl
+		execute_as_user "$rustup" target add aarch64-unknown-linux-musl
 		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
 		execute_as_user "$rustup" component add rust-src
 		;;
@@ -1414,6 +1437,163 @@ install_freebsd_sysroot() {
 	done
 	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
 	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
+}
+
+install_linux_glibc_sysroot() {
+	# ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++, matching the environment
+	# the prebuilt WebKit is compiled in (see oven-sh/WebKit Dockerfile). All
+	# linux-gnu lanes pass --sysroot pointing here so symbol versions never
+	# exceed 2.31; the --wrap list in flags.ts covers the 2.31 -> 2.17 tail.
+	case "$os-$ci" in
+	linux-1) ;;
+	*) return ;;
+	esac
+	if [ "$abi" = "musl" ]; then
+		return
+	fi
+
+	if ! [ -f "$(which skopeo)" ]; then install_packages skopeo; fi
+	if ! [ -f "$(which jq)" ]; then install_packages jq; fi
+	# Cross-arch GNU strip for -R .eh_frame (host strip rejects foreign-arch ELF).
+	case "$arch" in
+	aarch64) install_packages binutils-x86-64-linux-gnu ;;
+	x64) install_packages binutils-aarch64-linux-gnu ;;
+	esac
+	skopeo="$(require skopeo)"
+	jq_bin="$(require jq)"
+	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi
+
+	for sr_arch in x86_64 aarch64; do
+		case "$sr_arch" in
+		x86_64)
+			sysroot="/opt/linux-sysroot-glibc"
+			deb_arch="amd64"
+			apt_base="http://archive.ubuntu.com/ubuntu"
+			;;
+		aarch64)
+			sysroot="/opt/linux-sysroot-glibc-arm64"
+			deb_arch="arm64"
+			apt_base="http://ports.ubuntu.com/ubuntu-ports"
+			;;
+		esac
+		if [ -f "$sysroot/usr/include/features.h" ] && [ -d "$sysroot/usr/include/c++/13" ]; then
+			continue
+		fi
+		execute_sudo rm -rf "$sysroot"
+		execute_sudo mkdir -p "$sysroot"
+		tmp="$(create_tmp_directory)"
+		mkdir -p "$tmp/img"
+
+		# 1. ubuntu:20.04 rootfs (glibc 2.31 runtime libs).
+		execute "$skopeo" copy --override-arch "$deb_arch" \
+			"docker://docker.io/library/ubuntu:20.04" "dir:$tmp/img"
+		for d in $("$jq_bin" -r '.layers[].digest' "$tmp/img/manifest.json" | sed 's/^sha256://'); do
+			# Raw tar (not execute_sudo) so mknod failures on /dev nodes don't
+			# abort; the libc6 deb below provides the files we actually need.
+			$_s tar -xzf "$tmp/img/$d" -C "$sysroot" 2>/dev/null || true
+		done
+
+		# 2. focal runtime + dev headers (the minimal base image has runtime
+		#    libc but tar may not preserve all symlinks; dev headers are absent).
+		pkgz1=$(download_file "$apt_base/dists/focal-updates/main/binary-${deb_arch}/Packages.gz")
+		pkgz2=$(download_file "$apt_base/dists/focal/main/binary-${deb_arch}/Packages.gz")
+		# focal-updates first so awk's first-match picks the patched version.
+		execute sh -c "gzip -dc '$pkgz1' '$pkgz2' > '$tmp/Packages'"
+		for pkg in libc6 libc6-dev linux-libc-dev libcrypt1 libcrypt-dev; do
+			path=$(awk -v p="$pkg" '$1=="Package:"&&$2==p{f=1} f&&$1=="Filename:"{print $2; exit}' "$tmp/Packages")
+			if [ -n "$path" ]; then
+				deb=$(download_file "$apt_base/$path")
+				execute_sudo dpkg-deb -x "$deb" "$sysroot"
+			fi
+		done
+		# Absolute symlinks from the .debs point at host paths; rewrite them
+		# to stay inside the sysroot so -lpthread/-ldl resolve to target libs.
+		find "$sysroot" -type l 2>/dev/null | while read -r l; do
+			t="$(readlink "$l")"
+			case "$t" in /*) $_s ln -sfn "$sysroot$t" "$l" ;; esac
+		done
+		# libc.so linker script uses absolute /lib/<triple>/ paths; make sure
+		# those resolve inside the sysroot (usrmerge-style symlink if missing).
+		triple="${sr_arch}-linux-gnu"
+		if ! [ -e "$sysroot/lib/$triple/libc.so.6" ]; then
+			execute_sudo mkdir -p "$sysroot/lib"
+			execute_sudo ln -sfn "../usr/lib/$triple" "$sysroot/lib/$triple"
+		fi
+		if [ "$sr_arch" = "x86_64" ] && ! [ -e "$sysroot/lib64" ]; then
+			execute_sudo ln -sfn "usr/lib/$triple" "$sysroot/lib64"
+		fi
+
+		# 3. gcc-13 (libstdc++-13-dev, libgcc-13-dev) from the same mirrored
+		#    release the WebKit Dockerfile uses.
+		gcc13=$(download_file "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs/gcc-13-focal-${deb_arch}.tar.gz")
+		mkdir -p "$tmp/gcc13"
+		execute tar -xzf "$gcc13" -C "$tmp/gcc13"
+		for deb in "$tmp/gcc13"/*.deb; do
+			execute_sudo dpkg-deb -x "$deb" "$sysroot"
+		done
+
+		execute_sudo rm -rf "$tmp"
+		if ! [ -d "$sysroot/usr/include/c++/13" ]; then
+			error "$sysroot missing usr/include/c++/13 after gcc-13 overlay"
+		fi
+		print "installed: $sysroot (ubuntu:20.04 glibc 2.31 + gcc-13 libstdc++)"
+	done
+}
+
+alpine_sysroot_version() {
+	# Keep in sync with the alpine release testPlatforms runs on.
+	print "3.23"
+}
+
+install_linux_musl_sysroot() {
+	# musl + modern libstdc++ for --abi=musl cross-compiles from a glibc host.
+	# Populated from alpine's own packages via apk.static so the libstdc++ is
+	# the same one the native alpine test image uses. CI-only.
+	case "$os-$ci" in
+	linux-1) ;;
+	*) return ;;
+	esac
+	if [ "$abi" = "musl" ]; then
+		return
+	fi
+
+	alpine_ver="$(alpine_sysroot_version)"
+	cdn="https://dl-cdn.alpinelinux.org/alpine/v${alpine_ver}"
+	host_m="$(uname -m)"
+
+	# apk.static (host arch) can install foreign-arch packages into any root.
+	apk_tmp="$(create_tmp_directory)"
+	idx=$(download_file "$cdn/main/$host_m/APKINDEX.tar.gz")
+	apk_ver="$(tar -xzOf "$idx" APKINDEX 2>/dev/null |
+		awk '/^P:apk-tools-static$/{f=1} f&&/^V:/{print substr($0,3); exit}')"
+	if [ -z "$apk_ver" ]; then
+		error "could not resolve apk-tools-static version from $cdn/main/$host_m/APKINDEX.tar.gz"
+	fi
+	apk_pkg=$(download_file "$cdn/main/$host_m/apk-tools-static-${apk_ver}.apk")
+	execute tar -xzf "$apk_pkg" -C "$apk_tmp" sbin/apk.static
+	apk="$apk_tmp/sbin/apk.static"
+
+	for ml_arch in x86_64 aarch64; do
+		case "$ml_arch" in
+		x86_64) sysroot="/opt/linux-sysroot-musl" ;;
+		aarch64) sysroot="/opt/linux-sysroot-musl-arm64" ;;
+		esac
+		# Same sentinel detectLinuxMuslSysroot() uses.
+		if [ -f "$sysroot/usr/lib/libc.so" ]; then
+			continue
+		fi
+		execute_sudo rm -rf "$sysroot"
+		execute_sudo mkdir -p "$sysroot"
+		execute_sudo "$apk" --arch "$ml_arch" --root "$sysroot" \
+			--repository "$cdn/main" --allow-untrusted --no-cache --initdb \
+			add musl-dev libc-dev linux-headers g++ libstdc++-dev
+		if ! [ -f "$sysroot/usr/lib/libc.so" ]; then
+			error "$sysroot not populated (required for linux-musl cross-arch builds)"
+		fi
+	done
+	execute_sudo rm -rf "$apk_tmp"
+	# No LINUX_MUSL_SYSROOT export: detectLinuxMuslSysroot() picks the
+	# arch-appropriate /opt/linux-sysroot-musl{,-arm64} by well-known path.
 }
 
 xwin_version() {
@@ -1535,44 +1715,57 @@ install_docker() {
 	fi
 }
 
-macos_sdk_version() {
-	# https://github.com/alexey-lysiuk/macos-sdk/releases
-	print "13.3"
+macos_sdk_pinned_version() {
+	# Keep in sync with MACOS_SDK_VERSION in scripts/build/macos-sdk.ts.
+	print "26.5"
 }
 
-install_osxcross() {
-	if ! [ "$os" = "linux" ] || ! [ "$osxcross" = "1" ]; then
+macos_sdk_clt_release() {
+	# Keep in sync with MACOS_SDK_CLT_RELEASE in scripts/build/macos-sdk.ts.
+	print "26.5"
+}
+
+install_macos_sdk() {
+	# macOS SDK for cross-compiling darwin from this Linux host. Fetched via the
+	# repo's vendored xmac.mjs (pulled at BUN_BOOTSTRAP_REPO_REF) so the same
+	# Apple-CDN download path is used here and at build-time. resolveMacosSdkPath()
+	# in scripts/build/macos-sdk.ts checks /opt/macos-sdk before falling back to
+	# a per-job download.
+	case "$os-$ci" in
+	linux-1) ;;
+	*) return ;;
+	esac
+	# darwin cross lanes never run on a musl host; alpine test images skip it.
+	if [ "$abi" = "musl" ]; then
 		return
 	fi
 
-	install_packages \
-		libssl-dev \
-		lzma-dev \
-		libxml2-dev \
-		zlib1g-dev \
-		bzip2 \
-		cpio
+	sdk_ver="$(macos_sdk_pinned_version)"
+	sysroot="/opt/macos-sdk"
+	# Same completeness sentinel isMacosSdk() uses.
+	if [ -f "$sysroot/MacOSX${sdk_ver}.sdk/usr/include/sys/syscall.h" ]; then
+		return
+	fi
 
-	osxcross_path="/opt/osxcross"
-	create_directory "$osxcross_path"
+	bun_path="$(require bun)"
+	# xmac calls out to `xz` for the pbzx/xip payload.
+	case "$pm" in
+	apt) install_packages xz-utils ;;
+	*) install_packages xz ;;
+	esac
 
-	osxcross_commit="29fe6dd35522073c9df5800f8cd1feb4b9a993a8"
-	osxcross_tar="$(download_file "https://github.com/tpoechtrager/osxcross/archive/$osxcross_commit.tar.gz")"
-	execute tar -xzf "$osxcross_tar" -C "$osxcross_path"
-
-	osxcross_build_path="$osxcross_path/build"
-	execute mv "$osxcross_path/osxcross-$osxcross_commit" "$osxcross_build_path"
-
-	osxcross_sdk_tar="$(download_file "https://github.com/alexey-lysiuk/macos-sdk/releases/download/$(macos_sdk_version)/MacOSX$(macos_sdk_version).tar.xz")"
-	execute mv "$osxcross_sdk_tar" "$osxcross_build_path/tarballs/MacOSX$(macos_sdk_version).sdk.tar.xz"
-
-	bash="$(require bash)"
-	execute_sudo ln -sf "$(which clang-$(llvm_version))" /usr/bin/clang
-	execute_sudo ln -sf "$(which clang++-$(llvm_version))" /usr/bin/clang++
-	execute_sudo "$bash" -lc "UNATTENDED=1 TARGET_DIR='$osxcross_path' $osxcross_build_path/build.sh"
-
-	execute_sudo rm -rf "$osxcross_build_path"
-	grant_to_user "$osxcross_path"
+	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
+	xmac_mjs=$(download_file "https://raw.githubusercontent.com/oven-sh/bun/${repo_ref}/scripts/build/xmac.mjs")
+	staging="$(create_tmp_directory)"
+	execute_sudo rm -rf "$sysroot"
+	execute_sudo mkdir -p "$sysroot"
+	# stdout is dropped: xmac draws progress bars there even without a TTY.
+	execute "$bun_path" "$xmac_mjs" splat --accept-license --sdk-only \
+		--release "$(macos_sdk_clt_release)" --sdk "$sdk_ver" \
+		--output "$staging" --cache-dir "$staging/cache" >/dev/null
+	execute_sudo mv "$staging/SDKs/MacOSX${sdk_ver}.sdk" "$sysroot/"
+	execute_sudo rm -rf "$staging"
+	grant_to_user "$sysroot"
 }
 
 install_tailscale() {
@@ -1906,6 +2099,27 @@ clean_system() {
 	for path in $tmp_paths; do
 		execute_sudo rm -rf "$path"/*
 	done
+
+	case "$pm" in
+	apt)
+		execute_sudo apt-get clean
+		execute_sudo rm -rf /var/lib/apt/lists/*
+		;;
+	dnf | yum)
+		execute_sudo "$pm" clean all
+		;;
+	apk)
+		execute_sudo rm -rf /var/cache/apk/*
+		;;
+	esac
+
+	if command -v fstrim >/dev/null 2>&1; then
+		if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
+			fstrim -av || true
+		else
+			sudo -n fstrim -av || true
+		fi
+	fi
 }
 
 ensure_no_tmpfs() {

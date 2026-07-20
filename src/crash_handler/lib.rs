@@ -1587,7 +1587,7 @@ mod draft {
     };
 
     const METADATA_VERSION_LINE: &str = const_format::formatcp!(
-        "Bun {}v{} {} {}{}\n",
+        "Bun {}v{} {} {}\n",
         if Environment::IS_DEBUG {
             "Debug "
         } else if Environment::IS_CANARY {
@@ -1598,11 +1598,6 @@ mod draft {
         bun_core::package_json_version_with_sha,
         bun_core::os_display,
         ARCH_DISPLAY_STRING,
-        if Environment::BASELINE {
-            " (baseline)"
-        } else {
-            ""
-        },
     );
 
     /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
@@ -2304,14 +2299,12 @@ mod draft {
     /// eg: 'https://bun.report/1.1.3/we04c...
     ///                               ^ this tells you it is windows x86_64
     ///
-    /// Baseline gets a weirder encoding of a mix of b and e.
+    /// x64 ships one nehalem build; the old baseline codes ('B','b','e','g')
+    /// are no longer emitted but the backend still accepts them from old bins.
     struct Platform;
 
     impl Platform {
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
-        // Baseline is `Environment::BASELINE`, not a Cargo feature — `cfg(feature = "baseline")`
-        // was always false because no such feature exists, so baseline builds emitted the
-        // non-baseline char and bun.report symbolicated them against the wrong artifact.
         const CURRENT: u8 = {
             // Android folds into the Linux variants. bun.report decodes the same
             // single-char codes; introducing new ones would break older decoders.
@@ -2320,7 +2313,7 @@ mod draft {
                 target_arch = "x86_64"
             ))]
             {
-                if Environment::BASELINE { b'B' } else { b'l' }
+                b'l'
             }
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
@@ -2331,7 +2324,7 @@ mod draft {
             }
             #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
             {
-                if Environment::BASELINE { b'b' } else { b'm' }
+                b'm'
             }
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             {
@@ -2339,7 +2332,7 @@ mod draft {
             }
             #[cfg(all(windows, target_arch = "x86_64"))]
             {
-                if Environment::BASELINE { b'e' } else { b'w' }
+                b'w'
             }
             #[cfg(all(windows, target_arch = "aarch64"))]
             {
@@ -2347,7 +2340,7 @@ mod draft {
             }
             #[cfg(all(target_os = "freebsd", target_arch = "x86_64"))]
             {
-                if Environment::BASELINE { b'g' } else { b'f' }
+                b'f'
             }
             #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
             {

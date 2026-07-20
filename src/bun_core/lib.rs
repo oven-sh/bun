@@ -1846,15 +1846,17 @@ pub(crate) mod strings_impl {
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
         let mut copied = 0usize;
-        for (d, s) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
-            let word = u64::from_ne_bytes(s.try_into().expect("infallible: size matches"));
+        let (dst_chunks, _) = dst.as_chunks_mut::<8>();
+        let (src_chunks, _) = src.as_chunks::<8>();
+        for (d, s) in dst_chunks.iter_mut().zip(src_chunks) {
+            let word = u64::from_ne_bytes(*s);
             let mask = word & HIGH_BITS;
             if mask != 0 {
                 let ascii = (mask.trailing_zeros() / 8) as usize;
                 d[..ascii].copy_from_slice(&s[..ascii]);
                 return copied + ascii;
             }
-            d.copy_from_slice(&word.to_ne_bytes());
+            *d = word.to_ne_bytes();
             copied += 8;
         }
         for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {

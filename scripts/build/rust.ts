@@ -71,45 +71,6 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
 }
 
 /**
- * Can a linux host cross-compile the Rust staticlib for `cfg`'s target
- * without a native runner?
- *
- * Used by CI's `build-rust` step to decide fan-out: targets that return
- * `true` here share one fast linux box (one `cargo build --target <triple>`
- * each); targets that return `false` get a native agent.
- *
- *   linux-{gnu,musl,android} × {x64,aarch64}: yes — `rustup target add`
- *     installs prebuilt std, no foreign linker needed for a staticlib.
- *   freebsd × {x64,aarch64}: yes — Tier 2/3 (`-Zbuild-std` for aarch64),
- *     staticlib needs no FreeBSD libc to produce.
- *   darwin × {x64,aarch64}: yes — Tier 2 prebuilt std, and a staticlib
- *     needs no Mach-O link. No build script in the current dep graph
- *     compiles C for the target; if one ever does, emitRust's
- *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
- *     points cc-rs at the macOS SDK.
- *   windows-msvc × {x64,aarch64}: yes *when a Windows sysroot (xwin splat)
- *     is present* — the staticlib itself needs no SDK, but the bun_shim_impl
- *     PE that emitRust() also builds links against kernel32/ntdll import
- *     libs via lld-link + /winsysroot (see config.ts `winsysroot`). The
- *     shared CI rust box doesn't carry a splat, so CI runs these on the
- *     amazonlinux fleet instead, where configure fetches one per build.
- *
- * Unlike zig (which bundled its own libc/SDK for every target), cargo
- * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
- * the cross-compile boundary is "does the host have a C cross-toolchain
- * for the target", not "does rustc support the triple".
- */
-export function rustCanCrossFromLinux(cfg: Config): boolean {
-  if (cfg.linux) return true; // gnu, musl, android — all archs
-  if (cfg.freebsd) return true;
-  if (cfg.darwin) return true;
-  // windows: possible with a winsysroot (see above), but the shared rust
-  // box isn't provisioned with one — CI routes windows rust-only to the
-  // amazonlinux fleet (which fetches a splat at configure time) instead.
-  return false;
-}
-
-/**
  * All target triples CI builds. Exposed so `rust:check-all` can iterate
  * `cargo check --target <t>` without re-deriving the list.
  */
@@ -297,8 +258,10 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
 
   const rustup = findRustup(cfg);
   if (rustup !== undefined && cfg.rustToolchain !== undefined) {
+    // `-q` + `--no-self-update` silence the five `info:` lines rustup prints
+    // on every no-op reinstall; warnings/errors still show.
     const chain =
-      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
+      `${stream} --console $env ${q(rustup)} -q toolchain install ${cfg.rustToolchain} --force --no-self-update --component rust-src $rust_target_arg && ` +
       `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,
@@ -450,15 +413,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // does. Harmless on Apple ld64 (ignores the section).
   rustflags.push("-Cllvm-args=-addrsig");
   // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
-  // codegen sees the same ISA. Without this, C++ is built with
-  // `-march=haswell` while Rust defaults to generic x86-64 (SSE2 only),
-  // leaving auto-vectorization and BMI/LZCNT/POPCNT on the table for the
-  // entire Rust crate graph. rustc's `-C target-cpu=` takes LLVM CPU names
+  // codegen sees the same ISA. rustc's `-C target-cpu=` takes LLVM CPU names
   // (same vocabulary as clang's `-march=`/`-mcpu=`), so the mapping is 1:1.
   const cpuTarget = cfg.x64
-    ? cfg.baseline
-      ? "nehalem"
-      : "haswell"
+    ? "nehalem"
     : cfg.darwin
       ? "apple-m1"
       : // armv8-a+crc isn't a CPU name — closest LLVM model with CRC baseline:
@@ -735,13 +693,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     cross-language inlining under full LTO. (The merged module first
     //     gets a regular-LTO summary bolted on by the rust_lto_fix edge —
     //     rustLtoLinkInputs() below — because lld's EnableSplitLTOUnit
-    //     consistency check requires one.) With `off`, the per-CGU
-    //     ThinLTO-summaried modules are processed as ThinLTO partitions
-    //     instead, which (a) never exchange function bodies with the C++
-    //     regular partition (no cross-language inlining at all), and
-    //     (b) go through the LLVM 22 ThinLTO backend pipeline that
-    //     miscompiles JSC on linux.
-    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin || cfg.windows ? "off" : "fat";
+    //     consistency check requires one.)
+    // All platforms now use ThinLTO, so `off` (per-CGU summaries) everywhere.
+    env.CARGO_PROFILE_RELEASE_LTO = "off";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
     // override Cargo.toml's `[profile.release] lto = "fat"` still applies —

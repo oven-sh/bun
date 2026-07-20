@@ -6,8 +6,8 @@
 //   Windows x64:  Intel SDE with -nhm (no AVX)
 //
 // Usage:
-//   bun scripts/verify-baseline.ts --binary ./bun --emulator /usr/bin/qemu-x86_64
-//   bun scripts/verify-baseline.ts --binary ./bun.exe --emulator ./sde.exe
+//   bun scripts/verify-baseline.ts --binary ./bun --arch x64 --emulator /usr/bin/qemu-x86_64
+//   bun scripts/verify-baseline.ts --binary ./bun.exe --arch x64 --emulator ./sde.exe
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -18,6 +18,10 @@ const { values } = parseArgs({
   args: process.argv.slice(2),
   options: {
     binary: { type: "string" },
+    // Target arch of --binary ("x64" | "aarch64"). The host may differ (e.g.
+    // verifying an x64 build from an arm64 CI host), so process.arch is only a
+    // fallback for local dev.
+    arch: { type: "string" },
     emulator: { type: "string" },
     "jit-stress": { type: "boolean", default: false },
     "skip-emulation": { type: "boolean", default: false },
@@ -48,9 +52,14 @@ const fixturesDir = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures"
 const wasmFixturesDir = join(fixturesDir, "wasm");
 const preloadPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "preload.js");
 
-// Platform detection
+// Host OS (getVerifyBaselineHost() guarantees host OS == target OS here).
 const isWindows = process.platform === "win32";
-const isAarch64 = process.arch === "arm64";
+// Target arch (host arch may differ; --arch is explicit).
+const targetArch = values.arch ?? (process.arch === "arm64" ? "aarch64" : "x64");
+if (targetArch !== "x64" && targetArch !== "aarch64") {
+  throw new Error(`--arch must be "x64" or "aarch64", got: ${targetArch}`);
+}
+const isAarch64 = targetArch === "aarch64";
 
 // SDE outputs this when a chip-check violation occurs
 const SDE_VIOLATION_PATTERN = /SDE-ERROR:.*not valid for specified chip/i;

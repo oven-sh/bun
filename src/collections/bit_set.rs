@@ -83,15 +83,14 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         mask2 = bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1));
         masks[start_mask_index] |= mask1 & mask2;
     } else {
-        let bulk_mask_index: usize;
-        if start_bit > 0 {
+        let bulk_mask_index: usize = if start_bit > 0 {
             masks[start_mask_index] = (masks[start_mask_index]
                 & !(bool_mask_usize(true) << start_bit))
                 | (bool_mask_usize(value) << start_bit);
-            bulk_mask_index = start_mask_index + 1;
+            start_mask_index + 1
         } else {
-            bulk_mask_index = start_mask_index;
-        }
+            start_mask_index
+        };
 
         for mask in &mut masks[bulk_mask_index..end_mask_index] {
             *mask = bool_mask_usize(value);

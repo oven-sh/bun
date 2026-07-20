@@ -129,10 +129,10 @@ bun_core::comptime_string_map! {
 /// Unlike the Win32 routine no extension/stream suffix is stripped, so
 /// `nul.txt` is not a device; modern Windows and Node agree on that.
 pub fn windows_reserved_device_name_t<T: PathChar>(component: &[T]) -> Option<&'static [u8]> {
-    let mut end = component.len();
-    while end > 0 && (component[end - 1].eq_ascii(b'.') || component[end - 1].eq_ascii(b' ')) {
-        end -= 1;
-    }
+    let end = component
+        .iter()
+        .rposition(|c| !c.eq_ascii(b'.') && !c.eq_ascii(b' '))
+        .map_or(0, |i| i + 1);
     if !(3..=4).contains(&end) {
         return None;
     }

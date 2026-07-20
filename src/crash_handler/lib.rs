@@ -1912,6 +1912,10 @@ mod draft {
         ))]
         {
             reset_on_posix();
+            // Under ASAN `reset_on_posix` early-returns without registering the
+            // static altstack; give the main thread the full-size one here so
+            // the ASAN-chained handler has room to run.
+            init_thread();
         }
 
         install_hooks();

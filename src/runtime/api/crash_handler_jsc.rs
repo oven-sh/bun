@@ -102,7 +102,7 @@ pub mod js_bindings {
 
     /// Recurse in native code until the guard page is hit. Unlike JS recursion
     /// (caught by JSC's soft stack limit), this exercises the real
-    /// `SIGSEGV`-on-guard-page path and so the sigaltstack/`SA_ONSTACK` setup.
+    /// guard-page-fault path and so the sigaltstack/`SA_ONSTACK` setup.
     #[bun_jsc::host_fn]
     pub(crate) fn js_stack_overflow(
         _global: &JSGlobalObject,
@@ -110,11 +110,17 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         #[inline(never)]
-        #[allow(unconditional_recursion)]
         fn recurse(depth: usize) -> usize {
-            let frame = [0u8; 4096];
-            core::hint::black_box(&frame);
-            core::hint::black_box(recurse(core::hint::black_box(depth) + 1)) + frame[0] as usize
+            let mut frame = [0u8; 4096];
+            // Volatile I/O keeps the stack array from being elided; calling
+            // through a black-boxed fn pointer keeps release LLVM from proving
+            // the call is self-recursive and turning it into a loop.
+            // SAFETY: `frame` is a live stack array; the pointer is in-bounds.
+            unsafe { core::ptr::write_volatile(frame.as_mut_ptr(), depth as u8) };
+            let f: fn(usize) -> usize = core::hint::black_box(recurse);
+            let next = f(depth.wrapping_add(1));
+            // SAFETY: `frame` is a live stack array; the pointer is in-bounds.
+            next.wrapping_add(unsafe { core::ptr::read_volatile(frame.as_ptr()) } as usize)
         }
         core::hint::black_box(recurse(0));
         Ok(JSValue::UNDEFINED)

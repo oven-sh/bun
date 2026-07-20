@@ -277,6 +277,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
+    parse_param!(
+        "--pending-deprecation             Emit pending deprecation warnings."
+    ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -696,6 +699,29 @@ pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBoo
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
+fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
+    if !name.windows(6).any(|w| w == b"${pid}") {
+        return name.into();
+    }
+    let pid = std::process::id().to_string();
+    let mut out = Vec::with_capacity(name.len() + pid.len());
+    let mut i = 0;
+    while i < name.len() {
+        if name[i..].starts_with(b"${pid}") {
+            out.extend_from_slice(pid.as_bytes());
+            i += 6;
+        } else {
+            out.push(name[i]);
+            i += 1;
+        }
+    }
+    out.into_boxed_slice()
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1204,7 +1230,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         if cpu_prof_flag || cpu_prof_md_flag {
             ctx.runtime_options.cpu_prof.enabled = true;
             if let Some(name) = args.option(b"--cpu-prof-name") {
-                ctx.runtime_options.cpu_prof.name = name.into();
+                ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
                 ctx.runtime_options.cpu_prof.dir = dir.into();
@@ -1218,21 +1244,32 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                     strings::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
             }
         } else {
-            // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
+            // Node parity: profiler-scoped options without a profiler flag are a
+            // usage error printed as "<argv0>: <flag> must be used with --cpu-prof"
+            // and exit code 9. The default interval value is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--cpu-prof-name").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled"
-                );
+                bad_flags[0] = Some("--cpu-prof-name");
             }
             if args.option(b"--cpu-prof-dir").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled"
-                );
+                bad_flags[1] = Some("--cpu-prof-dir");
             }
-            if args.option(b"--cpu-prof-interval").is_some() {
-                bun_core::warn!(
-                    "--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled",
-                );
+            if let Some(interval_str) = args.option(b"--cpu-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 1000 {
+                    bad_flags[2] = Some("--cpu-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --cpu-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
@@ -1283,6 +1320,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--pending-deprecation")
+            || env_var::NODE_PENDING_DEPRECATION.get() == Some(b"1" as &[u8])
+        {
+            Bun__Node__ProcessPendingDeprecation
+                .store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`

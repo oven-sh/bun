@@ -1,4 +1,5 @@
 #include "ProcessBindingUV.h"
+#include "BunProcess.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -342,12 +343,30 @@
   macro(EUNATCH, "protocol driver not attached")
 
 // clang-format on
+extern "C" bool Bun__Node__ProcessPendingDeprecation;
+
 namespace Bun {
 namespace ProcessBindingUV {
 
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+
+    if (Bun__Node__ProcessPendingDeprecation) {
+        // Node latches DEP0119 once per process (EmitErrNameWarning).
+        static bool warnedErrname = false;
+        if (!warnedErrname) {
+            warnedErrname = true;
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            Process::emitWarning(globalObject,
+                JSC::jsString(vm, WTF::String("Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead."_s)),
+                JSC::jsString(vm, WTF::String("DeprecationWarning"_s)),
+                JSC::jsString(vm, WTF::String("DEP0119"_s)),
+                JSC::jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     auto arg0 = callFrame->argument(0);
 
     // Node.js crashes here:

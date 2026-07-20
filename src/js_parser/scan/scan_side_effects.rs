@@ -912,11 +912,11 @@ impl SideEffects {
                 ok: true,
             },
             ExprData::EBigInt(e) => {
-                let v = e.value.slice();
+                let equal = E::BigInt::check_equality(&e.value, b"0");
                 Result {
-                    value: !bun_core::eql_comptime(v, b"0"),
+                    value: equal == Some(false),
                     side_effects: SideEffects::NoSideEffects,
-                    ok: true,
+                    ok: equal.is_some(),
                 }
             }
             ExprData::EString(e) => Result {

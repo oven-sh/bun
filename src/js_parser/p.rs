@@ -53,7 +53,7 @@ pub(crate) trait ParserLike<'a> {
     fn bump(&self) -> &'a Bump;
     fn source(&self) -> &'a bun_ast::Source;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
-    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, crate::Error>;
+    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref;
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
@@ -79,7 +79,7 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
         P::new_expr(self, t, loc)
     }
     #[inline]
-    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, crate::Error> {
+    fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
         P::store_name_in_ref(self, name)
     }
 }
@@ -1275,9 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .expect("unreachable");
                         buf.into_bump_str().as_bytes()
                     };
-                    let namespace_ref = self
-                        .new_symbol(js_ast::symbol::Kind::Other, name)
-                        .expect("oom");
+                    let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
 
                     self.imports_to_convert_from_require
                         .push(DeferredImportNamespace {
@@ -1752,9 +1750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
         if !self.is_control_flow_dead {
-            if cfg!(debug_assertions) {
-                debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
-            }
+            debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
             // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
             self.symbol_uses
@@ -2141,7 +2137,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(imports.len() + 1)?;
 
-        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier)?;
+        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier);
         declared_symbols.append_assume_capacity(DeclaredSymbol {
             ref_: namespace_ref,
             is_top_level: true,
@@ -2275,7 +2271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(len)?;
 
-        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime")?;
+        let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime");
         declared_symbols.append_assume_capacity(DeclaredSymbol {
             ref_: namespace_ref,
             is_top_level: true,
@@ -3188,9 +3184,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.react_fast_refresh {
             self.react_refresh.create_signature_ref =
-                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$")?;
+                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$");
             self.react_refresh.register_ref =
-                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$")?;
+                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$");
         }
 
         {
@@ -3200,7 +3196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.server_components_wrap_ref = self.declare_generated_symbol(
                         js_ast::symbol::Kind::Other,
                         b"registerClientReference",
-                    )?;
+                    );
                 }
                 // TODO: these wrapping modes.
                 options::ServerComponents::WrapAnonServerFunctions => {}
@@ -3215,7 +3211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.response_ref =
                         self.declare_common_js_symbol(js_ast::symbol::Kind::Import, b"Response")?;
                     self.bun_app_namespace_ref =
-                        self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
+                        self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app");
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
                     symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: self.bun_app_namespace_ref,
@@ -3238,9 +3234,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.runtime_imports.__require.is_empty() {
             return;
         }
-        let ref_ = self
-            .declare_generated_symbol(js_ast::symbol::Kind::Other, b"__require")
-            .expect("oom");
+        let ref_ = self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"__require");
         self.runtime_imports.__require = ref_;
         self.runtime_imports.put(b"__require", ref_);
     }
@@ -3357,9 +3351,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                             let original_name: &'a [u8] =
                                 self.symbols[symbol_idx].original_name.slice();
-                            let hoisted_ref = self
-                                .new_symbol(js_ast::symbol::Kind::Hoisted, original_name)
-                                .expect("unreachable");
+                            let hoisted_ref =
+                                self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name);
                             // No live `&` borrow of `scope` exists here (the members
                             // snapshot was taken by value); `StoreRef` `DerefMut`.
                             VecExt::append(&mut scope.generated, hoisted_ref);
@@ -3854,13 +3847,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) -> Result<(), crate::Error> {
+    pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) {
         self.log().add_error(
             Some(self.source),
             loc,
             b"Cannot use a declaration in a single-statement context",
         );
-        Ok(())
     }
 
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
@@ -4087,7 +4079,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes();
-            stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
+            stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
             VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref);
         }
 
@@ -4340,10 +4332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn create_default_name(
-        &mut self,
-        loc: bun_ast::Loc,
-    ) -> Result<js_ast::LocRef, crate::Error> {
+    pub fn create_default_name(&mut self, loc: bun_ast::Loc) -> js_ast::LocRef {
         let identifier: &'a [u8] = {
             let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())
@@ -4351,19 +4340,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name = js_ast::LocRef {
             loc,
-            ref_: self.new_symbol(js_ast::symbol::Kind::Other, identifier)?,
+            ref_: self.new_symbol(js_ast::symbol::Kind::Other, identifier),
         };
 
         VecExt::append(&mut self.current_scope_mut().generated, name.ref_);
 
-        Ok(name)
+        name
     }
 
-    pub fn new_symbol(
-        &mut self,
-        kind: js_ast::symbol::Kind,
-        identifier: &'a [u8],
-    ) -> Result<Ref, crate::Error> {
+    pub fn new_symbol(&mut self, kind: js_ast::symbol::Kind, identifier: &'a [u8]) -> Ref {
         let inner_index = self.symbols.len() as js_ast::base::RefInt; // @truncate
         self.symbols.push(Symbol {
             kind,
@@ -4375,11 +4360,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.ts_use_counts.push(0);
         }
 
-        Ok(Ref::new(
+        Ref::new(
             inner_index,
             self.source.index.0 as js_ast::base::RefInt,
             js_ast::base::RefTag::Symbol,
-        ))
+        )
     }
 
     pub fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
@@ -4417,7 +4402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
-        self.create_default_name(loc).expect("unreachable")
+        self.create_default_name(loc)
     }
 
     pub fn discard_scopes_up_to(&mut self, scope_index: usize) {
@@ -4796,7 +4781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Create a new symbol if we didn't merge with an existing one above
-        let ref_ = self.new_symbol(kind, name)?;
+        let ref_ = self.new_symbol(kind, name);
 
         if member.is_none() {
             self.module_scope_mut().members.put(
@@ -4854,15 +4839,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
-    ) -> Result<Ref, crate::Error> {
+    ) -> Ref {
         let ref_ = if self.will_use_renamer() {
-            self.new_symbol(kind, name)?
+            self.new_symbol(kind, name)
         } else {
             let hashed = self.hash_generated_name(name);
-            self.new_symbol(kind, hashed)?
+            self.new_symbol(kind, hashed)
         };
         VecExt::append(&mut self.module_scope_mut().generated, ref_);
-        Ok(ref_)
+        ref_
     }
 
     pub fn declare_symbol(
@@ -4886,7 +4871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Allocate a new symbol
-        let mut ref_ = self.new_symbol(kind, name)?;
+        let mut ref_ = self.new_symbol(kind, name);
 
         // Single-probe `getOrPut`. The previous two-probe shape
         // (`members.get` then `members.put_borrowed`) existed only because the
@@ -5017,7 +5002,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, crate::Error> {
+    pub fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
         if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
             if let Some(uses) = &mut self.parse_pass_symbol_uses {
                 if let Some(res) = uses.get_mut(name) {
@@ -5037,18 +5022,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // safety check without the per-identifier branch in release.
             let off = name_ptr - contents_ptr;
             debug_assert!(off <= u32::MAX as usize && name.len() <= u32::MAX as usize);
-            Ok(Ref::new(
+            Ref::new(
                 name.len() as u32,
                 off as u32,
                 js_ast::base::RefTag::SourceContentsSlice,
-            ))
+            )
         } else {
             // `allocated_names.len()` is bounded by the
             // symbol budget (asserted by Ref::pack's INNER_INDEX_BITS check).
             let inner_index = self.allocated_names.len();
             debug_assert!(inner_index <= u32::MAX as usize);
             self.allocated_names.push(name);
-            Ok(Ref::init(inner_index as u32, self.source.index.0, false))
+            Ref::init(inner_index as u32, self.source.index.0, false)
         }
     }
 
@@ -6151,9 +6136,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(existing) => existing,
             None => {
                 let symbol_name = kind.tag_name();
-                let new_ref = self
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
-                    .expect("unreachable");
+                let new_ref =
+                    self.declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name);
                 let loc_ref = LocRef { loc, ref_: new_ref };
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
@@ -6612,9 +6596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.has_called_runtime = true;
 
         if !self.runtime_imports.contains(name) {
-            let ref_ = self
-                .declare_generated_symbol(js_ast::symbol::Kind::Other, name)
-                .expect("unreachable");
+            let ref_ = self.declare_generated_symbol(js_ast::symbol::Kind::Other, name);
             self.runtime_imports.put(name, ref_);
             ref_
         } else {
@@ -7060,9 +7042,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         if s_class.class.extends.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
-                            let arguments_ref = self
-                                .new_symbol(js_ast::symbol::Kind::Unbound, arguments_str)
-                                .expect("unreachable");
+                            let arguments_ref =
+                                self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str);
                             VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
 
                             let spread_inner =
@@ -7647,12 +7628,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
 
         // Allocate an "unbound" symbol
-        let r#ref = self
-            .new_symbol(
-                js_ast::symbol::Kind::Unbound,
-                self.arena.alloc_slice_copy(name),
-            )
-            .expect("unreachable");
+        let r#ref = self.new_symbol(
+            js_ast::symbol::Kind::Unbound,
+            self.arena.alloc_slice_copy(name),
+        );
 
         // Track how many times we've referenced this symbol
         self.record_usage(r#ref);
@@ -7768,9 +7747,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .into_bump_str()
                 .as_bytes()
         };
-        let r#ref = self
-            .new_symbol(js_ast::symbol::Kind::Other, name)
-            .expect("oom");
+        let r#ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
 
         self.temp_refs_to_declare.push(TempRef {
             r#ref,
@@ -8523,9 +8500,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             };
             if self.has_import_meta {
-                self.import_meta_ref = self
-                    .new_symbol(js_ast::symbol::Kind::Other, b"$Bun_import_meta")
-                    .expect("oom");
+                self.import_meta_ref =
+                    self.new_symbol(js_ast::symbol::Kind::Other, b"$Bun_import_meta");
                 args[5] = Arg {
                     binding: self.b(
                         B::Identifier {
@@ -8673,8 +8649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
                 break 'brk self
-                    .new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_str().as_bytes())
-                    .expect("oom");
+                    .new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_str().as_bytes());
             }
 
             Ref::NONE

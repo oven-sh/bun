@@ -387,6 +387,32 @@ impl StringOrBuffer {
         }
     }
 
+    /// Decode an array-buffer-like `value` into `*out`. On the async path a
+    /// resizable non-shared backing store is snapshotted (pin() blocks transfer(),
+    /// not resize()); fixed buffers and growable SABs keep the pinned zero-copy path.
+    #[inline]
+    fn array_buffer_into(out: &mut Self, global: &JSGlobalObject, value: JSValue, is_async: bool) {
+        let buffer = if is_async {
+            match Buffer::from_js_pinned(global, value) {
+                Some(buf) if buf.buffer.resizable && !buf.buffer.shared => {
+                    let owned = buf.slice().to_vec();
+                    buf.buffer.unpin();
+                    global.vm().report_extra_memory(owned.len());
+                    *out = Self::EncodedSlice(ZigStringSlice::init_owned(owned));
+                    return;
+                }
+                Some(buf) => buf,
+                None => Buffer::from_array_buffer(global, value),
+            }
+        } else {
+            Buffer::from_array_buffer(global, value)
+        };
+        if is_async {
+            buffer.buffer.value.protect();
+        }
+        *out = Self::Buffer(buffer);
+    }
+
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
@@ -453,29 +479,7 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    match Buffer::from_js_pinned(global, value) {
-                        Some(buf) if buf.buffer.resizable && !buf.buffer.shared => {
-                            // pin() blocks transfer(), not resize(); a shrink
-                            // decommits pages the threadpool is still reading.
-                            let owned = buf.slice().to_vec();
-                            buf.buffer.unpin();
-                            global.vm().report_extra_memory(owned.len());
-                            *out = Self::EncodedSlice(ZigStringSlice::init_owned(owned));
-                            return Ok(true);
-                        }
-                        Some(buf) => buf,
-                        None => Buffer::from_array_buffer(global, value),
-                    }
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
-
-                if is_async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
+                Self::array_buffer_into(out, global, value, is_async);
                 Ok(true)
             }
             _ => Ok(false),
@@ -535,25 +539,7 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                match Buffer::from_js_pinned(global, value) {
-                    Some(buf) if buf.buffer.resizable && !buf.buffer.shared => {
-                        let owned = buf.slice().to_vec();
-                        buf.buffer.unpin();
-                        global.vm().report_extra_memory(owned.len());
-                        *out = Self::EncodedSlice(ZigStringSlice::init_owned(owned));
-                        return Ok(true);
-                    }
-                    Some(buf) => buf,
-                    None => Buffer::from_array_buffer(global, value),
-                }
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
+            Self::array_buffer_into(out, global, value, is_async);
             return Ok(true);
         }
 

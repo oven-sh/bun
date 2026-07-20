@@ -134,9 +134,13 @@ pub mod parent_death_watchdog {
 
     /// Open a handle on the creating process and register a one-shot
     /// thread-pool wait on it. If the creator is already gone (OpenProcess
-    /// fails, or the PID was recycled), exit immediately, matching the POSIX
-    /// race branches in `ParentDeathWatchdog.rs`.
+    /// reports no such PID, or the PID was recycled), exit immediately,
+    /// matching the POSIX race branches in `ParentDeathWatchdog.rs`. If the
+    /// creator exists but its DACL denies us (e.g. a SYSTEM service spawned
+    /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
+    /// Job Object half already covers descendants.
     unsafe fn arm_parent_watch() {
+        const ERROR_INVALID_PARAMETER: u32 = 87;
         let ppid = getppid();
         if ppid == 0 {
             return;
@@ -150,16 +154,19 @@ pub mod parent_death_watchdog {
                 ppid,
             )
         };
+        if parent.is_null() {
+            if windows::GetLastError() == ERROR_INVALID_PARAMETER {
+                windows::kernel32::ExitProcess(EXIT_CODE as u32);
+            }
+            return;
+        }
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
         // just opened an unrelated process. A real creator's creation time is
-        // no later than ours; a reused PID's is strictly later. Either outcome
-        // here means the original parent is gone.
-        if parent.is_null() || !is_original_parent(parent) {
-            if !parent.is_null() {
-                // SAFETY: `parent` is a valid handle we just opened.
-                unsafe { windows::CloseHandle(parent) };
-            }
+        // no later than ours; a reused PID's is strictly later.
+        if !is_original_parent(parent) {
+            // SAFETY: `parent` is a valid handle we just opened.
+            unsafe { windows::CloseHandle(parent) };
             windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
         let mut wait: windows::HANDLE = core::ptr::null_mut();

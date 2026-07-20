@@ -105,6 +105,18 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
     is_absolute_windows_t::<u16>(p)
 }
 
+bun_core::comptime_string_map! {
+    static WINDOWS_RESERVED_DEVICE_NAMES: &'static [u8] = {
+        b"nul" => b"NUL", b"con" => b"CON", b"prn" => b"PRN", b"aux" => b"AUX",
+        b"com1" => b"COM1", b"com2" => b"COM2", b"com3" => b"COM3",
+        b"com4" => b"COM4", b"com5" => b"COM5", b"com6" => b"COM6",
+        b"com7" => b"COM7", b"com8" => b"COM8", b"com9" => b"COM9",
+        b"lpt1" => b"LPT1", b"lpt2" => b"LPT2", b"lpt3" => b"LPT3",
+        b"lpt4" => b"LPT4", b"lpt5" => b"LPT5", b"lpt6" => b"LPT6",
+        b"lpt7" => b"LPT7", b"lpt8" => b"LPT8", b"lpt9" => b"LPT9",
+    };
+}
+
 /// Recognise a reserved Win32 DOS device name (`NUL`, `CON`, `PRN`, `AUX`,
 /// `COM1`-`COM9`, `LPT1`-`LPT9`) in a single path component and return its
 /// canonical uppercase spelling, or `None`. Mirrors `RtlIsDosDeviceName_U`
@@ -117,35 +129,16 @@ pub fn windows_reserved_device_name_t<T: PathChar>(component: &[T]) -> Option<&'
     while end > 0 && (component[end - 1].eq_ascii(b'.') || component[end - 1].eq_ascii(b' ')) {
         end -= 1;
     }
-    let up = |i: usize| component[i].to_ascii_upper().to_ascii();
-    match end {
-        3 => match [up(0)?, up(1)?, up(2)?] {
-            [b'N', b'U', b'L'] => Some(b"NUL"),
-            [b'C', b'O', b'N'] => Some(b"CON"),
-            [b'P', b'R', b'N'] => Some(b"PRN"),
-            [b'A', b'U', b'X'] => Some(b"AUX"),
-            _ => None,
-        },
-        4 => {
-            let d = up(3)?;
-            if !d.is_ascii_digit() || d == b'0' {
-                return None;
-            }
-            const COM: [&[u8]; 9] = [
-                b"COM1", b"COM2", b"COM3", b"COM4", b"COM5", b"COM6", b"COM7", b"COM8", b"COM9",
-            ];
-            const LPT: [&[u8]; 9] = [
-                b"LPT1", b"LPT2", b"LPT3", b"LPT4", b"LPT5", b"LPT6", b"LPT7", b"LPT8", b"LPT9",
-            ];
-            let i = (d - b'1') as usize;
-            match [up(0)?, up(1)?, up(2)?] {
-                [b'C', b'O', b'M'] => Some(COM[i]),
-                [b'L', b'P', b'T'] => Some(LPT[i]),
-                _ => None,
-            }
-        }
-        _ => None,
+    if !(3..=4).contains(&end) {
+        return None;
     }
+    let mut stem = [0u8; 4];
+    for (i, c) in component[..end].iter().enumerate() {
+        stem[i] = c.to_ascii()?;
+    }
+    WINDOWS_RESERVED_DEVICE_NAMES
+        .get_ascii_case_insensitive(&stem[..end])
+        .copied()
 }
 
 #[cfg(test)]

@@ -2114,6 +2114,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     proxy_href: proxy.as_ref().map(|p| p.href).unwrap_or(b""),
                     redirect: redirect_type,
                     decompress: !disable_decompression,
+                    max_redirects,
                 },
                 match headers.as_ref() {
                     Some(h) => h,

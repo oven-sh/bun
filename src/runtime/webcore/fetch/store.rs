@@ -101,6 +101,7 @@ pub struct KeyInputs<'a> {
     pub proxy_href: &'a [u8],
     pub redirect: bun_http::FetchRedirect,
     pub decompress: bool,
+    pub max_redirects: Option<u8>,
 }
 
 /// Derive the store key and the owned request snapshot in one pass.
@@ -118,6 +119,7 @@ pub fn build_request(
         proxy_href,
         redirect,
         decompress,
+        max_redirects,
     } = *inputs;
     let entries = headers.entries.slice();
     let names = entries.items_name();
@@ -156,6 +158,9 @@ pub fn build_request(
     }
     if !decompress {
         buf.extend_from_slice(b"\0decompress:false\n");
+    }
+    if let Some(n) = max_redirects {
+        let _ = writeln!(&mut buf, "\0maxRedirects:{n}");
     }
     for (n, v) in &hv {
         buf.extend_from_slice(n);

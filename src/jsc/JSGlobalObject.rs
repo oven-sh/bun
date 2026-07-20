@@ -90,6 +90,20 @@ const fn indefinite_article_for(noun: &str) -> &'static str {
         _ => "a",
     }
 }
+const _: () = {
+    assert!(indefinite_article_for("array").len() == 2);
+    assert!(indefinite_article_for("element").len() == 2);
+    assert!(indefinite_article_for("integer").len() == 2);
+    assert!(indefinite_article_for("object").len() == 2);
+    assert!(indefinite_article_for("Array").len() == 2);
+    assert!(indefinite_article_for("Error").len() == 2);
+    assert!(indefinite_article_for("Iterable").len() == 2);
+    assert!(indefinite_article_for("Object").len() == 2);
+    assert!(indefinite_article_for("string").len() == 1);
+    assert!(indefinite_article_for("Uint8Array").len() == 1);
+    assert!(indefinite_article_for("URL").len() == 1);
+    assert!(indefinite_article_for("").len() == 1);
+};
 
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for

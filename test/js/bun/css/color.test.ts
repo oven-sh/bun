@@ -184,8 +184,7 @@ test.each(bad)("color(%s, 'css') === null", input => {
 });
 
 describe("ERR_INVALID_ARG_TYPE message uses the right indefinite article", () => {
-  // These all flow through JSGlobalObject::create_invalid_argument_type, which
-  // used to hardcode "a" and emit "a integer" / "a array" / "a object".
+  // All four flow through the shared JSGlobalObject::create_invalid_argument_type helper.
   test("an integer", () => {
     expect(() => color({ r: "x" as any, g: 0, b: 0 })).toThrow("Expected r to be an integer for 'color'.");
   });

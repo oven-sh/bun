@@ -369,6 +369,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .template
                 .print(&mut rel_path, !c.options.compile)
                 .expect("write to Vec<u8>");
+            // An empty `[ext]` leaves the template's literal `.` dangling;
+            // Win32 (and our NT open path) strip it at open time, so keep the
+            // path in sync with what lands on disk.
+            while rel_path.last() == Some(&b'.') {
+                rel_path.pop();
+            }
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {

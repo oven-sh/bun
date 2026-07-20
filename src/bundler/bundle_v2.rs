@@ -4207,6 +4207,13 @@ pub mod bv2_impl {
                             template
                                 .print(&mut v, !self.transpiler.options.compile)
                                 .expect("oom");
+                            // An empty `[ext]` leaves the template's literal `.`
+                            // dangling; Win32 (and our NT open path) strip it at
+                            // open time, so the written file and the generated
+                            // import would otherwise disagree.
+                            while v.last() == Some(&b'.') {
+                                v.pop();
+                            }
                             v.into_boxed_slice()
                         };
 

@@ -167,7 +167,7 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -229,7 +229,7 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const lines = stdout

@@ -630,7 +630,9 @@ pub fn is_url_safe_package_name(target: &[u8]) -> bool {
         };
         let slash = slash as usize;
         return target[1..slash].iter().all(|&c| is_uri_component_char(c))
-            && target[slash + 1..].iter().all(|&c| is_uri_component_char(c));
+            && target[slash + 1..]
+                .iter()
+                .all(|&c| is_uri_component_char(c));
     }
     target.iter().all(|&c| is_uri_component_char(c))
 }

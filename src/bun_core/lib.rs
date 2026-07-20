@@ -1185,13 +1185,13 @@ pub use crate::string::immutable::{
     has_prefix, has_prefix_case_insensitive, has_prefix_comptime, has_prefix_comptime_utf16,
     has_suffix_comptime, index_of, index_of_scalar, index_of_t, is_all_whitespace, is_ip_address,
     is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_url_safe_package_name,
-    is_utf8_char_boundary, is_valid_utf8, join, last_index_of, last_index_of_t,
-    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
-    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
-    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
-    trim_spaces, trim_suffix, trim_suffix_comptime, utf8_byte_sequence_length, utf16_eql_string,
-    without_prefix, without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
+    is_url_safe_package_name, is_utf8_char_boundary, is_valid_utf8, join, last_index_of,
+    last_index_of_t, length_of_leading_whitespace_ascii, memmem, order, order_t,
+    percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
+    starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
+    trim_prefix_comptime, trim_spaces, trim_suffix, trim_suffix_comptime,
+    utf8_byte_sequence_length, utf16_eql_string, without_prefix, without_prefix_comptime,
+    without_suffix_comptime, without_utf8_bom,
 };
 
 #[allow(deprecated)]

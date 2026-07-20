@@ -10,6 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
+use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{String as BunString, ZStr, ZigString};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
@@ -1087,6 +1088,7 @@ mod _async_tasks {
         args::Rename,
         args::Truncate,
         args::FdVectorIo,
+        args::Writev,
         args::FTruncate,
         args::Chown,
         args::Lutimes,
@@ -2817,11 +2819,10 @@ pub mod args {
         }
     }
 
-    /// Shared layout for `fs.writev` / `fs.readv` arguments. One concrete
-    /// struct; we re-export both
-    /// names as type aliases so every `args::Writev` / `args::Readv` caller
-    /// (UVFSRequest params, `readv`/`writev`/`preadv_inner`/`pwritev_inner`,
-    /// uv dispatch arms) is untouched.
+    /// Shared layout for `fs.writev` / `fs.readv` arguments. `args::Readv` is
+    /// a direct alias; `args::Writev` newtypes it so its `from_js` can snapshot
+    /// resizable inputs on the async path while every
+    /// `.fd`/`.buffers`/`.position` consumer stays unchanged via `Deref`.
     pub struct FdVectorIo {
         pub fd: FD,
         pub buffers: VectorArrayBuffer,
@@ -2873,8 +2874,44 @@ pub mod args {
             })
         }
     }
-    pub type Writev = FdVectorIo;
     pub type Readv = FdVectorIo;
+
+    /// Transparent so the `args_as!` identity cast in the Windows
+    /// `UVFSRequest` dispatch stays a pure reinterpretation.
+    #[repr(transparent)]
+    pub struct Writev(pub FdVectorIo);
+    impl core::ops::Deref for Writev {
+        type Target = FdVectorIo;
+        #[inline]
+        fn deref(&self) -> &FdVectorIo {
+            &self.0
+        }
+    }
+    impl core::ops::DerefMut for Writev {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut FdVectorIo {
+            &mut self.0
+        }
+    }
+    impl Unprotect for Writev {
+        #[inline]
+        fn unprotect(&mut self) {
+            self.0.unprotect();
+        }
+    }
+    impl Writev {
+        #[inline]
+        pub fn to_thread_safe(&mut self) {
+            self.0.to_thread_safe();
+        }
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            let mut inner = FdVectorIo::from_js(ctx, arguments)?;
+            if arguments.will_be_async {
+                inner.buffers.snapshot_resizable_inputs(ctx);
+            }
+            Ok(Self(inner))
+        }
+    }
 
     pub struct FTruncate {
         pub fd: FD,
@@ -3885,11 +3922,23 @@ pub mod args {
             }
             if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
                 if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
-                    args.buffer = StringOrBuffer::Buffer(Buffer {
-                        buffer: pinned,
-                        owns_buffer: false,
-                        pinned: true,
-                    });
+                    if pinned.resizable && !pinned.shared {
+                        // pin() blocks transfer(), not resize(); a shrink
+                        // decommits pages the threadpool hands to write(2),
+                        // which then returns EFAULT. Snapshot the call-time
+                        // bytes instead.
+                        let owned = pinned.byte_slice().to_vec();
+                        pinned.unpin();
+                        ctx.vm().report_extra_memory(owned.len());
+                        args.buffer =
+                            StringOrBuffer::EncodedSlice(ZigStringSlice::init_owned(owned));
+                    } else {
+                        args.buffer = StringOrBuffer::Buffer(Buffer {
+                            buffer: pinned,
+                            owns_buffer: false,
+                            pinned: true,
+                        });
+                    }
                 }
             }
             Ok(args)

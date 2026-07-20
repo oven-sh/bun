@@ -1441,6 +1441,10 @@ pub struct VectorArrayBuffer {
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned) for the lifetime of an async operation; see [`Self::release`].
     pub views: Vec<JSValue>,
+    /// Owned snapshots of any resizable-backed inputs; the matching
+    /// `buffers[i]` points in here. Populated by
+    /// [`Self::snapshot_resizable_inputs`]; freed by `Drop`.
+    owned: Vec<Box<[u8]>>,
     pinned: bool,
 }
 
@@ -1459,6 +1463,33 @@ impl VectorArrayBuffer {
         for view in self.views.drain(..) {
             view.unpin_array_buffer();
             view.unprotect();
+        }
+    }
+
+    /// For async writev: copy any element backed by a resizable non-shared
+    /// ArrayBuffer into owned storage and repoint its iovec. `pin()` blocks
+    /// `transfer()` but not `ArrayBuffer.prototype.resize`; a shrink decommits
+    /// pages the threadpool hands to `pwritev(2)`, which then returns EFAULT.
+    /// Fixed-length and growable-shared backings stay zero-copy.
+    pub fn snapshot_resizable_inputs(&mut self, global: &JSGlobalObject) {
+        if !self.pinned {
+            return;
+        }
+        debug_assert_eq!(self.views.len(), self.buffers.len());
+        let mut extra: usize = 0;
+        for (i, view) in self.views.iter().enumerate() {
+            let Some(buf) = view.as_array_buffer(global) else {
+                continue;
+            };
+            if buf.resizable && !buf.shared {
+                let mut owned: Box<[u8]> = Box::from(buf.byte_slice());
+                extra += owned.len();
+                self.buffers[i] = bun_sys::platform_iovec_create(&mut owned[..]);
+                self.owned.push(owned);
+            }
+        }
+        if extra > 0 {
+            global.vm().report_extra_memory(extra);
         }
     }
 }
@@ -1517,6 +1548,7 @@ impl VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),
             views: Vec::new(),
+            owned: Vec::new(),
             pinned: false,
         };
         bun_jsc::validation_scope!(scope, global_object);

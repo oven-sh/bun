@@ -2271,6 +2271,13 @@ mod spawn_process_body {
             pub use_execve_on_macos: bool,
             pub argv0: Option<*const c_char>,
 
+            /// When `true` (default), participate in the `--no-orphans`
+            /// subreaper/`wait4(-1)`/adoptee-kill path in `spawn_posix` on the
+            /// watchdog-arming thread. Set to `false` by callers that run
+            /// alongside other managed subprocesses (notably `bun install`'s
+            /// `repository::exec` via `bun_spawn::run`).
+            pub no_orphans_reap: bool,
+
             #[cfg(windows)]
             pub windows: WindowsOptions,
             #[cfg(not(windows))]
@@ -2338,6 +2345,7 @@ mod spawn_process_body {
                     envp: None,
                     use_execve_on_macos: false,
                     argv0: None,
+                    no_orphans_reap: true,
                     #[cfg(windows)]
                     windows: Default::default(),
                     #[cfg(not(windows))]
@@ -3031,7 +3039,14 @@ mod spawn_process_body {
             // exit statuses. Those callers fall through to the plain
             // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
             // thread still tears the whole process down if our parent dies.
-            let no_orphans = ParentDeathWatchdog::is_enabled()
+            //
+            // Also disabled when the caller opts out via `no_orphans_reap`:
+            // `repository::exec` reaches this on the main thread for
+            // `find_commit`'s `git log` while other git clones are live on the
+            // install threadpool; arming here SIGKILLs them in
+            // `kill_subreaper_adoptees` or steals their status in `wait4(-1)`.
+            let no_orphans = options.no_orphans_reap
+                && ParentDeathWatchdog::is_enabled()
                 && bun_spawn_sys::pdeathsig::is_arming_thread()
                 && !(cfg!(target_os = "macos") && options.use_execve_on_macos);
 

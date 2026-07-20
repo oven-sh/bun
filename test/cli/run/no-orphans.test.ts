@@ -971,3 +971,89 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
     }
   },
 );
+
+// `bun install` resolves git dependencies by shelling out to `git` via
+// `bun_spawn::run` -> `process::sync::spawn`. `find_commit` (`git log`) runs on
+// the main thread while git clones / checkouts run on the install threadpool.
+// The `--no-orphans` spawnSync path arms PR_SET_CHILD_SUBREAPER + a `wait4(-1)`
+// reap loop and finishes with `kill_subreaper_adoptees`, which SIGKILLs any
+// direct child that was not in the pre-spawn snapshot; a threadpool `git clone`
+// forked during that window dies with "git failed with signal 9" (observed as
+// repeated flakes of test/cli/install/migration/complex-workspace.test.ts on the
+// x64-asan CI lane, which sets BUN_FEATURE_FLAG_NO_ORPHANS for every test).
+//
+// `bun_spawn::run` now opts out of that path. This test observes the mechanism
+// deterministically rather than the race: when the subreaper path is armed the
+// git child is placed in its own process group (`new_process_group = no_orphans`
+// in `sync::spawn_posix`), so a fake `git` on PATH records whether `git log`'s
+// pgid equals its pid. With the opt-out applied it must not.
+test.concurrent.skipIf(!isLinux)(
+  "BUN_FEATURE_FLAG_NO_ORPHANS=1: bun install's internal git calls do not arm the subreaper reap path",
+  async () => {
+    const fakeGit =
+      `#!/bin/sh\n` +
+      `last=""\n` +
+      `for a in "$@"; do last="$a"; done\n` +
+      // pgid from /proc/self/stat (field 3 after the comm close-paren). The awk
+      // child inherits the shell's process group, so this reads the pgid bun
+      // assigned to the spawned `git`.
+      `pgid=$(awk -F'\\\\) ' '{split($2,a," "); print a[3]}' /proc/self/stat)\n` +
+      `if [ "$pgid" = "$$" ]; then grp=own; else grp=parent; fi\n` +
+      `case "$*" in\n` +
+      `  *" log "*)\n` +
+      `    echo "log $grp" >> "$FAKE_GIT_MARKER"\n` +
+      `    echo abcdef0123456789abcdef0123456789abcdef01\n` +
+      `    ;;\n` +
+      `  *"--no-checkout"*)\n` +
+      `    echo "clone-no-checkout $grp" >> "$FAKE_GIT_MARKER"\n` +
+      `    mkdir -p "$last"\n` +
+      `    printf '{"name":"fake-dep","version":"1.0.0"}' > "$last/package.json"\n` +
+      `    ;;\n` +
+      `  *) ;;\n` +
+      `esac\n`;
+
+    // `git+file://` matches neither `try_https` nor `try_ssh`, so the
+    // threadpool GitClone task never runs `git clone --bare` (Repository::
+    // download). `find_commit`'s `git log` on the main thread is the first git
+    // invocation, followed by the threadpool checkout step.
+    using dir = tempDir("no-orphans-install-git", {
+      "bin/git": fakeGit,
+      "package.json": JSON.stringify({
+        name: "no-orphans-install-git",
+        dependencies: { "dep-a": "git+file:///fake/repo-a" },
+      }),
+    });
+    chmodSync(`${dir}/bin/git`, 0o755);
+
+    const env: Record<string, string> = {
+      ...bunEnv,
+      BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+      BUN_INSTALL_CACHE_DIR: `${dir}/cache`,
+      FAKE_GIT_MARKER: `${dir}/marker.txt`,
+      PATH: `${dir}/bin:${process.env.PATH ?? ""}`,
+    };
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const marker = readFileSync(`${dir}/marker.txt`, "utf8").trim();
+    // `git log` is the `find_commit` call on the main thread. "own" means
+    // `sync::spawn_posix` put it in its own process group, i.e. the
+    // `--no-orphans` subreaper/`kill_subreaper_adoptees` path was armed and
+    // would SIGKILL any concurrent threadpool `git` child. The threadpool
+    // checkout step is always "parent" (not the watchdog-arming thread) and
+    // acts as a control that the pgid probe itself works.
+    expect({ stdout, stderr, exitCode, marker }).toEqual({
+      stdout: expect.stringContaining("1 package installed"),
+      stderr: expect.any(String),
+      exitCode: 0,
+      marker: ["log parent", "clone-no-checkout parent"].join("\n"),
+    });
+  },
+);

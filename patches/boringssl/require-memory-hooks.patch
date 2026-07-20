@@ -1,14 +1,13 @@
 --- a/crypto/mem.cc
 +++ b/crypto/mem.cc
-@@ -100,9 +100,21 @@
+@@ -100,9 +100,20 @@
  // primitives used must tolerate every other synchronization primitive linked
  // into the process, including pthreads locks. Failing to meet these constraints
  // may result in deadlocks, crashes, or memory corruption.
 +#if defined(BORINGSSL_REQUIRE_MEMORY_HOOKS)
-+// Bun: the embedder guarantees these three are always defined, so declare them
-+// as ordinary externs. WEAK_SYMBOL_FUNC above is gated on __ELF__, so on Mach-O
-+// and COFF it would expand to a static null pointer and the hook path would be
-+// folded away at compile time.
++// Bun: the embedder guarantees these three are always defined. WEAK_SYMBOL_FUNC
++// is gated on __ELF__, so on Mach-O and COFF it would expand to a static null
++// pointer and the hook path would be folded away at compile time.
 +extern "C" {
 +void *OPENSSL_memory_alloc(size_t size);
 +void OPENSSL_memory_free(void *ptr);
@@ -22,7 +21,7 @@
  
  #if defined(BORINGSSL_MALLOC_FAILURE_TESTING)
  static StaticMutex malloc_failure_lock;
-@@ -186,6 +198,15 @@
+@@ -186,6 +197,15 @@
      goto err;
    }
  
@@ -38,7 +37,7 @@
    if (OPENSSL_memory_alloc != nullptr) {
      assert(OPENSSL_memory_free != nullptr);
      assert(OPENSSL_memory_get_size != nullptr);
-@@ -195,6 +216,7 @@
+@@ -195,6 +215,7 @@
      }
      return ptr2;
    }
@@ -46,7 +45,7 @@
  
    if (size + OPENSSL_MALLOC_PREFIX < size) {
      goto err;
-@@ -238,10 +260,15 @@
+@@ -238,10 +259,15 @@
      return;
    }
  
@@ -62,7 +61,7 @@
  
    void *ptr = ((uint8_t *)orig_ptr) - OPENSSL_MALLOC_PREFIX;
    __asan_unpoison_memory_region(ptr, OPENSSL_MALLOC_PREFIX);
-@@ -268,6 +295,9 @@
+@@ -268,6 +294,9 @@
    }
  
    size_t old_size;
@@ -72,7 +71,7 @@
    if (OPENSSL_memory_get_size != nullptr) {
      old_size = OPENSSL_memory_get_size(orig_ptr);
    } else {
-@@ -276,6 +306,7 @@
+@@ -276,6 +305,7 @@
      old_size = *(size_t *)ptr;
      __asan_poison_memory_region(ptr, OPENSSL_MALLOC_PREFIX);
    }

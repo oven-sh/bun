@@ -6235,20 +6235,50 @@ impl DynLib {
     /// is the formatted loader message (`dlerror()` / `FormatMessageW`),
     /// captured immediately so a later retry cannot overwrite it.
     pub fn open(path: &[u8]) -> core::result::Result<Self, Box<[u8]>> {
-        let mut buf = bun_paths::PathBuffer::default();
-        // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
-        // dlopen a different library whose path is a prefix of the requested one).
-        if path.len() >= buf.0.len() {
+        // Never truncate (could dlopen a different library whose path is a
+        // prefix of the requested one).
+        if path.len() >= bun_paths::MAX_PATH_BYTES {
             return Err(Box::from(b"path too long" as &[u8]));
         }
-        let len = path.len();
-        buf.0[..len].copy_from_slice(path);
-        buf.0[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&buf.0[..], len);
-        match dlopen(z, RTLD::LAZY) {
-            Some(h) => Ok(Self { handle: h }),
-            None => Err(dlopen_error(path)),
+        #[cfg(unix)]
+        {
+            let mut buf = bun_paths::PathBuffer::default();
+            let len = path.len();
+            buf.0[..len].copy_from_slice(path);
+            buf.0[len] = 0;
+            // SAFETY: NUL-terminated above.
+            let z = ZStr::from_buf(&buf.0[..], len);
+            match dlopen(z, RTLD::LAZY) {
+                Some(h) => Ok(Self { handle: h }),
+                None => Err(dlopen_error(path)),
+            }
+        }
+        #[cfg(windows)]
+        {
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path);
+            const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+            let dw_flags = if bun_paths::is_absolute_windows(path) {
+                LOAD_WITH_ALTERED_SEARCH_PATH
+            } else {
+                0
+            };
+            // SAFETY: `to_w_path` NUL-terminates; `hFile` is reserved (NULL).
+            let p = unsafe {
+                bun_windows_sys::kernel32::LoadLibraryExW(
+                    wpath.as_ptr(),
+                    core::ptr::null_mut(),
+                    dw_flags,
+                )
+            };
+            if !p.is_null() {
+                return Ok(Self { handle: p.cast() });
+            }
+            // Capture before `wbuf` returns to the pool (its Drop pushes into
+            // a thread-local Vec, which may allocate on first use per thread).
+            let err = bun_windows_sys::kernel32::GetLastError();
+            drop(wbuf);
+            Err(dlopen_error_windows(err, path))
         }
     }
     /// `dlsym` typed lookup.

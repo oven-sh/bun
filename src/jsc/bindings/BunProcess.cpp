@@ -546,6 +546,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
 
     if (!handle) {
+        // Re-borrow: tryToDeleteIfNecessary() may have called
+        // filename.convertTo16Bit(), which swaps the StringImpl and leaves the
+        // earlier borrowed filename_str dangling.
+        filename_str = Bun::toString(filename);
         BunString err = Bun__dlerror(errorno, &filename_str);
 #if OS(WINDOWS)
         // Node.js (src/node_binding.cc) appends the filename after uv_dlerror() on Windows.

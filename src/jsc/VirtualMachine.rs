@@ -37,6 +37,10 @@ pub(crate) static has_bun_garbage_collector_flag_enabled: core::sync::atomic::At
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+// Set by the node:test shim when it loads inside a run() child (jest.rs
+// js_node_test_register_child); gates uncaught routing to process listeners.
+pub static IS_NODE_TEST_RUN_CHILD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
@@ -1388,7 +1392,11 @@ impl VirtualMachine {
             return true;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        // A registered node:test run() child takes the vanilla path below so
+        // the shim's process listeners can attribute uncaught errors to the
+        // running test; in-process registration doesn't leak to grandchildren.
+        let is_node_test_child = IS_NODE_TEST_RUN_CHILD.load(core::sync::atomic::Ordering::Relaxed);
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) && !is_node_test_child {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -3361,7 +3369,11 @@ impl VirtualMachine {
             return;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        // Mirrors uncaught_exception: a registered node:test run() child routes
+        // rejections through the vanilla path so the shim can attribute them.
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+            && !IS_NODE_TEST_RUN_CHILD.load(core::sync::atomic::Ordering::Relaxed)
+        {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;

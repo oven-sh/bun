@@ -148,18 +148,31 @@ const kBuiltinReporters = {
 };
 
 async function resolveReporter(name: string) {
-  const builtin = kBuiltinReporters[name];
-  if (builtin !== undefined) return builtin;
-  // Custom reporter: a module specifier, resolved like node resolves it.
-  const specifier = name.startsWith(".") ? resolve(process.cwd(), name) : name;
-  let mod;
-  try {
-    mod = await import(specifier);
-  } catch (err) {
-    (err as { code?: string }).code ??= "ERR_MODULE_NOT_FOUND";
-    throw err;
+  let reporter: unknown = kBuiltinReporters[name];
+  if (reporter === undefined) {
+    // Custom reporter: a module specifier, resolved like node resolves it.
+    const specifier = name.startsWith(".") ? resolve(process.cwd(), name) : name;
+    let mod;
+    try {
+      mod = await import(specifier);
+    } catch (err) {
+      // Rewrap: bun's ResolveMessage hides `code` from inspection, and the
+      // reporter tests look for ERR_MODULE_NOT_FOUND in stderr like node's.
+      const error = new Error((err as Error)?.message ?? String(err));
+      (error as { code?: string }).code = (err as { code?: string })?.code ?? "ERR_MODULE_NOT_FOUND";
+      throw error;
+    }
+    reporter = mod.default ?? mod;
   }
-  const reporter = mod.default ?? mod;
+  // node news any constructor-carrying function (utils.js getReportersMap).
+  // The own-constructor identity check keeps bundled async generators (whose
+  // shared prototype carries an AsyncGeneratorFunction constructor) as-is.
+  if (
+    (reporter as { prototype?: object })?.prototype &&
+    Object.getOwnPropertyDescriptor((reporter as { prototype: object }).prototype, "constructor")?.value === reporter
+  ) {
+    reporter = new (reporter as new () => unknown)();
+  }
   if (typeof reporter !== "function" && !(reporter && typeof (reporter as any).pipe === "function")) {
     const error = new TypeError(
       `The "Reporter" argument must be a function or a stream. Received ${reporter === undefined ? "undefined" : typeof reporter}`,
@@ -176,43 +189,24 @@ function destinationFor(dest: string) {
   return createWriteStream(resolve(process.cwd(), dest));
 }
 
-function isTransformLike(reporter: unknown): boolean {
-  return typeof reporter === "function" && typeof (reporter as any).prototype?._transform === "function";
-}
-
-// Wires one reporter over its own copy of the event stream. Returns a promise
-// that settles when the reporter has flushed everything it will write.
+// Wires one reporter over its own copy of the event stream, node-style:
+// compose(source, reporter).pipe(destination) (internal/test_runner/utils.js).
+// Returns a promise that settles when the reporter has flushed everything.
 function attachReporter(reporter, source, destination): Promise<void> {
+  const { compose } = require("node:stream");
   const endDestination = destination !== process.stdout && destination !== process.stderr;
-  // A file destination must reach 'finish' before this resolves, or a
-  // --test-force-exit right after could truncate the report.
-  function destinationFlushed(): Promise<void> {
-    if (!endDestination) return Promise.resolve();
-    return new Promise(resolveFlush => {
-      destination.on("finish", resolveFlush);
-      destination.on("error", resolveFlush);
-    });
-  }
-  if (isTransformLike(reporter)) {
-    return new Promise((resolvePromise, rejectPromise) => {
-      const transform = new reporter();
-      transform.on("error", rejectPromise);
-      const flushed = destinationFlushed();
-      const out = source.pipe(transform).pipe(destination, { end: endDestination });
-      transform.on("end", () => flushed.then(resolvePromise));
-      out.on("error", rejectPromise);
-    });
-  }
-  return (async () => {
-    for await (const chunk of reporter(source)) {
-      destination.write(chunk);
-    }
+  return new Promise((resolvePromise, rejectPromise) => {
+    const composed = compose(source, reporter);
+    composed.on("error", rejectPromise);
+    const out = composed.pipe(destination, { end: endDestination });
+    out.on("error", rejectPromise);
     if (endDestination) {
-      const flushed = destinationFlushed();
-      destination.end();
-      await flushed;
+      destination.on("finish", resolvePromise);
+      destination.on("error", rejectPromise);
+    } else {
+      composed.on("end", resolvePromise);
     }
-  })();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -334,8 +328,9 @@ async function main() {
       reporter = await resolveReporter(reporterNames[i]);
     } catch (err) {
       // node's main is ESM: a reporter that can't be set up leaves the
-      // top-level await unfinished, which exits with code 7.
-      console.error(err);
+      // top-level await unfinished, which exits with code 7. inspect() keeps
+      // the error's `code` visible, like node's fatal printer.
+      console.error(require("node:util").inspect(err));
       process.exit(7);
     }
     const destination = destinationFor(destinationNames[i]);

@@ -660,10 +660,20 @@ class LcovReporter extends Transform {
   }
 }
 
+// node exports spec/lcov as plain functions that ReflectConstruct their class
+// (lib/test/reporters.js), so both `new spec()` and stream compose() work.
+function spec(...args: unknown[]) {
+  return Reflect.construct(SpecReporter, args);
+}
+
+function lcov(...args: unknown[]) {
+  return Reflect.construct(LcovReporter, args);
+}
+
 export default {
   dot,
   junit,
-  spec: SpecReporter,
+  spec,
   tap,
-  lcov: LcovReporter,
+  lcov,
 };

@@ -833,9 +833,15 @@ impl BunTest {
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
         } else {
-            // error is only reported for the first done() call
+            // Error is only reported for the first done() call. Routed through
+            // bun:test's collector, not `uncaught_exception`: in a node:test
+            // child the latter dispatches genuine uncaughts to process listeners.
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                let vm = global_this.bun_vm().as_mut();
+                if !vm.is_shutting_down() {
+                    vm.unhandled_error_counter += 1;
+                    (vm.on_unhandled_rejection)(vm, global_this, value);
+                }
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.

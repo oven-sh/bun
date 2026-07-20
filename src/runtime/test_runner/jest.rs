@@ -556,6 +556,17 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
+/// Reached from node:test at module load in a run() child: registers this
+/// process so genuine uncaught errors route to the process listeners the shim
+/// installs (VirtualMachine::uncaught_exception / unhandled_rejection gates).
+pub(crate) fn js_node_test_register_child(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::virtual_machine::IS_NODE_TEST_RUN_CHILD.store(true, core::sync::atomic::Ordering::Relaxed);
+    Ok(JSValue::UNDEFINED)
+}
+
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a

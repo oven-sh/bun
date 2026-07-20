@@ -20,3 +20,13 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/no-isolation
 !fixtures/test-runner/no-isolation/**
 !fixtures/test-runner/test-id-fixture.js
+!fixtures/test-runner/describe_error.js
+!fixtures/test-runner/never_ending_async.js
+!fixtures/test-runner/never_ending_sync.js
+!fixtures/test-runner/todo_exit_code.js
+!fixtures/test-runner/throws_sync_and_async.js
+!fixtures/test-runner/reporters.js
+!fixtures/test-runner/plan
+!fixtures/test-runner/plan/**
+!fixtures/test-runner/error-reporter-fail-fast
+!fixtures/test-runner/error-reporter-fail-fast/**

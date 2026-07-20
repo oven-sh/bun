@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -505,4 +505,82 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+test("run(): an uncaught exception during a pending body fails that test instead of hanging", async () => {
+  using dir = tempDir("node-test-uncaught-body", {
+    "fixture.test.mjs": `
+      import test from 'node:test';
+      test('pending body uncaught', async () => {
+        setTimeout(() => { throw new Error('late boom'); }, 20);
+        await new Promise(() => {});
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      const stream = run({ files: [new URL('./fixture.test.mjs', import.meta.url).pathname] });
+      const fails = [];
+      stream.on('test:fail', d => fails.push({ name: d.name, failureType: d.details?.error?.failureType }));
+      for await (const _ of stream);
+      console.log(JSON.stringify(fails));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // Well under bun:test's own 5s watchdog: the shim must fail the test as
+  // soon as the error is attributed, not wait for a timeout rescue.
+  const exited = await Promise.race([proc.exited, Bun.sleep(4000).then(() => "timeout" as const)]);
+  if (exited === "timeout") proc.kill();
+  const stdout = await proc.stdout.text();
+  expect(exited).not.toBe("timeout");
+  const fails = JSON.parse(stdout.trim() || "[]");
+  expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
+});
+
+test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned grandchildren", async () => {
+  using dir = tempDir("node-test-env-leak", {
+    "inner.test.js": `
+      process.on("uncaughtException", () => {});
+      const { test } = require("bun:test");
+      test("swallow attempt", async () => {
+        setTimeout(() => { throw new Error("boom"); }, 10);
+        await new Promise(r => setTimeout(r, 50));
+      });
+    `,
+    "outer.test.mjs": `
+      import test from 'node:test';
+      import assert from 'node:assert';
+      import { spawnSync } from 'node:child_process';
+      test('grandchild records the uncaught', () => {
+        const r = spawnSync(process.execPath, ['test', process.env.INNER_FIXTURE], { env: { ...process.env } });
+        assert.strictEqual(r.status, 1);
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      const stream = run({ files: [new URL('./outer.test.mjs', import.meta.url).pathname] });
+      let passed = 0, failed = 0;
+      stream.on('test:pass', () => passed++);
+      stream.on('test:fail', () => failed++);
+      for await (const _ of stream);
+      console.log(JSON.stringify({ passed, failed }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: { ...bunEnv, INNER_FIXTURE: join(String(dir), "inner.test.js") },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const counts = JSON.parse(stdout.trim());
+  expect(counts.failed).toBe(0);
+  expect(counts.passed).toBeGreaterThanOrEqual(1);
+  expect(exitCode).toBe(0);
 });

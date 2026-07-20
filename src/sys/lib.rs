@@ -6403,7 +6403,9 @@ pub fn dlopen_error() -> Box<[u8]> {
             v.into_boxed_slice()
         };
         if !buf.is_null() {
-            kernel32::LocalFree(buf.cast());
+            // SAFETY: `buf` was allocated by FormatMessageW with
+            // FORMAT_MESSAGE_ALLOCATE_BUFFER; LocalFree is its documented release.
+            unsafe { kernel32::LocalFree(buf.cast()) };
         }
         out
     }

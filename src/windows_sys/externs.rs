@@ -748,8 +748,10 @@ pub mod kernel32 {
             nSize: DWORD,
             Arguments: *mut c_void,
         ) -> DWORD;
-        /// `LocalFree` (`winbase.h`). Accepts null (no-op).
-        pub safe fn LocalFree(hMem: *mut c_void) -> *mut c_void;
+        /// `LocalFree` (`winbase.h`). Accepts null (no-op); a non-null `hMem`
+        /// must have come from `LocalAlloc`/`LocalReAlloc` or `FormatMessageW`
+        /// with `FORMAT_MESSAGE_ALLOCATE_BUFFER`.
+        pub fn LocalFree(hMem: *mut c_void) -> *mut c_void;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;

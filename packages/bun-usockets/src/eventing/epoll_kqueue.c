@@ -107,6 +107,7 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 #include <sys/syscall.h>
 #include <signal.h>
 #include <errno.h>
+#include <limits.h>
 
 static int has_epoll_pwait2 = -1;
 
@@ -126,10 +127,31 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     sigset_t mask;
     sigemptyset(&mask);
 
+    /* For a finite non-zero timeout, track an absolute monotonic deadline so
+     * EINTR retries wait for the remaining time (signal(7): epoll_*wait is
+     * never restarted by SA_RESTART). NULL and {0,0} are idempotent on retry. */
+    uint64_t deadline_ns = 0;
+    const int has_deadline = timeout && (timeout->tv_sec | timeout->tv_nsec);
+    if (has_deadline) {
+        deadline_ns = us_internal_monotonic_ns()
+                    + (uint64_t) timeout->tv_sec * 1000000000ULL
+                    + (uint64_t) timeout->tv_nsec;
+    }
+
     if (has_epoll_pwait2 != 0) {
-        do {
-            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
-        } while (ret == -EINTR);
+        struct timespec remaining_ts;
+        const struct timespec *remaining = timeout;
+        for (;;) {
+            ret = sys_epoll_pwait2(epfd, events, maxevents, remaining, &mask);
+            if (LIKELY(ret != -EINTR)) break;
+            if (!has_deadline) continue;
+            uint64_t now = us_internal_monotonic_ns();
+            if (now >= deadline_ns) return 0;
+            uint64_t left = deadline_ns - now;
+            remaining_ts.tv_sec  = (time_t) (left / 1000000000ULL);
+            remaining_ts.tv_nsec = (long)   (left % 1000000000ULL);
+            remaining = &remaining_ts;
+        }
 
         if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES && ret != -EFAULT)) {
             return ret;
@@ -138,14 +160,28 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         has_epoll_pwait2 = 0;
     }
 
-    int timeoutMs = -1;
-    if (timeout) {
-        timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+    /* epoll_pwait(2) takes an int millisecond timeout; epoll_pwait2(2) takes a
+     * timespec (since Linux 5.11). Round the ns remainder UP so a sub-ms delta
+     * waits 1 ms instead of truncating to 0 and busy-spinning. */
+    int timeoutMs;
+    if (!timeout) {
+        timeoutMs = -1;
+    } else {
+        uint64_t ns = (uint64_t) timeout->tv_sec * 1000000000ULL + (uint64_t) timeout->tv_nsec;
+        uint64_t ms = (ns + 999999ULL) / 1000000ULL;
+        timeoutMs = ms > (uint64_t) INT_MAX ? INT_MAX : (int) ms;
     }
 
-    do {
+    for (;;) {
         ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
-    } while (IS_EINTR(ret));
+        if (!IS_EINTR(ret)) break;
+        if (!has_deadline) continue;
+        uint64_t now = us_internal_monotonic_ns();
+        if (now >= deadline_ns) return 0;
+        uint64_t left_ns = deadline_ns - now;
+        uint64_t left_ms = (left_ns + 999999ULL) / 1000000ULL;
+        timeoutMs = left_ms > (uint64_t) INT_MAX ? INT_MAX : (int) left_ms;
+    }
 
     return ret;
 }

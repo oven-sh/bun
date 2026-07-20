@@ -71,8 +71,8 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 fn collect_varargs(
     global: &JSGlobalObject,
     args: &[JSValue],
-    method: &str,
-    label: &str,
+    method: &'static str,
+    label: &'static str,
 ) -> JsResult<Vec<JSArgument>> {
     let mut out = Vec::with_capacity(args.len());
     for arg in args {

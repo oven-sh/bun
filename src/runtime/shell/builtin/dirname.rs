@@ -21,13 +21,14 @@ impl Dirname {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
         let argc = bltn.args_slice().len();
-        if argc == 0 {
+        let start = bltn.operand_start();
+        if start >= argc {
             return Self::fail(interp, cmd, b"usage: dirname string\n");
         }
 
         let stdout_needs_io = bltn.stdout.needs_io();
         let mut buf = Vec::new();
-        for i in 0..argc {
+        for i in start..argc {
             let path = bltn.arg_bytes(i);
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
             let dir: &[u8] = if dir.is_empty() { b"." } else { dir };

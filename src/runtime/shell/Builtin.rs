@@ -463,6 +463,13 @@ impl Builtin {
         &self.args
     }
 
+    /// Index of the first operand, skipping a leading `--` end-of-options
+    /// delimiter (POSIX Utility Syntax Guideline 10).
+    #[inline]
+    pub fn operand_start(&self) -> usize {
+        (!self.args.is_empty() && self.arg_bytes(0) == b"--") as usize
+    }
+
     /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
     ///
     /// Every entry in `self.args` borrows into the owning `Cmd`'s

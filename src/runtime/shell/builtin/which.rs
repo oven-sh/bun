@@ -32,7 +32,8 @@ pub enum State {
 impl Which {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        if argc == 0 {
+        let start = Builtin::of(interp, cmd).operand_start();
+        if start >= argc {
             if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                 Self::state_mut(interp, cmd).state = State::OneArg;
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -49,7 +50,7 @@ impl Which {
             // captured buffer, then finish.
             let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
             let mut had_not_found = false;
-            for i in 0..argc {
+            for i in start..argc {
                 let arg = Self::arg(interp, cmd, i);
                 match Self::resolve(&path_env, &cwd, &arg) {
                     Some(resolved) => {
@@ -79,7 +80,7 @@ impl Which {
         }
 
         Self::state_mut(interp, cmd).state = State::MultiArgs {
-            arg_idx: 0,
+            arg_idx: start,
             had_not_found: false,
             waiting_write: false,
         };

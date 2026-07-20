@@ -27,7 +27,8 @@ enum WaitKind {
 
 impl Pwd {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        if !Builtin::of(interp, cmd).args_slice().is_empty() {
+        let bltn = Builtin::of(interp, cmd);
+        if bltn.args_slice().len() > bltn.operand_start() {
             let msg: &[u8] = b"pwd: too many arguments\n";
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                 Self::state_mut(interp, cmd).state = State::WaitingIo {

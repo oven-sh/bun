@@ -22,11 +22,12 @@ impl Basename {
         let buf = {
             let bltn = Builtin::of(interp, cmd);
             let argc = bltn.args_slice().len();
-            if argc == 0 {
+            let start = bltn.operand_start();
+            if start >= argc {
                 return Self::fail(interp, cmd, Kind::Basename.usage_string());
             }
             let mut buf = Vec::new();
-            for i in 0..argc {
+            for i in start..argc {
                 buf.extend_from_slice(bun_paths::resolve_path::basename(bltn.arg_bytes(i)));
                 buf.push(b'\n');
             }

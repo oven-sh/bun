@@ -18,10 +18,11 @@ enum State {
 impl Exit {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
-        let code: crate::shell::ExitCode = match bltn.args_slice().len() {
+        let start = bltn.operand_start();
+        let code: crate::shell::ExitCode = match bltn.args_slice().len() - start {
             0 => 0,
             1 => {
-                let s = bltn.arg_bytes(0);
+                let s = bltn.arg_bytes(start);
                 match parse_exit_code(s) {
                     Some(c) => c,
                     None => {

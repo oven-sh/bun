@@ -33,12 +33,13 @@ impl Yes {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Build one copy of the output line.
         let argc = Builtin::of(interp, cmd).args_slice().len();
+        let start = Builtin::of(interp, cmd).operand_start();
         let mut one = Vec::new();
-        if argc == 0 {
+        if start >= argc {
             one.extend_from_slice(b"y\n");
         } else {
-            for i in 0..argc {
-                if i > 0 {
+            for i in start..argc {
+                if i > start {
                     one.push(b' ');
                 }
                 one.extend_from_slice(Builtin::of(interp, cmd).arg_bytes(i));

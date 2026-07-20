@@ -20,11 +20,12 @@ enum State {
 impl Export {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        if argc == 0 {
+        let start = Builtin::of(interp, cmd).operand_start();
+        if start >= argc {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
-        for i in 0..argc {
+        for i in start..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
             if s.is_empty() {
                 continue;

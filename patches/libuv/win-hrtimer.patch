@@ -110,7 +110,7 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
                                     LOAD_LIBRARY_SEARCH_SYSTEM32);
 --- a/src/win/core.c
 +++ b/src/win/core.c
-@@ -224,6 +224,35 @@
+@@ -224,6 +224,45 @@
  }
  
  
@@ -143,10 +143,20 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
 +}
 +
 +
++static void uv__hrtimer_close(uv__loop_internal_fields_t* lfields) {
++  if (lfields->hrtimer_pkt != NULL) {
++    pNtCancelWaitCompletionPacket(lfields->hrtimer_pkt, FALSE);
++    CloseHandle(lfields->hrtimer_pkt);
++  }
++  if (lfields->hrtimer != NULL)
++    CloseHandle(lfields->hrtimer);
++}
++
++
  int uv_loop_init(uv_loop_t* loop) {
    uv__loop_internal_fields_t* lfields;
    struct heap* timer_heap;
-@@ -300,6 +329,8 @@
+@@ -300,6 +339,8 @@
    if (err)
      goto fail_async_init;
  
@@ -155,20 +165,15 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
    return 0;
  
  fail_async_init:
-@@ -367,6 +398,12 @@
+@@ -367,6 +408,7 @@
    loop->timer_heap = NULL;
  
    lfields = uv__get_internal_fields(loop);
-+  if (lfields->hrtimer_pkt != NULL) {
-+    pNtCancelWaitCompletionPacket(lfields->hrtimer_pkt, FALSE);
-+    CloseHandle(lfields->hrtimer_pkt);
-+  }
-+  if (lfields->hrtimer != NULL)
-+    CloseHandle(lfields->hrtimer);
++  uv__hrtimer_close(lfields);
    uv_mutex_destroy(&lfields->loop_metrics.lock);
    uv__free(lfields);
    loop->internal_fields = NULL;
-@@ -463,6 +500,34 @@
+@@ -463,6 +505,34 @@
       */
      lfields->current_timeout = timeout;
  

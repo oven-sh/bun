@@ -1351,14 +1351,16 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
-            // Body already delivered: re-arming onData would overwrite a
-            // pipelined request's userData on the shared HttpResponseData.
-            || self.body_read_state.get() != BodyReadState::Pending
         {
             return Ok(JSValue::FALSE);
         }
-        self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        // Body already delivered: nothing to buffer, and re-arming onData would
+        // overwrite a pipelined request's userData on the shared HttpResponseData.
+        // pause_socket() still runs so pausePipelineReads can gate the fd.
+        if self.body_read_state.get() == BodyReadState::Pending {
+            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
+            raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        }
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]

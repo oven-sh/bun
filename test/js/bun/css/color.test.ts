@@ -196,9 +196,7 @@ describe("ERR_INVALID_ARG_TYPE message uses the right indefinite article", () =>
   });
   test("an object", () => {
     // options validation throws before the destination path is ever touched.
-    expect(() => Bun.write("unused-path", "x", "nope" as any)).toThrow(
-      "Expected options to be an object for 'write'.",
-    );
+    expect(() => Bun.write("unused-path", "x", "nope" as any)).toThrow("Expected options to be an object for 'write'.");
   });
   test("a string (consonant onset unchanged)", () => {
     expect(() => color("red", 123 as any)).toThrow("Expected format to be a string for 'color'.");

@@ -20,7 +20,8 @@ setDefaultTimeout(30_000);
 // Tree under test: test → sh (the "parent" we SIGKILL) → bun-debug → grandchild.
 // We SIGKILL sh and observe bun-debug and the grandchild.
 
-const isSupported = process.platform === "linux" || process.platform === "darwin";
+const isPosix = process.platform === "linux" || process.platform === "darwin";
+const isSupported = isPosix || isWindows;
 
 // Shared fixture dir — child.js spawns grandchild.js, prints
 // "<self> <ppid> <grandchild>", then idles. Kept on disk so we can pass it
@@ -46,6 +47,10 @@ const fixture = tempDir("no-orphans", {
     console.log(process.pid, process.ppid, gc.pid);
     setInterval(()=>{}, 1000);
   `,
+  // Windows supervisor — cmd.exe is the process we TerminateProcess in place
+  // of /bin/sh. A .bat avoids cmd /c's quote-stripping around a quoted exe +
+  // arg. %1 is the child script name.
+  "supervisor.bat": `@"${bunExe()}" "%~dp0%~1"\r\n`,
   // Same shape as child.js, but the grandchild is plain /bin/sh — never calls
   // prctl itself, so reaping it proves the spawn-side linux_pdeathsig (Linux)
   // and the libproc walk (macOS) cover non-Bun descendants.
@@ -82,9 +87,14 @@ async function spawnTree(noOrphans: string | undefined, childScript = "child.js"
   if (noOrphans !== undefined) env.BUN_FEATURE_FLAG_NO_ORPHANS = noOrphans;
 
   const sh = Bun.spawn({
-    // Trailing `wait` defeats sh's implicit-exec-of-last-command so sh stays a
-    // distinct pid we can SIGKILL independently of bun.
-    cmd: ["/bin/sh", "-c", `"${bunExe()}" "${String(fixture)}/${childScript}" & wait`],
+    // POSIX: trailing `wait` defeats sh's implicit-exec-of-last-command so sh
+    // stays a distinct pid we can SIGKILL independently of bun.
+    // Windows: cmd.exe always forks a child and waits; no trick needed. bun
+    // escapes the test's libuv job via SILENT_BREAKAWAY, so only the Windows
+    // parent-watch (RegisterWaitForSingleObject) ties it to cmd.exe.
+    cmd: isWindows
+      ? ["cmd.exe", "/d", "/c", `${fixture}\\supervisor.bat`, childScript]
+      : ["/bin/sh", "-c", `"${bunExe()}" "${String(fixture)}/${childScript}" & wait`],
     env,
     stdout: "pipe",
     stderr: "ignore",
@@ -191,7 +201,7 @@ test.concurrent.skipIf(!isSupported)(
 // Linux this is covered by Bun setting linux_pdeathsig on every spawn when
 // no-orphans mode is enabled (prctl in the vfork child before exec). On macOS
 // it's covered by the libproc descendant walk in the exit handler.
-test.concurrent.skipIf(!isSupported)(
+test.concurrent.skipIf(!isPosix)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
@@ -209,7 +219,7 @@ test.concurrent.skipIf(!isSupported)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.concurrent.skipIf(!isSupported || process.getuid?.() !== 0)(
+test.concurrent.skipIf(!isPosix || process.getuid?.() !== 0)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
@@ -256,7 +266,7 @@ describe.concurrent.each([
   { via: "--no-orphans", argv: ["--no-orphans"], bunfig: false, env: {} },
   { via: "bunfig [run] noOrphans = true", argv: [], bunfig: true, env: {} },
 ])("clean exit reaps descendants", ({ via, argv, bunfig, env: extraEnv }) => {
-  test.concurrent.skipIf(!isSupported)(via, async () => {
+  test.concurrent.skipIf(!isPosix)(via, async () => {
     using dir = tempDir("no-orphans-clean-exit", {
       ...(bunfig && { "bunfig.toml": "[run]\nnoOrphans = true\n" }),
       "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,
@@ -321,7 +331,7 @@ describe.concurrent.each([
     },
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
-  test.concurrent.skipIf(!isSupported)("bun run and the script exit", async () => {
+  test.concurrent.skipIf(!isPosix)("bun run and the script exit", async () => {
     using dir = tempDir("no-orphans-run", files);
     const env: Record<string, string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -377,7 +387,7 @@ describe.concurrent.each([
 // Linux: PR_SET_CHILD_SUBREAPER claims the orphan, procfs walk finds it.
 // macOS: NoOrphansTracker's p_puniqueid spawn-graph finds it.
 const hasPerl = Bun.which("perl") != null;
-test.concurrent.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans: perl setsid+double-fork daemon (no Bun in chain) is reaped",
   async () => {
     using dir = tempDir("no-orphans-perl", {
@@ -446,7 +456,7 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.concurrent.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {
@@ -567,7 +577,7 @@ test.concurrent.skipIf(!isLinux || !hasPerl)(
 // the grandchild on its own clean exit. Uses a non-Bun grandchild so the test
 // doesn't depend on env-var inheritance — proves the descendant walk runs from
 // the `bun run` process itself.
-test.concurrent.skipIf(!isSupported)("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
+test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
   using dir = tempDir("no-orphans-run", {
     "package.json": JSON.stringify({
       name: "no-orphans-run",
@@ -778,7 +788,7 @@ test.concurrent.skipIf(!isLinux)(
 //      itself stopped.
 //   3. After perl `fg`s it (tcsetpgrp + SIGCONT), the script's SIGCONT
 //      handler fires — `onChildStopped` SIGCONT'd the whole script pgroup.
-test.concurrent.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans on a TTY: Ctrl-Z stop observed by outer shell's waitpid(WUNTRACED), fg resumes script",
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
@@ -905,7 +915,7 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 // Same perl-shell/pty rig as above, but perl never hands bun the foreground
 // (the `&` shape). After the script announces READY, perl re-reads
 // `tcgetpgrp(0)` and reports whether it's still perl's own pgroup.
-test.concurrent.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans backgrounded on a TTY does not steal the foreground pgroup",
   async () => {
     using dir = tempDir("no-orphans-tty-bg", {
@@ -1079,104 +1089,3 @@ describe.concurrent.each([
     }
   });
 });
-
-// Parent watch: RegisterWaitForSingleObject on the original parent's process
-// handle. Tree: test → cmd.exe (supervisor) → bun → cmd.exe → leaf. Killing
-// the supervisor must bring down bun (parent watch) and transitively the leaf
-// (bun's Job Object). Without --no-orphans bun survives: it's behind libuv's
-// SILENT_BREAKAWAY, and nothing else ties it to the supervisor.
-async function spawnParentWatchTreeWindows(noOrphans: boolean) {
-  const dir = tempDir("no-orphans-win-parent", {
-    "leaf.js": `
-      require("fs").writeFileSync(process.env.PIDFILE, process.pid + " " + process.env.MID_PID);
-      setInterval(()=>{}, 1000);
-    `,
-    "middle.js": `
-      Bun.spawn({
-        cmd: ["cmd.exe", "/d", "/c", process.env.LEAF_BAT],
-        stdio: ["ignore", "ignore", "ignore"],
-        env: { ...process.env, MID_PID: String(process.pid) },
-      });
-      setInterval(()=>{}, 1000);
-    `,
-    "leaf.bat": `@"${bunExe()}" "%~dp0leaf.js"\r\n`,
-    "supervisor.bat": `@"${bunExe()}" ${noOrphans ? "--no-orphans " : ""}"%~dp0middle.js"\r\n`,
-  });
-  const pidfile = `${dir}\\pids.txt`;
-  const env: Record<string, string> = { ...bunEnv, PIDFILE: pidfile, LEAF_BAT: `${dir}\\leaf.bat` };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-  const supervisor = Bun.spawn({
-    cmd: ["cmd.exe", "/d", "/c", `${dir}\\supervisor.bat`],
-    env,
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  const deadline = Date.now() + 15000;
-  let leafPid = 0;
-  let bunPid = 0;
-  while (bunPid === 0 && Date.now() < deadline) {
-    try {
-      const t = (await Bun.file(pidfile).text()).trim().split(" ");
-      if (t.length === 2) {
-        leafPid = Number(t[0]);
-        bunPid = Number(t[1]);
-      }
-    } catch {}
-    if (bunPid === 0) await sleep(25);
-  }
-  return {
-    supervisor,
-    bunPid,
-    leafPid,
-    async reap() {
-      supervisor.kill("SIGKILL");
-      await supervisor.exited;
-      for (const pid of [bunPid, leafPid]) {
-        if (pid > 0 && isAlive(pid)) {
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {}
-          await waitUntilDead(pid, 2000);
-        }
-      }
-      dir[Symbol.dispose]();
-    },
-  };
-}
-
-test.concurrent.skipIf(!isWindows)(
-  "windows: without --no-orphans, Bun survives TerminateProcess on its parent",
-  async () => {
-    const { supervisor, bunPid, leafPid, reap } = await spawnParentWatchTreeWindows(false);
-    try {
-      expect(bunPid).toBeGreaterThan(0);
-      expect(isAlive(bunPid)).toBe(true);
-      supervisor.kill("SIGKILL");
-      await supervisor.exited;
-      const died = await waitUntilDead(bunPid, 1000);
-      expect({ bunDied: died, leafAlive: isAlive(leafPid) }).toEqual({ bunDied: false, leafAlive: true });
-    } finally {
-      await reap();
-    }
-  },
-);
-
-test.concurrent.skipIf(!isWindows)(
-  "windows: --no-orphans: Bun exits when its parent is TerminateProcess'd, and its descendants are reaped",
-  async () => {
-    const { supervisor, bunPid, leafPid, reap } = await spawnParentWatchTreeWindows(true);
-    try {
-      expect(bunPid).toBeGreaterThan(0);
-      expect(leafPid).toBeGreaterThan(0);
-      expect(isAlive(bunPid)).toBe(true);
-      expect(isAlive(leafPid)).toBe(true);
-      supervisor.kill("SIGKILL");
-      await supervisor.exited;
-      const bunDied = await waitUntilDead(bunPid, 10000);
-      const leafDied = await waitUntilDead(leafPid, 10000);
-      expect({ bunDied, leafDied }).toEqual({ bunDied: true, leafDied: true });
-    } finally {
-      await reap();
-    }
-  },
-);

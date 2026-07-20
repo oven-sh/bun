@@ -3585,12 +3585,17 @@ pub(crate) fn to_namespaced_path(
         return to_namespaced_path_js_t::<u16>(global_object, pool, path_value, path_str.utf16());
     }
     let path8 = path_str.latin1();
-    if strings::is_all_ascii(path8) {
+    // The <u8> fast path is only sound when the resolved buffer is pure ASCII,
+    // which also requires an ASCII cwd (resolve prepends it via get_cwd_u8 as
+    // UTF-8 for relative inputs).
+    if strings::is_all_ascii(path8)
+        && strings::is_all_ascii(bun_paths::fs::FileSystem::instance().top_level_dir())
+    {
         return to_namespaced_path_js_t::<u8>(global_object, pool, path_value, path8);
     }
-    // 8-bit Latin-1 with non-ASCII bytes: widen 1:1 to UTF-16 so the length
-    // guard counts code units and `get_cwd_u16` (UTF-8 cwd → UTF-16) mixes in
-    // the same encoding as the input.
+    // Non-ASCII input or cwd: widen Latin-1 1:1 to UTF-16 so the length guard
+    // counts code units and `get_cwd_u16` (UTF-8 cwd → UTF-16) mixes in the
+    // same encoding as the input.
     let mut wide: SmallVec<[u16; 256]> = SmallVec::with_capacity(path8.len());
     wide.extend(path8.iter().map(|&b| u16::from(b)));
     to_namespaced_path_js_t::<u16>(global_object, pool, path_value, &wide)

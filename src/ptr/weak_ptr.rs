@@ -89,8 +89,6 @@ pub struct WeakPtr<T: HasWeakPtrData> {
     raw_ptr: Option<NonNull<T>>,
 }
 
-pub type Data = WeakPtrData;
-
 impl<T: HasWeakPtrData> WeakPtr<T> {
     pub const EMPTY: Self = Self { raw_ptr: None };
 

@@ -1048,6 +1048,13 @@ where
         // SAFETY: caller contract — `ptr` is non-null and live.
         Self(unsafe { NonNull::new_unchecked(ptr) })
     }
+
+    /// Defuse the guard without derefing, handing the ref to whatever adopts
+    /// it next. Inverse of [`adopt`](Self::adopt).
+    #[inline]
+    pub fn forget(self) {
+        let _ = core::mem::ManuallyDrop::new(self);
+    }
 }
 
 impl<T: AnyRefCounted> Drop for ScopedRef<T>

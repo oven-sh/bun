@@ -1273,6 +1273,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_CLOSED_CONNECTION = 14,
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
   HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
+  HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
@@ -1308,6 +1309,9 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
       err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Request has invalid `Transfer-Encoding`");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH:
+      err = $HPE_INVALID_CONTENT_LENGTH("Parse Error: Content-Length can't be present with Transfer-Encoding");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_REQUEST:
       err = $HPE_INVALID_CONSTANT("Parse Error: Expected HTTP/");

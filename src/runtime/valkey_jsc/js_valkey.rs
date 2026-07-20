@@ -1124,8 +1124,20 @@ impl JSValkeyClient {
             let _ = self
                 .client_mut()
                 .fail_with_js_value(&self.global_object, err_js);
-            // Socket is already detached here, so close() above early-returns and
-            // on_valkey_close never fires; call the user's onclose directly.
+            // Socket is already detached here, so close() inside fail_with_js_value
+            // early-returns and on_valkey_close never fires; replicate its
+            // connection-promise rejection + onclose here.
+            if let Some(this_jsvalue) = self.this_value.get().try_get() {
+                if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
+                    Js::connection_promise_set_cached(
+                        this_jsvalue,
+                        &self.global_object,
+                        JSValue::ZERO,
+                    );
+                    let _ = JSPromise::opaque_mut(promise.as_promise().unwrap())
+                        .reject(&self.global_object, Ok(err_js));
+                }
+            }
             self.call_onclose_handler(err_js);
             self.poll_ref.with_mut(|r| r.disable());
             return;

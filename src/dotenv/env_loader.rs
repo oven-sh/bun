@@ -1064,9 +1064,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quoted<const QUOTE: u8>(&mut self) -> Result<Option<&[u8]>, AllocError> {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.src[self.pos] == QUOTE);
-        }
+        debug_assert!(self.src[self.pos] == QUOTE);
         let start = self.pos;
         self.value_buffer.clear(); // Reset the buffer
         let mut end = start + 1;
@@ -1084,9 +1082,7 @@ impl<'a> Parser<'a> {
                         match self.src[i] {
                             b'\\' => {
                                 if QUOTE == b'"' {
-                                    if cfg!(debug_assertions) {
-                                        debug_assert!(i + 1 < end);
-                                    }
+                                    debug_assert!(i + 1 < end);
                                     match self.src[i + 1] {
                                         b'n' => {
                                             self.value_buffer.push(b'\n');

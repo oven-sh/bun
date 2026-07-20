@@ -823,7 +823,6 @@ pub(crate) enum NameUse {
 impl NameUse {
     pub(crate) fn find(this: &NumberScope, name: &[u8]) -> NameUse {
         // This version doesn't allocate
-        #[cfg(debug_assertions)]
         debug_assert!(js_lexer::is_identifier(name));
 
         // Hash `name` once and probe each scope in the parent chain with the

@@ -1083,9 +1083,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .e_number()
                                 .expect("infallible: variant checked")
                                 .to_usize();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(strings::is_all_ascii(&literal));
-                            }
+                            debug_assert!(strings::is_all_ascii(&literal));
                             if num < literal.len() {
                                 *e = p.new_expr(
                                     E::String {
@@ -1118,9 +1116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *e = p.new_expr(E::Undefined {}, inlined.loc);
                                 return;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(inlined.can_be_inlined_from_property_access());
-                            }
+                            debug_assert!(inlined.can_be_inlined_from_property_access());
                             *e = inlined;
                             return;
                         }

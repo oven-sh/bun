@@ -2272,9 +2272,7 @@ impl<'a> Resolver<'a> {
                 //
                 // [1]: https://github.com/oven-sh/bun/issues/16705
                 // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
-                if cfg!(debug_assertions) {
-                    debug_assert!(is_package_path(import_path));
-                }
+                debug_assert!(is_package_path(import_path));
                 let mut closest_dir = source_dir;
                 // `dirname` returns `None` once the entire directory tree
                 // has been visited. `None` is theoretically impossible since
@@ -4351,9 +4349,7 @@ impl<'a> Resolver<'a> {
         }
 
         let mut queue_slice_len = i;
-        if cfg!(debug_assertions) {
-            debug_assert!(queue_slice_len > 0);
-        }
+        debug_assert!(queue_slice_len > 0);
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
@@ -5459,9 +5455,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if cfg!(debug_assertions) {
-                debug_assert!(bun_paths::is_absolute(file.path));
-            }
+            debug_assert!(bun_paths::is_absolute(file.path));
 
             *out = MatchResult {
                 path_pair: PathPair {

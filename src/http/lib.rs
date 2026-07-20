@@ -4730,14 +4730,12 @@ impl<'a> HTTPClient<'a> {
             }
 
             if self.state.response_message_buffer.owns(incoming_data) {
-                if cfg!(debug_assertions) {
-                    // i'm not sure why this would happen and i haven't seen it happen
-                    // but we should check
-                    debug_assert!(
-                        self.state.get_body_buffer().list.as_ptr()
-                            != self.state.response_message_buffer.list.as_ptr()
-                    );
-                }
+                // i'm not sure why this would happen and i haven't seen it happen
+                // but we should check
+                debug_assert!(
+                    self.state.get_body_buffer().list.as_ptr()
+                        != self.state.response_message_buffer.list.as_ptr()
+                );
                 self.state.response_message_buffer = MutableString::default();
             }
         }
@@ -5289,9 +5287,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
@@ -5350,9 +5346,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());

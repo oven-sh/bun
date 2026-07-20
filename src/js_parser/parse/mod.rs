@@ -313,9 +313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 break 'parse_template_part;
             }
-            if cfg!(debug_assertions) {
-                debug_assert!(p.lexer.token != T::TEndOfFile);
-            }
+            debug_assert!(p.lexer.token != T::TEndOfFile);
         }
 
         p.allow_in = old_allow_in;

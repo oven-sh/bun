@@ -4649,9 +4649,7 @@ pub fn move_opened_file_at(
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
     // Bun's minimum supported Windows version is >= win10_rs5.
 
-    if cfg!(debug_assertions) {
-        debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
-    }
+    debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
 
     // The FileName tail here is UTF-16, so the correct cap is
     // `PATH_MAX_WIDE * 2` bytes — sizing against the UTF-8 worst case

@@ -4641,29 +4641,26 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
-        let mut certificate_info: Option<CertificateInfo> = None;
-        if let Some(info) = self.state.certificate_info.take() {
-            // transfer owner ship of the certificate info here
-            certificate_info = Some(info);
-        } else if let Some(metadata) = self.state.cloned_metadata.take() {
-            // transfer owner ship of the metadata here
-            return HTTPClientResult {
-                metadata: Some(metadata),
-                body: body_out::opt_mut(self.state.body_out_str),
-                redirected: self.flags.redirected,
-                fail: self.state.fail,
-                dns_error: self.state.dns_error,
-                dns_hostname: self.state.dns_hostname.take(),
-                // check if we are reporting cert errors, do not have a fail state and we are not done
-                has_more: certificate_info.is_some()
-                    || (self.state.fail.is_none() && !self.state.is_done()),
-                body_size,
-                certificate_info: None,
-                can_stream: (self.state.request_stage == RequestStage::Body
-                    || self.state.request_stage == RequestStage::ProxyBody)
-                    && self.flags.is_streaming_request_body,
-                is_http2: self.flags.protocol != Protocol::Http1_1,
-            };
+        let certificate_info = self.state.certificate_info.take();
+        if certificate_info.is_none() {
+            if let Some(metadata) = self.state.cloned_metadata.take() {
+                // transfer ownership of the metadata here
+                return HTTPClientResult {
+                    metadata: Some(metadata),
+                    body: body_out::opt_mut(self.state.body_out_str),
+                    redirected: self.flags.redirected,
+                    fail: self.state.fail,
+                    dns_error: self.state.dns_error,
+                    dns_hostname: self.state.dns_hostname.take(),
+                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    body_size,
+                    certificate_info: None,
+                    can_stream: (self.state.request_stage == RequestStage::Body
+                        || self.state.request_stage == RequestStage::ProxyBody)
+                        && self.flags.is_streaming_request_body,
+                    is_http2: self.flags.protocol != Protocol::Http1_1,
+                };
+            }
         }
         HTTPClientResult {
             body: body_out::opt_mut(self.state.body_out_str),

@@ -175,19 +175,9 @@ impl<'a> InternalState<'a> {
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // The boxed
-        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see the note in Decompressor.rs), so the `*self = ...` assignment below
-        // frees the FFI handle via drop glue — no explicit reset needed.
-
-        // just in case we check and free to avoid leaks
-        // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)
-        self.cloned_metadata = None;
-
-        // if exists we own this info
-        // (Option<CertificateInfo> drops on assignment; allocator param removed)
-        self.certificate_info = None;
-
+        // `*self = ...` below drops every field via drop glue. Only
+        // `original_request_body` needs an explicit `deinit()` because
+        // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
         self.original_request_body.deinit();
         *self = InternalState {
             body_out_str: body_msg,

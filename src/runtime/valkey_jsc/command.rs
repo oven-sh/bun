@@ -8,7 +8,7 @@ use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 type Slice = bun_core::ZigStringSlice;
 
 // Note: callers in `js_valkey_functions.rs` construct
-// `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
+// `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Blobs` must accept
 // that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
 // stub; use the real in-crate definition (which already provides `slice()` /
 // `byte_length()`).
@@ -36,7 +36,7 @@ impl<'a> Default for Command<'a> {
 #[derive(Copy, Clone)]
 pub enum Args<'a> {
     Slices(&'a [Slice]),
-    Args(&'a [BlobOrStringOrBuffer]),
+    Blobs(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
 }
 
@@ -50,7 +50,7 @@ impl<'a> Args<'a> {
     pub(crate) fn len(&self) -> usize {
         match self {
             Args::Slices(args) => args.len(),
-            Args::Args(args) => args.len(),
+            Args::Blobs(args) => args.len(),
             Args::Raw(args) => args.len(),
         }
     }
@@ -75,7 +75,7 @@ impl<'a> Command<'a> {
                         writer.write_all(b"\r\n")?;
                     }
                 }
-                Args::Args(args) => {
+                Args::Blobs(args) => {
                     for arg in args.iter() {
                         write!(writer, "${}\r\n", arg.byte_length())?;
                         writer.write_all(arg.slice())?;

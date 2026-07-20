@@ -200,7 +200,7 @@ macro_rules! cmd_noargs {
                 this,
                 global,
                 $command.as_bytes(),
-                CommandArgs::Args(&[]),
+                CommandArgs::Blobs(&[]),
                 CommandMeta::default(),
             )
         }
@@ -227,7 +227,7 @@ macro_rules! cmd_key {
                 this,
                 global,
                 $command.as_bytes(),
-                CommandArgs::Args(&[key]),
+                CommandArgs::Blobs(&[key]),
                 $meta,
             )
         }
@@ -255,7 +255,7 @@ macro_rules! cmd_key_varargs {
                 this,
                 global,
                 $command.as_bytes(),
-                CommandArgs::Args(&args),
+                CommandArgs::Blobs(&args),
                 CommandMeta::default(),
             )
         }
@@ -283,7 +283,7 @@ macro_rules! cmd_key_value {
                 this,
                 global,
                 $command.as_bytes(),
-                CommandArgs::Args(&[key, value]),
+                CommandArgs::Blobs(&[key, value]),
                 $meta,
             )
         }
@@ -312,7 +312,7 @@ macro_rules! cmd_key_value_value2 {
                 this,
                 global,
                 $command.as_bytes(),
-                CommandArgs::Args(&[key, value, value2]),
+                CommandArgs::Blobs(&[key, value, value2]),
                 $meta,
             )
         }
@@ -336,7 +336,7 @@ macro_rules! cmd_strings_varargs {
                 this,
                 global,
                 $command.as_bytes(),
-                CommandArgs::Args(&args),
+                CommandArgs::Blobs(&args),
                 CommandMeta::default(),
             )
         }
@@ -368,7 +368,7 @@ impl JSValkeyClient {
             this,
             global,
             cmd_str.slice(),
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -409,7 +409,7 @@ impl JSValkeyClient {
             this,
             global,
             b"SET",
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -479,7 +479,7 @@ impl JSValkeyClient {
             this,
             global,
             b"SREM",
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -513,7 +513,7 @@ impl JSValkeyClient {
             this,
             global,
             b"SRANDMEMBER",
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -545,7 +545,7 @@ impl JSValkeyClient {
             this,
             global,
             b"SPOP",
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -573,7 +573,7 @@ impl JSValkeyClient {
             this,
             global,
             b"SADD",
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -631,7 +631,7 @@ impl JSValkeyClient {
             this,
             global,
             b"HMGET",
-            CommandArgs::Args(&args),
+            CommandArgs::Blobs(&args),
             CommandMeta::default(),
         )
     }
@@ -838,7 +838,7 @@ impl JSValkeyClient {
             this,
             global,
             b"PING",
-            CommandArgs::Args(args_slice),
+            CommandArgs::Blobs(args_slice),
             CommandMeta::default(),
         )
     }
@@ -1300,7 +1300,7 @@ impl JSValkeyClient {
 
         let command = Command {
             command: b"SUBSCRIBE",
-            args: CommandArgs::Args(&redis_channels),
+            args: CommandArgs::Blobs(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
         let promise = match this.send(global, &command) {
@@ -1340,7 +1340,7 @@ impl JSValkeyClient {
         if args_view.is_empty() {
             let command = Command {
                 command: b"UNSUBSCRIBE",
-                args: CommandArgs::Args(&redis_channels),
+                args: CommandArgs::Blobs(&redis_channels),
                 meta: CommandMeta::default(),
             };
             return match this.send(global, &command) {
@@ -1407,7 +1407,7 @@ impl JSValkeyClient {
             if remaining_listeners == 0 {
                 let command = Command {
                     command: b"UNSUBSCRIBE",
-                    args: CommandArgs::Args(&redis_channels),
+                    args: CommandArgs::Blobs(&redis_channels),
                     meta: CommandMeta::default(),
                 };
                 return match this.send(global, &command) {
@@ -1474,7 +1474,7 @@ impl JSValkeyClient {
 
         let command = Command {
             command: b"UNSUBSCRIBE",
-            args: CommandArgs::Args(&redis_channels),
+            args: CommandArgs::Blobs(&redis_channels),
             meta: CommandMeta::default(),
         };
         match this.send(global, &command) {

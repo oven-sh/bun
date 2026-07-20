@@ -1341,19 +1341,17 @@ impl Tag {
     }
 
     pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+        // This must only return `Some` when the operand is guaranteed to have
+        // no side effects. Array/object/class literals are omitted because
+        // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArray
-            | Tag::EObject
-            | Tag::EArrayJSON
-            | Tag::EObjectJSON
-            | Tag::ENull
-            | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
             Tag::EString => b"string",
-            Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
+            Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
     }
@@ -1462,11 +1460,12 @@ impl Tag {
     }
 }
 
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Tag {
+    /// Human-readable variant name for diagnostics (`"string"`, `"boolean"`, …).
+    pub fn type_name(self) -> &'static str {
+        match self {
             Tag::EString => "string",
-            Tag::EArray => "array",
+            Tag::EArray | Tag::EArrayJSON => "array",
             Tag::EUnary => "unary",
             Tag::EBinary => "binary",
             Tag::EBoolean | Tag::EBranchBoolean => "boolean",
@@ -1488,7 +1487,7 @@ impl fmt::Display for Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EObject => "object",
+            Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",
@@ -1500,8 +1499,14 @@ impl fmt::Display for Tag {
             Tag::EThis => "this",
             Tag::EClass => "class",
             Tag::ERequireString => "require",
-            other => <&'static str>::from(*other),
-        })
+            other => <&'static str>::from(other),
+        }
+    }
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.type_name())
     }
 }
 
@@ -2358,7 +2363,7 @@ impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
     pub fn tag_name(&self) -> &'static str {
-        self.tag().into()
+        self.tag().type_name()
     }
 
     // Per-variant `as_*` accessors live alongside the enum decl above

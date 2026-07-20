@@ -194,7 +194,9 @@ for (const test_info of [
         process.kill?.();
       }
     },
-    isDebug ? 60_000 : 40_000,
+    // release-asan runs streaming-echo at ~31s median (27-39s over 35 CI runs),
+    // so 40s leaves no margin on a slow runner; give ASAN the same 60s as debug.
+    isDebug || isASAN ? 60_000 : 40_000,
   );
 }
 

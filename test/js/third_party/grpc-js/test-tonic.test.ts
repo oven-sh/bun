@@ -74,17 +74,20 @@ async function startServer(): Promise<Server> {
       PATH: process.env.PATH,
       CARGO_HOME: process.env.CARGO_HOME,
       RUSTUP_HOME: process.env.RUSTUP_HOME,
+      RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN,
       // Keep cargo's target dir outside the throwaway tmpDir so registry deps
       // (tonic, tokio, prost, ...) compile once per machine instead of once per run.
       CARGO_TARGET_DIR: join(cacheDir, "target"),
     },
     stdout: "pipe",
     stdin: "ignore",
-    stderr: "inherit",
+    stderr: "pipe",
   });
 
   {
-    const { promise, reject, resolve } = Promise.withResolvers<Server>();
+    // Drain stderr immediately so a chatty compile can't fill the pipe buffer
+    // and wedge the child before it gets to print "Listening on".
+    const stderrPromise = server.stderr.text();
     const reader = server.stdout.getReader();
     const decoder = new TextDecoder();
     async function killServer() {
@@ -94,26 +97,27 @@ async function startServer(): Promise<Server> {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {}
     }
+    const marker = "Listening on ";
+    let text = "";
     while (true) {
       const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      const text = decoder.decode(value);
-      if (text.includes("Listening on")) {
-        const [_, address] = text.split("Listening on ");
-        resolve({
-          address: address?.trim(),
+      if (value) text += decoder.decode(value, { stream: true });
+      const markerIndex = text.indexOf(marker);
+      const lineEnd = markerIndex < 0 ? -1 : text.indexOf("\n", markerIndex + marker.length);
+      if (lineEnd >= 0) {
+        return {
+          address: text.slice(markerIndex + marker.length, lineEnd).trim(),
           kill: killServer,
-        });
-        break;
-      } else {
-        await killServer();
-        reject(new Error("Server not started"));
-        break;
+        };
       }
+      if (done) break;
     }
-    return await promise;
+    // stdout closed without a "Listening on" line: cargo/rustup failed or the
+    // build errored. Surface stderr so the failure is diagnosable instead of
+    // awaiting a never-settled promise until the hook times out.
+    const [stderr, exitCode] = await Promise.all([stderrPromise, server.exited]);
+    await killServer();
+    throw new Error(`tonic server exited (${exitCode}) before reporting an address:\n${stderr || text}`);
   }
 }
 
@@ -124,8 +128,8 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
     server = await startServer();
   });
 
-  afterAll(() => {
-    server.kill();
+  afterAll(async () => {
+    await server?.kill();
   });
 
   test("flow control should work in both directions", async () => {

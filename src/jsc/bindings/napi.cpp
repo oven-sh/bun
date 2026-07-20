@@ -57,6 +57,7 @@
 #include "napi.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/BigIntObject.h>
+#include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
 
@@ -1613,6 +1614,171 @@ extern "C" JS_EXPORT napi_status node_api_get_module_file_name(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" JS_EXPORT napi_status node_api_set_prototype(napi_env env,
+    napi_value object, napi_value value)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, object);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    JSObject* obj = toJS(object).getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, obj, napi_object_expected);
+
+    // JSC's setPrototypeDirect asserts prototype.isObject() || prototype.isNull();
+    // reject primitives here rather than reaching the engine assertion.
+    JSValue protoValue = toJS(value);
+    NAPI_RETURN_EARLY_IF_FALSE(env, protoValue.isObject() || protoValue.isNull(), napi_invalid_arg);
+
+    bool didSet = obj->setPrototype(vm, globalObject, protoValue, false);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_EARLY_IF_FALSE(env, didSet, napi_generic_failure);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env env,
+    napi_value prototype_or_null,
+    napi_value* property_names,
+    napi_value* property_values,
+    size_t property_count,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, result);
+    if (property_count > 0) {
+        NAPI_CHECK_ARG(env, property_names);
+        NAPI_CHECK_ARG(env, property_values);
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    for (size_t i = 0; i < property_count; i++) {
+        JSValue name = toJS(property_names[i]);
+        NAPI_RETURN_EARLY_IF_FALSE(env, !name.isEmpty() && (name.isString() || name.isSymbol()), napi_name_expected);
+    }
+
+    JSValue prototype = prototype_or_null ? toJS(prototype_or_null) : jsNull();
+    NAPI_RETURN_EARLY_IF_FALSE(env, prototype.isObject() || prototype.isNull(), napi_invalid_arg);
+    JSObject* obj;
+    if (prototype.isObject()) {
+        obj = constructEmptyObject(globalObject, prototype.getObject());
+    } else {
+        obj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    }
+    JSC::EnsureStillAliveScope ensureAlive(obj);
+
+    for (size_t i = 0; i < property_count; i++) {
+        auto name = JSC::PropertyName(toJS(property_names[i]).toPropertyKey(globalObject));
+        NAPI_RETURN_IF_EXCEPTION(env);
+        JSValue value = toJS(property_values[i]);
+        obj->putDirectMayBeIndex(globalObject, name, value.isEmpty() ? jsUndefined() : value);
+        NAPI_RETURN_IF_EXCEPTION(env);
+    }
+
+    *result = toNapi(obj, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status node_api_is_sharedarraybuffer(napi_env env,
+    napi_value value, bool* result)
+{
+    NAPI_LOG_CURRENT_FUNCTION;
+    NAPI_CHECK_ARG(env, env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    auto* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(value));
+    *result = jsArrayBuffer && jsArrayBuffer->isShared();
+    return napi_set_last_error(env, napi_ok);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
+    size_t byte_length, void** data, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(byte_length, 1);
+    if (!arrayBuffer) {
+        return napi_set_last_error(env, napi_generic_failure);
+    }
+    arrayBuffer->makeShared();
+
+    auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    if (data && jsArrayBuffer->impl()) [[likely]] {
+        *data = jsArrayBuffer->impl()->data();
+    }
+    *result = toNapi(jsArrayBuffer, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+typedef void (*node_api_noenv_finalize)(void* finalize_data, void* finalize_hint);
+
+// SharedArrayBuffer backing stores can outlive the creating napi_env (they
+// may be posted to other agents), so Node-API specifies a finalizer with no
+// env parameter. This destructor mirrors NapiExternalBufferDestructor but
+// calls a (data, hint) callback directly instead of routing through
+// NapiEnv::doFinalizer.
+class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
+public:
+    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint)
+        : m_cb(cb)
+        , m_hint(hint)
+    {
+    }
+
+    void run(void* data) override
+    {
+        if (m_armed && m_cb) {
+            m_cb(data, m_hint);
+        }
+    }
+
+    void arm() { m_armed = true; }
+
+private:
+    node_api_noenv_finalize m_cb;
+    void* m_hint;
+    bool m_armed { false };
+};
+
+extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi_env env,
+    void* external_data, size_t byte_length,
+    node_api_noenv_finalize finalize_cb, void* finalize_hint,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, result);
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
+    auto* destructorPtr = destructor.ptr();
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
+    arrayBuffer->makeShared();
+
+    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
+    destructorPtr->arm();
+
+    *result = toNapi(buffer, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
@@ -1911,20 +2077,34 @@ extern "C" napi_status napi_get_all_property_names(
         JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
+            auto propKey = key.toPropertyKey(globalObject);
             PropertyDescriptor desc;
 
+            JSObject* owner = object;
             if (key_mode == napi_key_include_prototypes) {
                 // Climb up the prototype chain to find inherited properties
-                JSObject* current_object = object;
-                while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
-                    JSObject* proto = current_object->getPrototype(globalObject).getObject();
+                while (!owner->getOwnPropertyDescriptor(globalObject, propKey, desc)) {
+                    JSObject* proto = owner->getPrototype(globalObject).getObject();
                     if (!proto) {
                         break;
                     }
-                    current_object = proto;
+                    owner = proto;
                 }
             } else {
-                object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc);
+                owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
+            }
+
+            // V8 never applies ONLY_WRITABLE/ONLY_CONFIGURABLE to Proxy keys
+            // (FilterProxyKeys checks enumerable only) or to a String wrapper's
+            // character indices (StringWrapperElementsAccessor adds them unfiltered).
+            bool exempt_attr_filter = false;
+            JSC::JSType owner_type = owner->type();
+            if (owner_type == JSC::ProxyObjectType) {
+                exempt_attr_filter = true;
+            } else if (owner_type == JSC::StringObjectType || owner_type == JSC::DerivedStringObjectType) {
+                if (auto index = parseIndex(propKey)) {
+                    exempt_attr_filter = *index < uncheckedDowncast<StringObject>(owner)->internalValue()->length();
+                }
             }
 
             bool include = true;
@@ -1932,10 +2112,12 @@ extern "C" napi_status napi_get_all_property_names(
                 include = include && desc.enumerable();
             }
             if (key_filter & napi_key_writable) {
-                include = include && desc.writable();
+                // V8's ONLY_WRITABLE filters on the ReadOnly attribute; accessor
+                // descriptors never carry it, so they always pass.
+                include = include && (exempt_attr_filter || desc.isAccessorDescriptor() || desc.writable());
             }
             if (key_filter & napi_key_configurable) {
-                include = include && desc.configurable();
+                include = include && (exempt_attr_filter || desc.configurable());
             }
 
             if (include) {

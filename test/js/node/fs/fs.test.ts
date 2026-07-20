@@ -1812,6 +1812,117 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
+  // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
+  // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed
+  // the whole array to one syscall and got EINVAL for any count > 1024.
+  const n = 2000;
+  const makeWriteBufs = () => Array.from({ length: n }, (_, i) => Buffer.from([i & 0xff]));
+  const expectedBytes = Buffer.from(Array.from({ length: n }, (_, i) => i & 0xff));
+  // libuv caps readv at IOV_MAX on POSIX; Windows libuv reads every buffer.
+  const readvCap = isWindows ? n : 1024;
+
+  it("writevSync writes every buffer", () => {
+    using dir = tempDir("writev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      expect(writevSync(fd, makeWriteBufs())).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("writevSync with position writes every buffer", () => {
+    using dir = tempDir("pwritev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      writeSync(fd, Buffer.from("head"), 0, 4, 0);
+      expect(writevSync(fd, makeWriteBufs(), 4)).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(file);
+    expect(out.subarray(0, 4).toString()).toBe("head");
+    expect(out.subarray(4).equals(expectedBytes)).toBe(true);
+  });
+
+  it("fs.writev (callback) writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-cb", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.writev(fd, makeWriteBufs(), (err, written) => (err ? reject(err) : resolve(written)));
+      expect(await promise).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("FileHandle.writev writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-fh", {});
+    const file = join(String(dir), "out");
+    const fh = await _promises.open(file, "w");
+    try {
+      const { bytesWritten } = await fh.writev(makeWriteBufs());
+      expect(bytesWritten).toBe(n);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("readvSync caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("readv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("readvSync with position caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("preadv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.concat([Buffer.from("xxx"), Buffer.alloc(n, 7)]));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers, 3)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("FileHandle.readv caps at IOV_MAX instead of failing", async () => {
+    using dir = tempDir("readv-iovmax-fh", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fh = await _promises.open(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      const { bytesRead } = await fh.readv(buffers, 0);
+      expect(bytesRead).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      await fh.close();
+    }
+  });
+});
+
 describe("writeSync", () => {
   it("works with bigint", () => {
     const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
@@ -4042,6 +4153,39 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
+  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, "-1.5", "-1.5");
+
+    const stats = fs.statSync(tmp);
+    expect(stats.atime.getTime()).toBe(-1500);
+    expect(stats.mtime.getTime()).toBe(-1500);
+
+    // rem_euclid rounds to exactly 1.0 here; must not produce tv_nsec == 1e9 (EINVAL)
+    fs.utimesSync(tmp, "-1e-17", "-1e-17");
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+  });
+
+  it("treats negative number timestamps as the current time", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    // known-old precondition so the assertion below proves the call did something
+    fs.utimesSync(tmp, 0, 0);
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+
+    // fs timestamp granularity can be coarser than Date.now()
+    const before = Date.now() - 1000;
+    fs.utimesSync(tmp, -1.5, -1.5);
+
+    const stats = fs.statSync(tmp);
+    expect(stats.mtime.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stats.atime.getTime()).toBeGreaterThanOrEqual(before);
   });
 
   it("works with whole numbers", () => {

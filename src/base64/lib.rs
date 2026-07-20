@@ -507,7 +507,6 @@ pub mod zig_base64 {
         }
 
         /// Compute the encoded length
-        /// Note: this is wrong for base64url encoding. Do not use it for that.
         pub fn calc_size(&self, source_len: usize) -> usize {
             if self.pad_char.is_some() {
                 source_len.div_ceil(3) * 4

@@ -165,6 +165,69 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
+  // us_socket_write_check_error gives send() errnos that are neither
+  // would-block/transient nor known peer-gone (EPROTOTYPE: macOS returns it
+  // racily from send() on healthy sockets) a bounded retry through the
+  // writable rearm machinery instead of failing the first write.
+  test("send → EPROTOTYPE burst: bytes are retried and delivered intact", async () => {
+    let received = Buffer.alloc(0);
+    using p = await connectedPair(s => {
+      s.on("data", c => (received = Buffer.concat([received, c])));
+    });
+    const fd = (p.client as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: 8, fd });
+    const payload = Buffer.alloc(256, "p");
+    p.client.write(payload);
+    p.client.end();
+    await once(p.serverSock, "end");
+    fault.clear();
+    expect(received.equals(payload)).toBe(true);
+  });
+
+  // A sustained unclassified errno exhausts the bounded retry and must fail
+  // like a dead transport: 'error' carrying the real errno on the write
+  // syscall, then close. Before the fix the buffered bytes were silently
+  // dropped, the write was acknowledged as flushed and the peer saw a clean
+  // FIN terminating a truncated stream.
+  test("send → sustained EPROTOTYPE surfaces as 'error' + close, not silent truncation", async () => {
+    using p = await connectedPair();
+    const fd = (p.client as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: -1, fd });
+    const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
+    // Not events.once(): that helper rejects its promise when 'error' fires
+    // first, and 'error' arriving before 'close' is exactly this contract.
+    const closeP = new Promise<void>(resolve => p.client.once("close", () => resolve()));
+    p.client.write(Buffer.alloc(64, "x"));
+    const [err] = await errP;
+    fault.clear();
+    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
+    await closeP;
+    expect(p.client.destroyed).toBe(true);
+  });
+
+  // Server-side twin of the above. On kqueue the fatal flush from on_writable
+  // runs before the read dispatch (EV_EOF sets eof, not error), and its close
+  // short-circuits the read-error path, so ServerHandlers.error is the only
+  // place the errno is visible. With the plain-TCP delegation swallowing it,
+  // the server socket's 'error' never fired and 'close' was stuck behind an
+  // un-failed pending write (test-net-stream.js timeout on darwin).
+  test("server: send → sustained fatal flush surfaces 'error' + 'close' on the accepted socket", async () => {
+    using p = await connectedPair();
+    const fd = (p.serverSock as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: -1, fd });
+    const errP = once(p.serverSock, "error") as Promise<[NodeJS.ErrnoException]>;
+    const closeP = new Promise<void>(resolve => p.serverSock.once("close", () => resolve()));
+    p.serverSock.write(Buffer.alloc(64, "s"));
+    const [err] = await errP;
+    fault.clear();
+    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
+    await closeP;
+    expect(p.serverSock.destroyed).toBe(true);
+  });
+
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
     server.listen(0, "127.0.0.1");

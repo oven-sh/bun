@@ -1382,6 +1382,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_highway",
+ "bun_simdutf_sys",
  "bun_wyhash",
  "bytemuck",
  "const_format",

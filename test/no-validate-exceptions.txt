@@ -171,3 +171,6 @@ test/js/third_party/@azure/service-bus/azure-service-bus.test.ts
 # real addons. Under validateExceptionChecks every scope simulates a throw, so
 # the second call trips the assertion at the napi boundary.
 test/bundler/native-plugin.test.ts
+# `bun run build` in the react templates loads bun-plugin-tailwind's napi
+# addon, same Init() pattern.
+test/cli/init/init.test.ts

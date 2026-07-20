@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{ParseStatementOptions, Ref, ScopeOrder};
+use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -76,7 +76,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   @ DecoratorParenthesizedExpression
     pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
         let p = self;
-        let loc = p.lexer.loc();
 
         // @(Expression) — parenthesized, any expression allowed
         if p.lexer.token == T::TOpenParen {
@@ -92,6 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
+        let loc = p.lexer.loc();
         let ident = p.lexer.identifier;
         let ref_ = p.store_name_in_ref(ident)?;
         let mut expr = p.new_expr(
@@ -103,64 +103,99 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
         p.lexer.next()?;
 
-        // Skip TypeScript type arguments after the identifier (e.g., @foo<T>)
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_arguments::<false>()?;
-        }
+        loop {
+            match p.lexer.token {
+                T::TExclamation => {
+                    // Skip over TypeScript non-null assertions
+                    if p.lexer.has_newline_before {
+                        break;
+                    }
+                    if !Self::IS_TYPESCRIPT_ENABLED {
+                        p.lexer.unexpected()?;
+                        return Err(crate::Error::SyntaxError);
+                    }
+                    p.lexer.next()?;
+                }
 
-        // DecoratorMemberExpression: Identifier (.Identifier)*
-        while p.lexer.token == T::TDot || p.lexer.token == T::TQuestionDot {
-            // Forbid optional chaining in decorators
-            if p.lexer.token == T::TQuestionDot {
-                let err_loc = p.lexer.loc();
-                p.log().add_error(
-                    Some(p.source),
-                    err_loc,
-                    b"Optional chaining is not allowed in decorator expressions",
-                );
-                return Err(crate::Error::SyntaxError);
+                T::TDot | T::TQuestionDot => {
+                    // The grammar for "DecoratorMemberExpression" currently forbids "?."
+                    if p.lexer.token == T::TQuestionDot {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            p.lexer.range(),
+                            b"Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator",
+                        );
+                    }
+                    p.lexer.next()?;
+
+                    if p.lexer.token == T::TPrivateIdentifier && p.allow_private_identifiers {
+                        let name = p.lexer.identifier;
+                        let name_loc = p.lexer.loc();
+                        p.lexer.next()?;
+                        let ref_ = p.store_name_in_ref(name)?;
+                        let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
+                        expr = p.new_expr(
+                            E::Index {
+                                target: expr,
+                                index,
+                                optional_chain: None,
+                            },
+                            loc,
+                        );
+                    } else {
+                        if !p.lexer.is_identifier_or_keyword() {
+                            p.lexer.expect(T::TIdentifier)?;
+                            return Err(crate::Error::SyntaxError);
+                        }
+                        let name = E::Str::new(p.lexer.identifier);
+                        let name_loc = p.lexer.loc();
+                        p.lexer.next()?;
+                        expr = p.new_expr(
+                            E::Dot {
+                                target: expr,
+                                name,
+                                name_loc,
+                                ..Default::default()
+                            },
+                            loc,
+                        );
+                    }
+                }
+
+                T::TOpenParen => {
+                    let args = p.parse_call_args()?;
+                    expr = p.new_expr(
+                        E::Call {
+                            target: expr,
+                            args: args.list,
+                            close_paren_loc: args.loc,
+                            ..Default::default()
+                        },
+                        loc,
+                    );
+
+                    // The grammar for "DecoratorCallExpression" is terminal
+                    if p.lexer.token == T::TDot {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            p.lexer.range(),
+                            b"A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator",
+                        );
+                        continue;
+                    }
+                    break;
+                }
+
+                _ => {
+                    // "@x<y>" / "@x.y<z>"
+                    if Self::IS_TYPESCRIPT_ENABLED
+                        && p.skip_type_script_type_arguments::<false, false>()?
+                    {
+                        continue;
+                    }
+                    break;
+                }
             }
-
-            p.lexer.next()?;
-
-            if !p.lexer.is_identifier_or_keyword() {
-                p.lexer.expect(T::TIdentifier)?;
-                return Err(crate::Error::SyntaxError);
-            }
-
-            let name = E::Str::new(p.lexer.identifier);
-            let name_loc = p.lexer.loc();
-            p.lexer.next()?;
-
-            expr = p.new_expr(
-                E::Dot {
-                    target: expr,
-                    name,
-                    name_loc,
-                    ..Default::default()
-                },
-                loc,
-            );
-
-            // Skip TypeScript type arguments after member access (e.g., @foo.bar<T>)
-            if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments::<false>()?;
-            }
-        }
-
-        // DecoratorCallExpression: DecoratorMemberExpression Arguments
-        // Only a single call is allowed, no chaining after the call
-        if p.lexer.token == T::TOpenParen {
-            let args = p.parse_call_args()?;
-            expr = p.new_expr(
-                E::Call {
-                    target: expr,
-                    args: args.list,
-                    close_paren_loc: args.loc,
-                    ..Default::default()
-                },
-                loc,
-            );
         }
 
         Ok(expr)
@@ -195,7 +230,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let old_has_non_local_export_declare_inside_namespace =
             p.has_non_local_export_declare_inside_namespace;
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         p.has_non_local_export_declare_inside_namespace = false;
+        p.fn_or_arrow_data_parse = FnOrArrowDataParse {
+            is_this_disallowed: true,
+            is_return_disallowed: true,
+            // parse_fn.rs reads is_top_level to consume a react-hooks
+            // suppression after a namespace member function; every other
+            // consumer is gated on allow_await == AllowExpr (AllowIdent here).
+            is_top_level: old_fn_or_arrow_data.is_top_level,
+            ..Default::default()
+        };
 
         // Parse the statements inside the namespace
         let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.arena);
@@ -229,6 +274,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.has_non_local_export_declare_inside_namespace;
         p.has_non_local_export_declare_inside_namespace =
             old_has_non_local_export_declare_inside_namespace;
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // Add any exported members from this namespace's body as members of the
         // associated namespace object.
@@ -568,6 +614,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect(T::TOpenBrace)?;
 
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+        p.fn_or_arrow_data_parse = FnOrArrowDataParse {
+            is_this_disallowed: true,
+            // See the namespace body: preserve is_top_level for parse_fn.rs's
+            // react-hooks suppression consume.
+            is_top_level: old_fn_or_arrow_data.is_top_level,
+            ..Default::default()
+        };
+
         // Parse the body
         let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.arena);
         while p.lexer.token != T::TCloseBrace {
@@ -627,6 +682,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
         }
+
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         if !opts.is_typescript_declare {
             // Avoid a collision with the enum closure argument variable if the

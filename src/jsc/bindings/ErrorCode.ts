@@ -87,6 +87,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_CONTENT_LENGTH_MISMATCH", Error],
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
+  ["ERR_HTTP_REQUEST_TIMEOUT", Error],
   ["ERR_HTTP_TRAILER_INVALID", Error],
   ["ERR_HTTP_SOCKET_ASSIGNED", Error],
   ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
@@ -320,6 +321,13 @@ const errors: ErrorCodeMapping = [
   ["ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING", TypeError],
   ["HPE_INVALID_HEADER_TOKEN", Error],
   ["HPE_HEADER_OVERFLOW", Error],
+  ["HPE_INVALID_VERSION", Error],
+  ["HPE_LF_EXPECTED", Error],
+  ["HPE_CHUNK_EXTENSIONS_OVERFLOW", Error],
+  ["HPE_PAUSED_H2_UPGRADE", Error],
+  ["HPE_CLOSED_CONNECTION", Error],
+  ["HPE_INVALID_CHUNK_SIZE", Error],
+  ["HPE_INVALID_CONSTANT", Error],
   ["ERR_SECRETS_NOT_AVAILABLE", Error],
   ["ERR_SECRETS_NOT_FOUND", Error],
   ["ERR_SECRETS_ACCESS_DENIED", Error],
@@ -345,5 +353,11 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
   ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
   ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
+  ["ERR_TRAILING_JUNK_AFTER_STREAM_END", TypeError],
+  ["ERR_SQLITE_ERROR", Error],
+  ["ERR_CRYPTO_ARGON2_NOT_SUPPORTED", Error],
+  // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
+  // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
+  ["HPE_STRICT", Error],
 ];
 export default errors;

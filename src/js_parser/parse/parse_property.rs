@@ -353,9 +353,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 T::TOpenBracket
                                     | T::TNumericLiteral
                                     | T::TStringLiteral
-                                    | T::TAsterisk
                                     | T::TPrivateIdentifier
-                            );
+                            )
+                            || (p.lexer.token == T::TAsterisk
+                                && (opts.is_async || (raw != b"get" && raw != b"set")));
 
                         // If so, check for a modifier keyword
                         if could_be_modifier_keyword {
@@ -417,6 +418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         // https://github.com/oven-sh/bun/issues/1907
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && raw == b"declare"
                                         {
                                             let scope_index = p.scopes_in_order.len();
@@ -440,6 +442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     PropertyModifierKeyword::PAbstract => {
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && !opts.is_ts_abstract
                                             && raw == b"abstract"
                                         {
@@ -464,6 +467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     PropertyModifierKeyword::PAccessor => {
                                         // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
                                         if opts.is_class
+                                            && !p.lexer.has_newline_before
                                             && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)

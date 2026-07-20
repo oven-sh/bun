@@ -1061,41 +1061,36 @@ impl ExportRenamer {
 
     pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {
         let entry = self.used.get_or_put(input).expect("unreachable");
-        let mut tries: u32 = 1;
-        if entry.found_existing {
-            loop {
-                self.string_buffer.reset();
-                write!(
-                    self.string_buffer.writer(),
-                    "{}{}",
-                    bstr::BStr::new(input),
-                    tries
-                )
-                .expect("unreachable");
-                tries += 1;
-                let attempt: &[u8] = self.string_buffer.slice();
-                // Reshaped for borrowck — `get_or_put` borrows `self.used`
-                // mutably, so allocate the arena copy first.
-                let to_use: &[u8] = self.arena.alloc_slice_copy(attempt);
-                let entry = self.used.get_or_put(to_use).expect("unreachable");
-                if !entry.found_existing {
-                    // `StringHashMap` owns a boxed copy of the key on insert.
-                    *entry.value_ptr = tries;
-
-                    let entry = self.used.get_or_put(input).expect("unreachable");
-                    *entry.value_ptr = tries;
-                    // `to_use` borrows `self.arena` (disjoint from `self.used`
-                    // above); returnable directly under split-borrow rules.
-                    return to_use;
-                }
-            }
-        } else {
-            *entry.value_ptr = tries;
+        if !entry.found_existing {
+            *entry.value_ptr = 1;
+            // `StringHashMap` does not expose a key pointer; allocate a copy in
+            // `self.arena` so the returned slice is tied to `&self`.
+            return self.arena.alloc_slice_copy(input);
         }
 
-        // `StringHashMap` does not expose a key pointer; allocate a copy in `self.arena`
-        // so the returned slice is tied to `&self` (sub-borrow of `&mut self`).
-        self.arena.alloc_slice_copy(input)
+        // Resume from the last suffix handed out for this prefix so N collisions
+        // on the same name stay O(N) total (see `NumberScope::find_unused_name`).
+        let mut tries: u32 = *entry.value_ptr;
+        loop {
+            self.string_buffer.reset();
+            write!(
+                self.string_buffer.writer(),
+                "{}{}",
+                bstr::BStr::new(input),
+                tries
+            )
+            .expect("unreachable");
+            tries += 1;
+            let attempt: &[u8] = self.string_buffer.slice();
+            if self.used.contains_key(attempt) {
+                continue;
+            }
+            // `StringHashMap::put` boxes the key itself; the arena copy below is
+            // only for the caller's returned slice (`string_buffer` is reused).
+            self.used.put(attempt, 1).expect("unreachable");
+            *self.used.get_mut(input).expect("unreachable") = tries;
+            return self.arena.alloc_slice_copy(attempt);
+        }
     }
 
     pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {

@@ -29,13 +29,9 @@ pub type CowString<'a> = Cow<'a, [u8]>;
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
 
-// owned/shared — OBSOLETE per PORTING.md §Pointers: callers
-// use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
-pub mod owned;
+// shared — OBSOLETE per PORTING.md §Pointers: callers
+// use std `Rc`/`Arc` directly. Draft module kept for diff-pass only.
 pub mod shared;
-pub type Owned<T> = Box<T>;
-pub type OwnedIn<T> = Box<T>;
-pub type DynamicOwned<T> = Box<T>;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the

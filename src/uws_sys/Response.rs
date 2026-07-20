@@ -185,6 +185,18 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_write_continue(Self::ssl_flag(), self.as_raw())
     }
 
+    pub fn write_informational(&mut self, data: &[u8]) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_write_informational(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+            )
+        }
+    }
+
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -265,6 +277,30 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// Write body bytes without copying the unwritten tail into uWS backpressure.
+    /// Returns the number of body bytes accepted. See `HttpResponse::tryWriteBody`.
+    pub fn try_write_body(&mut self, data: &[u8], is_first: bool) -> usize {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_try_write_body(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+                is_first,
+            )
+        }
+    }
+
+    /// Copy the body tail into the uWS backpressure buffer and close out the
+    /// chunk framing. See `HttpResponse::spillBodyTail`.
+    pub fn spill_body(&mut self, data: &[u8]) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_spill_body(Self::ssl_flag(), self.downcast(), data.as_ptr(), data.len())
+        }
+    }
+
     pub fn get_write_offset(&mut self) -> u64 {
         c::uws_res_get_write_offset(Self::ssl_flag(), self.as_raw())
     }
@@ -287,6 +323,10 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn mark_wrote_content_length_header(&mut self) {
         c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub fn mark_wrote_date_header(&mut self) {
+        c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn write_mark(&mut self) {
@@ -695,6 +735,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.mark_wrote_content_length_header())
     }
 
+    pub fn mark_wrote_date_header(self) {
+        any_dispatch!(self, |r| r.mark_wrote_date_header())
+    }
+
     pub fn write_mark(self) {
         any_dispatch!(self, |r| r.write_mark())
     }
@@ -743,6 +787,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write_continue())
     }
 
+    pub fn write_informational(self, data: &[u8]) {
+        any_dispatch!(self, |r| r.write_informational(data))
+    }
+
     pub fn state(self) -> State {
         any_dispatch!(self, |r| r.state())
     }
@@ -781,6 +829,14 @@ impl AnyResponse {
 
     pub fn write(self, data: &[u8]) -> WriteResult {
         any_dispatch!(self, |r| r.write(data))
+    }
+
+    pub fn try_write_body(self, data: &[u8], is_first: bool) -> usize {
+        any_dispatch!(self, |r| r.try_write_body(data, is_first))
+    }
+
+    pub fn spill_body(self, data: &[u8]) {
+        any_dispatch!(self, |r| r.spill_body(data))
     }
 
     pub fn end(self, data: &[u8], close_connection: bool) {
@@ -966,9 +1022,12 @@ pub(crate) type H3Response = crate::h3::Response;
 bitflags::bitflags! {
     /// Non-exhaustive bitset — values may carry
     /// unnamed bit combinations.
+    /// Mirrors `uWS::HttpResponseData::state`. That word is wider than a byte —
+    /// it also carries the response-framing and node:http bits above bit 7 — so
+    /// this must stay `u32` even though only the bits below are named here.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct State: u8 {
+    pub struct State: u32 {
         const HTTP_STATUS_CALLED               = 1;
         const HTTP_WRITE_CALLED                = 2;
         const HTTP_END_CALLED                  = 4;
@@ -1032,6 +1091,7 @@ pub mod c {
     // unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
@@ -1062,6 +1122,12 @@ pub mod c {
         pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
+        pub(crate) fn uws_res_write_informational(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+        );
         pub(crate) fn uws_res_write_status(
             ssl: i32,
             res: *mut uws_res,
@@ -1103,6 +1169,19 @@ pub mod c {
             data: *const u8,
             length: *mut usize,
         ) -> bool;
+        pub(crate) fn uws_res_try_write_body(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+            is_first: bool,
+        ) -> usize;
+        pub(crate) fn uws_res_spill_body(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+        );
         pub(crate) safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;

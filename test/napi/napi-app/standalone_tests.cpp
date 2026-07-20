@@ -3269,6 +3269,187 @@ test_napi_adjust_external_memory(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// The NAPI_EXPERIMENTAL declarations below may predate the node-addon-api
+// headers that node-gyp downloaded, so declare them locally to keep the
+// addon linking against the runtime's exports regardless of header age.
+extern "C" {
+napi_status node_api_set_prototype(napi_env env, napi_value object,
+                                   napi_value value);
+napi_status node_api_create_object_with_properties(
+    napi_env env, napi_value prototype_or_null, napi_value *property_names,
+    napi_value *property_values, size_t property_count, napi_value *result);
+napi_status node_api_is_sharedarraybuffer(napi_env env, napi_value value,
+                                          bool *result);
+napi_status node_api_create_sharedarraybuffer(napi_env env, size_t byte_length,
+                                              void **data, napi_value *result);
+napi_status node_api_create_external_sharedarraybuffer(
+    napi_env env, void *external_data, size_t byte_length,
+    void (*finalize_cb)(void *data, void *hint), void *finalize_hint,
+    napi_value *result);
+}
+
+static napi_value test_node_api_set_prototype(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  napi_value proto;
+  NODE_API_CALL(env, napi_create_object(env, &proto));
+  napi_value marker;
+  NODE_API_CALL(env, napi_create_int32(env, 123, &marker));
+  NODE_API_CALL(env, napi_set_named_property(env, proto, "inherited", marker));
+
+  NODE_API_CALL(env, node_api_set_prototype(env, obj, proto));
+
+  napi_value got_proto;
+  NODE_API_CALL(env, napi_get_prototype(env, obj, &got_proto));
+  bool same = false;
+  NODE_API_CALL(env, napi_strict_equals(env, got_proto, proto, &same));
+  napi_value inherited;
+  NODE_API_CALL(env, napi_get_named_property(env, obj, "inherited", &inherited));
+  int32_t inherited_i = 0;
+  NODE_API_CALL(env, napi_get_value_int32(env, inherited, &inherited_i));
+  printf("set_prototype: proto_matches=%s inherited=%d\n",
+         same ? "true" : "false", inherited_i);
+
+  napi_value null_v;
+  NODE_API_CALL(env, napi_get_null(env, &null_v));
+  NODE_API_CALL(env, node_api_set_prototype(env, obj, null_v));
+  NODE_API_CALL(env, napi_get_prototype(env, obj, &got_proto));
+  napi_valuetype t;
+  NODE_API_CALL(env, napi_typeof(env, got_proto, &t));
+  printf("set_prototype: null_proto_type=%d\n", static_cast<int>(t));
+  return ok(env);
+}
+
+static napi_value
+test_node_api_create_object_with_properties(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value names[4];
+  napi_value values[4];
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "a", NAPI_AUTO_LENGTH, &names[0]));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "b", NAPI_AUTO_LENGTH, &names[1]));
+  NODE_API_CALL(env, napi_create_symbol(env, nullptr, &names[2]));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "0", NAPI_AUTO_LENGTH, &names[3]));
+  NODE_API_CALL(env, napi_create_int32(env, 1, &values[0]));
+  NODE_API_CALL(env, napi_create_int32(env, 2, &values[1]));
+  NODE_API_CALL(env, napi_create_int32(env, 3, &values[2]));
+  NODE_API_CALL(env, napi_create_int32(env, 4, &values[3]));
+
+  napi_value obj;
+  NODE_API_CALL(env, node_api_create_object_with_properties(
+                         env, nullptr, names, values, 4, &obj));
+
+  napi_value proto;
+  NODE_API_CALL(env, napi_get_prototype(env, obj, &proto));
+  napi_valuetype proto_t;
+  NODE_API_CALL(env, napi_typeof(env, proto, &proto_t));
+
+  napi_value a, b, sym, idx;
+  NODE_API_CALL(env, napi_get_named_property(env, obj, "a", &a));
+  NODE_API_CALL(env, napi_get_named_property(env, obj, "b", &b));
+  NODE_API_CALL(env, napi_get_property(env, obj, names[2], &sym));
+  NODE_API_CALL(env, napi_get_element(env, obj, 0, &idx));
+  int32_t ai = 0, bi = 0, si = 0, ii = 0;
+  NODE_API_CALL(env, napi_get_value_int32(env, a, &ai));
+  NODE_API_CALL(env, napi_get_value_int32(env, b, &bi));
+  NODE_API_CALL(env, napi_get_value_int32(env, sym, &si));
+  NODE_API_CALL(env, napi_get_value_int32(env, idx, &ii));
+  printf("create_object_with_properties: proto_type=%d a=%d b=%d sym=%d "
+         "idx0=%d\n",
+         static_cast<int>(proto_t), ai, bi, si, ii);
+
+  napi_value bad_name;
+  NODE_API_CALL(env, napi_create_int32(env, 7, &bad_name));
+  napi_value dummy;
+  napi_status st = node_api_create_object_with_properties(
+      env, nullptr, &bad_name, &values[0], 1, &dummy);
+  printf("create_object_with_properties: bad_name_status=%d\n",
+         static_cast<int>(st));
+
+  napi_value proto_obj;
+  NODE_API_CALL(env, napi_create_object(env, &proto_obj));
+  napi_value obj2;
+  NODE_API_CALL(env, node_api_create_object_with_properties(
+                         env, proto_obj, nullptr, nullptr, 0, &obj2));
+  napi_value got_proto;
+  NODE_API_CALL(env, napi_get_prototype(env, obj2, &got_proto));
+  bool same = false;
+  NODE_API_CALL(env, napi_strict_equals(env, got_proto, proto_obj, &same));
+  printf("create_object_with_properties: custom_proto_matches=%s\n",
+         same ? "true" : "false");
+  return ok(env);
+}
+
+static std::atomic<int> external_sab_finalize_count{0};
+
+static napi_value
+test_node_api_sharedarraybuffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  void *data = nullptr;
+  napi_value sab;
+  NODE_API_CALL(env,
+                node_api_create_sharedarraybuffer(env, 16, &data, &sab));
+  bool is_sab = false;
+  NODE_API_CALL(env, node_api_is_sharedarraybuffer(env, sab, &is_sab));
+  bool is_ab = true;
+  NODE_API_CALL(env, napi_is_arraybuffer(env, sab, &is_ab));
+  printf("create_sharedarraybuffer: data_nonnull=%s is_sab=%s is_ab=%s\n",
+         data != nullptr ? "true" : "false", is_sab ? "true" : "false",
+         is_ab ? "true" : "false");
+
+  void *info_data = nullptr;
+  size_t info_len = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, sab, &info_data, &info_len));
+  printf("create_sharedarraybuffer: info_data_matches=%s info_len=%zu\n",
+         info_data == data ? "true" : "false", info_len);
+
+  napi_value plain_ab;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 4, nullptr, &plain_ab));
+  bool plain_is_sab = true;
+  NODE_API_CALL(env,
+                node_api_is_sharedarraybuffer(env, plain_ab, &plain_is_sab));
+  napi_value num;
+  NODE_API_CALL(env, napi_create_int32(env, 0, &num));
+  bool num_is_sab = true;
+  NODE_API_CALL(env, node_api_is_sharedarraybuffer(env, num, &num_is_sab));
+  printf("is_sharedarraybuffer: plain_ab=%s number=%s\n",
+         plain_is_sab ? "true" : "false", num_is_sab ? "true" : "false");
+
+  external_sab_finalize_count = 0;
+  const size_t ext_size = 8;
+  uint8_t *ext_data = static_cast<uint8_t *>(malloc(ext_size));
+  for (size_t i = 0; i < ext_size; i++)
+    ext_data[i] = static_cast<uint8_t>(0xB0 + i);
+  napi_value ext_sab;
+  NODE_API_CALL(env, node_api_create_external_sharedarraybuffer(
+                         env, ext_data, ext_size,
+                         +[](void *d, void *) {
+                           external_sab_finalize_count++;
+                           free(d);
+                         },
+                         nullptr, &ext_sab));
+  bool ext_is_sab = false;
+  NODE_API_CALL(env, node_api_is_sharedarraybuffer(env, ext_sab, &ext_is_sab));
+  void *got_ext_data = nullptr;
+  size_t got_ext_len = 0;
+  NODE_API_CALL(env, napi_get_arraybuffer_info(env, ext_sab, &got_ext_data,
+                                               &got_ext_len));
+  printf("create_external_sharedarraybuffer: is_sab=%s data_matches=%s "
+         "len=%zu first=%u finalized_early=%s\n",
+         ext_is_sab ? "true" : "false",
+         got_ext_data == ext_data ? "true" : "false", got_ext_len,
+         static_cast<unsigned>(ext_data[0]),
+         external_sab_finalize_count.load() != 0 ? "true" : "false");
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -3341,6 +3522,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);
+  REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);
+  REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
+  REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
 }
 
 } // namespace napitests

@@ -147,9 +147,9 @@ impl Flags {
 // (`generate-classes.ts` → `${T}__data{Get,Set}Cached`).
 #[allow(non_snake_case)]
 pub mod js {
-    // Emits `data_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
+    // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
-    ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data);
+    ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data, server);
 }
 
 /// Maps a uWS `SendStatus` to the JS-visible number contract shared by every
@@ -356,6 +356,14 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
+        // Both callers route through `on_upgrade`'s `handler.server.is_none()`
+        // refusal, so this is normally `Some`; keep the `and_then` as
+        // defense-in-depth (option getters between that guard and here can
+        // re-enter JS and `stop(true)`, and `js_value_for_dispatch` still
+        // returns `None` on `Finalized`).
+        if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
+            js::server_set_cached(this_value, global_object, server_js);
+        }
         this
     }
 
@@ -383,10 +391,15 @@ impl ServerWebSocket {
 
         let handler = self.handler();
         let vm = handler.vm();
-        // The handler is shared (&), so mutate via the interior-mutability helper.
-        handler.active_connections_saturating_add(1);
+        // Live-socket accounting lives on the server (`Cell`), reached
+        // through the type-erased backref so the shared `&Handler` suffices.
+        let server = handler.server;
+        if let Some(server) = server {
+            server.on_websocket_opened();
+        }
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
+        let on_error = handler.on_error;
         if vm.is_shutting_down() {
             bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution");
             ws.close();
@@ -421,17 +434,26 @@ impl ServerWebSocket {
         if let Some(err_value) = result.to_error() {
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 
+            let mut closed_here = false;
             if !self.flags.get().closed() {
                 self.update_flags(|f| f.set_closed(true));
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
+                // (`close()` re-enters `on_close`, which skips its own
+                // accounting because the closed flag is already set.)
                 self.websocket().close();
-                handler.active_connections_saturating_sub(1);
+                closed_here = true;
                 this_value.unprotect();
             }
 
-            handler.run_error_callback(vm, global_object, err_value);
+            handler.run_error_callback(on_error, vm, global_object, err_value);
+            if closed_here {
+                if let Some(server) = server {
+                    // May run the idle pass; no `&Handler` borrow is live here.
+                    server.on_websocket_closed();
+                }
+            }
         }
     }
 
@@ -444,6 +466,7 @@ impl ServerWebSocket {
             bstr::BStr::new(message)
         );
         let on_message_handler = self.handler().on_message;
+        let on_error = self.handler().on_error;
         if on_message_handler.is_empty_or_undefined_or_null() {
             return;
         }
@@ -490,7 +513,7 @@ impl ServerWebSocket {
 
         if let Some(err_value) = result.to_error() {
             self.handler()
-                .run_error_callback(vm, global_object, err_value);
+                .run_error_callback(on_error, vm, global_object, err_value);
             return;
         }
 
@@ -523,7 +546,9 @@ impl ServerWebSocket {
             return;
         }
 
-        if !handler.on_drain.is_empty() {
+        let on_drain = handler.on_drain;
+        let on_error = handler.on_error;
+        if !on_drain.is_empty() {
             let global_object = handler.global_object();
 
             let args = [self
@@ -535,7 +560,7 @@ impl ServerWebSocket {
                 args: &args,
                 global_object,
                 this_value: JSValue::ZERO,
-                callback: handler.on_drain,
+                callback: on_drain,
                 result: JSValue::ZERO,
             };
             let _loop_guard = vm.enter_event_loop_scope();
@@ -543,7 +568,7 @@ impl ServerWebSocket {
             let result = corker.result;
 
             if let Some(err_value) = result.to_error() {
-                handler.run_error_callback(vm, global_object, err_value);
+                handler.run_error_callback(on_error, vm, global_object, err_value);
             }
         }
     }
@@ -563,6 +588,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_ping;
+        let on_error = handler.on_error;
         let vm = handler.vm();
         if cb.is_empty_or_undefined_or_null() || vm.is_shutting_down() {
             return;
@@ -583,7 +609,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
-            handler.run_error_callback(vm, global_this, err);
+            handler.run_error_callback(on_error, vm, global_this, err);
         }
     }
 
@@ -592,6 +618,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_pong;
+        let on_error = handler.on_error;
         if cb.is_empty_or_undefined_or_null() {
             return;
         }
@@ -617,7 +644,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
-            handler.run_error_callback(vm, global_this, err);
+            handler.run_error_callback(on_error, vm, global_this, err);
         }
     }
 
@@ -628,11 +655,20 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
+        // Copy the erased server handle out now: the guard below runs after
+        // every `handler` borrow has expired, and `on_websocket_closed` may
+        // form `&mut NewServer` (which owns the handler storage) to run the
+        // idle pass when this was the last live socket.
+        let server = handler.server;
         let was_closed = self.is_closed();
         self.update_flags(|f| f.set_closed(true));
+        // Whoever set the closed flag owns the decrement; close()/terminate()
+        // and on_open's error path each decrement themselves when they flip it.
         scopeguard::defer! {
             if !was_closed {
-                handler.active_connections_saturating_sub(1);
+                if let Some(server) = server {
+                    server.on_websocket_closed();
+                }
             }
         }
         let signal = self.signal.take();
@@ -647,6 +683,7 @@ impl ServerWebSocket {
             .try_get()
             .unwrap_or(JSValue::UNDEFINED);
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
+        let global_object_ref = handler.global_object;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
                 // `sig` was stored with a +1 ref by the upgrade caller; it
@@ -657,6 +694,9 @@ impl ServerWebSocket {
                 sig.unref();
             }
             if was_not_empty {
+                // Drop the server-wrapper traced edge: once closed, this socket
+                // no longer needs to pin the server (and its handler slots).
+                js::server_set_cached(cached_this, global_object_ref.get(), JSValue::ZERO);
                 // R-2: closure-scoped `&mut JsRef` via `JsCell::with_mut` —
                 // no raw `*mut` projection needed.
                 this_value_cell.with_mut(|v| v.downgrade());
@@ -668,7 +708,11 @@ impl ServerWebSocket {
             return;
         }
 
-        if !handler.on_close.is_empty_or_undefined_or_null() {
+        // Copy to a stack local before `sig.signal()` re-enters JS: a GC
+        // between the test and the `.call(...)` could otherwise collect it.
+        let on_close_handler = handler.on_close;
+        let on_error = handler.on_error;
+        if !on_close_handler.is_empty_or_undefined_or_null() {
             let global_object = handler.global_object();
 
             let _loop_guard = vm.enter_event_loop_scope();
@@ -691,19 +735,16 @@ impl ServerWebSocket {
                         "onClose error (message) {}",
                         was_not_empty
                     );
-                    handler.run_error_callback(vm, global_object, err);
+                    handler.run_error_callback(on_error, vm, global_object, err);
                     return;
                 }
             };
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
-            if let Err(e) = handler
-                .on_close
-                .call(global_object, JSValue::UNDEFINED, &call_args)
-            {
+            if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
                 let err = global_object.take_exception(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                handler.run_error_callback(vm, global_object, err);
+                handler.run_error_callback(on_error, vm, global_object, err);
                 return;
             }
         } else if let Some(sig) = signal {
@@ -1344,8 +1385,22 @@ impl ServerWebSocket {
             break 'brk args.ptr[1].to_slice_or_null(global_this)?;
         };
 
+        // `to_slice_or_null` can run user `toString()`, which may re-entrantly
+        // `ws.close()` and already decrement the count; re-check the guard.
+        if self.is_closed() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Copy the server backref BEFORE end(): on_close re-enters and the
+        // user's close handler may call stop(true), which clears handler.server.
+        let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
         self.websocket().end(code, message_value.slice());
+        // on_close re-entered with was_closed=true so it skipped the
+        // accounting; balance the count here.
+        if let Some(server) = server {
+            server.on_websocket_closed();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1363,8 +1418,16 @@ impl ServerWebSocket {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // Copy the server backref BEFORE close(): on_close re-enters and the
+        // user's close handler may call stop(true), which clears handler.server.
+        let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
         self.websocket().close();
+        // on_close re-entered with was_closed=true so it skipped the
+        // accounting; balance the count here.
+        if let Some(server) = server {
+            server.on_websocket_closed();
+        }
 
         Ok(JSValue::UNDEFINED)
     }

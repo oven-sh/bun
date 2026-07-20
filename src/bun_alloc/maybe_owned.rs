@@ -1,19 +1,7 @@
-//! This type can be used with `bun_ptr::Owned` to model "maybe owned" pointers:
-//!
-//! ```ignore
-//! // Either owned by the default allocator, or borrowed
-//! type MaybeOwnedFoo = bun_ptr::OwnedIn<Foo, bun_alloc::MaybeOwned<bun_alloc::DefaultAllocator>>;
-//!
-//! let owned_foo: MaybeOwnedFoo = MaybeOwnedFoo::new(make_foo());
-//! let borrowed_foo: MaybeOwnedFoo = MaybeOwnedFoo::from_raw_in(some_foo_ptr, MaybeOwned::init_borrowed());
-//!
-//! drop(owned_foo);    // calls `Foo::drop` and frees the memory
-//! drop(borrowed_foo); // no-op
-//! ```
-//!
-//! With `#[global_allocator]`, "owned" reduces to "drop the box"; borrowed
-//! drops are a no-op. The struct keeps the `Option<A>` shape so callers that
-//! pattern-match on `is_owned()` keep working.
+//! Models "maybe owned" pointers: either owned by an allocator `A` (drop frees
+//! the backing memory) or borrowed (drop is a no-op). With `#[global_allocator]`,
+//! "owned" reduces to "drop the box". The struct keeps the `Option<A>` shape so
+//! callers that pattern-match on `is_owned()` keep working.
 
 /// See module docs.
 pub struct MaybeOwned<A> {

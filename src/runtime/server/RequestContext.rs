@@ -1186,9 +1186,12 @@ where
         ctx_log!("end");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(data, close_connection);
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1199,13 +1202,16 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
             if resp.state().is_response_pending() {
                 resp.end_stream(close_connection);
             }
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1247,9 +1253,12 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1259,9 +1268,12 @@ where
     pub fn force_close(&mut self) {
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.force_close();
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1919,8 +1931,8 @@ where
                     resp.write_header(b"accept-ranges", b"bytes");
                     let close = resp.should_close_connection();
                     self.detach_response();
-                    self.end_request_streaming_and_drain();
                     resp.end(b"", close);
+                    self.end_request_streaming_and_drain();
                     self.deref();
                     return;
                 }
@@ -1936,9 +1948,9 @@ where
             // SAFETY: FFI handle
             let close = resp.should_close_connection();
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(b"", close);
+            self.end_request_streaming_and_drain();
             self.deref();
             return;
         }
@@ -3517,12 +3529,10 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = &*server;
-            if let Some(on_error) = server.config().on_error.as_ref()
-                && !self.flags.has_called_error_handler()
-            {
+            let on_error = server.config().on_error;
+            if !on_error.is_empty() && !self.flags.has_called_error_handler() {
                 self.flags.set_has_called_error_handler(true);
                 let result = on_error
-                    .get()
                     .call(
                         server.global_this(),
                         server.js_value().try_get().unwrap_or(JSValue::UNDEFINED),

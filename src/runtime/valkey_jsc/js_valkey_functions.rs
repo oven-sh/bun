@@ -1644,6 +1644,11 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
+        // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
+        // stays live across those calls.
+        let _guard = this.ref_scope();
+
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
@@ -1748,6 +1753,10 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Hold a ref so `*this` stays live across the handler-map updates and
+        // the `send()` below.
+        let _guard = this.ref_scope();
+
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;
 
@@ -1821,13 +1830,7 @@ impl JSValkeyClient {
                         JSValue::UNDEFINED,
                     ));
                 }
-                Err(_) => {
-                    return Err(global.throw(format_args!(
-                        "Failed to remove handler for channel {}",
-                        // `JSString` is an `opaque_ffi!` ZST — safe deref.
-                        bun_jsc::JSString::opaque_ref(channel.as_string()).get_zig_string(global)
-                    )));
-                }
+                Err(e) => return Err(e),
             };
 
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this

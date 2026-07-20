@@ -186,15 +186,15 @@ On older Windows, fall back to timeBeginPeriod(1).
  }
  
  
-@@ -249,6 +308,8 @@ int uv_loop_init(uv_loop_t* loop) {
-          0,
-          sizeof(lfields->loop_metrics.metrics));
+@@ -300,6 +359,8 @@ int uv_loop_init(uv_loop_t* loop) {
+   if (err)
+     goto fail_async_init;
  
 +  uv__hrtimer_init(loop, lfields);
 +
-   /* To prevent uninitialized memory access, loop->time must be initialized
-    * to zero before calling uv_update_time for the first time.
-    */
+   return 0;
+ 
+ fail_async_init:
 @@ -367,6 +428,12 @@ void uv__loop_close(uv_loop_t* loop) {
    loop->timer_heap = NULL;
  

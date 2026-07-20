@@ -72,7 +72,8 @@ shipped apps cannot rely on.
   treats those inaccessible ancestors as opaque directories (a
   `node_modules` physically inside one is not found — keep dependencies
   under the granted project tree), and `fs.realpath` resolves through them
-  via the handle-based native path, so project-relative work is unaffected.
+  via the handle-based native path for paths on the system volume. On any
+  other volume `fs.realpath` fails with `EPERM` as the underlying query does.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
   works.

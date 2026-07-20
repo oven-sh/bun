@@ -3681,52 +3681,6 @@ pub enum GetFinalPathNameByHandleError {
     NameTooLong,
 }
 
-/// `\Device\<volume>` prefix → DOS drive letter, learned from spellings the
-/// lowbox already holds (cwd + exe dir; the mount manager is denied inside one).
-/// Junctions stay unlearned; a wrong pairing only ever misses (identity check).
-struct NtDeviceMap {
-    map: Vec<(Vec<u16>, u16)>,
-    /// cwd spelling last probed; a chdir re-probes on the next denied query.
-    probed_cwd: Option<Vec<u16>>,
-    exe_probed: bool,
-}
-
-static NT_DEVICE_TO_DRIVE: std::sync::Mutex<NtDeviceMap> = std::sync::Mutex::new(NtDeviceMap {
-    map: Vec::new(),
-    probed_cwd: None,
-    exe_probed: false,
-});
-
-impl NtDeviceMap {
-    /// Probes run only on queries that already failed, so re-probing after a
-    /// chdir costs nothing on the success path.
-    fn refresh(&mut self) {
-        if !self.exe_probed {
-            self.exe_probed = true;
-            if let Ok(exe) = std::env::current_exe() {
-                use std::os::windows::ffi::OsStrExt;
-                let exe: Vec<u16> = exe.into_os_string().encode_wide().collect();
-                if let Some(sep) = exe.iter().rposition(|&c| c == u16::from(b'\\')) {
-                    // A volume-root exe keeps its separator: "D:\" learns, bare "D:" cannot.
-                    let dir_len = if sep == 2 { 3 } else { sep };
-                    learn_nt_device(&mut self.map, &exe[..dir_len]);
-                }
-            }
-        }
-        let mut cwd = bun_paths::w_path_buffer_pool::get();
-        // SAFETY: cwd.0 is valid for cwd.0.len() writes.
-        let n = unsafe { kernel32::GetCurrentDirectoryW(cwd.0.len() as u32, cwd.0.as_mut_ptr()) }
-            as usize;
-        if n > 0 && n < cwd.0.len() {
-            let cur = &cwd.0[..n];
-            if self.probed_cwd.as_deref() != Some(cur) {
-                self.probed_cwd = Some(cur.to_vec());
-                learn_nt_device(&mut self.map, cur);
-            }
-        }
-    }
-}
-
 fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
     // SAFETY: buf valid for buf.len().
     let n =
@@ -3737,16 +3691,6 @@ fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
     } else {
         Some(n)
     }
-}
-
-fn eq_w_ordinal_ignore_case(a: &[u16], b: &[u16]) -> bool {
-    // Full simple-case-fold compare; the ASCII-only fold this replaces missed
-    // non-ASCII spellings (é vs É). Lowbox-safe: no object-manager access.
-    // SAFETY: both pointers are valid for their counts.
-    a.len() == b.len()
-        && unsafe {
-            externs::CompareStringOrdinal(a.as_ptr(), a.len() as _, b.as_ptr(), b.len() as _, 1)
-        } == externs::CSTR_EQUAL
 }
 
 /// Attribute-only `CreateFileW` (0 access): exempt from share-mode arbitration
@@ -3768,120 +3712,75 @@ fn attr_only_open(pathz: &[u16]) -> HANDLE {
     }
 }
 
-/// True only when opening `dos` (attribute-only) reaches the file behind `h`:
-/// volume serial + file index equal — hardlink-equivalent identity (any
-/// hardlink passes; it still names the queried file).
-fn verified_same_file(h: HANDLE, dos: &[u16]) -> bool {
-    const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-    let mut z = bun_paths::w_path_buffer_pool::get();
-    // `\\?\` is required: reconstructed answers can exceed MAX_PATH.
-    if PFX.len() + dos.len() + 1 > z.0.len() {
-        return false;
-    }
-    z.0[..PFX.len()].copy_from_slice(&PFX);
-    z.0[PFX.len()..PFX.len() + dos.len()].copy_from_slice(dos);
-    z.0[PFX.len() + dos.len()] = 0;
-    let verify = attr_only_open(&z.0[..PFX.len() + dos.len() + 1]);
-    if verify == INVALID_HANDLE_VALUE {
-        return false;
-    }
-    let mut queried: BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-    let mut opened: BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-    // SAFETY: both handles are live; the out-params are valid for writes.
-    let ok = unsafe {
-        GetFileInformationByHandle(h, &mut queried) != 0
-            && GetFileInformationByHandle(verify, &mut opened) != 0
-    };
-    // SAFETY: `verify` is the live handle opened above.
-    unsafe {
-        let _ = externs::CloseHandle(verify);
-    }
-    // Unsupported-ID filesystems report zero/sentinel indexes (network
-    // redirectors; ReFS 128-bit degradation): degeneracy must miss, never match.
-    let real_id = |i: &BY_HANDLE_FILE_INFORMATION| {
-        i.dwVolumeSerialNumber != 0
-            && (i.nFileIndexHigh, i.nFileIndexLow) != (0, 0)
-            && (i.nFileIndexHigh, i.nFileIndexLow) != (u32::MAX, u32::MAX)
-    };
-    ok && real_id(&queried)
-        && real_id(&opened)
-        && queried.dwVolumeSerialNumber == opened.dwVolumeSerialNumber
-        && queried.nFileIndexHigh == opened.nFileIndexHigh
-        && queried.nFileIndexLow == opened.nFileIndexLow
+/// `(\Device\<volume>, letter)` for the system volume, resolved once via
+/// `GetSystemDirectoryW`: the Windows directory carries an inherited
+/// `ALL APPLICATION PACKAGES:(RX)` ACE, so an attribute-only open there
+/// succeeds in any lowbox where the mount manager is denied.
+fn system_volume_device() -> Option<&'static (Vec<u16>, u16)> {
+    static CACHE: std::sync::OnceLock<Option<(Vec<u16>, u16)>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut sysdir = bun_paths::w_path_buffer_pool::get();
+            // SAFETY: sysdir.0 is valid for sysdir.0.len() writes.
+            let n = unsafe {
+                kernel32::GetSystemDirectoryW(sysdir.0.as_mut_ptr(), sysdir.0.len() as u32)
+            } as usize;
+            if n < 3 || n >= sysdir.0.len() {
+                return None;
+            }
+            let letter = sysdir.0[0];
+            if letter >= 128
+                || !(letter as u8).is_ascii_alphabetic()
+                || sysdir.0[1] != u16::from(b':')
+            {
+                return None;
+            }
+            sysdir.0[n] = 0;
+            let h = attr_only_open(&sysdir.0[..=n]);
+            if h == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let mut nt = bun_paths::w_path_buffer_pool::get();
+            let mut none = bun_paths::w_path_buffer_pool::get();
+            let got = final_name_raw(
+                h,
+                win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+                &mut nt.0[..],
+            )
+            .zip(final_name_raw(
+                h,
+                win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
+                &mut none.0[..],
+            ));
+            // SAFETY: `h` is the live handle opened above.
+            unsafe {
+                let _ = externs::CloseHandle(h);
+            }
+            let (nt_len, none_len) = got?;
+            if none_len >= nt_len {
+                return None;
+            }
+            let (device, tail) = nt.0[..nt_len].split_at(nt_len - none_len);
+            if tail != &none.0[..none_len] {
+                return None;
+            }
+            Some((
+                device.to_vec(),
+                u16::from((letter as u8).to_ascii_uppercase()),
+            ))
+        })
+        .as_ref()
 }
 
-/// Record `\Device\X → L:` when `dos` (`L:\a\b`) provably names its own handle's
-/// NT path (`VOLUME_NAME_NONE` tail == `dos` minus drive). A case-insensitive
-/// alias can still pass — harmless: every answer is identity-verified.
-fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
-    if dos.len() < 3
-        || dos[0] >= 128
-        || !(dos[0] as u8).is_ascii_alphabetic()
-        || dos[1] != u16::from(b':')
-    {
-        return;
-    }
-    let mut z = bun_paths::w_path_buffer_pool::get();
-    if dos.len() + 1 >= z.0.len() {
-        return;
-    }
-    z.0[..dos.len()].copy_from_slice(dos);
-    z.0[dos.len()] = 0;
-    let h = attr_only_open(&z.0[..dos.len() + 1]);
-    if h == INVALID_HANDLE_VALUE {
-        return;
-    }
-    let mut nt = bun_paths::w_path_buffer_pool::get();
-    let mut none = bun_paths::w_path_buffer_pool::get();
-    let got = final_name_raw(
-        h,
-        win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
-        &mut nt.0[..],
-    )
-    .zip(final_name_raw(
-        h,
-        win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
-        &mut none.0[..],
-    ));
-    // SAFETY: `h` is the live handle opened above.
-    unsafe {
-        let _ = externs::CloseHandle(h);
-    }
-    let Some((nt_len, none_len)) = got else {
-        return;
-    };
-    if none_len >= nt_len {
-        return;
-    }
-    let device_len = nt_len - none_len;
-    let (device, nt_tail) = nt.0[..nt_len].split_at(device_len);
-    if nt_tail != &none.0[..none_len] {
-        return;
-    }
-    if !eq_w_ordinal_ignore_case(&none.0[..none_len], &dos[2..]) {
-        return;
-    }
-    if map.iter().any(|(d, _)| d == device) {
-        return;
-    }
-    map.push((
-        device.to_vec(),
-        u16::from((dos[0] as u8).to_ascii_uppercase()),
-    ));
-}
-
-/// `VOLUME_NAME_DOS` was denied (AppContainer token). Answer with
-/// `<drive>:<VOLUME_NAME_NT path minus its device prefix>` via the learned
-/// device map — identity-verified against the queried handle before being
-/// returned; degrade to the original error otherwise. Callers gate on
-/// `is_app_container()`.
+/// `VOLUME_NAME_DOS` was denied (AppContainer token). Answer only for handles
+/// on the system volume: `<system drive>:<VOLUME_NAME_NT minus device prefix>`,
+/// byte-identical to what the real API would have composed. Any other device
+/// surfaces the original denial. Callers gate on `is_app_container()`.
 fn lowbox_dos_name_fallback(
     hFile: HANDLE,
     out_buffer: &mut [u16],
 ) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
     debug_assert!(is_app_container());
-    // Query the NT name before taking the lock so the per-handle syscall never
-    // runs under it.
     let mut nt_buf = bun_paths::w_path_buffer_pool::get();
     let Some(nt_len) = final_name_raw(
         hFile,
@@ -3895,60 +3794,41 @@ fn lowbox_dos_name_fallback(
         return Err(GetFinalPathNameByHandleError::FileNotFound);
     };
     let nt = &nt_buf.0[..nt_len];
-    // Device-prefix match, copying out (device_len, letter) so the guard drops
-    // before the copy into `out_buffer`.
-    let find = |map: &[(Vec<u16>, u16)]| -> Option<(usize, u16)> {
-        map.iter()
-            .find(|(device, _)| {
-                nt.len() > device.len()
-                    && &nt[..device.len()] == &device[..]
-                    && nt[device.len()] == u16::from(b'\\')
-            })
-            .map(|(device, letter)| (device.len(), *letter))
-    };
-    let mut state = match NT_DEVICE_TO_DRIVE.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut hit = find(&state.map);
-    if hit.is_none() {
-        state.refresh();
-        hit = find(&state.map);
-    }
-    drop(state);
-    if let Some((device_len, letter)) = hit {
-        let rest = &nt[device_len..];
-        if 2 + rest.len() >= out_buffer.len() {
-            return Err(GetFinalPathNameByHandleError::NameTooLong);
-        }
-        out_buffer[0] = letter;
-        out_buffer[1] = u16::from(b':');
-        out_buffer[2..2 + rest.len()].copy_from_slice(rest);
-        let total = 2 + rest.len();
-        // The real API NUL-terminates and raw-shape callers read
-        // `buf[len]`; the bounds check above reserved that slot.
-        out_buffer[total] = 0;
-        // A wrongly learned pairing must never surface a wrong path: require
-        // the reconstruction to reach the queried file itself.
-        if !verified_same_file(hFile, &out_buffer[..total]) {
-            bun_sys::syslog!(
-                "GetFinalPathNameByHandleW({:p}) = denied (reconstruction failed identity check)",
-                hFile
-            );
-            return Err(GetFinalPathNameByHandleError::FileNotFound);
-        }
+    let Some((device, letter)) = system_volume_device() else {
         bun_sys::syslog!(
-            "GetFinalPathNameByHandleW({:p}) = {} (NT device fallback)",
-            hFile,
-            bun_core::fmt::utf16(&out_buffer[..total])
+            "GetFinalPathNameByHandleW({:p}) = denied (system volume unresolved)",
+            hFile
         );
-        return Ok(&mut out_buffer[..total]);
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    };
+    if !(nt.len() > device.len()
+        && nt[..device.len()] == device[..]
+        && nt[device.len()] == u16::from(b'\\'))
+    {
+        bun_sys::syslog!(
+            "GetFinalPathNameByHandleW({:p}) = denied (not on system volume: {})",
+            hFile,
+            bun_core::fmt::utf16(nt)
+        );
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
     }
+    let rest = &nt[device.len()..];
+    let total = 2 + rest.len();
+    if total >= out_buffer.len() {
+        return Err(GetFinalPathNameByHandleError::NameTooLong);
+    }
+    out_buffer[0] = *letter;
+    out_buffer[1] = u16::from(b':');
+    out_buffer[2..total].copy_from_slice(rest);
+    // The real API NUL-terminates and raw-shape callers read `buf[len]`;
+    // the bounds check above reserved that slot.
+    out_buffer[total] = 0;
     bun_sys::syslog!(
-        "GetFinalPathNameByHandleW({:p}) = denied (no NT device mapping)",
-        hFile
+        "GetFinalPathNameByHandleW({:p}) = {} (system-volume fallback)",
+        hFile,
+        bun_core::fmt::utf16(&out_buffer[..total])
     );
-    Err(GetFinalPathNameByHandleError::FileNotFound)
+    Ok(&mut out_buffer[..total])
 }
 
 /// This module's spelling of `GetFinalPathNameByHandleW`: raw-ABI drop-in
@@ -5373,9 +5253,8 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 #[cfg(test)]
 mod tests {
     use super::{
-        E, HANDLE, INVALID_HANDLE_VALUE, SystemErrno, Win32Error, Win32ErrorExt as _,
-        Win32ErrorUnwrap as _, attr_only_open, eq_w_ordinal_ignore_case, externs,
-        verified_same_file,
+        E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _,
+        system_volume_device,
     };
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
@@ -5406,104 +5285,13 @@ mod tests {
         assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
     }
 
-    fn w(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
+    /// Outside an AppContainer this exercises the same open + NT/NONE split
+    /// the lowbox fallback relies on; the system directory is always present.
     #[test]
-    fn eq_w_ignore_case_matches_ascii_case_insensitively() {
-        assert!(eq_w_ordinal_ignore_case(&w("c:\\users"), &w("C:\\USERS")));
-    }
-
-    /// The ASCII-only fold this helper replaced missed non-ASCII simple folds.
-    #[test]
-    fn eq_w_ignore_case_matches_non_ascii_simple_folds() {
-        // 'é' (U+00E9) vs 'É' (U+00C9)
-        assert!(eq_w_ordinal_ignore_case(&[0x00E9], &[0x00C9]));
-    }
-
-    #[test]
-    fn eq_w_ignore_case_rejects_different_strings() {
-        assert!(!eq_w_ordinal_ignore_case(&w("abc"), &w("abd")));
-    }
-
-    #[test]
-    fn eq_w_ignore_case_rejects_different_lengths() {
-        assert!(!eq_w_ordinal_ignore_case(&w("abc"), &w("abcd")));
-    }
-
-    /// Real Windows paths can contain lone surrogates (WTF-16).
-    #[test]
-    fn eq_w_ignore_case_accepts_lone_surrogate_self_compare() {
-        assert!(eq_w_ordinal_ignore_case(&[0xD800], &[0xD800]));
-    }
-
-    /// Separator-normalized wide string: `\\?\` opens bypass normalization and
-    /// some CI images set TEMP with forward slashes.
-    fn wz_str(s: &str) -> Vec<u16> {
-        s.replace('/', "\\").encode_utf16().collect()
-    }
-
-    /// Bare (un-prefixed) wide path — `verified_same_file` prepends `\\?\`.
-    fn wz(p: &std::path::Path) -> Vec<u16> {
-        wz_str(&p.to_string_lossy())
-    }
-
-    /// Opens through the same production helper the verifier uses.
-    fn open_probe(p: &std::path::Path) -> HANDLE {
-        let mut path = wz(p);
-        path.push(0);
-        attr_only_open(&path)
-    }
-
-    /// Removes the temp fixtures even when an assertion fails mid-test.
-    struct RemoveOnDrop(Vec<std::path::PathBuf>);
-    impl Drop for RemoveOnDrop {
-        fn drop(&mut self) {
-            for p in &self.0 {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-    }
-
-    #[test]
-    fn verified_same_file_matches_only_the_queried_file() {
-        let dir = std::env::temp_dir();
-        let a = dir.join(format!("bun-vsf-a-{}", std::process::id()));
-        let b = dir.join(format!("bun-vsf-b-{}", std::process::id()));
-        let _cleanup = RemoveOnDrop(vec![a.clone(), b.clone()]);
-        std::fs::write(&a, b"a").unwrap();
-        std::fs::write(&b, b"b").unwrap();
-
-        let h = open_probe(&a);
-        assert_ne!(h, INVALID_HANDLE_VALUE);
-        // SAFETY: `h` is the live handle opened above; closed on every path
-        // because the guard drops after the asserts.
-        let _close = scopeguard::guard(h, |h| unsafe {
-            let _ = externs::CloseHandle(h);
-        });
-
-        assert!(verified_same_file(h, &wz(&a)));
-        // Production always verifies a reconstructed spelling, never the
-        // original: a case-changed spelling must still verify.
-        assert!(verified_same_file(
-            h,
-            &wz_str(&a.to_string_lossy().to_lowercase())
-        ));
-        assert!(!verified_same_file(h, &wz(&b)));
-        let missing = dir.join(format!("bun-vsf-missing-{}", std::process::id()));
-        assert!(!verified_same_file(h, &wz(&missing)));
-    }
-
-    #[test]
-    fn verified_same_file_accepts_directories() {
-        let dir = std::env::temp_dir();
-        let h = open_probe(&dir);
-        assert_ne!(h, INVALID_HANDLE_VALUE);
-        // SAFETY: `h` is the live handle opened above.
-        let _close = scopeguard::guard(h, |h| unsafe {
-            let _ = externs::CloseHandle(h);
-        });
-        assert!(verified_same_file(h, &wz(&dir)));
+    fn system_volume_device_resolves() {
+        let (device, letter) = system_volume_device().expect("system volume");
+        assert!((*letter as u8).is_ascii_uppercase());
+        let prefix: Vec<u16> = "\\Device\\".encode_utf16().collect();
+        assert!(device.starts_with(&prefix));
     }
 }

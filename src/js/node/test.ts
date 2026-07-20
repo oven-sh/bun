@@ -521,8 +521,8 @@ async function runOneFile(
   let error: Error | undefined;
 
   if (subtestsFailed) {
-    const failed = fileCounts.failed;
-    error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
+    const n = fileCounts.failed + fileCounts.cancelled;
+    error = makeTestFailure(`${n} subtest${n === 1 ? "" : "s"} failed`, "subtestsFailed");
   }
 
   if (!fileFailed) {
@@ -971,7 +971,10 @@ function maybeCompleteSuite(suite: TestNode): boolean {
     duration_ms: suite.startedAtMs > 0 ? roundDurationMs(performance.now() - suite.startedAtMs) : 0,
     tags: suite.tags,
     error: suiteFailed
-      ? (forcedError ?? makeTestFailure(`${failedCount} subtest${failedCount > 1 ? "s" : ""} failed`, "subtestsFailed"))
+      ? (forcedError ??
+        (suite.error != null
+          ? wrapTestError(suite.error)
+          : makeTestFailure(`${failedCount} subtest${failedCount > 1 ? "s" : ""} failed`, "subtestsFailed")))
       : undefined,
   };
   // node's order around a finishing suite: its completion, the plan covering
@@ -3083,6 +3086,14 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   const callerEntries = standaloneQueue.splice(0, standaloneQueue.length);
   const wasStandaloneActive = standaloneActive;
   const wasScheduled = standaloneScheduled;
+  // The root node is a process singleton outside `bun test`; its per-run fields
+  // are snapshotted so a second run (or the caller's own beforeExit pass) starts
+  // clean and does not re-fire this run's root after() hooks.
+  const callerRoot = getRootNode();
+  const savedRootHooks = callerRoot.hooks;
+  const savedRootReportedCount = callerRoot.reportedCount;
+  callerRoot.hooks = { before: [], after: [], beforeEach: [], afterEach: [] };
+  callerRoot.reportedCount = 0;
 
   // Callers attach listeners synchronously on the returned stream; yield first.
   await Promise.resolve();
@@ -3192,7 +3203,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // Give the caller its own tests and mode flags back so a standalone file
     // that also calls run() still gets its beforeExit pass (finding: the run
     // must not latch standalone state for the rest of the process).
-    getRootNode().started = false;
+    const root = getRootNode();
+    root.started = false;
+    root.hooks = savedRootHooks;
+    root.reportedCount = savedRootReportedCount;
     standaloneQueue.push(...callerEntries);
     standaloneActive = wasStandaloneActive || callerEntries.length > 0;
     standaloneScheduled = wasScheduled;
@@ -3275,29 +3289,46 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   }
   // Suites: the callback already ran at declaration (node runs describe
   // bodies during load); execute the collected children in order.
+  const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
+  // A failing build/before() means setup never completed; node cancels the
+  // declared children (cancelledByParent) instead of running them against
+  // broken setup. Matches executeStandaloneQueue's root-hook handling.
+  let setupFailed = false;
   const { build } = entry;
   if (build !== undefined) {
     try {
       await build;
     } catch (err) {
-      node.childrenFailed++;
-      node.error = err;
-    }
-  }
-  const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
-  for (const hook of node.hooks.before) {
-    try {
-      await runHook(hook, node, node.getSuiteCtx());
-    } catch (err) {
-      // A todo suite's hook failure is advisory, like in the run() child.
       if (!isTodoSuite) {
         node.childrenFailed++;
         node.error = err;
+        setupFailed = true;
       }
     }
   }
-  for (const child of node.standaloneChildren ?? []) {
-    await runStandaloneEntry(child);
+  if (!setupFailed) {
+    for (const hook of node.hooks.before) {
+      try {
+        await runHook(hook, node, node.getSuiteCtx());
+      } catch (err) {
+        // A todo suite's hook failure is advisory, like in the run() child.
+        if (!isTodoSuite) {
+          node.childrenFailed++;
+          node.error = err;
+          setupFailed = true;
+          break;
+        }
+      }
+    }
+  }
+  if (setupFailed) {
+    for (const child of node.standaloneChildren ?? []) {
+      reportCancelledNode(child.node);
+    }
+  } else {
+    for (const child of node.standaloneChildren ?? []) {
+      await runStandaloneEntry(child);
+    }
   }
   for (const hook of node.hooks.after) {
     try {

@@ -17,33 +17,10 @@ use bun_uws as uws;
 
 use super::protocol_jsc;
 use super::valkey;
-use super::valkey_command_body as command;
-use super::valkey_command_body::Command;
+use super::command;
+use super::command::Command;
 use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
-
-/// `bun.JSTerminated!T`
-// Widened to `JsResult<T>` to match `valkey.rs`; can be narrowed once
-// `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
-// `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
-type JsTerminatedResult<T> = jsc::JsResult<T>;
-
-/// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`
-/// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
-/// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
-/// / `resolve`); the other variants are unreachable on this path.
-// While `JsTerminatedResult` is widened to `JsResult` (see above), this is
-// effectively identity-with-OOM-crash. Once both aliases tighten to
-// `jsc::JsTerminatedResult`, restore the `JsTerminated::JSTerminated` mapping.
-#[inline]
-fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
-    r.map_err(|e| match e {
-        jsc::JsError::Terminated => jsc::JsError::Terminated,
-        jsc::JsError::OutOfMemory => bun_core::out_of_memory(),
-        // valkey.rs never throws into JS from these paths; treat as terminal.
-        jsc::JsError::Thrown => jsc::JsError::Terminated,
-    })
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Local shims / extension traits (adapt-on-our-side)
@@ -212,29 +189,13 @@ impl SubscriptionCtx {
         });
         let map = self.subscription_callback_map();
 
-        let handlers_array: JSValue;
-        let mut is_new_channel = false;
-        let existing_handler_arr = map.get(global_object, channel_name)?;
-        if existing_handler_arr != JSValue::UNDEFINED {
-            debug!("Adding a new receive handler.");
-            // Note that we need to cover this case because maps in JSC can return undefined when
-            // the key has never been set.
-            if existing_handler_arr.is_undefined() {
-                // Create a new array if the existing_handler_arr is undefined/null
-                handlers_array = JSArray::create_empty(global_object, 0)?;
-                is_new_channel = true;
-            } else if existing_handler_arr.is_array() {
-                // Use the existing array
-                handlers_array = existing_handler_arr;
-            } else {
-                unreachable!();
-            }
+        let existing = map.get(global_object, channel_name)?;
+        let handlers_array = if existing.is_undefined_or_null() {
+            JSArray::create_empty(global_object, 0)?
         } else {
-            // No existing_handler_arr exists, create a new array
-            handlers_array = JSArray::create_empty(global_object, 0)?;
-            is_new_channel = true;
-        }
-        let _ = is_new_channel;
+            debug_assert!(existing.is_array());
+            existing
+        };
 
         // Append the new callback to the array
         handlers_array.push(global_object, callback)?;
@@ -1250,7 +1211,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client connects
-    pub fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> JsTerminatedResult<()> {
+    pub fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> JsResult<()> {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.get().is_strong());
@@ -1401,7 +1362,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client closes
-    pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
+    pub fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
 
         // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
@@ -1450,8 +1411,8 @@ impl JSValkeyClient {
         );
     }
 
-    pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
-        narrow_terminated(self.client_mut().fail(message, err))
+    pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsResult<()> {
+        self.client_mut().fail(message, err)
     }
 
     pub fn call_onclose_handler(&self, value: JSValue) {
@@ -1702,12 +1663,12 @@ impl JSValkeyClient {
 
         // Add queue sizes
         memory_cost += client.in_flight.readable_length()
-            * core::mem::size_of::<super::valkey_command::PromisePair>();
+            * core::mem::size_of::<super::command::PromisePair>();
         for command in client.queue.readable_slice(0) {
             memory_cost += command.serialized_data.len();
         }
         memory_cost +=
-            client.queue.readable_length() * core::mem::size_of::<super::valkey_command::Entry>();
+            client.queue.readable_length() * core::mem::size_of::<super::command::Entry>();
         memory_cost
     }
 
@@ -1845,9 +1806,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsTerminatedResult<()> {
+    pub fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
         this.client_mut().socket = Self::_socket(socket);
-        narrow_terminated(this.client_mut().on_open(Self::_socket(socket)))
+        this.client_mut().on_open(Self::_socket(socket))
     }
 
     pub fn on_handshake_(
@@ -1855,7 +1816,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _socket: SocketType<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
-    ) -> JsTerminatedResult<()> {
+    ) -> JsResult<()> {
         debug!(
             "onHandshake: {} error={} reason={} code={}",
             success,
@@ -1935,7 +1896,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     return Self::fail_handshake(this, vm, err);
                 }
             }
-            narrow_terminated(this.client_mut().start())?;
+            this.client_mut().start()?;
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the
@@ -1949,7 +1910,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         vm: &VirtualMachine,
         ssl_error: &uws::us_bun_verify_error_t,
-    ) -> JsTerminatedResult<()> {
+    ) -> JsResult<()> {
         let ssl_js_value =
             match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
                 Ok(v) => v,
@@ -1974,16 +1935,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         _vm: &VirtualMachine,
         err_value: JSValue,
-    ) -> JsTerminatedResult<()> {
+    ) -> JsResult<()> {
         this.client_mut().flags.is_authenticated = false;
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;
         let this_br = BackRef::new(this);
         let _close = scopeguard::guard(this_br, |p| p.client_mut().close());
-        narrow_terminated(
-            this.client_mut()
-                .fail_with_js_value(&this.global_object, err_value),
-        )
+        this.client_mut()
+            .fail_with_js_value(&this.global_object, err_value)
     }
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`
@@ -1993,7 +1952,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             SocketType<SSL>,
             i32,
             uws::us_bun_verify_error_t,
-        ) -> JsTerminatedResult<()>,
+        ) -> JsResult<()>,
     > = if SSL { Some(Self::on_handshake_) } else { None };
 
     pub fn on_close(
@@ -2027,7 +1986,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
         _code: i32,
-    ) -> JsTerminatedResult<()> {
+    ) -> JsResult<()> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _guard = this.ref_scope();
@@ -2036,7 +1995,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        narrow_terminated(this.client_mut().on_close())
+        this.client_mut().on_close()
     }
 
     pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -2147,3 +2106,12 @@ impl Options {
         Ok(this)
     }
 }
+
+impl JSValkeyClient {
+    #[inline]
+    pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        Js::to_js(ptr, global)
+    }
+}
+
+bun_jsc::impl_js_class_via_generated!(JSValkeyClient => crate::generated_classes::js_RedisClient);

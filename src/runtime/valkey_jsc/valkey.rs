@@ -878,36 +878,33 @@ impl ValkeyClient {
             .get()
             .channels_subscribed_to_count(&global_this)?;
 
-        match kind {
-            protocol::SubscriptionPushMessage::Message => {
-                self.on_valkey_message(&mut push.data);
-                Ok(())
-            }
-            protocol::SubscriptionPushMessage::Subscribe => {
-                p.add_subscription();
-                self.on_valkey_subscribe();
-
-                // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
-                // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
-                if let Some(req_pair) = pair {
-                    req_pair
-                        .promise
-                        .resolve(&global_this, JSValue::js_number(f64::from(sub_count)))?;
-                }
-                Ok(())
-            }
-            protocol::SubscriptionPushMessage::Unsubscribe => {
-                self.on_valkey_unsubscribe();
-                self.parent().remove_subscription();
-
-                // For UNSUBSCRIBE responses, only resolve the promise if we have one
-                // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
-                if let Some(req_pair) = pair {
-                    req_pair.promise.resolve(&global_this, JSValue::UNDEFINED)?;
-                }
-                Ok(())
-            }
+        if kind.is_message() {
+            self.on_valkey_message(&mut push.data);
+            return Ok(());
         }
+        if kind.is_subscribe_ack() {
+            p.add_subscription();
+            self.on_valkey_subscribe();
+
+            // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
+            // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
+            if let Some(req_pair) = pair {
+                req_pair
+                    .promise
+                    .resolve(&global_this, JSValue::js_number(f64::from(sub_count)))?;
+            }
+            return Ok(());
+        }
+        debug_assert!(kind.is_unsubscribe_ack());
+        self.on_valkey_unsubscribe();
+        self.parent().remove_subscription();
+
+        // For UNSUBSCRIBE responses, only resolve the promise if we have one
+        // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
+        if let Some(req_pair) = pair {
+            req_pair.promise.resolve(&global_this, JSValue::UNDEFINED)?;
+        }
+        Ok(())
     }
 
     fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsResult<()> {

@@ -296,6 +296,18 @@ const SCOPE_TYPE_MAP: Record<string, string> = {
   nestedLexical: "block",
 };
 
+// JSC reports the async boundary itself as the top frame of an async stack
+// (`setTimeout`, `then`, ...). V8 has no such frame; it names the boundary in
+// `description`. Boundaries without a V8 counterpart are left undescribed.
+const ASYNC_BOUNDARY_DESCRIPTIONS: Record<string, string> = {
+  setTimeout: "Timeout",
+  setInterval: "Timeout",
+  setImmediate: "Immediate",
+  then: "Promise.then",
+  catch: "Promise.catch",
+  finally: "Promise.finally",
+};
+
 // No "log" entry: JSC reports console.warn/error/info/debug as
 // { type: "log", level: "warning"/"error"/... }, so a type-level match on "log"
 // would mask the level. #translateConsoleMessage falls through to
@@ -1115,13 +1127,19 @@ class InspectorCDPAdapter {
 
   #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {
     if (!stackTrace) return undefined;
+    const frames: AnyObject[] = stackTrace.callFrames ?? [];
+    // The boundary frame is a label, not a location: hand it to the client as
+    // `description` the way V8 does instead of leaving it in the frame list.
+    const boundary = stackTrace.topCallFrameIsBoundary && frames.length ? frames[0] : undefined;
+    const description = boundary ? ASYNC_BOUNDARY_DESCRIPTIONS[boundary.functionName ?? ""] : undefined;
     const translated: AnyObject = {
-      callFrames: (stackTrace.callFrames ?? []).map((frame: AnyObject) => {
+      callFrames: (boundary ? frames.slice(1) : frames).map((frame: AnyObject) => {
         const scriptId = frame.scriptId ?? this.#scriptIdsByUrl.$get(frame.url ?? "") ?? "";
+        // JSC counts these lines and columns from 1; CDP counts from 0.
         const location = this.#toOriginalLocation({
           scriptId,
-          lineNumber: frame.lineNumber ?? 0,
-          columnNumber: frame.columnNumber ?? 0,
+          lineNumber: Math.max((frame.lineNumber ?? 1) - 1, 0),
+          columnNumber: Math.max((frame.columnNumber ?? 1) - 1, 0),
         }) as AnyObject;
         return {
           functionName: frame.functionName ?? "",
@@ -1132,6 +1150,7 @@ class InspectorCDPAdapter {
         };
       }),
     };
+    if (description !== undefined) translated.description = description;
     const { parentStackTrace } = stackTrace;
     if (parentStackTrace) {
       translated.parent = this.#translateStackTrace(parentStackTrace);

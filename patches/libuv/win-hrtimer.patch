@@ -173,15 +173,14 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
    uv_mutex_destroy(&lfields->loop_metrics.lock);
    uv__free(lfields);
    loop->internal_fields = NULL;
-@@ -463,6 +505,34 @@
+@@ -463,6 +505,33 @@
       */
      lfields->current_timeout = timeout;
  
 +    /* Arm the high-res waitable timer and associate it with this loop's IOCP;
 +     * it posts a NULL-overlapped completion (already treated as a pure wakeup
-+     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait.
-+     * >100ms deadlines don't need sub-tick precision; skip the 3 syscalls. */
-+    if (timeout - 1 < 100 && lfields->hrtimer != NULL) {
++     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait. */
++    if (timeout != 0 && timeout != INFINITE && lfields->hrtimer != NULL) {
 +      LARGE_INTEGER due;
 +      BOOLEAN signaled;
 +      due.QuadPart = -(LONGLONG) timeout * 10000;  /* relative, 100ns units */

@@ -23,15 +23,18 @@ status="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
 [ "$status" = "0" ] && exit 0
 [ -n "${BUILDKITE_JOB_ID:-}" ] || exit 0
 
-# Skip cancel/timeout kills: the agent SIGKILLs the command after its grace
-# period (or on build cancel), which reports as exit -1 on posix and
-# 3221225786 (STATUS_CONTROL_C_EXIT) / 15 (SIGTERM passthrough) on Windows.
-# The reporter had no chance to set the marker, and a canceled build annotating
-# 30 "step failed outside runner" entries is noise, not signal. Real infra
-# failures exit with ordinary codes (1, 2, 127, ...).
-case "$status" in
-  -1|255|3221225786|15) exit 0 ;;
-esac
+# Skip canceled/timed-out jobs: on cancel the agent SIGTERMs then SIGKILLs the
+# command, so the reporter had no chance to set the marker, and a canceled
+# build annotating every running job is noise, not signal. The agent's
+# Executor.Cancel() sets BUILDKITE_JOB_CANCELLED=true in the shell env
+# (buildkite/agent@3ab8ab31, v3.94.0+), and additionally
+# BUILDKITE_JOB_TIMED_OUT=true when the cancel was a job-level timeout. The
+# exit-code fallback covers agents still on v3.87.0 (the linux queue=ci image
+# at the time of writing): -1 is the posix agent-killed code, 3221225786 is
+# Windows STATUS_CONTROL_C_EXIT, both observed on cancel in build 76127.
+# Drop the fallback once every agent is v3.94.0+.
+if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
+case "$status" in -1|3221225786) exit 0 ;; esac
 
 if buildkite-agent meta-data exists "reported-${BUILDKITE_JOB_ID}" 2>/dev/null; then
   exit 0

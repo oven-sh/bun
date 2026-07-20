@@ -3572,9 +3572,8 @@ pub(crate) fn to_namespaced_path(
     if !is_windows || !path_value.is_string() {
         return Ok(path_value);
     }
-    let path_zstr = path_value.get_zig_string(global_object)?;
-    let len = path_zstr.len;
-    if len == 0 {
+    let path_str = bun_core::OwnedString::new(path_value.to_bun_string(global_object)?);
+    if path_str.is_empty() {
         return Ok(path_value);
     }
 
@@ -3582,15 +3581,10 @@ pub(crate) fn to_namespaced_path(
     // UTF-16 code units (Node's `resolvedPath.length <= 2` guard) and pure
     // string manipulation does no transcoding.
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    if path_zstr.is_16bit() {
-        return to_namespaced_path_js_t::<u16>(
-            global_object,
-            pool,
-            path_value,
-            path_zstr.utf16_slice_aligned(),
-        );
+    if path_str.is_utf16() {
+        return to_namespaced_path_js_t::<u16>(global_object, pool, path_value, path_str.utf16());
     }
-    let path8 = path_zstr.slice();
+    let path8 = path_str.latin1();
     if strings::is_all_ascii(path8) {
         return to_namespaced_path_js_t::<u8>(global_object, pool, path_value, path8);
     }

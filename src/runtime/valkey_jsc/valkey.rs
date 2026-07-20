@@ -1063,8 +1063,12 @@ impl ValkeyClient {
                     let global_this = self.global_object();
                     let js = valkey_error_to_js(&global_this, err, RedisError::ServerError);
                     p.reject(&global_this, js)?;
+                } else {
+                    debug!(
+                        "subscriber: server error without pending promise: {}",
+                        bstr::BStr::new(err)
+                    );
                 }
-                self.fail(err, RedisError::ServerError)?;
                 return Ok(());
             }
             match value {
@@ -1074,10 +1078,10 @@ impl ValkeyClient {
                         return Ok(());
                     }
                     bun_core::hint::cold();
-                    self.fail(
-                        b"Unexpected push message kind without promise",
-                        RedisError::InvalidResponseType,
-                    )?;
+                    debug!(
+                        "subscriber: ignoring push kind {:?}",
+                        bstr::BStr::new(&push.kind)
+                    );
                     return Ok(());
                 }
                 _ => {

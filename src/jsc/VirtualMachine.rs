@@ -1059,6 +1059,24 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// Like [`is_event_loop_alive`] without the `unhandled_error_counter == 0`
+    /// gate: true iff there are ref'd handles or queued tasks keeping the loop
+    /// alive. Used by the test runner to drain a script file after tests finish.
+    pub fn event_loop_has_pending_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.is_active())
+            .unwrap_or(false);
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + (el.has_pending_refs() as usize)
+            > 0
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }

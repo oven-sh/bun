@@ -3233,6 +3233,18 @@ impl TestCommand {
                     }
                 }
 
+                // A file that registered no test()/describe() is a plain script:
+                // drain ref'd handles so late uncaught errors surface, like `bun <file>`.
+                if buntest.collection.root_scope.entries.is_empty() {
+                    let drain_base = vm.unhandled_error_counter;
+                    while drain_base == vm.unhandled_error_counter
+                        && vm.event_loop_has_pending_work()
+                    {
+                        vm.event_loop_ref().tick();
+                        vm.event_loop_ref().auto_tick();
+                    }
+                }
+
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };

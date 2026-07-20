@@ -1458,6 +1458,124 @@ describe("bun test", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/34859
+describe.concurrent("script files with no test() registrations", () => {
+  test("fails on a delayed unhandled rejection from an async IIFE", async () => {
+    using dir = tempDir("script-delayed-rejection", {
+      "delayed.test.js": `
+        'use strict';
+        (async () => {
+          await new Promise(r => setTimeout(r, 20));
+          throw new Error("delayed rejection should fail the test run");
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./delayed.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("delayed rejection should fail the test run");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("1 error");
+    expect(exitCode).toBe(1);
+  });
+
+  test("fails on a delayed uncaught exception from a timer", async () => {
+    using dir = tempDir("script-delayed-throw", {
+      "delayed.test.js": `setTimeout(() => { throw new Error("boom from timer"); }, 20);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./delayed.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("boom from timer");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(exitCode).toBe(1);
+  });
+
+  test("waits for ref'd async work to complete", async () => {
+    using dir = tempDir("script-drain", {
+      "drain.test.js": `
+        const assert = require("assert");
+        (async () => {
+          await new Promise(r => setTimeout(r, 20));
+          assert.strictEqual(1, 1);
+          console.log("reached end of async iife");
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./drain.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("reached end of async iife");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("drains per file so a later script file's delayed rejection is caught", async () => {
+    using dir = tempDir("script-two-files", {
+      "a.test.js": `
+        (async () => {
+          await Promise.resolve();
+          throw new Error("file A microtask error");
+        })();
+      `,
+      "b.test.js": `
+        (async () => {
+          await new Promise(r => setTimeout(r, 20));
+          throw new Error("file B delayed error");
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("file A microtask error");
+    expect(stderr).toContain("file B delayed error");
+    expect(exitCode).toBe(1);
+  });
+
+  test("does not drain when the file registered a test()", async () => {
+    // Files that use bun:test keep today's behavior: the runner does not
+    // block on leaked handles after the last test finishes.
+    using dir = tempDir("registered-test-no-drain", {
+      "with.test.js": `
+        const { test } = require("bun:test");
+        setInterval(() => {}, 60_000);
+        test("noop", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./with.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+});
+
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {
   const cwd = tmpdirSync();
   const inputs = Array.isArray(input) ? input : [input ?? ""];

@@ -29,18 +29,12 @@ async function runInTempDir(body: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(!isWindows)(
-  "fs.writeFileSync to a reserved DOS device name does not create a file",
-  async () => {
-    const { stdout, stderr, exitCode } = await runInTempDir(`
+test.skipIf(!isWindows)("fs.writeFileSync to a reserved DOS device name does not create a file", async () => {
+  const { stdout, stderr, exitCode } = await runInTempDir(`
       // CON/PRN/COM*/LPT* may not be openable for write on every CI host, so
       // an error is acceptable for them; the point is no file is created.
       for (const n of ["nul", "NUL", "Nul", "nUl", "nul.", "nul ", "nul. "]) {
@@ -60,36 +54,34 @@ test.skipIf(!isWindows)(
         console.log(n, entriesAfter(n, () => fs.writeFileSync(n, "x")));
       }
     `);
-    expect({ stdout, stderr }).toEqual({
-      stdout:
-        [
-          "nul []",
-          "NUL []",
-          "Nul []",
-          "nUl []",
-          "nul. []",
-          "nul  []",
-          "nul.  []",
-          "con []",
-          "CoN []",
-          "aux []",
-          "prn []",
-          "com1 []",
-          "Com9 []",
-          "lpt1 []",
-          "LpT9 []",
-          "sub\\nul []",
-          'nul.txt ["nul.txt"]',
-          'null ["null"]',
-          'com0 ["com0"]',
-          'com10 ["com10"]',
-          "",
-        ].join("\n"),
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
-  },
-);
+  expect({ stdout, stderr }).toEqual({
+    stdout: [
+      "nul []",
+      "NUL []",
+      "Nul []",
+      "nUl []",
+      "nul. []",
+      "nul  []",
+      "nul.  []",
+      "con []",
+      "CoN []",
+      "aux []",
+      "prn []",
+      "com1 []",
+      "Com9 []",
+      "lpt1 []",
+      "LpT9 []",
+      "sub\\nul []",
+      'nul.txt ["nul.txt"]',
+      'null ["null"]',
+      'com0 ["com0"]',
+      'com10 ["com10"]',
+      "",
+    ].join("\n"),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!isWindows)("fs.readFileSync from a bare reserved name reads the device", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`
@@ -108,10 +100,8 @@ test.skipIf(!isWindows)("fs.readFileSync from a bare reserved name reads the dev
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)(
-  "trailing dots and spaces on the final component are stripped",
-  async () => {
-    const { stdout, stderr, exitCode } = await runInTempDir(`
+test.skipIf(!isWindows)("trailing dots and spaces on the final component are stripped", async () => {
+  const { stdout, stderr, exitCode } = await runInTempDir(`
       for (const n of ["foo.", "foo ", "foo. ", "foo..", "foo.bar.", ".foo."]) {
         console.log(JSON.stringify(n), entriesAfter(n, () => fs.writeFileSync(n, "x")));
       }
@@ -123,24 +113,22 @@ test.skipIf(!isWindows)(
       const verbatim = "\\\\\\\\?\\\\" + path.join(process.cwd(), "keep.");
       console.log("verbatim", entriesAfter("v", () => fs.writeFileSync(verbatim, "x")));
     `);
-    expect({ stdout, stderr }).toEqual({
-      stdout:
-        [
-          '"foo." ["foo"]',
-          '"foo " ["foo"]',
-          '"foo. " ["foo"]',
-          '"foo.." ["foo"]',
-          '"foo.bar." ["foo.bar"]',
-          '".foo." [".foo"]',
-          "roundtrip hello",
-          'verbatim ["keep."]',
-          "",
-        ].join("\n"),
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
-  },
-);
+  expect({ stdout, stderr }).toEqual({
+    stdout: [
+      '"foo." ["foo"]',
+      '"foo " ["foo"]',
+      '"foo. " ["foo"]',
+      '"foo.." ["foo"]',
+      '"foo.bar." ["foo.bar"]',
+      '".foo." [".foo"]',
+      "roundtrip hello",
+      'verbatim ["keep."]',
+      "",
+    ].join("\n"),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!isWindows)("Bun.write to a bare reserved name writes to the device", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`

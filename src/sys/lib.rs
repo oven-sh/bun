@@ -9937,8 +9937,21 @@ mod normalize_path_windows_tests {
         // `\\?\`-prefixed (the prefix does not suppress device recognition
         // here; node:fs hands every absolute path through with that prefix).
         for input in [
-            "nul", "NUL", "Nul", "nUl", "nul.", "nul ", "nul. ", "C:nul", "sub\\nul", "sub/nul",
-            "./nul", "C:\\a\\Nul", "C:\\a\\nul ", "\\\\?\\C:\\a\\nul", "\\\\?\\C:\\a\\NUL",
+            "nul",
+            "NUL",
+            "Nul",
+            "nUl",
+            "nul.",
+            "nul ",
+            "nul. ",
+            "C:nul",
+            "sub\\nul",
+            "sub/nul",
+            "./nul",
+            "C:\\a\\Nul",
+            "C:\\a\\nul ",
+            "\\\\?\\C:\\a\\nul",
+            "\\\\?\\C:\\a\\NUL",
         ] {
             assert_eq!(normalize(cwd, input), "\\??\\NUL", "{input:?}");
             assert_eq!(normalize_opts(cwd, input, false), "\\\\.\\NUL", "{input:?}");

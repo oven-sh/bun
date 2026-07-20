@@ -114,9 +114,7 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
 /// `nul.txt` is not a device; modern Windows and Node agree on that.
 pub fn windows_reserved_device_name_t<T: PathChar>(component: &[T]) -> Option<&'static [u8]> {
     let mut end = component.len();
-    while end > 0
-        && (component[end - 1].eq_ascii(b'.') || component[end - 1].eq_ascii(b' '))
-    {
+    while end > 0 && (component[end - 1].eq_ascii(b'.') || component[end - 1].eq_ascii(b' ')) {
         end -= 1;
     }
     let up = |i: usize| component[i].to_ascii_upper().to_ascii();
@@ -206,8 +204,25 @@ mod windows_reserved_device_name_tests {
     #[test]
     fn near_misses() {
         for s in [
-            "", "n", "nu", "null", "nul1", "nu1", "nula", "anul", " nul", ".nul", "con1",
-            "conn", "nul.txt", "nul:stream", "aux1", "co", "com", "lpt", "c:nul",
+            "",
+            "n",
+            "nu",
+            "null",
+            "nul1",
+            "nu1",
+            "nula",
+            "anul",
+            " nul",
+            ".nul",
+            "con1",
+            "conn",
+            "nul.txt",
+            "nul:stream",
+            "aux1",
+            "co",
+            "com",
+            "lpt",
+            "c:nul",
         ] {
             both(s, None);
         }

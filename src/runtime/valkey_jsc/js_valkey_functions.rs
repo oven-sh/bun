@@ -98,7 +98,7 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
 /// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
 /// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
-/// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
+/// `unsubscribe`, …) duplicated this 15-line block
 /// byte-identically; the only per-caller variation is the args slice, the
 /// `meta` flags, and the error-message prefix.
 #[inline]
@@ -1687,24 +1687,6 @@ impl JSValkeyClient {
         Ok(promise_to_js(promise))
     }
 
-    /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.
-    ///
-    /// The subscription context must exist when calling this function.
-    fn send_unsubscribe_request_and_cleanup(
-        this: &Self,
-        global: &JSGlobalObject,
-        redis_channels: &[JSArgument],
-    ) -> JsResult<JSValue> {
-        send_cmd(
-            this,
-            global,
-            b"UNSUBSCRIBE",
-            CommandArgs::Args(redis_channels),
-            CommandMeta::default(),
-            "Failed to send UNSUBSCRIBE command",
-        )
-    }
-
     #[bun_jsc::host_fn(method)]
     pub fn unsubscribe(
         this: &Self,
@@ -1727,19 +1709,18 @@ impl JSValkeyClient {
             this._subscription_ctx
                 .get()
                 .clear_all_receive_handlers(global)?;
-            return Self::send_unsubscribe_request_and_cleanup(this, global, &redis_channels);
+            return send_cmd(
+                this,
+                global,
+                b"UNSUBSCRIBE",
+                CommandArgs::Args(&redis_channels),
+                CommandMeta::default(),
+                "Failed to send UNSUBSCRIBE command",
+            );
         }
 
         // The first argument can be a channel or an array of channels
         let channel_or_many = frame.argument(0);
-
-        // Get the subscription context
-        if !this._subscription_ctx.get().is_subscriber {
-            return Ok(JSPromise::resolved_promise_value(
-                global,
-                JSValue::UNDEFINED,
-            ));
-        }
 
         // Two arguments means .unsubscribe(channel, listener) is invoked.
         if frame.arguments().len() == 2 {
@@ -1789,7 +1770,14 @@ impl JSValkeyClient {
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this
             // channel.
             if remaining_listeners == 0 {
-                return Self::send_unsubscribe_request_and_cleanup(this, global, &redis_channels);
+                return send_cmd(
+                    this,
+                    global,
+                    b"UNSUBSCRIBE",
+                    CommandArgs::Args(&redis_channels),
+                    CommandMeta::default(),
+                    "Failed to send UNSUBSCRIBE command",
+                );
             }
 
             // Otherwise, in order to keep the API consistent, we need to return a resolved promise.
@@ -1843,8 +1831,14 @@ impl JSValkeyClient {
             ));
         }
 
-        // Now send the unsubscribe command and clean up if necessary
-        Self::send_unsubscribe_request_and_cleanup(this, global, &redis_channels)
+        send_cmd(
+            this,
+            global,
+            b"UNSUBSCRIBE",
+            CommandArgs::Args(&redis_channels),
+            CommandMeta::default(),
+            "Failed to send UNSUBSCRIBE command",
+        )
     }
 
     #[bun_jsc::host_fn(method)]

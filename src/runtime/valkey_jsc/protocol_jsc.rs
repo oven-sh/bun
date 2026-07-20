@@ -6,8 +6,6 @@
 use crate::jsc::{Error as JscError, JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
-// keep `protocol` referenced for sibling drafts
-
 /// All callers always provide a message, so the parameter
 /// is `impl AsRef<[u8]>` to accept `&str`, `&[u8]`, `&[u8; N]`, `&Box<[u8]>`
 /// uniformly without forcing `Some(..)` at every call site.
@@ -122,7 +120,6 @@ pub fn resp_value_to_js_with_options(
                     resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
                 // Route through `put_to_property_key`, which performs
                 // index-vs-string property dispatch on the JSValue key.
-                let _ = js_key.to_bun_string(global)?; // preserve toString side-effect/exception path
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
 
                 JSValue::put_to_property_key(js_obj, global, js_key, js_value)?;

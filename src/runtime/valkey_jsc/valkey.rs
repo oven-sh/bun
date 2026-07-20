@@ -4,6 +4,7 @@ use bun_collections::VecExt;
 // This file contains the core Valkey client implementation with protocol handling
 
 use bun_collections::OffsetByteList;
+use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -77,13 +78,6 @@ pub enum Status {
     Connected,
 }
 
-impl Status {
-    #[inline]
-    pub fn is_active(self) -> bool {
-        matches!(self, Status::Connected | Status::Connecting)
-    }
-}
-
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Protocol {
@@ -153,7 +147,6 @@ pub struct Options {
     pub max_retries: u32,
     pub enable_offline_queue: bool,
     pub enable_auto_pipelining: bool,
-    pub enable_debug_logging: bool,
 
     pub tls: TLS,
 }
@@ -167,7 +160,6 @@ impl Default for Options {
             max_retries: 20,
             enable_offline_queue: true,
             enable_auto_pipelining: true,
-            enable_debug_logging: false,
             tls: TLS::None,
         }
     }
@@ -256,15 +248,11 @@ pub struct ValkeyClient {
     pub queue: command::entry::Queue,
 
     // Connection parameters
-    // `connection_strings` is retained because `js_valkey.rs` still slices it
-    // when constructing/duplicating clients.
     pub password: Box<[u8]>,
     pub username: Box<[u8]>,
     pub database: u32,
     pub address: Address,
     pub protocol: Protocol,
-
-    pub connection_strings: Box<[u8]>,
 
     // TLS support
     pub tls: TLS,
@@ -326,12 +314,6 @@ impl DeferredFailure {
     }
 }
 
-/// Read the parser's current byte offset.
-#[inline]
-fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
-    reader.pos()
-}
-
 // SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed via
 // `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the
 // field offset is unchanged. R-2: shared `&` only — every `JSValkeyClient`
@@ -361,25 +343,18 @@ impl ValkeyClient {
             while let Some(mut offline_cmd) = commands.read_item() {
                 // Same as above: swallow reject exceptions so the whole queue drains.
                 let _ = offline_cmd.promise.reject(global_this, object);
-                // Note: `offline_cmd.deinit()` — Entry/Box<[u8]> drops automatically.
             }
         } else {
             // finalizing. we can't call into JS.
             while let Some(pair) = pending.read_item() {
-                // Note: `pair.promise.deinit()` — JSPromiseStrong drops automatically.
                 drop(pair);
             }
 
             while let Some(offline_cmd) = commands.read_item() {
-                // Note: `offline_cmd.promise.deinit()` / `offline_cmd.deinit()` —
-                // JSPromiseStrong / Box<[u8]> drop automatically.
                 drop(offline_cmd);
             }
         }
 
-        // Note: `allocator.free(connection_strings)` and `write_buffer/read_buffer.deinit()`
-        // and `tls.deinit()` are handled by Drop on the owning fields. Only the side-effecting
-        // unregister remains explicit.
         drop(pending);
         drop(commands);
         self.unregister_auto_flusher();
@@ -440,8 +415,6 @@ impl ValkeyClient {
             self.write_buffer
                 .write(&cmd.serialized_data)
                 .unwrap_or_oom();
-            // Free the serialized data since we've copied it to the write buffer
-            // Note: `allocator.free(command.serialized_data)` — Box<[u8]> drops here.
         }
 
         self.flush_data();
@@ -784,7 +757,7 @@ impl ValkeyClient {
                 }
 
                 let mut reader = protocol::ValkeyReader::init(remaining_buffer);
-                let before_read_pos = reader_pos(&reader);
+                let before_read_pos = reader.pos();
 
                 let value = match reader.read_value() {
                     Ok(v) => v,
@@ -796,9 +769,8 @@ impl ValkeyClient {
                         return Ok(());
                     }
                 };
-                // Note: `defer value.deinit(allocator)` — RESPValue should impl Drop.
 
-                let bytes_consumed = reader_pos(&reader) - before_read_pos;
+                let bytes_consumed = reader.pos() - before_read_pos;
                 if bytes_consumed == 0 && !remaining_buffer.is_empty() {
                     self.fail(
                         b"Parser consumed 0 bytes unexpectedly (buffer path)",
@@ -826,7 +798,7 @@ impl ValkeyClient {
         let mut current_data_slice = data; // Create a mutable view of the incoming data
         while !current_data_slice.is_empty() {
             let mut reader = protocol::ValkeyReader::init(current_data_slice);
-            let before_read_pos = reader_pos(&reader);
+            let before_read_pos = reader.pos();
 
             let value = match reader.read_value() {
                 Ok(v) => v,
@@ -854,9 +826,8 @@ impl ValkeyClient {
                 }
             };
             // Successfully read a full message from the stack data
-            // Note: `defer value.deinit(allocator)` — RESPValue should impl Drop.
 
-            let bytes_consumed = reader_pos(&reader) - before_read_pos;
+            let bytes_consumed = reader.pos() - before_read_pos;
             if bytes_consumed == 0 {
                 // This case should ideally not happen if readValue succeeded and slice wasn't empty
                 self.fail(
@@ -1319,8 +1290,6 @@ impl ValkeyClient {
 
         if self.connection_ready() && self.write_buffer.remaining().is_empty() {
             // Optimization: avoid cloning the data an extra time.
-            // Note: `defer allocator.free(data)` — `data: Box<[u8]>` drops at scope end.
-
             let wrote = self.socket.write(&data);
             let unwritten = &data[usize::try_from(wrote.max(0)).expect("int cast")..];
 
@@ -1334,7 +1303,6 @@ impl ValkeyClient {
 
         // Write the pre-serialized data directly to the output buffer
         self.write_buffer.write(&data).unwrap_or_oom();
-        // Note: `bun.default_allocator.free(data)` — Box<[u8]> drops here.
     }
 
     pub fn on_writable(&mut self) {
@@ -1353,13 +1321,6 @@ impl ValkeyClient {
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
             && self.flags.enable_auto_pipelining;
 
-        // For commands that don't support pipelining, we need to wait for the queue to drain completely
-        // before sending the command. This ensures proper order of execution for state-changing commands.
-        let must_wait_for_queue = !command
-            .meta
-            .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-            && self.queue.readable_length() > 0;
-
         if
         // If there are any pending commands, queue this one
         self.queue.readable_length() > 0
@@ -1367,8 +1328,6 @@ impl ValkeyClient {
             || (!can_pipeline && self.in_flight.readable_length() > 0)
             // We need authentication before processing commands
             || !self.connection_ready()
-            // Commands that don't support pipelining must wait for the entire queue to drain
-            || must_wait_for_queue
             // If can pipeline, we can accept commands regardless of in_flight commands
             || can_pipeline
         {
@@ -1524,10 +1483,6 @@ impl ValkeyClient {
     pub fn on_valkey_close(&mut self) -> JsResult<()> {
         self.parent().on_valkey_close()
     }
-
-    pub fn on_valkey_timeout(&mut self) {
-        self.parent().on_valkey_timeout();
-    }
 }
 
 // Auto-pipelining
@@ -1561,18 +1516,3 @@ impl bun_io::Write for WriteBufWriter<'_> {
     }
 }
 
-// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
-// No shared `UnwrapOrOom` trait exists yet (bun_alloc has none); delegate to
-// `bun_core::handle_oom` so every call site keeps its method-chain shape.
-trait UnwrapOrOom {
-    type Output;
-    fn unwrap_or_oom(self) -> Self::Output;
-}
-impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
-    type Output = T;
-    #[inline]
-    #[track_caller]
-    fn unwrap_or_oom(self) -> T {
-        bun_core::handle_oom(self)
-    }
-}

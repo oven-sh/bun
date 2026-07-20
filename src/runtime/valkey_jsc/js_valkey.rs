@@ -266,31 +266,6 @@ impl SubscriptionCtx {
         }
         Ok(())
     }
-
-    /// Return whether the subscription context is ready to be deleted by the JS garbage collector.
-    pub fn is_deletable(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
-        // The user may request .close(), in which case we can dispose of the subscription object.
-        // If that is the case, finalized will be true. Otherwise, we should treat the object as
-        // disposable if there are no active subscriptions.
-        Ok(self.parent().client.get().flags.finalized || !self.has_subscriptions(global_object)?)
-    }
-
-    // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
-    // `close` per PORTING.md (never expose `pub fn deinit`).
-    pub fn close(&self, global_object: &JSGlobalObject) {
-        if cfg!(debug_assertions) {
-            let go = self.parent().global_object;
-            debug_assert!(self.is_deletable(&go).expect("unreachable"));
-        }
-
-        if let Some(parent_this) = self.parent().this_value.get().try_get() {
-            Js::subscription_callback_map_set_cached(
-                parent_this,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -591,33 +566,10 @@ impl JSValkeyClient {
             valkey::Options::default()
         };
 
-        // Copy strings into a persistent buffer since the URL object will be deinitialized
-        let mut connection_strings: Box<[u8]> = Box::default();
-        let mut username: Box<[u8]> = Box::default();
-        let mut password: Box<[u8]> = Box::default();
-        let mut hostname: Box<[u8]> = Box::default();
-
-        // errdefer free(connection_strings) — handled by Box drop on `?`.
-
-        if !username_utf8.slice().is_empty()
-            || !password_utf8.slice().is_empty()
-            || !hostname_slice.is_empty()
-        {
-            let mut b = bun_core::StringBuilder::default();
-            b.count(username_utf8.slice());
-            b.count(password_utf8.slice());
-            b.count(hostname_slice);
-            b.allocate()?;
-            let user_sp = b.append_count(username_utf8.slice());
-            let pass_sp = b.append_count(password_utf8.slice());
-            let host_sp = b.append_count(hostname_slice);
-            connection_strings = b.move_to_slice();
-            // `ValkeyClient` owns each field as an independent
-            // `Box<[u8]>`, so re-slice from the pointers.
-            username = Box::<[u8]>::from(user_sp.slice(&connection_strings));
-            password = Box::<[u8]>::from(pass_sp.slice(&connection_strings));
-            hostname = Box::<[u8]>::from(host_sp.slice(&connection_strings));
-        }
+        // Copy strings into owned buffers since the URL object will be deinitialized
+        let username = Box::<[u8]>::from(username_utf8.slice());
+        let password = Box::<[u8]>::from(password_utf8.slice());
+        let hostname = Box::<[u8]>::from(hostname_slice);
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         let database: u32 = match uri {
@@ -664,7 +616,6 @@ impl JSValkeyClient {
                 in_flight: command::promise::Queue::init(),
                 queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
-                connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
@@ -738,12 +689,6 @@ impl JSValkeyClient {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        // `ValkeyClient` (see valkey.rs:290-299) owns `username`/`password`/
-        // `address.hostname` as independent `Box<[u8]>`s rather than sub-slices
-        // of the single `connection_strings` allocation, so rebase arithmetic
-        // against `connection_strings` would compute a garbage offset and read
-        // OOB. Clone each owned buffer directly.
-        let connection_strings_copy: Box<[u8]> = Box::<[u8]>::from(&client.connection_strings[..]);
         let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
         let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
         let hostname: Box<[u8]> = Box::<[u8]>::from(client.address.hostname());
@@ -777,7 +722,6 @@ impl JSValkeyClient {
                 in_flight: command::promise::Queue::init(),
                 queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
-                connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
@@ -885,27 +829,6 @@ impl JSValkeyClient {
             self.update_poll_ref();
         }
         debug!("removeSubscription: exiting");
-    }
-
-    pub fn get_or_create_subscription_ctx(&self) -> JsResult<&SubscriptionCtx> {
-        // Return the existing ctx so we don't unconditionally reinit.
-        if self._subscription_ctx.get().is_subscriber {
-            return Ok(self._subscription_ctx.get());
-        }
-
-        // Save the original flag values and create a new subscription context
-        self._subscription_ctx.set(SubscriptionCtx::init(self));
-
-        // We need to make sure we disable the offline queue, but we actually want to make sure
-        // that our HELLO message goes through first. Consequently, we only disable the offline
-        // queue if we're already connected.
-        if self.client.get().status == valkey::Status::Connected {
-            self.client_mut().flags.enable_offline_queue = false;
-        }
-
-        self.client_mut().flags.enable_auto_pipelining = false;
-
-        Ok(self._subscription_ctx.get())
     }
 
     pub fn is_subscriber(&self) -> bool {
@@ -1398,14 +1321,6 @@ impl JSValkeyClient {
             }
         }
         Ok(())
-    }
-
-    // Callback for when Valkey client times out
-    pub fn on_valkey_timeout(&self) {
-        let _ = self.client_fail(
-            b"Connection timeout",
-            protocol::RedisError::ConnectionClosed,
-        );
     }
 
     pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsResult<()> {
@@ -1993,7 +1908,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         debug!("Socket timed out.");
 
         this.client_mut().socket = Self::_socket(socket);
-        // Handle socket timeout
     }
 
     pub fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {

@@ -39,10 +39,6 @@ pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub use semaphore::Semaphore;
-/// `parking_lot::Once` parity. Bun has no custom `Once`,
-/// and `std::sync::Once` has no poisoning concern, so
-/// just re-export it for callers migrating off `parking_lot::Once`.
-pub use std::sync::Once;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;

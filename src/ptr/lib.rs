@@ -16,22 +16,12 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-// Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
-pub use std::borrow::Cow;
-pub type CowSlice<'a, T> = Cow<'a, [T]>;
-pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
-pub type CowString<'a> = Cow<'a, [u8]>;
-
 // `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
-// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Distinct
-// from the `std::borrow::Cow` aliases above; callers that need the struct-shaped
-// API (e.g. `pack_command::Pattern`) reach for `cow_slice::CowSlice<u8>`.
+// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
+// that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for
+// `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
-
-// shared — OBSOLETE per PORTING.md §Pointers: callers
-// use std `Rc`/`Arc` directly. Draft module kept for diff-pass only.
-pub mod shared;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
@@ -45,9 +35,9 @@ pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
-// Compat aliases — `tagged_pointer` exports short names; some downstream code
-// uses the long ones.
-pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
+// Compat alias — `tagged_pointer` exports the short name; some downstream code
+// uses the long one.
+pub use tagged_pointer::TaggedPtr as TaggedPointer;
 
 pub mod ref_count;
 pub use ref_count::{

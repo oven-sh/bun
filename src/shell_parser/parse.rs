@@ -1958,7 +1958,6 @@ impl<'bump> Parser<'bump> {
         let tag = tok.tag();
         tag == TokenTag::Delimit
             || tag == TokenTag::Semicolon
-            || tag == TokenTag::Semicolon
             || tag == TokenTag::Eof
             || tag == TokenTag::Newline
             || (self.inside_subshell.is_some()
@@ -3007,7 +3006,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if next.escaped || next.char != u32::from(b'|') {
                                 self.tokens.push(Token::Pipe);
-                            } else if next.char == u32::from(b'|') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoublePipe);
                             }
@@ -3066,13 +3065,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 self.tokens.push(Token::Redirect(inner));
                             } else if next.escaped || next.char != u32::from(b'&') {
                                 self.tokens.push(Token::Ampersand);
-                            } else if next.char == u32::from(b'&') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoubleAmpersand);
-                            } else {
-                                self.tokens.push(Token::Ampersand);
-                                fell_through = true;
-                                break 'escaped;
                             }
                             fell_through = true;
                         }
@@ -4532,12 +4527,10 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     }
 
     pub fn init_with(val: T) -> Self {
-        let mut this = Self::zeroes();
-        if let SmolList::Inlined(inlined) = &mut this {
-            inlined.items[0].write(val);
-            inlined.len += 1;
-        }
-        this
+        let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+        inlined.items[0].write(val);
+        inlined.len = 1;
+        SmolList::Inlined(inlined)
     }
 
     pub fn memory_cost(&self) -> usize
@@ -4567,14 +4560,12 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     {
         debug_assert!(vals.len() <= u32::MAX as usize);
         if vals.len() <= INLINED_MAX {
-            let mut this = Self::zeroes();
-            if let SmolList::Inlined(inlined) = &mut this {
-                for (i, v) in vals.iter().enumerate() {
-                    inlined.items[i].write(v.clone());
-                }
-                inlined.len += u32::try_from(vals.len()).expect("int cast");
+            let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+            for (i, v) in vals.iter().enumerate() {
+                inlined.items[i].write(v.clone());
             }
-            return this;
+            inlined.len = u32::try_from(vals.len()).expect("int cast");
+            return SmolList::Inlined(inlined);
         }
         let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
         heap.extend_from_slice(vals);

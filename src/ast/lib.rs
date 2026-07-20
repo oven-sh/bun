@@ -3240,8 +3240,7 @@ pub use char_freq::CharFreq;
 pub use e as E;
 pub use e::CallUnwrap as CanBeUnwrapped;
 pub use expr::{
-    Data as ExprData, Expr, IntoExprData, IntoExprData as ExprInit,
-    PrimitiveType as KnownPrimitive, Tag as ExprTag,
+    Data as ExprData, Expr, IntoExprData, PrimitiveType as KnownPrimitive, Tag as ExprTag,
 };
 pub use g as G;
 pub use g::NamespaceAlias;

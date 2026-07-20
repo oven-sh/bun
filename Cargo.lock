@@ -140,7 +140,6 @@ dependencies = [
  "allocator-api2",
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -676,7 +675,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_cares_sys",
  "bun_core",
  "bun_sys",

@@ -2697,8 +2697,6 @@ pub enum Pollable {
     NotReady,
     Hup,
 }
-/// Alias for [`Pollable`].
-pub type PollFlag = Pollable;
 
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
@@ -3783,8 +3781,7 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
-// the xxhash64 entry point that ETag/bundler need.
+// `bun.hash` one-shot Wyhash / XxHash64 wrappers over `bun_hash`.
 pub mod hash {
     pub use bun_hash::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.
@@ -3795,7 +3792,7 @@ pub mod hash {
     /// Wyhash one-shot (`bun.hash`).
     #[inline]
     pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
+        bun_hash::RapidHash::hash(0, bytes)
     }
 }
 

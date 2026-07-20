@@ -51,9 +51,8 @@ pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCou
 
 pub mod parent_ref;
 pub use parent_ref::{Anchored, LiveMarker, ParentRef};
-// Compat aliases for callers that use the pointer-typedef names.
+// Compat alias for callers that use the pointer-typedef name.
 pub type IntrusiveRc<T> = RefPtr<T>;
-pub type IntrusiveArc<T> = RefPtr<T>;
 
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;

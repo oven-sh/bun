@@ -26,12 +26,8 @@ function setup() {
   longStatement = db.query(LONG_QUERY);
 }
 
-function runSmall(operations) {
-  let checksum = 0;
-  for (let i = 0; i < operations; i++) {
-    checksum += smallStatement.get([i & 255]).value.length;
-  }
-  return checksum;
+function runSmall(index) {
+  return smallStatement.get([index & 255]).value.length;
 }
 
 function runLong(limit) {
@@ -47,7 +43,7 @@ onmessage = ({ data }) => {
         result = true;
         break;
       case "small":
-        result = runSmall(data.operations);
+        result = runSmall(data.index);
         break;
       case "long":
         result = runLong(data.limit);

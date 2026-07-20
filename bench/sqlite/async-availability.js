@@ -74,11 +74,18 @@ function setupSyncDatabase() {
       }
       return checksum;
     },
+    runSmallQueued: operations => {
+      let checksum = 0;
+      for (let i = 0; i < operations; i++) {
+        checksum += smallStatement.get([i & 255]).value.length;
+      }
+      return checksum;
+    },
   };
 }
 
 async function setupAsyncDatabase() {
-  const db = await AsyncDatabase.open(":memory:");
+  const db = await AsyncDatabase.open(":memory:", { maxPending: config.smallOperations });
   try {
     await db.exec("CREATE TABLE hot (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
     for (let id = 0; id < 256; id++) {
@@ -94,6 +101,12 @@ async function setupAsyncDatabase() {
           checksum += (await db.get(SMALL_QUERY, [i & 255])).value.length;
         }
         return checksum;
+      },
+      runSmallQueued: async operations => {
+        const rows = await Promise.all(
+          Array.from({ length: operations }, (_, index) => db.get(SMALL_QUERY, [index & 255])),
+        );
+        return rows.reduce((checksum, row) => checksum + row.value.length, 0);
       },
     };
   } catch (error) {
@@ -145,7 +158,17 @@ function createWorkerDatabase() {
     },
     setup: () => request("setup"),
     runLong: limit => request("long", { limit }),
-    runSmall: operations => request("small", { operations }),
+    runSmall: async operations => {
+      let checksum = 0;
+      for (let index = 0; index < operations; index++) {
+        checksum += await request("small", { index });
+      }
+      return checksum;
+    },
+    runSmallQueued: async operations => {
+      const lengths = await Promise.all(Array.from({ length: operations }, (_, index) => request("small", { index })));
+      return lengths.reduce((checksum, length) => checksum + length, 0);
+    },
   };
 }
 
@@ -211,12 +234,15 @@ async function measureImplementation(name, database) {
   assertEqual(warmChecksum, 7, `${name} warm query`);
 
   const hot = await measure(() => database.runSmall(config.smallOperations), config.smallOperations);
-  assertEqual(hot.result, expectedChecksum, `${name} cache-hot query`);
+  assertEqual(hot.result, expectedChecksum, `${name} sequential cache-hot query`);
+
+  const hotQueued = await measure(() => database.runSmallQueued(config.smallOperations), config.smallOperations);
+  assertEqual(hotQueued.result, expectedChecksum, `${name} queued cache-hot query`);
 
   const long = await measure(() => database.runLong(config.recursiveLimit), 1);
   assertEqual(long.result, expectedSum(config.recursiveLimit), `${name} recursive query`);
 
-  return { name, hot, long };
+  return { name, hot, hotQueued, long };
 }
 
 let sync;
@@ -239,7 +265,8 @@ try {
   for (const result of results) {
     console.log(`\n${result.name}`);
     console.table({
-      "cache-hot small query": format(result.hot),
+      "cache-hot sequential": format(result.hot),
+      "cache-hot queued": format(result.hotQueued),
       "recursive query": format(result.long),
     });
   }

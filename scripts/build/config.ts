@@ -912,6 +912,24 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
+  // A prebuilt "baseline" macOS build can't be produced: oven-sh/WebKit
+  // publishes no Nehalem macOS tarball (only Linux amd64 and Windows amd64
+  // baseline variants exist — see deps/webkit.ts). Requesting one either 404s
+  // on bun-webkit-macos-amd64-baseline.tar.gz or, if the -baseline suffix is
+  // dropped, silently links the Haswell macOS WebKit, whose bmalloc startup
+  // constructors use BMI2/AVX2 and SIGILL on pre-Haswell Intel Macs
+  // (oven-sh/bun#32511 — the shipped binary crashed at launch on Ivy Bridge).
+  // Fail loudly here instead. A true baseline macOS binary needs a Nehalem
+  // macOS WebKit built in oven-sh/WebKit first. Exempt: a local WebKit build
+  // (compiled for Nehalem via computeCpuTargetFlags) and rust-only split
+  // builds (produce libbun_rust.a, never link WebKit).
+  assert(
+    !(baseline && darwin && (partial.webkit ?? "prebuilt") === "prebuilt" && (partial.mode ?? "full") !== "rust-only"),
+    "baseline builds are not supported for macOS: oven-sh/WebKit ships no baseline (Nehalem) macOS WebKit, so the binary would link the Haswell build and crash with SIGILL on pre-Haswell Intel Macs (oven-sh/bun#32511)",
+    {
+      hint: "Omit --baseline for macOS x64, or pass --webkit=local to compile WebKit for Nehalem from source.",
+    },
+  );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");

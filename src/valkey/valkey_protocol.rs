@@ -99,6 +99,19 @@ pub enum RESPValue {
     BigNumber(Box<[u8]>),
 }
 
+impl RESPValue {
+    /// `Some(msg)` when the value is a server-side error reply (`-ERR…` or
+    /// RESP3 `!…`), peeling through any `Attribute` wrapper. Used by the
+    /// client to decide resolve-vs-reject for a command promise.
+    pub fn as_server_error(&self) -> Option<&[u8]> {
+        match self {
+            RESPValue::Error(msg) | RESPValue::BlobError(msg) => Some(msg),
+            RESPValue::Attribute(attr) => attr.value.as_server_error(),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for RESPValue {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -360,6 +373,43 @@ impl<'a> ValkeyReader<'a> {
         cap
     }
 
+    /// Shared prelude for `* % ~ | >`: depth guard + signed length read.
+    /// `Ok(None)` only when `allow_null` and the declared length is negative
+    /// (RESP2 `*-1`).
+    fn read_aggregate_header(
+        &mut self,
+        depth: usize,
+        allow_null: bool,
+        invalid: RedisError,
+    ) -> Result<Option<usize>, RedisError> {
+        if depth >= Self::MAX_NESTING_DEPTH {
+            return Err(RedisError::NestingDepthExceeded);
+        }
+        let len = self.read_integer()?;
+        if len < 0 {
+            return if allow_null { Ok(None) } else { Err(invalid) };
+        }
+        Ok(Some(usize::try_from(len).expect("int cast")))
+    }
+
+    fn read_n_values(&mut self, depth: usize, len: usize) -> Result<Vec<RESPValue>, RedisError> {
+        let mut out = Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
+        for _ in 0..len {
+            out.push(self.read_value_with_depth(depth + 1)?);
+        }
+        Ok(out)
+    }
+
+    fn read_n_entries(&mut self, depth: usize, len: usize) -> Result<Vec<MapEntry>, RedisError> {
+        let mut out = Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
+        for _ in 0..len {
+            let key = self.read_value_with_depth(depth + 1)?;
+            let value = self.read_value_with_depth(depth + 1)?;
+            out.push(MapEntry { key, value });
+        }
+        Ok(out)
+    }
+
     /// Parse one complete RESP value. Returns `Ok(None)` when the buffer ends
     /// mid-value (caller should append more bytes and retry); `Err` is always a
     /// real protocol error.
@@ -400,22 +450,10 @@ impl<'a> ValkeyReader<'a> {
                     .map(Box::<[u8]>::from),
             )),
             RESPType::Array => {
-                if depth >= Self::MAX_NESTING_DEPTH {
-                    return Err(RedisError::NestingDepthExceeded);
+                match self.read_aggregate_header(depth, true, RedisError::InvalidResponse)? {
+                    None => Ok(RESPValue::Null),
+                    Some(n) => Ok(RESPValue::Array(self.read_n_values(depth, n)?)),
                 }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Ok(RESPValue::Null);
-                }
-                let len = usize::try_from(len).expect("int cast");
-                let mut array =
-                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
-                let mut i: usize = 0;
-                while i < len {
-                    array.push(self.read_value_with_depth(depth + 1)?);
-                    i += 1;
-                }
-                Ok(RESPValue::Array(array))
             }
 
             // RESP3 types
@@ -439,98 +477,38 @@ impl<'a> ValkeyReader<'a> {
             }
             RESPType::VerbatimString => Ok(RESPValue::VerbatimString(self.read_verbatim_string()?)),
             RESPType::Map => {
-                if depth >= Self::MAX_NESTING_DEPTH {
-                    return Err(RedisError::NestingDepthExceeded);
-                }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidMap);
-                }
-                let len = usize::try_from(len).expect("int cast");
-
-                let mut entries =
-                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
-                let mut i: usize = 0;
-                while i < len {
-                    let key = self.read_value_with_depth(depth + 1)?;
-                    let value = self.read_value_with_depth(depth + 1)?;
-                    entries.push(MapEntry { key, value });
-                    i += 1;
-                }
-                Ok(RESPValue::Map(entries))
+                let n = self
+                    .read_aggregate_header(depth, false, RedisError::InvalidMap)?
+                    .expect("!allow_null");
+                Ok(RESPValue::Map(self.read_n_entries(depth, n)?))
             }
             RESPType::Set => {
-                if depth >= Self::MAX_NESTING_DEPTH {
-                    return Err(RedisError::NestingDepthExceeded);
-                }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidSet);
-                }
-                let len = usize::try_from(len).expect("int cast");
-
-                let mut set =
-                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
-                let mut i: usize = 0;
-                while i < len {
-                    set.push(self.read_value_with_depth(depth + 1)?);
-                    i += 1;
-                }
-                Ok(RESPValue::Set(set))
+                let n = self
+                    .read_aggregate_header(depth, false, RedisError::InvalidSet)?
+                    .expect("!allow_null");
+                Ok(RESPValue::Set(self.read_n_values(depth, n)?))
             }
             RESPType::Attribute => {
-                if depth >= Self::MAX_NESTING_DEPTH {
-                    return Err(RedisError::NestingDepthExceeded);
-                }
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Err(RedisError::InvalidAttribute);
-                }
-                let len = usize::try_from(len).expect("int cast");
-
-                let mut attrs =
-                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
-                let mut i: usize = 0;
-                while i < len {
-                    let key = self.read_value_with_depth(depth + 1)?;
-                    let value = self.read_value_with_depth(depth + 1)?;
-                    attrs.push(MapEntry { key, value });
-                    i += 1;
-                }
-
-                // Read the actual value that follows the attributes
+                let n = self
+                    .read_aggregate_header(depth, false, RedisError::InvalidAttribute)?
+                    .expect("!allow_null");
+                let attributes = self.read_n_entries(depth, n)?;
                 let value = Box::new(self.read_value_with_depth(depth + 1)?);
-
-                Ok(RESPValue::Attribute(Attribute {
-                    attributes: attrs,
-                    value,
-                }))
+                Ok(RESPValue::Attribute(Attribute { attributes, value }))
             }
             RESPType::Push => {
-                if depth >= Self::MAX_NESTING_DEPTH {
-                    return Err(RedisError::NestingDepthExceeded);
-                }
-                let len = self.read_integer()?;
-                if len <= 0 {
+                let n = self
+                    .read_aggregate_header(depth, false, RedisError::InvalidPush)?
+                    .expect("!allow_null");
+                if n == 0 {
                     return Err(RedisError::InvalidPush);
                 }
-
                 // First element is the push type
                 let kind: Box<[u8]> = match self.read_value_with_depth(depth + 1)? {
                     RESPValue::SimpleString(s) | RESPValue::BulkString(Some(s)) => s,
                     _ => return Err(RedisError::InvalidPush),
                 };
-
-                // Read the rest of the data
-                let data_len = usize::try_from(len - 1).expect("int cast");
-                let mut data =
-                    Vec::with_capacity(self.take_prealloc_budget(data_len, size_of::<RESPValue>()));
-                let mut i: usize = 0;
-                while i < data_len {
-                    data.push(self.read_value_with_depth(depth + 1)?);
-                    i += 1;
-                }
-
+                let data = self.read_n_values(depth, n - 1)?;
                 Ok(RESPValue::Push(Push { kind, data }))
             }
             RESPType::BigNumber => {

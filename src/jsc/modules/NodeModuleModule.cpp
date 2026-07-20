@@ -178,6 +178,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, idString, 0, index);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -230,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
             "(function (exports, require, module, __filename, __dirname) { "_s));
     JSString* suffix = jsString(vm, String("\n});"_s));
 
-    return JSValue::encode(jsString(globalObject, prefix, code, suffix));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, prefix, code, suffix)));
 }
 extern "C" void Bun__Node__Path_joinWTF(BunString* lhs, const char* rhs,
     size_t len, BunString* result);

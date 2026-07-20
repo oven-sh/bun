@@ -130,6 +130,29 @@ describe.concurrent("node-module-module", () => {
     expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
   });
 
+  // Module.wrap's rope concatenation and new Module()'s dirname jsSubstring
+  // both allocate and can throw; JSC's exception-check validator aborts the
+  // process when the result is used without a check.
+  test("Module.wrap / new Module() satisfy JSC exception-check validation", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const M = require("module"); M.wrap("x"); const m = new M("a/b"); if (m.id !== "a/b") throw new Error(m.id); console.log("ok");`,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("Overwriting _resolveFilename", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "resolveFilenameOverwrite.cjs")],

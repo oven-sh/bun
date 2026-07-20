@@ -3006,7 +3006,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if next.escaped || next.char != u32::from(b'|') {
                                 self.tokens.push(Token::Pipe);
-                            } else if next.char == u32::from(b'|') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoublePipe);
                             }

@@ -131,9 +131,7 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
   // way the process must emit a diagnostic rather than dying silently.
   const expectCrashDiagnostic = (stderr: string) => {
     // macOS delivers a guard-page fault as SIGBUS, Linux as SIGSEGV.
-    expect(stderr).toMatch(
-      isASAN ? /AddressSanitizer:.*stack-overflow/ : /(Segmentation fault|Bus error) at address/,
-    );
+    expect(stderr).toMatch(isASAN ? /AddressSanitizer:.*stack-overflow/ : /(Segmentation fault|Bus error) at address/);
   };
   // Skip llvm-symbolizer in the child; the unwinder walks hundreds of
   // identical frames and symbolising them all takes several seconds.

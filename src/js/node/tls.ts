@@ -398,6 +398,7 @@ const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
 
 const ObjectFreeze = Object.freeze;
+const ObjectDefineProperty = Object.defineProperty;
 
 function parseCertString() {
   // Removed since JAN 2022 Node v18.0.0+ https://github.com/nodejs/node/pull/41479
@@ -1686,7 +1687,7 @@ function getDefaultCiphers() {
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tls_exports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1728,8 +1729,16 @@ export default {
   Server,
   TLSSocket,
   checkServerIdentity,
-  get rootCertificates() {
-    return cacheBundledRootCertificates();
-  },
   getCACertificates,
-} as any as typeof import("node:tls");
+};
+
+// Node.js defines this with configurable: false so the bundled trust
+// store cannot be swapped out via Object.defineProperty.
+ObjectDefineProperty(tls_exports, "rootCertificates", {
+  __proto__: null,
+  configurable: false,
+  enumerable: true,
+  get: cacheBundledRootCertificates,
+});
+
+export default tls_exports as any as typeof import("node:tls");

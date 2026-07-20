@@ -1438,7 +1438,7 @@ impl ValkeyClient {
     }
 
     /// Get a writer targeting the outgoing write buffer.
-    pub fn writer(&mut self) -> WriteBufWriter<'_> {
+    pub(crate) fn writer(&mut self) -> WriteBufWriter<'_> {
         WriteBufWriter(&mut self.write_buffer)
     }
 

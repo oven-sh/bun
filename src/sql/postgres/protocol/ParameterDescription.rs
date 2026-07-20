@@ -46,9 +46,9 @@ impl ParameterDescription {
 // Rust cannot form an unaligned `&[i32]`, so we reinterpret as `&[[u8; 4]]`
 // (align 1) and let the caller `from_ne_bytes` each element.
 fn to_int32_slice(slice: &[u8]) -> &[[u8; core::mem::size_of::<Int4>()]] {
-    // `[u8; 4]` has align 1 and is `AnyBitPattern`, so this is a safe cast
-    // cast. Truncate any trailing `len % 4` bytes first (cast_slice would
-    // panic on a remainder).
+    // `[u8; 4]` has align 1 and is `AnyBitPattern`, so this is a safe
+    // `cast_slice`. Truncate any trailing `len % 4` bytes first (cast_slice
+    // would panic on a remainder).
     let n = core::mem::size_of::<Int4>();
     bun_core::cast_slice(&slice[..slice.len() - slice.len() % n])
 }

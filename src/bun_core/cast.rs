@@ -356,25 +356,28 @@ mod tests {
         assert_eq!(v, u32::from_ne_bytes([1, 2, 3, 4]));
     }
 
+    // `#[repr(align(2))]` guarantees an even base address so the alignment
+    // branch of `try_cast_slice` is deterministic in both tests below.
+    #[repr(align(2))]
+    struct Aligned2<const N: usize>([u8; N]);
+
     #[test]
     fn try_cast_rejects_slop() {
-        let bytes = [0u8; 3];
+        let a = Aligned2([0u8; 3]);
         assert_eq!(
-            try_cast_slice::<u8, u16>(&bytes).unwrap_err(),
+            try_cast_slice::<u8, u16>(&a.0).unwrap_err(),
             PodCastError::OutputSliceWouldHaveSlop
         );
     }
 
     #[test]
     fn try_cast_rejects_misalign() {
-        let bytes = [0u8; 5];
-        let odd = &bytes[1..5];
-        if (odd.as_ptr() as usize) % 2 != 0 {
-            assert_eq!(
-                try_cast_slice::<u8, u16>(odd).unwrap_err(),
-                PodCastError::TargetAlignmentGreaterAndInputNotAligned
-            );
-        }
+        let a = Aligned2([0u8; 6]);
+        let odd = &a.0[1..5];
+        assert_eq!(
+            try_cast_slice::<u8, u16>(odd).unwrap_err(),
+            PodCastError::TargetAlignmentGreaterAndInputNotAligned
+        );
     }
 
     #[test]

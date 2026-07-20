@@ -21,7 +21,7 @@ test("expect() failure messages render Invalid Date, not a sliced 'null'", async
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("Expected: 1970-01-01T00:00:00.000Z");
   expect(stderr).toContain("Received: Invalid Date");

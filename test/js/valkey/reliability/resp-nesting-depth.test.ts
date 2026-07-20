@@ -361,27 +361,29 @@ describe("Valkey: RESP push frame routing", () => {
     }
   });
 
-  test("psubscribe() does not enter subscriber mode (get/set still allowed)", async () => {
-    const psubscribeAck = Buffer.from(">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n");
-    const getReply = Buffer.from("$5\r\nvalue\r\n");
-
-    const { server, port } = await createMockRedisServer([psubscribeAck, getReply]);
-    try {
-      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
-        autoReconnect: false,
-        connectionTimeout: 2000,
-      });
-
+  for (const [label, cmd, ack] of [
+    ["psubscribe()", (c: Bun.RedisClient) => c.psubscribe("news.*"), ">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n"],
+    ["send('SSUBSCRIBE', ...)", (c: Bun.RedisClient) => c.send("SSUBSCRIBE", ["shard-ch"]), ">3\r\n$10\r\nssubscribe\r\n$8\r\nshard-ch\r\n:1\r\n"],
+  ] as const) {
+    test(`${label} does not enter subscriber mode (get/set still allowed)`, async () => {
+      const getReply = Buffer.from("$5\r\nvalue\r\n");
+      const { server, port } = await createMockRedisServer([Buffer.from(ack), getReply]);
       try {
-        expect(await client.psubscribe("news.*")).toEqual(0);
-        // Only `.subscribe(channel, handler)` populates the handler map and
-        // flips subscriber mode; psubscribe must not block regular commands.
-        expect(await client.get("k")).toBe("value");
+        const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+          autoReconnect: false,
+          connectionTimeout: 2000,
+        });
+        try {
+          expect(await cmd(client)).toEqual(0);
+          // Only `.subscribe(channel, handler)` populates the handler map and
+          // flips subscriber mode; pattern/shard acks must not block regular commands.
+          expect(await client.get("k")).toBe("value");
+        } finally {
+          client.close();
+        }
       } finally {
-        client.close();
+        server.close();
       }
-    } finally {
-      server.close();
-    }
-  });
+    });
+  }
 });

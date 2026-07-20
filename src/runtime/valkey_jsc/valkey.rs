@@ -902,10 +902,9 @@ impl ValkeyClient {
                 .subscription_ctx
                 .get()
                 .channels_subscribed_to_count(&global_this);
-            // Only `.subscribe(channel, handler)` populates the handler map, so
-            // only a plain `subscribe` ack enters subscriber mode. A psubscribe
-            // / ssubscribe ack just settles its promise without gating regular
-            // commands (RESP3 permits them while pattern/shard subscribed).
+            // Only `.subscribe(ch, handler)` wires the handler map, so only a
+            // plain `subscribe` ack enters subscriber mode; psubscribe /
+            // ssubscribe acks just settle their promise (RESP3 allows this).
             if matches!(kind, protocol::SubscriptionPushMessage::Subscribe) {
                 p.add_subscription();
                 self.parent().on_valkey_subscribe();

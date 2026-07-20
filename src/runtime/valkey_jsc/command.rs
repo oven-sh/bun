@@ -163,8 +163,10 @@ bun_core::comptime_string_set! {
         b"PIPELINE",
         b"SUBSCRIBE",
         b"PSUBSCRIBE",
+        b"SSUBSCRIBE",
         b"UNSUBSCRIBE",
         b"PUNSUBSCRIBE",
+        b"SUNSUBSCRIBE",
     };
 }
 

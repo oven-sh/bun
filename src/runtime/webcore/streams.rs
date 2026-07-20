@@ -1698,7 +1698,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.drain_open_chunk() {
                 return true;
             }
-            let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+            let _ = self.flush_promise();
             return true;
         }
 

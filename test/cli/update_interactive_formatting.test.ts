@@ -363,30 +363,30 @@ describe("bun update --interactive", () => {
   // The header's help-text budget is `terminal_width - 30`; on a tty narrower
   // than 30 columns that usize subtraction overflows (panics on overflow-checks
   // builds). Exercise the render path through a 20-column pty.
-  it.skipIf(isWindows)(
-    "should render on a terminal narrower than the header prefix",
-    async () => {
-      const openptyDecl = {
-        args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
-        returns: FFIType.i32,
-      } as const;
-      const lib =
-        process.platform === "darwin"
-          ? dlopen("libc.dylib", { openpty: openptyDecl })
-          : isMusl
-            ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", {
-                openpty: openptyDecl,
-              })
-            : dlopen("libutil.so.1", { openpty: openptyDecl });
+  it.skipIf(isWindows)("should render on a terminal narrower than the header prefix", async () => {
+    const openptyDecl = {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.i32,
+    } as const;
+    const lib =
+      process.platform === "darwin"
+        ? dlopen("libc.dylib", { openpty: openptyDecl })
+        : isMusl
+          ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", {
+              openpty: openptyDecl,
+            })
+          : dlopen("libutil.so.1", { openpty: openptyDecl });
 
-      const masterBuf = new Int32Array(1);
-      const slaveBuf = new Int32Array(1);
-      // struct winsize { u16 ws_row; u16 ws_col; u16 ws_xpixel; u16 ws_ypixel; }
-      const winsize = new Uint16Array([24, 20, 0, 0]);
-      expect(lib.symbols.openpty(masterBuf, slaveBuf, null, null, winsize)).toBe(0);
-      const master = masterBuf[0];
-      const slave = slaveBuf[0];
+    const masterBuf = new Int32Array(1);
+    const slaveBuf = new Int32Array(1);
+    // struct winsize { u16 ws_row; u16 ws_col; u16 ws_xpixel; u16 ws_ypixel; }
+    const winsize = new Uint16Array([24, 20, 0, 0]);
+    expect(lib.symbols.openpty(masterBuf, slaveBuf, null, null, winsize)).toBe(0);
+    const master = masterBuf[0];
+    const slave = slaveBuf[0];
+    let slaveOpen = true;
 
+    try {
       const dir = tempDirWithFiles("update-interactive-narrow-tty", {
         "bunfig.toml": `[install]
 cache = false
@@ -399,65 +399,68 @@ registry = "${registryUrl}"
         }),
       });
 
-      try {
-        await using install = Bun.spawn({
-          cmd: [bunExe(), "install"],
-          cwd: dir,
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [installOut, installErr, installCode] = await Promise.all([
-          install.stdout.text(),
-          install.stderr.text(),
-          install.exited,
-        ]);
-        expect({ stdout: installOut, stderr: installErr, exitCode: installCode }).toMatchObject({ exitCode: 0 });
+      await using install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [installOut, installErr, installCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect({ stdout: installOut, stderr: installErr, exitCode: installCode }).toMatchObject({ exitCode: 0 });
 
-        await using update = Bun.spawn({
-          cmd: [bunExe(), "update", "--interactive", "--dry-run"],
-          cwd: dir,
-          env: bunEnv,
-          stdin: "pipe",
-          stdout: slave,
-          stderr: "pipe",
-        });
-        // Drop the parent's slave handle so master reads see EOF on child exit.
-        closeSync(slave);
+      await using update = Bun.spawn({
+        cmd: [bunExe(), "update", "--interactive", "--dry-run"],
+        cwd: dir,
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: slave,
+        stderr: "pipe",
+      });
+      // Drop the parent's slave handle so master reads see EOF on child exit.
+      closeSync(slave);
+      slaveOpen = false;
 
-        // Drain the master concurrently so a crashing debug build's backtrace
-        // doesn't block on a full pty buffer.
-        let ptyOutput = "";
-        const ptyStream = createReadStream("", { fd: master, autoClose: false });
-        const drained = new Promise<void>(resolve => {
-          ptyStream.on("data", chunk => (ptyOutput += chunk.toString("utf8")));
-          ptyStream.on("error", () => resolve());
-          ptyStream.on("end", () => resolve());
-          ptyStream.on("close", () => resolve());
-        });
+      // Drain the master concurrently so a crashing debug build's backtrace
+      // doesn't block on a full pty buffer.
+      let ptyOutput = "";
+      const ptyStream = createReadStream("", { fd: master, autoClose: false });
+      const drained = new Promise<void>(resolve => {
+        ptyStream.on("data", chunk => (ptyOutput += chunk.toString("utf8")));
+        ptyStream.on("error", () => resolve());
+        ptyStream.on("end", () => resolve());
+        ptyStream.on("close", () => resolve());
+      });
 
-        update.stdin.write("\r");
-        update.stdin.end();
+      update.stdin.write("\r");
+      update.stdin.end();
 
-        const [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited]);
-        await drained;
+      const [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited]);
+      await drained;
 
-        if (exitCode !== 0) {
-          console.error("stderr:", stderr);
-        }
+      if (exitCode !== 0) {
+        console.error("stderr:", stderr);
+      }
 
-        // The header proves we reached process_multi_select where width is used.
-        expect(ptyOutput).toContain("Select packages to update");
-        expect(stderr).not.toContain("attempt to subtract with overflow");
-        expect(exitCode).toBe(0);
-      } finally {
+      // The header proves we reached process_multi_select where width is used.
+      expect(ptyOutput).toContain("Select packages to update");
+      expect(stderr).not.toContain("attempt to subtract with overflow");
+      expect(exitCode).toBe(0);
+    } finally {
+      if (slaveOpen) {
         try {
-          closeSync(master);
+          closeSync(slave);
         } catch {}
       }
-    },
-    30_000,
-  );
+      try {
+        closeSync(master);
+      } catch {}
+    }
+  });
 
   it("should update packages when 'a' (select all) is used", async () => {
     const dir = tempDirWithFiles("update-interactive-select-all", {

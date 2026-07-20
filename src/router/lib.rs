@@ -1548,12 +1548,31 @@ pub mod pattern {
 
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
+        ///
+        /// `params` is scratch shared by every candidate route, so a failed match
+        /// restores it to the length it had on entry: parameters pushed while
+        /// probing a route that loses must never reach the route that wins.
         pub fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
             name: &'a [u8],
             // case-insensitive, must not have a leading slash
+            match_name: &[u8],
+            params: &mut route_param::List<'a>,
+        ) -> bool {
+            let params_len = params.len();
+            if Self::match_inner::<ALLOW_OPTIONAL_CATCH_ALL>(path, name, match_name, params) {
+                return true;
+            }
+
+            params.truncate(params_len);
+            false
+        }
+
+        fn match_inner<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+            path: &'a [u8],
+            name: &'a [u8],
             match_name: &[u8],
             params: &mut route_param::List<'a>,
         ) -> bool {
@@ -1568,7 +1587,6 @@ pub mod pattern {
                         let segment =
                             &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.truncate(0); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1591,7 +1609,6 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.truncate(0); // shrinkRetainingCapacity(0)
                                 return false;
                             }
 

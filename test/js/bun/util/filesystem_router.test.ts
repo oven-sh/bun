@@ -231,6 +231,116 @@ it("should support catch-all routes", () => {
   }
 });
 
+// Pattern.match_ reuses one scratch param list across every candidate route and used
+// to clear it on only some of its failure paths, so params pushed while probing a
+// route that lost still reached the route that won.
+const probedRouteFixtures = [
+  {
+    label: "a losing pattern that ran out with path segments left over",
+    files: ["[user]/settings.tsx", "help/[...usertopic].tsx"],
+    pathname: "/help/settings/a",
+    name: "/help/[...usertopic]",
+    params: { usertopic: "settings/a" },
+  },
+  {
+    label: "a losing route that names its param like the winner's",
+    files: ["[topic]/settings.tsx", "help/[...topic].tsx"],
+    pathname: "/help/settings/a",
+    name: "/help/[...topic]",
+    params: { topic: "settings/a" },
+  },
+  {
+    label: "a losing route whose catch-all had nothing left to consume",
+    files: ["[c]/b/[...rest].tsx", "[c]/[...d].tsx"],
+    pathname: "/x/b",
+    name: "/[c]/[...d]",
+    params: { c: "x", d: "b" },
+  },
+  {
+    // https://github.com/oven-sh/bun/issues/12206
+    label: "sibling routes under a shared dynamic segment",
+    files: [
+      "admin/[businessId]/index.tsx",
+      "admin/[businessId]/providers/index.tsx",
+      "admin/[businessId]/providers/create.tsx",
+      "admin/[businessId]/providers/[providerId]/edit.tsx",
+      "admin/[businessId]/providers/[providerId]/delete.tsx",
+    ],
+    pathname: "/admin/6679fbe17b41431a977163fd/providers/create",
+    name: "/admin/[businessId]/providers/create",
+    params: { businessId: "6679fbe17b41431a977163fd" },
+  },
+  {
+    // https://github.com/oven-sh/bun/issues/15554
+    label: "a dynamic leaf next to its own index route",
+    files: ["[a]/index.ts", "[a]/test/index.ts", "[a]/test/[b].ts"],
+    pathname: "/1/test/2",
+    name: "/[a]/test/[b]",
+    params: { a: "1", b: "2" },
+  },
+  {
+    // https://github.com/oven-sh/bun/issues/15554
+    label: "a dynamic leaf that is itself an index route",
+    files: ["[a]/index.ts", "[a]/test/index.ts", "[a]/test/[b]/index.ts"],
+    pathname: "/1/test/2",
+    name: "/[a]/test/[b]",
+    params: { a: "1", b: "2" },
+  },
+];
+
+it.each(probedRouteFixtures)("does not leak params from $label", ({ files, pathname, name, params }) => {
+  const { dir } = make(files);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  const match = router.match(pathname)!;
+  expect({ name: match.name, params: match.params }).toEqual({ name, params });
+});
+
+it("does not crash reading .params when a probed route's param name is absent from the match", async () => {
+  // A leaked param name that the winning route's name does not contain resolves to a
+  // zero-length property key, which JSC's Identifier::fromString dereferences as null.
+  // Run in a subprocess so the crash is an exit code rather than a dead test runner.
+  using dir = tempDir("fsr-param-leak-crash", {
+    "pattern-ran-out/[user]/settings.tsx": "export default 1;",
+    "pattern-ran-out/help/[...topic].tsx": "export default 1;",
+    "empty-catch-all/[a]/b/[...rest].tsx": "export default 1;",
+    "empty-catch-all/[c]/[...d].tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    import path from "path";
+    const out = {};
+    for (const [subdir, pathname] of [["pattern-ran-out", "/help/settings/a"], ["empty-catch-all", "/x/b"]]) {
+      const router = new Bun.FileSystemRouter({
+        dir: path.join(${JSON.stringify(String(dir))}, subdir),
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      const match = router.match(pathname);
+      out[subdir] = match ? { name: match.name, params: match.params } : null;
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "pattern-ran-out": { name: "/help/[...topic]", params: { topic: "settings/a" } },
+    "empty-catch-all": { name: "/[c]/[...d]", params: { c: "x", d: "b" } },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("should support index routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);

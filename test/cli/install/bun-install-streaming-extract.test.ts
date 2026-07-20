@@ -326,12 +326,14 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("drain threshold holds off extraction until enough bytes arrive", async () => {
-    // Below the threshold no drain is scheduled, so nothing lands in the
-    // extraction temp dir; crossing it schedules one drain that writes
-    // package.json while later entries stay absent until the body resumes.
-    const threshold = 1024 * 1024;
-    const belowThreshold = 512 * 1024;
+  // Below the threshold no drain is scheduled, so nothing lands in the
+  // extraction temp dir; crossing it schedules one drain that writes
+  // package.json while later entries stay absent until the body resumes.
+  test.each([
+    ["default", 256 * 1024, {}],
+    ["override", 1024 * 1024, { BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(1024 * 1024) }],
+  ] as const)("drain threshold holds off extraction until enough bytes arrive (%s)", async (_, threshold, extraEnv) => {
+    const belowThreshold = threshold >> 1;
     const aboveThreshold = threshold + 128 * 1024;
     expect(aboveThreshold).toBeLessThan(tgz.length);
 
@@ -410,30 +412,41 @@ describe("streaming tarball extraction", () => {
         BUN_TMPDIR: tmp,
         TMPDIR: tmp,
         BUN_INSTALL_CACHE_DIR: cache,
-        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(threshold),
+        ...extraEnv,
       },
       stdout: "pipe",
       stderr: "pipe",
     });
+    const stdoutP = proc.stdout.text();
+    const stderrP = proc.stderr.text();
+    let gated = true;
+    const earlyExit = proc.exited.then(async code => {
+      if (gated) throw new Error(`bun install exited (${code}) before reaching a phase gate\n${await stderrP}`);
+    });
+    earlyExit.catch(() => {});
 
-    // Phase 1: server has sent < threshold. No drain has been scheduled,
-    // so nothing is extracted yet.
-    await phase1.promise;
-    await Bun.sleep(250);
-    expect(findExtracted("package.json")).toBeNull();
+    // Phase 1: server has sent < threshold. No drain is scheduled, so the
+    // temp dir stays empty; there is no "drain did not run" event to await
+    // from outside the child, so poll a bounded window.
+    await Promise.race([phase1.promise, earlyExit]);
+    for (let i = 0; i < 25; i++) {
+      expect(findExtracted("package.json")).toBeNull();
+      await Bun.sleep(10);
+    }
 
     // Phase 2: send past the threshold. The first drain runs and writes
     // package.json; the last data entry is still missing bytes.
     gate1.resolve();
-    await phase2.promise;
+    await Promise.race([phase2.promise, earlyExit]);
     let extractedPkgJson: string | null = null;
     for (let i = 0; i < 1000 && !(extractedPkgJson = findExtracted("package.json")); i++) await Bun.sleep(10);
     expect(extractedPkgJson).not.toBeNull();
     expect(findExtracted(join("data", "chunk-47.bin"))).toBeNull();
 
     // Finish.
+    gated = false;
     gate2.resolve();
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([stdoutP, stderrP, proc.exited]);
     expect(stderr).not.toContain("error:");
     expect(stderr).toContain("Streamed ");
     expect({ stdout, exitCode }).toMatchObject({ exitCode: 0 });

@@ -1177,10 +1177,6 @@ impl<'a> Resolver<'a> {
         }
 
         if self.log_ref().level == bun_ast::Level::Verbose {
-            if self.debug_logs.is_some() {
-                // deinit → drop
-                self.debug_logs = None;
-            }
             self.debug_logs = Some(DebugLogs::init().expect("unreachable"));
         }
 

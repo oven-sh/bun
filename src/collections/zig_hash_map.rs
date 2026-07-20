@@ -340,7 +340,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         Q: ?Sized,
     {
         self.get_index(key)
-            .and_then(|i| self.slots[i].as_ref().map(|(_, v)| v))
+            .map(|i| &self.slots[i].as_ref().unwrap().1)
     }
 
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
@@ -350,7 +350,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         Q: ?Sized,
     {
         self.get_index(key)
-            .and_then(move |i| self.slots[i].as_mut().map(|(_, v)| v))
+            .map(move |i| &mut self.slots[i].as_mut().unwrap().1)
     }
 
     pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
@@ -359,8 +359,10 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         C: HashContext<Q>,
         Q: ?Sized,
     {
-        self.get_index(key)
-            .and_then(|i| self.slots[i].as_ref().map(|(k, v)| (k, v)))
+        self.get_index(key).map(|i| {
+            let (k, v) = self.slots[i].as_ref().unwrap();
+            (k, v)
+        })
     }
 
     #[inline]
@@ -477,9 +479,9 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         Ok(())
     }
 
-    fn remove_by_index(&mut self, idx: usize) -> Option<(K, V)> {
+    fn remove_by_index(&mut self, idx: usize) -> (K, V) {
         self.metadata[idx] = SLOT_TOMBSTONE;
-        let kv = self.slots[idx].take();
+        let kv = self.slots[idx].take().unwrap();
         self.size -= 1;
         self.available += 1;
         kv
@@ -492,8 +494,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         C: HashContext<Q>,
         Q: ?Sized,
     {
-        self.get_index(key)
-            .and_then(|i| self.remove_by_index(i).map(|(_, v)| v))
+        self.get_index(key).map(|i| self.remove_by_index(i).1)
     }
 
     /// std `remove_entry`.
@@ -503,7 +504,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         C: HashContext<Q>,
         Q: ?Sized,
     {
-        self.get_index(key).and_then(|i| self.remove_by_index(i))
+        self.get_index(key).map(|i| self.remove_by_index(i))
     }
 
     /// Remove and return the owned `{key, value}` pair.

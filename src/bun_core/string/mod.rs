@@ -1498,10 +1498,7 @@ impl ZigString {
             // string death. `heap::release` is the hand-off-to-foreign-owner
             // spelling.
             let leaked: &'static mut [u16] = crate::heap::release(utf16.into_boxed_slice());
-            let mut out = ZigString::init_utf16(leaked);
-            out.mark_global();
-            out.mark_utf16();
-            Ok(out)
+            Ok(ZigString::from16_slice(leaked))
         } else {
             // Same hand-off: JSC owns the bytes, freed via `mi_free` on string death.
             let duped: &'static mut [u8] = crate::heap::release(Box::<[u8]>::from(utf8));

@@ -177,7 +177,7 @@ pub fn init_global(
     if let Some(dir) = cwd {
         // Dupe to keep Box<[u8]> ownership uniform.
         global.top_level_dir = Box::<[u8]>::from(dir);
-    } else if global.top_level_dir.is_empty() {
+    } else {
         let mut buf = bun_paths::PathBuffer::uninit();
         match sys::getcwd(&mut buf[..]) {
             Ok(len) => {

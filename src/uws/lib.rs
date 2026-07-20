@@ -1174,7 +1174,7 @@ pub mod ssl_wrapper {
         /// re-checked between pops and nothing else of `self` is borrowed
         /// across a dispatch.
         fn flush_pending_events(this: *mut Self, buffer: &mut [u8; BUFFER_SIZE]) {
-            if Self::r(this).handlers.on_session.is_some() {
+            if let Some(on_session) = Self::r(this).handlers.on_session {
                 loop {
                     let Some(ssl) = Self::r(this).ssl else { return };
                     // SAFETY: ssl is live (checked above); buffer is writable
@@ -1189,12 +1189,10 @@ pub mod ssl_wrapper {
                     if len <= 0 {
                         break;
                     }
-                    if let Some(on_session) = Self::r(this).handlers.on_session {
-                        on_session(Self::r(this).handlers.ctx, &buffer[..len as usize]);
-                    }
+                    on_session(Self::r(this).handlers.ctx, &buffer[..len as usize]);
                 }
             }
-            if Self::r(this).handlers.on_keylog.is_some() {
+            if let Some(on_keylog) = Self::r(this).handlers.on_keylog {
                 loop {
                     let Some(ssl) = Self::r(this).ssl else { return };
                     // SAFETY: same as the session pop above; keylog entries
@@ -1209,9 +1207,7 @@ pub mod ssl_wrapper {
                     if len <= 0 {
                         break;
                     }
-                    if let Some(on_keylog) = Self::r(this).handlers.on_keylog {
-                        on_keylog(Self::r(this).handlers.ctx, &buffer[..len as usize]);
-                    }
+                    on_keylog(Self::r(this).handlers.ctx, &buffer[..len as usize]);
                 }
             }
         }

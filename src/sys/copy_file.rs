@@ -433,9 +433,6 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
                     amt_written += wrote;
                 }
             }
-            if amt_read == 0 {
-                return Ok(0);
-            }
             Ok(amt_read)
         }
         Err(err) => Err(err),

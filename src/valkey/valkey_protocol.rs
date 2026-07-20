@@ -355,7 +355,8 @@ impl<'a> ValkeyReader<'a> {
     /// server amplify a few KB of nested aggregate headers carrying huge
     /// declared lengths into gigabytes of reserved capacity.
     fn take_prealloc_budget(&mut self, len: usize, element_size: usize) -> usize {
-        let cap = len.min(self.prealloc_budget / element_size.max(1));
+        debug_assert_ne!(element_size, 0);
+        let cap = len.min(self.prealloc_budget / element_size);
         self.prealloc_budget -= cap * element_size;
         cap
     }

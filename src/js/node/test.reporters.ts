@@ -155,14 +155,16 @@ function tapIndent(nesting: number) {
 }
 
 function tapEscape(input: string) {
-  let result = input.replaceAll("\b", "\\b");
+  // Escape the escape character first so the control-char replacements below
+  // don't get their own backslash doubled (node's tap.js order).
+  let result = input.replaceAll("\\", "\\\\");
+  result = result.replaceAll("#", "\\#");
+  result = result.replaceAll("\b", "\\b");
   result = result.replaceAll("\f", "\\f");
   result = result.replaceAll("\t", "\\t");
   result = result.replaceAll("\n", "\\n");
   result = result.replaceAll("\r", "\\r");
   result = result.replaceAll("\v", "\\v");
-  result = result.replaceAll("\\", "\\\\");
-  result = result.replaceAll("#", "\\#");
   return result;
 }
 
@@ -606,7 +608,7 @@ async function* junit(source) {
               attrs: {
                 __proto__: null,
                 type: error?.failureType || error?.code,
-                message: error?.message.trim() ?? "",
+                message: error?.message?.trim() ?? "",
               },
               children: [inspect(error, kInspectOptions)],
             });

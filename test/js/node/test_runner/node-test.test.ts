@@ -1,7 +1,10 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
+
+// Every test here spawns a bun subprocess (debug+ASAN startup is ~3s each).
+setDefaultTimeout(isDebug ? 30_000 : 10_000);
 
 describe("node:test", () => {
   test("should run basic tests", async () => {
@@ -539,8 +542,8 @@ test("run(): an uncaught exception during a pending body fails that test instead
   const hangGuard = isDebug ? 20_000 : 4_000;
   const exited = await Promise.race([proc.exited, Bun.sleep(hangGuard).then(() => "timeout" as const)]);
   if (exited === "timeout") proc.kill();
-  const stdout = await proc.stdout.text();
-  expect(exited).not.toBe("timeout");
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  expect({ exited, stderr }).not.toMatchObject({ exited: "timeout" });
   const fails = JSON.parse(stdout.trim() || "[]");
   expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
 }, 30_000);
@@ -582,9 +585,8 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  const counts = JSON.parse(stdout.trim());
-  expect(counts.failed).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const counts = JSON.parse(stdout.trim() || "null");
+  expect({ counts, stderr, exitCode }).toMatchObject({ counts: { failed: 0 }, exitCode: 0 });
   expect(counts.passed).toBeGreaterThanOrEqual(1);
-  expect(exitCode).toBe(0);
-});
+}, 30_000);

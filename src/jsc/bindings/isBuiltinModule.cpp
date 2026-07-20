@@ -45,7 +45,6 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "constants"_s,
     "inspector"_s,
     "node:test"_s,
-    "node:test/reporters"_s,
     "bun:sqlite"_s,
     "path/posix"_s,
     "path/win32"_s,
@@ -79,6 +78,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_stream_transform"_s,
     "readline/promises"_s,
     "inspector/promises"_s,
+    "node:test/reporters"_s,
     "_stream_passthrough"_s,
     "diagnostics_channel"_s,
 };

@@ -1737,6 +1737,10 @@ class TestPlan {
         }, wait);
         // Not unref'd: count()/cancel()/the timer callback always clear it, and
         // on Windows an unref'd timer alone under bun:test busy-spins (8664279d).
+      } else {
+        // wait === true: keep a ref'd handle so an .unref()'d user timer still
+        // fires on Windows while this await is the only work (see above).
+        timer = realSetTimeout(() => {}, kTimeoutMax);
       }
       this.#pending = { resolve, reject, timer };
     });

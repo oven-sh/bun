@@ -739,19 +739,34 @@ pub struct Attribute {
     pub value: Box<RESPValue>,
 }
 
+/// The nine RESP3 pub/sub push kinds: plain, pattern (`p`-prefixed) and
+/// sharded (`s`-prefixed) message delivery plus the matching subscribe /
+/// unsubscribe acks.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SubscriptionPushMessage {
     Message,
+    PMessage,
+    SMessage,
     Subscribe,
+    PSubscribe,
+    SSubscribe,
     Unsubscribe,
+    PUnsubscribe,
+    SUnsubscribe,
 }
 
 bun_core::comptime_string_map! {
     static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
         b"message" => SubscriptionPushMessage::Message,
+        b"pmessage" => SubscriptionPushMessage::PMessage,
+        b"smessage" => SubscriptionPushMessage::SMessage,
         b"subscribe" => SubscriptionPushMessage::Subscribe,
+        b"psubscribe" => SubscriptionPushMessage::PSubscribe,
+        b"ssubscribe" => SubscriptionPushMessage::SSubscribe,
         b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+        b"punsubscribe" => SubscriptionPushMessage::PUnsubscribe,
+        b"sunsubscribe" => SubscriptionPushMessage::SUnsubscribe,
     };
 }
 
@@ -761,17 +776,21 @@ impl SubscriptionPushMessage {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
     }
 
-    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
-    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
-    /// `from_bytes` before this is consulted.
     #[inline]
-    pub fn is_reply_kind(kind: &[u8]) -> bool {
-        match kind.split_first() {
-            Some((b'p' | b's', base)) => matches!(
-                Self::from_bytes(base),
-                Some(Self::Subscribe | Self::Unsubscribe)
-            ),
-            _ => false,
-        }
+    pub fn is_message(self) -> bool {
+        matches!(self, Self::Message | Self::PMessage | Self::SMessage)
+    }
+
+    #[inline]
+    pub fn is_subscribe_ack(self) -> bool {
+        matches!(self, Self::Subscribe | Self::PSubscribe | Self::SSubscribe)
+    }
+
+    #[inline]
+    pub fn is_unsubscribe_ack(self) -> bool {
+        matches!(
+            self,
+            Self::Unsubscribe | Self::PUnsubscribe | Self::SUnsubscribe
+        )
     }
 }

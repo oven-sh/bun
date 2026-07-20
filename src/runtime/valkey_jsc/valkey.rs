@@ -382,7 +382,7 @@ impl ValkeyClient {
             return false;
         }
 
-        self.ref_();
+        let _guard = self.parent().ref_scope();
 
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
@@ -420,8 +420,6 @@ impl ValkeyClient {
 
         let have_more = self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
-
-        self.deref();
 
         // Return true if we should schedule another flush
         have_more
@@ -720,9 +718,7 @@ impl ValkeyClient {
         );
         // Path 1: Buffer already has data, append and process from buffer
         if !self.read_buffer.remaining().is_empty() {
-            self.read_buffer
-                .write(data)
-                .expect("failed to write to read buffer");
+            self.read_buffer.write(data).unwrap_or_oom();
 
             // Process as many complete messages from the buffer as possible
             loop {
@@ -749,7 +745,7 @@ impl ValkeyClient {
                         return Ok(());
                     }
                     Err(err) => {
-                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        self.fail(b"Failed to parse server response", err)?;
                         return Ok(());
                     }
                 }
@@ -1017,23 +1013,18 @@ impl ValkeyClient {
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if let RESPValue::Push(push) = value {
             match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                Some(protocol::SubscriptionPushMessage::Message) => {
+                Some(k) if k.is_message() => {
                     // Message pushes never need promise pairs
                     should_consume_promise_pair = false;
                 }
-                Some(
-                    protocol::SubscriptionPushMessage::Subscribe
-                    | protocol::SubscriptionPushMessage::Unsubscribe,
-                ) => {
-                    // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
+                Some(_) => {
+                    // Subscribe/unsubscribe acks only need promise pairs if we have pending commands
                     if self.in_flight.readable_length() == 0 {
                         should_consume_promise_pair = false;
                     }
                 }
                 None => {
-                    if !protocol::SubscriptionPushMessage::is_reply_kind(&push.kind) {
-                        should_consume_promise_pair = false;
-                    }
+                    should_consume_promise_pair = false;
                 }
             }
         }

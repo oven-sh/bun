@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -969,5 +969,106 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
       await proc.exited;
       proc.terminal?.close();
     }
+  },
+);
+
+// Windows: --no-orphans self-assigns to a kill-on-close Job Object. Children
+// inherit Job membership, so when Bun is TerminateProcess'd the kernel closes
+// the Job handle and terminates every descendant. No sh supervisor layer —
+// the test kills Bun directly and observes the grandchild.
+async function spawnTreeWindows(noOrphans: boolean) {
+  const env: Record<string, string> = { ...bunEnv };
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+  const bun = Bun.spawn({
+    cmd: [bunExe(), ...(noOrphans ? ["--no-orphans"] : []), `${String(fixture)}/child.js`],
+    env,
+    cwd: String(fixture),
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const reader = bun.stdout.getReader();
+  const decoder = new TextDecoder();
+  let line = "";
+  while (!line.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    line += decoder.decode(value, { stream: true });
+  }
+  reader.releaseLock();
+  const [bunPid, , grandchildPid] = line.trim().split(" ").map(Number);
+  expect(bunPid).toBe(bun.pid);
+  expect(grandchildPid).toBeGreaterThan(0);
+  return { bun, grandchildPid };
+}
+
+test.concurrent.skipIf(!isWindows)(
+  "windows: without --no-orphans, grandchild survives TerminateProcess on Bun",
+  async () => {
+    const { bun, grandchildPid } = await spawnTreeWindows(false);
+    expect(isAlive(grandchildPid)).toBe(true);
+    bun.kill("SIGKILL");
+    await bun.exited;
+    const died = await waitUntilDead(grandchildPid, 1000);
+    reap(grandchildPid);
+    expect(died).toBe(false);
+  },
+);
+
+test.concurrent.skipIf(!isWindows)(
+  "windows: --no-orphans reaps grandchild when Bun is TerminateProcess'd",
+  async () => {
+    const { bun, grandchildPid } = await spawnTreeWindows(true);
+    expect(isAlive(grandchildPid)).toBe(true);
+    bun.kill("SIGKILL");
+    await bun.exited;
+    const died = await waitUntilDead(grandchildPid, 10000);
+    reap(grandchildPid);
+    expect(died).toBe(true);
+  },
+);
+
+// The inner Bun and its child are both Bun (and so both self-assign to a Job
+// via env-var inheritance). This grandchild is a non-Bun process that never
+// creates its own Job — proves Job membership is inherited across spawn.
+test.concurrent.skipIf(!isWindows)(
+  "windows: --no-orphans reaps a non-Bun grandchild when Bun is TerminateProcess'd",
+  async () => {
+    using dir = tempDir("no-orphans-win-nonbun", {
+      "child.js": `
+        const gc = Bun.spawn({
+          cmd: ["cmd.exe", "/c", "echo r& ping -n 120 127.0.0.1 > NUL"],
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        await gc.stdout.getReader().read();
+        console.log(process.pid, process.ppid, gc.pid);
+        setInterval(()=>{}, 1000);
+      `,
+    });
+    const env: Record<string, string> = { ...bunEnv };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    const bun = Bun.spawn({
+      cmd: [bunExe(), "--no-orphans", "child.js"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const reader = bun.stdout.getReader();
+    const decoder = new TextDecoder();
+    let line = "";
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      line += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+    const [, , grandchildPid] = line.trim().split(" ").map(Number);
+    expect(grandchildPid).toBeGreaterThan(0);
+    expect(isAlive(grandchildPid)).toBe(true);
+    bun.kill("SIGKILL");
+    await bun.exited;
+    const died = await waitUntilDead(grandchildPid, 10000);
+    reap(grandchildPid);
+    expect(died).toBe(true);
   },
 );

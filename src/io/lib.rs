@@ -41,28 +41,83 @@ mod keep_alive;
 pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
 
-// ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
-// Windows handles orphan death via Job Objects in `spawn`. Downstream code
-// calls `install()` / `enable()` / `is_enabled()` unconditionally, so a
-// no-op Windows stub keeps the cross-platform call sites (main.rs, bunfig,
-// run_command, filter_run, dispatch) compiling.
+// ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
+// exit-time descendant SIGKILL walk. Windows uses a kill-on-close Job Object
+// self-assigned at `enable()`; children inherit Job membership (nested jobs,
+// Win8+), so when this process exits for any reason, including
+// `TerminateProcess`, the kernel closes our Job handle and terminates every
+// descendant. Downstream code calls `install()` / `enable()` / `is_enabled()`
+// unconditionally, so both arms expose the same surface.
 #[cfg(not(windows))]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
 #[cfg(windows)]
 pub mod parent_death_watchdog {
+    use core::sync::atomic::{AtomicBool, Ordering};
+
     use crate::posix_event_loop::EventLoopCtx;
+
     /// Unit struct — `FilePoll.Owner` dispatch needs a real pointee type.
     pub struct ParentDeathWatchdog;
     pub const EXIT_CODE: u8 = 128 + 1;
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+
     #[inline]
     pub fn is_enabled() -> bool {
-        false
+        ENABLED.load(Ordering::Relaxed)
     }
+
+    /// Called from `main()` before the CLI starts. Checks the env var and
+    /// enables the watchdog; `bunfig.toml`'s `[run] noOrphans` and the
+    /// `--no-orphans` flag call `enable()` directly later in startup.
     #[inline]
-    pub fn install() {}
-    #[inline]
-    pub fn enable() {}
+    pub fn install() {
+        if !bun_core::env_var::BUN_FEATURE_FLAG_NO_ORPHANS
+            .get()
+            .unwrap_or(false)
+        {
+            return;
+        }
+        enable();
+    }
+
+    /// Idempotent. Creates an anonymous kill-on-close Job Object and assigns
+    /// the current process to it. The handle is intentionally leaked: closing
+    /// it early would fire `KILL_ON_JOB_CLOSE` and terminate us. Best-effort;
+    /// on failure the flag stays set so `run_command` still propagates the env
+    /// var to nested Bun processes.
+    #[cold]
+    #[inline(never)]
+    pub fn enable() {
+        use bun_sys::windows;
+        if ENABLED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
+        unsafe {
+            let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
+            if job.is_null() {
+                return;
+            }
+            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if windows::SetInformationJobObject(
+                job,
+                windows::JobObjectExtendedLimitInformation,
+                core::ptr::from_mut(&mut jeli).cast(),
+                core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+            {
+                windows::CloseHandle(job);
+                return;
+            }
+            if windows::AssignProcessToJobObject(job, windows::GetCurrentProcess()) == 0 {
+                windows::CloseHandle(job);
+            }
+        }
+    }
+
     #[inline]
     pub fn install_on_event_loop(_handle: EventLoopCtx) {}
     #[inline]

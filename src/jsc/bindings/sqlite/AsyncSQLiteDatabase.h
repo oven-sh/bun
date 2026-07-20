@@ -148,9 +148,19 @@ public:
         Closed
     };
 
+    // Result of a per-operation cancellation request evaluated under the lock.
+    // RemovedFromQueue settles on the JS thread without a native completion;
+    // Interrupted waits for the native completion; NotFound already completed.
+    enum class CancelOutcome : uint8_t {
+        NotFound,
+        RemovedFromQueue,
+        Interrupted
+    };
+
     AsyncSQLiteConnection(uint32_t, std::string&&, uint32_t, int, bool, bool, int);
 
     bool admit(uint64_t, std::string&&, AsyncSQLiteOperationKind, std::unique_ptr<AsyncSQLiteBindings>&&);
+    CancelOutcome cancelOperation(uint64_t);
     void open(uint64_t, uint32_t);
     bool close(uint64_t, uint32_t);
     void abandon();
@@ -184,12 +194,26 @@ private:
     void scheduleOperation(Operation&&);
     void scheduleClose();
     void interruptLocked();
+    // Custom busy handler (ptr is the connection): emulates sqlite3_busy_timeout's
+    // backoff but yields immediately once the active op has been interrupted.
+    static int busyHandler(void*, int);
 
     mutable WTF::Lock m_lock;
     State m_state { State::Opening };
     sqlite3* m_database { nullptr };
     sqlite3* m_activeDatabase { nullptr };
     WTF::Deque<Operation> m_queue;
+    // Identity of the operation currently owning the active slot (scheduled or
+    // running). Non-zero from the moment an op leaves the queue until its result
+    // is released; the sole ID an interrupt is allowed to target.
+    uint64_t m_activeOperationId { 0 };
+    // Set when the active op is cancelled before it began stepping so the worker
+    // refuses to enter SQLite and reports SQLITE_INTERRUPT instead.
+    bool m_activeCancelRequested { false };
+    // Read lock-free by the busy handler on the worker thread: when the active op
+    // is interrupted while waiting on a contended lock, the handler breaks the
+    // wait so the step loop can surface the abort promptly.
+    std::atomic<bool> m_activeInterruptRequested { false };
     uint32_t m_contextId;
     std::string m_path;
     uint32_t m_capacity;
@@ -277,6 +301,7 @@ public:
     void complete(uint64_t, int, WebCore::ScriptExecutionContext&);
     void completeConnection(uint64_t, bool, int, std::string&&, WebCore::ScriptExecutionContext&);
     void completeConnectionOperation(uint64_t, AsyncSQLiteConnection&, std::unique_ptr<AsyncSQLiteOperationResult>&&, WebCore::ScriptExecutionContext&);
+    void cancelConnectionOperation(uint64_t, WebCore::ScriptExecutionContext&);
     void remove(uint64_t);
     void addConnection(uint64_t, WTF::Ref<AsyncSQLiteConnection>&&);
     WTF::RefPtr<AsyncSQLiteConnection> connection(uint64_t);

@@ -85,6 +85,54 @@ declare module "bun:sqlite" {
   }
 
   /**
+   * Options for {@link AsyncDatabase.open}.
+   */
+  export interface AsyncDatabaseOptions {
+    /**
+     * Open the database as read-only.
+     */
+    readonly?: boolean;
+
+    /**
+     * Allow creating a new database.
+     */
+    create?: boolean;
+
+    /**
+     * Open the database as read-write.
+     */
+    readwrite?: boolean;
+
+    /**
+     * Require all SQL parameters to be bound and allow named bindings without
+     * their SQL prefix.
+     */
+    strict?: boolean;
+
+    /**
+     * Return SQLite integers as `bigint` rather than `number`.
+     */
+    safeIntegers?: boolean;
+
+    /**
+     * Maximum time, in milliseconds, to wait for a busy SQLite lock.
+     */
+    busyTimeout?: number;
+
+    /**
+     * Maximum number of active plus queued operations for this connection.
+     */
+    maxPending?: number;
+  }
+
+  /**
+   * Options accepted by an asynchronous database operation.
+   */
+  export interface AsyncDatabaseOperationOptions {
+    signal?: AbortSignal;
+  }
+
+  /**
    * A SQLite3 database
    *
    * @example
@@ -562,6 +610,53 @@ declare module "bun:sqlite" {
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
+  }
+
+  /**
+   * A SQLite3 database whose operations run asynchronously.
+   *
+   * Use {@link AsyncDatabase.open} to create an instance; the constructor is
+   * intentionally private.
+   */
+  export class AsyncDatabase implements AsyncDisposable {
+    private constructor();
+
+    /**
+     * Open or create a SQLite3 database asynchronously.
+     *
+     * When `safeIntegers` is `true`, integer columns and
+     * `Changes.lastInsertRowid` are returned as `bigint`; otherwise they are
+     * returned as `number`.
+     */
+    static open(filename?: string, options?: AsyncDatabaseOptions): Promise<AsyncDatabase>;
+
+    readonly filename: string;
+
+    exec(sql: string, options?: AsyncDatabaseOperationOptions): Promise<void>;
+
+    run(sql: string, params?: AsyncDatabaseBindings, options?: AsyncDatabaseOperationOptions): Promise<Changes>;
+
+    get<ReturnType = Record<string, AsyncDatabaseValue>>(
+      sql: string,
+      params?: AsyncDatabaseBindings,
+      options?: AsyncDatabaseOperationOptions,
+    ): Promise<ReturnType | null>;
+
+    all<ReturnType = Record<string, AsyncDatabaseValue>>(
+      sql: string,
+      params?: AsyncDatabaseBindings,
+      options?: AsyncDatabaseOperationOptions,
+    ): Promise<ReturnType[]>;
+
+    values(
+      sql: string,
+      params?: AsyncDatabaseBindings,
+      options?: AsyncDatabaseOperationOptions,
+    ): Promise<AsyncDatabaseValues>;
+
+    close(): Promise<void>;
+
+    [Symbol.asyncDispose](): Promise<void>;
   }
 
   /**
@@ -1238,6 +1333,11 @@ declare module "bun:sqlite" {
    * deficiency in this API.
    */
   export var native: any;
+
+  export type AsyncDatabaseBinding = string | bigint | NodeJS.TypedArray | number | boolean | null;
+  export type AsyncDatabaseBindings = readonly AsyncDatabaseBinding[] | Record<string, AsyncDatabaseBinding>;
+  export type AsyncDatabaseValue = string | bigint | number | Uint8Array | null;
+  export type AsyncDatabaseValues = AsyncDatabaseValue[][];
 
   export type SQLQueryBindings =
     | string

@@ -695,6 +695,238 @@ class SQLiteError extends Error {
   }
 }
 
+let asyncSQLiteBinding;
+function initAsyncSQLite() {
+  asyncSQLiteBinding = $cpp("AsyncSQLiteDatabase.cpp", "createAsyncSQLiteBinding");
+}
+
+// Private construction token: AsyncDatabase.open() is the only way in.
+const kAsyncToken = Symbol("bun:sqlite:async");
+const kAsyncOpen = 0;
+const kAsyncClosing = 1;
+const kAsyncClosed = 2;
+
+// Best-effort safety net: close the native connection if a wrapper is dropped
+// without close(). Explicit close() unregisters. Full GC ownership is hardened
+// in the following gate-c-validation task.
+let asyncFinalization;
+function reapAsyncConnection(connectionId) {
+  try {
+    const closed = asyncSQLiteBinding.close(connectionId);
+    if (closed && typeof closed.then === "function") closed.then(undefined, () => {});
+  } catch {}
+}
+
+// Validate and coerce open options into owned primitives passed to native.
+function normalizeAsyncOpenOptions(options) {
+  let flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
+  let busyTimeout = 0;
+  let maxPending = 64;
+  let strict = false;
+  let safeIntegers = false;
+  if (options === undefined || options === null) {
+    return { flags, busyTimeout, maxPending, strict, safeIntegers };
+  }
+  if (typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+
+  const readonly = readAsyncBoolean(options, "readonly");
+  const readwrite = readAsyncBoolean(options, "readwrite");
+  const create = readAsyncBoolean(options, "create");
+  if (readonly === true && (readwrite === true || create === true)) {
+    throw $ERR_INVALID_ARG_VALUE("options.readonly", true, "conflicts with readwrite/create");
+  }
+
+  if (readonly === true) {
+    flags = constants.SQLITE_OPEN_READONLY;
+  } else {
+    flags = constants.SQLITE_OPEN_READWRITE;
+    if (create !== false) {
+      flags |= constants.SQLITE_OPEN_CREATE;
+    }
+  }
+
+  strict = readAsyncBoolean(options, "strict") === true;
+  safeIntegers = readAsyncBoolean(options, "safeIntegers") === true;
+
+  if ("busyTimeout" in options) {
+    const value = options.busyTimeout;
+    if (typeof value !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("options.busyTimeout", "number", value);
+    }
+    if (!Number.isInteger(value) || value < 0) {
+      throw $ERR_OUT_OF_RANGE("options.busyTimeout", ">= 0 and an integer", value);
+    }
+    busyTimeout = value;
+  }
+
+  if ("maxPending" in options) {
+    const value = options.maxPending;
+    if (typeof value !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("options.maxPending", "number", value);
+    }
+    if (!Number.isInteger(value) || value < 1) {
+      throw $ERR_OUT_OF_RANGE("options.maxPending", ">= 1 and an integer", value);
+    }
+    maxPending = value;
+  }
+
+  return { flags, busyTimeout, maxPending, strict, safeIntegers };
+}
+
+function readAsyncBoolean(options, key) {
+  if (!(key in options)) return undefined;
+  const value = options[key];
+  if (typeof value !== "boolean") {
+    throw $ERR_INVALID_ARG_TYPE("options." + key, "boolean", value);
+  }
+  return value;
+}
+
+class AsyncDatabase {
+  #connectionId;
+  #filename;
+  #state = kAsyncOpen;
+  #closePromise;
+  #maxPending;
+  #pending = 0;
+
+  constructor(token, connectionId, filename, maxPending) {
+    if (token !== kAsyncToken) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    this.#connectionId = connectionId;
+    this.#filename = filename;
+    this.#maxPending = maxPending;
+  }
+
+  get filename() {
+    return this.#filename;
+  }
+
+  static async open(filename, options) {
+    if (asyncSQLiteBinding === undefined) {
+      initAsyncSQLite();
+      asyncFinalization = new FinalizationRegistry(reapAsyncConnection);
+    }
+    if (filename === undefined) filename = ":memory:";
+    if (typeof filename !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("filename", "string", filename);
+    }
+    const { flags, busyTimeout, maxPending, strict, safeIntegers } = normalizeAsyncOpenOptions(options);
+    const trimmed = filename.trim();
+    const anonymous = trimmed === "" || trimmed === ":memory:";
+    if (anonymous && (flags & constants.SQLITE_OPEN_READONLY) !== 0) {
+      throw new Error("Cannot open an anonymous database in read-only mode.");
+    }
+    const nativePath = anonymous ? ":memory:" : trimmed;
+    const { id, ready } = asyncSQLiteBinding.open(nativePath, flags, busyTimeout, maxPending, strict, safeIntegers);
+    await ready;
+    const db = new AsyncDatabase(kAsyncToken, id, trimmed === "" ? ":memory:" : trimmed, maxPending);
+    asyncFinalization.register(db, id, db);
+    return db;
+  }
+
+  #preflight(sql, options) {
+    if (this.#state === kAsyncClosing) {
+      throw $ERR_SQLITE_ASYNC_CLOSING("The database is closing");
+    }
+    if (this.#state === kAsyncClosed) {
+      throw $ERR_SQLITE_ASYNC_CLOSED("The database is closed");
+    }
+    if (typeof sql !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("sql", "string", sql);
+    }
+    let signal;
+    if (options !== undefined) {
+      if (typeof options !== "object" || options === null) {
+        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+      }
+      // Treat null/undefined signal as absent; the native host validates the
+      // AbortSignal type and already-aborted state and rejects the Promise.
+      signal = options.signal ?? undefined;
+    }
+    if (this.#pending >= this.#maxPending) {
+      throw $ERR_SQLITE_ASYNC_QUEUE_FULL("Too many pending async SQLite operations");
+    }
+    return signal;
+  }
+
+  async exec(sql, options) {
+    const signal = this.#preflight(sql, options);
+    this.#pending++;
+    try {
+      await asyncSQLiteBinding.exec(this.#connectionId, sql, undefined, signal);
+      return undefined;
+    } finally {
+      this.#pending--;
+    }
+  }
+
+  async run(sql, params, options) {
+    const signal = this.#preflight(sql, options);
+    this.#pending++;
+    try {
+      return await asyncSQLiteBinding.run(this.#connectionId, sql, params, signal);
+    } finally {
+      this.#pending--;
+    }
+  }
+
+  async get(sql, params, options) {
+    const signal = this.#preflight(sql, options);
+    this.#pending++;
+    try {
+      return await asyncSQLiteBinding.get(this.#connectionId, sql, params, signal);
+    } finally {
+      this.#pending--;
+    }
+  }
+
+  async all(sql, params, options) {
+    const signal = this.#preflight(sql, options);
+    this.#pending++;
+    try {
+      return await asyncSQLiteBinding.all(this.#connectionId, sql, params, signal);
+    } finally {
+      this.#pending--;
+    }
+  }
+
+  async values(sql, params, options) {
+    const signal = this.#preflight(sql, options);
+    this.#pending++;
+    try {
+      return await asyncSQLiteBinding.values(this.#connectionId, sql, params, signal);
+    } finally {
+      this.#pending--;
+    }
+  }
+
+  close() {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
+    }
+    this.#state = kAsyncClosing;
+    asyncFinalization.unregister(this);
+    this.#closePromise = this.#drainAndClose();
+    return this.#closePromise;
+  }
+
+  async #drainAndClose() {
+    try {
+      await asyncSQLiteBinding.close(this.#connectionId);
+    } finally {
+      this.#state = kAsyncClosed;
+    }
+  }
+
+  [Symbol.asyncDispose]() {
+    return this.close();
+  }
+}
+
 export default {
   __esModule: true,
   Database,
@@ -702,4 +934,5 @@ export default {
   constants,
   default: Database,
   SQLiteError,
+  AsyncDatabase,
 };

@@ -95,6 +95,37 @@ private:
     WTF::Ref<AsyncSQLiteTaskState> m_state;
 };
 
+// JS-thread abort algorithm for a per-connection operation. It owns only the
+// operation ID; when the signal aborts it routes to the pending registry, which
+// resolves the connection and cancels the exact operation under its lock.
+class AsyncSQLiteConnectionAbortAlgorithm final : public WebCore::AbortAlgorithm {
+public:
+    AsyncSQLiteConnectionAbortAlgorithm(WebCore::ScriptExecutionContext* context, uint64_t operationId)
+        : WebCore::AbortAlgorithm(context)
+        , m_operationId(operationId)
+    {
+        liveAbortAlgorithms.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    ~AsyncSQLiteConnectionAbortAlgorithm() final
+    {
+        liveAbortAlgorithms.fetch_sub(1, std::memory_order_relaxed);
+    }
+
+    WebCore::CallbackResult<void> handleEvent(JSC::JSValue) final
+    {
+        auto* context = scriptExecutionContext();
+        if (!context)
+            return {};
+        if (auto* registry = registryForGlobal(context->globalObject()))
+            registry->cancelConnectionOperation(m_operationId, *context);
+        return {};
+    }
+
+private:
+    uint64_t m_operationId;
+};
+
 struct AsyncSQLiteNativeResult {
     explicit AsyncSQLiteNativeResult(int value)
         : value(value)
@@ -378,6 +409,8 @@ bool AsyncSQLiteConnection::admit(uint64_t operationId, std::string&& sql, Async
         if (schedule) {
             m_state = State::OpenActive;
             operation = m_queue.takeFirst();
+            m_activeOperationId = operation.id;
+            m_activeCancelRequested = false;
         }
     }
     if (schedule)
@@ -428,6 +461,60 @@ void AsyncSQLiteConnection::interruptLocked()
         sqlite3_interrupt(m_activeDatabase);
         connectionInterrupts.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+int AsyncSQLiteConnection::busyHandler(void* ptr, int count)
+{
+    auto* self = static_cast<AsyncSQLiteConnection*>(ptr);
+    // An interrupted op must not keep sleeping: yield so the step loop surfaces
+    // the abort instead of blocking for the remaining busy timeout.
+    if (self->m_activeInterruptRequested.load(std::memory_order_relaxed))
+        return 0;
+    // Emulate sqlite3_busy_timeout's escalating backoff, capped by the timeout.
+    static const int delays[] = { 1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100 };
+    static const int totals[] = { 0, 1, 3, 8, 18, 33, 53, 78, 103, 128, 178, 228 };
+    constexpr int ndelay = static_cast<int>(sizeof(delays) / sizeof(delays[0]));
+    int tmout = self->m_busyTimeout;
+    if (tmout <= 0)
+        return 0;
+    int delay = 0;
+    int prior = 0;
+    if (count < ndelay) {
+        delay = delays[count];
+        prior = totals[count];
+    } else {
+        delay = delays[ndelay - 1];
+        prior = totals[ndelay - 1] + delay * (count - (ndelay - 1));
+    }
+    if (prior + delay > tmout) {
+        delay = tmout - prior;
+        if (delay <= 0)
+            return 0;
+    }
+    sqlite3_sleep(delay);
+    return 1;
+}
+
+AsyncSQLiteConnection::CancelOutcome AsyncSQLiteConnection::cancelOperation(uint64_t operationId)
+{
+    WTF::Locker locker { m_lock };
+    // Queued target: erase by exact ID, releasing its capacity slot. This never
+    // enters SQLite and no native completion will ever arrive for it.
+    if (m_queue.removeFirstMatching([operationId](const Operation& operation) { return operation.id == operationId; }))
+        return CancelOutcome::RemovedFromQueue;
+    // Active target: mark it, and interrupt only while this exact op still owns
+    // the active slot and the connection is open (a running statement exists and
+    // the db cannot be closed underneath us because close is serialized here).
+    if (operationId != 0 && operationId == m_activeOperationId) {
+        m_activeCancelRequested = true;
+        if (m_activeDatabase && m_state != State::Closed) {
+            m_activeInterruptRequested.store(true, std::memory_order_relaxed);
+            sqlite3_interrupt(m_activeDatabase);
+            connectionInterrupts.fetch_add(1, std::memory_order_relaxed);
+        }
+        return CancelOutcome::Interrupted;
+    }
+    return CancelOutcome::NotFound;
 }
 
 void AsyncSQLiteConnection::abandon()
@@ -489,6 +576,9 @@ void AsyncSQLiteConnection::runOpen(uint64_t operationId, uint32_t callerThreadU
             result = connectionResult(false, code, WTF::move(message));
         } else {
             sqlite3_db_config(database, SQLITE_DBCONFIG_DEFENSIVE, 1, nullptr);
+            // Override the default busy callback so a contended-lock wait can be
+            // interrupted by an AbortSignal rather than blocking for the timeout.
+            sqlite3_busy_handler(database, &AsyncSQLiteConnection::busyHandler, this);
             result = connectionResult(true);
         }
     }
@@ -513,6 +603,8 @@ void AsyncSQLiteConnection::runOpen(uint64_t operationId, uint32_t callerThreadU
         } else if (!m_queue.isEmpty()) {
             m_state = State::OpenActive;
             operation = m_queue.takeFirst();
+            m_activeOperationId = operation.id;
+            m_activeCancelRequested = false;
             scheduleOperationAfterOpen = true;
         } else {
             m_state = State::OpenIdle;
@@ -744,7 +836,7 @@ static std::unique_ptr<AsyncSQLiteError> validateSingleStatement(sqlite3* databa
     return nullptr;
 }
 
-static std::unique_ptr<AsyncSQLiteOperationResult> runOperationSQL(sqlite3* database, const AsyncSQLiteConnection::Operation& operation, bool strict)
+static std::unique_ptr<AsyncSQLiteOperationResult> runOperationSQL(sqlite3* database, const AsyncSQLiteConnection::Operation& operation, bool strict, std::atomic<bool>& interruptRequested)
 {
     if (!database) {
         return operationError(captureConnectionError(nullptr, SQLITE_MISUSE));
@@ -821,6 +913,16 @@ static std::unique_ptr<AsyncSQLiteOperationResult> runOperationSQL(sqlite3* data
                 break;
             }
             rc = stepRc;
+            // A busy wait broken by our interrupt handler surfaces as SQLITE_BUSY;
+            // when this op was interrupted, report it as an interrupt so the
+            // completion converts it to the signal's abort reason.
+            if (rc == SQLITE_BUSY && interruptRequested.load(std::memory_order_relaxed)) {
+                auto error = std::make_unique<AsyncSQLiteError>();
+                error->resultCode = SQLITE_INTERRUPT;
+                error->extendedCode = SQLITE_INTERRUPT;
+                error->message = "async SQLite operation was aborted";
+                return operationError(WTF::move(error));
+            }
             auto error = captureConnectionError(database, rc);
             return operationError(WTF::move(error));
         }
@@ -851,12 +953,19 @@ void AsyncSQLiteConnection::runOperation(Operation&& operation)
     sqlite3* database = nullptr;
     bool execute = false;
     bool strict = false;
+    bool cancelled = false;
     {
         WTF::Locker locker { m_lock };
         database = m_database;
         strict = m_strict;
-        if (m_deliveryEnabled) {
+        // A cancel that landed before we began stepping is honored here: refuse
+        // to enter SQLite and report SQLITE_INTERRUPT like an interrupted step.
+        cancelled = m_activeCancelRequested;
+        if (m_deliveryEnabled && !cancelled) {
             m_activeDatabase = database;
+            // Clear any stale interrupt request from a prior op before this one
+            // may begin waiting on a contended lock.
+            m_activeInterruptRequested.store(false, std::memory_order_relaxed);
             activeConnectionOperations.fetch_add(1, std::memory_order_relaxed);
             execute = true;
         }
@@ -865,17 +974,26 @@ void AsyncSQLiteConnection::runOperation(Operation&& operation)
         auto error = std::make_unique<AsyncSQLiteError>();
         error->resultCode = SQLITE_INTERRUPT;
         error->extendedCode = SQLITE_INTERRUPT;
-        error->message = "connection was abandoned";
+        error->message = cancelled ? "async SQLite operation was aborted" : "connection was abandoned";
+        {
+            WTF::Locker locker { m_lock };
+            m_activeOperationId = 0;
+            m_activeCancelRequested = false;
+        }
         finishOperation(operation.id, operationError(WTF::move(error)));
         return;
     }
 
-    auto result = runOperationSQL(database, operation, strict);
+    auto result = runOperationSQL(database, operation, strict, m_activeInterruptRequested);
 
     {
         WTF::Locker locker { m_lock };
-        // The statement is finalized; there is nothing left to interrupt.
+        // The statement is finalized; clear the interrupt target and active
+        // identity so a late abort for this op resolves to NotFound.
         m_activeDatabase = nullptr;
+        m_activeOperationId = 0;
+        m_activeCancelRequested = false;
+        m_activeInterruptRequested.store(false, std::memory_order_relaxed);
     }
     activeConnectionOperations.fetch_sub(1, std::memory_order_relaxed);
 
@@ -909,11 +1027,15 @@ void AsyncSQLiteConnection::advanceAfterCompletion(bool dropped)
         if (!m_queue.isEmpty()) {
             operation = m_queue.takeFirst();
             m_state = State::OpenActive;
+            m_activeOperationId = operation.id;
+            m_activeCancelRequested = false;
             schedule = true;
         } else if (m_closeRequested) {
+            m_activeOperationId = 0;
             m_state = State::ShuttingDown;
             close = true;
         } else {
+            m_activeOperationId = 0;
             m_state = State::OpenIdle;
         }
     }
@@ -1527,6 +1649,9 @@ void JSAsyncSQLitePendingRegistry::completeConnectionOperation(uint64_t operatio
         return;
     }
     liveRequests.fetch_sub(1, std::memory_order_relaxed);
+    // Capture the signal before detaching: an interrupt caused by this op's own
+    // abort must still be recognizable when building the settlement value.
+    WTF::RefPtr<WebCore::AbortSignal> signal = request->signal;
     detachAbortAlgorithm(*request);
 
     auto* globalObject = context.globalObject();
@@ -1555,13 +1680,20 @@ void JSAsyncSQLitePendingRegistry::completeConnectionOperation(uint64_t operatio
             }
         } else if (result && result->kind == AsyncSQLiteResultKind::Error && result->error) {
             const auto& error = result->error;
-            auto message = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(error->message.data()), error->message.size() });
-            // Binding failures mirror sync bun:sqlite as plain Errors with no
-            // code/errno; only prepare/step errors carry SQLite diagnostics.
-            if (error->kind == AsyncSQLiteErrorKind::Binding)
-                rejectValue = JSC::createError(globalObject, message);
-            else
-                rejectValue = WebCore::createSQLiteErrorFromCode(globalObject, error->extendedCode, error->byteOffset, message);
+            // A step interrupted by this operation's own AbortSignal settles as the
+            // signal's abort reason. Unrelated interrupts and all other SQLite
+            // errors keep their native diagnostics; never blanket-convert here.
+            if ((error->resultCode == SQLITE_INTERRUPT || error->extendedCode == SQLITE_INTERRUPT) && signal && signal->aborted()) {
+                rejectValue = signal->jsReason(*globalObject);
+            } else {
+                auto message = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(error->message.data()), error->message.size() });
+                // Binding failures mirror sync bun:sqlite as plain Errors with no
+                // code/errno; only prepare/step errors carry SQLite diagnostics.
+                if (error->kind == AsyncSQLiteErrorKind::Binding)
+                    rejectValue = JSC::createError(globalObject, message);
+                else
+                    rejectValue = WebCore::createSQLiteErrorFromCode(globalObject, error->extendedCode, error->byteOffset, message);
+            }
         }
     }
     bool exceptionPending = scope.exception();
@@ -1583,6 +1715,35 @@ void JSAsyncSQLitePendingRegistry::completeConnectionOperation(uint64_t operatio
             request->result->resolveWithJSValue(resolveValue);
     }
     if (request->keepAlive)
+        context.unrefEventLoop();
+}
+
+void JSAsyncSQLitePendingRegistry::cancelConnectionOperation(uint64_t operationId, WebCore::ScriptExecutionContext& context)
+{
+    auto iterator = m_requests.find(operationId);
+    if (iterator == m_requests.end())
+        return; // The native completion already claimed and settled this op.
+    auto* request = iterator->value.get();
+    if (!request->connection || !request->result)
+        return;
+
+    auto outcome = request->connection->cancelOperation(operationId);
+    if (outcome != AsyncSQLiteConnection::CancelOutcome::RemovedFromQueue)
+        return; // Running/scheduled: the native completion settles exactly once.
+
+    // Queued cancellation settles here without waiting for a completion that will
+    // never arrive: reject once with the signal reason, then release the request
+    // and its keepalive. The FIFO is untouched because the op never became active.
+    auto owned = m_requests.take(operationId);
+    if (!owned)
+        return;
+    liveRequests.fetch_sub(1, std::memory_order_relaxed);
+    auto* globalObject = context.globalObject();
+    JSC::JSValue reason = owned->signal ? owned->signal->jsReason(*globalObject) : JSC::JSValue(JSC::jsUndefined());
+    detachAbortAlgorithm(*owned);
+    owned->result->reject(reason);
+    owned->connection = nullptr;
+    if (owned->keepAlive)
         context.unrefEventLoop();
 }
 
@@ -1857,7 +2018,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteDatabaseOpen, (JSC::JSGlobalObjec
     return startAsyncSQLiteOpen(globalObject, scope, pathString, capacity, timeout, strict, safeIntegers, openFlags);
 }
 
-
 static JSC::EncodedJSValue asyncSQLiteConnectionSubmit(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, AsyncSQLiteOperationKind kind, bool acceptsBindings)
 {
     auto& vm = globalObject->vm();
@@ -1903,6 +2063,22 @@ static JSC::EncodedJSValue asyncSQLiteConnectionSubmit(JSC::JSGlobalObject* glob
         return JSC::JSValue::encode(promise);
     }
 
+    // Resolve the optional per-operation AbortSignal (a dedicated native argument;
+    // the public wrapper never exposes operation IDs). An invalid signal or one
+    // already aborted rejects the Promise without admitting any work.
+    WebCore::AbortSignal* signal = nullptr;
+    if (kind != AsyncSQLiteOperationKind::QueryForTesting && !callFrame->argument(3).isUndefined()) {
+        signal = WebCore::JSAbortSignal::toWrapped(vm, callFrame->argument(3));
+        if (!signal) {
+            result->reject(WebCore::ExceptionCode::OperationError, "signal must be an AbortSignal"_s);
+            return JSC::JSValue::encode(promise);
+        }
+        if (signal->aborted()) {
+            result->reject(signal->jsReason(*globalObject));
+            return JSC::JSValue::encode(promise);
+        }
+    }
+
     // Snapshot all binding input on the JS thread before admission. Any getter,
     // Proxy trap, or conversion error rejects the returned Promise rather than
     // escaping synchronously; no keepalive/request has been taken yet.
@@ -1924,9 +2100,16 @@ static JSC::EncodedJSValue asyncSQLiteConnectionSubmit(JSC::JSGlobalObject* glob
     }
     // admit() can schedule a fast completion, but its JS callback cannot claim
     // the registry until this host function returns.
-    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), nullptr, 0, nullptr, connection, id, false, true, kind != AsyncSQLiteOperationKind::Exec, forceMaterializeFailure, kind });
+    registry->add(operationId, JSAsyncSQLitePendingRegistry::PendingRequest { nullptr, WTF::move(result), signal ? WTF::RefPtr<WebCore::AbortSignal>(signal) : nullptr, 0, nullptr, connection, id, false, true, kind != AsyncSQLiteOperationKind::Exec, forceMaterializeFailure, kind });
     context->refEventLoop();
     registry->markKeepAlive(operationId);
+    // Register the abort algorithm last, after the keepalive is taken, so a signal
+    // that aborts during registration settles through the same terminal path.
+    if (signal) {
+        auto algorithm = WTF::adoptRef(*new AsyncSQLiteConnectionAbortAlgorithm(context, operationId));
+        auto algorithmId = WebCore::AbortSignal::addAbortAlgorithmToSignal(*signal, WTF::move(algorithm));
+        registry->setAbortAlgorithmId(operationId, algorithmId);
+    }
     return JSC::JSValue::encode(promise);
 }
 
@@ -2026,7 +2209,7 @@ JSC::JSValue createAsyncSQLiteBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto* object = JSC::constructEmptyObject(globalObject);
-    auto put = [&](JSC::ASCIILiteral name, unsigned length, JSC::NativeFunction fn) {
+    auto put = [&](ASCIILiteral name, unsigned length, JSC::NativeFunction fn) {
         object->putDirect(vm, JSC::Identifier::fromString(vm, name), JSC::JSFunction::create(vm, globalObject, length, WTF::String(name), fn, JSC::ImplementationVisibility::Public), 0);
     };
     put("open"_s, 6, jsFunction_asyncSQLiteDatabaseOpen);

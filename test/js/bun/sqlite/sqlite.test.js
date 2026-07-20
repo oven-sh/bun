@@ -348,11 +348,14 @@ describe("AsyncDatabase (public Gate C)", () => {
     expect(typeof mod.Statement).toBe("function");
     expect(typeof mod.SQLiteError).toBe("function");
     expect(mod.constants.SQLITE_OPEN_READWRITE).toBe(2);
-    expect(mod.default.Database).toBe(mod.Database);
-    expect(mod.default.Statement).toBe(mod.Statement);
-    expect(mod.default.SQLiteError).toBe(mod.SQLiteError);
-    expect(mod.default.default).toBe(mod.Database);
-    expect(mod.default.AsyncDatabase).toBe(mod.AsyncDatabase);
+    // The default export remains the synchronous Database class.
+    expect(mod.default).toBe(mod.Database);
+    const required = require("bun:sqlite");
+    expect(required.Database).toBe(mod.Database);
+    expect(required.Statement).toBe(mod.Statement);
+    expect(required.SQLiteError).toBe(mod.SQLiteError);
+    expect(required.default).toBe(mod.Database);
+    expect(required.AsyncDatabase).toBe(mod.AsyncDatabase);
     // The synchronous Database is not an AsyncDatabase and vice versa.
     const sync = new Database(":memory:");
     expect(sync).not.toBeInstanceOf(mod.AsyncDatabase);
@@ -532,14 +535,16 @@ describe("AsyncDatabase (public Gate C)", () => {
     await expect(db.exec(null)).rejects.toThrow(TypeError);
   });
 
-  it("rejects unsupported per-operation options such as AbortSignal", async () => {
+  it("rejects an invalid per-operation signal option as a Promise rejection", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
     await using db = await AsyncDatabase.open(":memory:");
     await db.exec("CREATE TABLE t (v INTEGER)");
-    const controller = new AbortController();
-    await expect(db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal })).rejects.toThrow();
-    await expect(db.exec("SELECT 1", { signal: controller.signal })).rejects.toThrow();
-    await expect(db.get("SELECT v FROM t", undefined, { signal: controller.signal })).rejects.toThrow();
+    // A non-AbortSignal signal is a validation error surfaced as a rejection,
+    // never a synchronous throw, and it must not admit or apply any work.
+    await expect(db.run("INSERT INTO t VALUES (1)", [], { signal: {} })).rejects.toThrow();
+    await expect(db.get("SELECT v FROM t", undefined, { signal: 123 })).rejects.toThrow();
+    await expect(db.all("SELECT v FROM t", undefined, { signal: "nope" })).rejects.toThrow();
+    expect(await db.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 0 });
   });
 
   it("honors safeIntegers for bindings and results", async () => {
@@ -564,8 +569,8 @@ describe("AsyncDatabase (public Gate C)", () => {
       await expect(db.run("INSERT INTO t VALUES (2)")).rejects.toThrow(/pending/i);
       blocker.exec("COMMIT");
       await expect(active).resolves.toEqual({ changes: 1, lastInsertRowid: 1 });
-      // After the slot frees, the next operation is admitted again.
-      await expect(db.run("INSERT INTO t VALUES (3)")).resolves.toEqual({ changes: 1, lastInsertRowid: 3 });
+      // The rejected op never executed, so the next rowid is 2, not 3.
+      await expect(db.run("INSERT INTO t VALUES (3)")).resolves.toEqual({ changes: 1, lastInsertRowid: 2 });
     } finally {
       blocker.close();
     }
@@ -609,6 +614,708 @@ describe("AsyncDatabase (public Gate C)", () => {
     }
     await expect(escaped.run("INSERT INTO t VALUES (1)")).rejects.toThrow();
   });
+});
+
+describe("AsyncDatabase lifecycle (Gate C validation)", () => {
+  const asyncTmp = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "async.db");
+
+  // Runs a Bun subprocess script and drains stdout, stderr, and exit concurrently.
+  const runScript = async (files, { env = {}, cmd = ["main.js"] } = {}) => {
+    const dir = tempDirWithFiles("sqlite-async-lifecycle-proc", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: dir,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { dir, stdout, stderr, exitCode };
+  };
+
+  it("keeps the event loop responsive while a public write waits on a contended lock", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const file = asyncTmp("async-db-responsive");
+    {
+      const seed = new Database(file);
+      seed.exec("CREATE TABLE t (v INTEGER)");
+      seed.close();
+    }
+    await using db = await AsyncDatabase.open(file, { busyTimeout: 60000 });
+    const blocker = new Database(file);
+    blocker.exec("BEGIN IMMEDIATE");
+    blocker.run("INSERT INTO t VALUES (1)"); // hold the write lock
+
+    const order = [];
+    // The write is admitted and blocks on the write lock inside a worker thread.
+    const write = db.run("INSERT INTO t VALUES (2)");
+    // The JS event loop must stay free to run scheduled work; that work releases
+    // the lock. No elapsed-time assertions or sleeps are used.
+    queueMicrotask(() => order.push("microtask"));
+    setImmediate(() => {
+      order.push("release");
+      blocker.exec("COMMIT");
+      blocker.close();
+    });
+
+    const result = await write;
+    expect(result).toEqual({ changes: 1, lastInsertRowid: 2 });
+    // The contended write could only resolve after the event-loop task committed,
+    // proving the loop processed queued work while the worker was blocked.
+    expect(order).toEqual(["microtask", "release"]);
+    expect(await db.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 2 });
+  });
+
+  it("runs one connection's operations in FIFO submission order with one active at a time", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT)");
+    const tags = ["a", "b", "c", "d", "e"];
+    const results = await Promise.all(tags.map(tag => db.run("INSERT INTO t (tag) VALUES (?)", [tag])));
+    // Row IDs are assigned in execution order; FIFO makes them match submission order.
+    expect(results.map(r => Number(r.lastInsertRowid))).toEqual([1, 2, 3, 4, 5]);
+    expect(await db.all("SELECT tag FROM t ORDER BY id")).toEqual(tags.map(tag => ({ tag })));
+  });
+
+  it("keeps the FIFO ordered and usable after a failed public operation", async () => {
+    const { AsyncDatabase, SQLiteError } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v INTEGER)");
+    const first = db.run("INSERT INTO t (v) VALUES (10)");
+    const failing = db.run("INSERT INTO missing VALUES (1)").then(
+      () => {
+        throw new Error("expected failure");
+      },
+      error => error,
+    );
+    const third = db.run("INSERT INTO t (v) VALUES (20)");
+    const [r1, err, r3] = await Promise.all([first, failing, third]);
+    expect(Number(r1.lastInsertRowid)).toBe(1);
+    expect(err).toBeInstanceOf(SQLiteError);
+    expect(Number(r3.lastInsertRowid)).toBe(2);
+    // The failed operation never applied and never displaced the ordering.
+    expect(await db.all("SELECT v FROM t ORDER BY id")).toEqual([{ v: 10 }, { v: 20 }]);
+  });
+
+  it("lets an independent AsyncDatabase make progress while another blocks on a lock", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const fileA = asyncTmp("async-db-overlap");
+    {
+      const seed = new Database(fileA);
+      seed.exec("CREATE TABLE t (v INTEGER)");
+      seed.close();
+    }
+    await using a = await AsyncDatabase.open(fileA, { busyTimeout: 60000 });
+    await using b = await AsyncDatabase.open(":memory:");
+    await b.exec("CREATE TABLE t (v INTEGER)");
+
+    const blocker = new Database(fileA);
+    try {
+      blocker.exec("BEGIN IMMEDIATE");
+      blocker.run("INSERT INTO t VALUES (99)"); // holds fileA's write lock
+
+      // a's write is admitted and blocks on the lock inside one worker thread.
+      const aWrite = a.run("INSERT INTO t VALUES (1)");
+      // b runs on an independent connection; the WorkPool has >= 2 threads, so b's
+      // result must land while a is still blocked.
+      expect(await b.run("INSERT INTO t VALUES (2)")).toEqual({ changes: 1, lastInsertRowid: 1 });
+      expect(await b.get("SELECT v FROM t")).toEqual({ v: 2 });
+
+      // Release a; it now completes too.
+      blocker.exec("COMMIT");
+      await aWrite;
+      expect(await a.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 2 });
+    } finally {
+      // Always release the lock (closing rolls back any open transaction) so a's
+      // pending write can drain during disposal even if an assertion above throws.
+      blocker.close();
+    }
+  });
+
+  it("releases owned native rows, results, and requests after teardown of a result-producing op", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+    const file = asyncTmp("async-db-owned-drop");
+    {
+      const seed = new Database(file);
+      seed.exec("CREATE TABLE t (v INTEGER)");
+      for (let i = 0; i < 200; i++) seed.run("INSERT INTO t VALUES (?)", [i]);
+      seed.close();
+    }
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+    {
+      await using db = await AsyncDatabase.open(file);
+      // A result-producing operation materializes owned rows, then the database is
+      // torn down (await using -> close) while its owned payloads must be released.
+      expect((await db.all("SELECT v FROM t ORDER BY v")).length).toBe(200);
+      expect(await db.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 200 });
+      await expect(db.get("this is not sql")).rejects.toThrow();
+    }
+    await waitForAsyncSQLiteStats(
+      asyncSQLiteConnectionStatsForTesting,
+      current =>
+        current.liveConnections === baseline.liveConnections &&
+        current.liveRows === baseline.liveRows &&
+        current.liveErrors === baseline.liveErrors &&
+        current.liveResults === baseline.liveResults &&
+        current.liveRequests === baseline.liveRequests &&
+        current.liveJobs === baseline.liveJobs,
+      "owned async SQLite native state did not return to baseline after teardown",
+    );
+    const after = asyncSQLiteConnectionStatsForTesting();
+    expect(after.liveRows).toBe(baseline.liveRows);
+    expect(after.liveErrors).toBe(baseline.liveErrors);
+    expect(after.liveResults).toBe(baseline.liveResults);
+    expect(after.liveRequests).toBe(baseline.liveRequests);
+    expect(after.liveJobs).toBe(baseline.liveJobs);
+    expect(after.liveConnections).toBe(baseline.liveConnections);
+  });
+
+  it("abandons active and queued public operations when workers terminate, without leaking", async () => {
+    const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+    const { Worker } = await import("node:worker_threads");
+    const rounds = isASAN || isDebug ? 2 : 5;
+    const dir = tempDirWithFiles("sqlite-async-public-worker-teardown", {
+      "worker.js": `
+        import { parentPort, workerData } from "node:worker_threads";
+        import { AsyncDatabase } from "bun:sqlite";
+        const db = await AsyncDatabase.open(workerData, { maxPending: 8, busyTimeout: 60000 });
+        const active = db.run("INSERT INTO gate VALUES (1)"); // blocks on the parent's lock
+        const queued = db.run("INSERT INTO gate VALUES (2)"); // queued behind the active op
+        active.catch(() => {});
+        queued.catch(() => {});
+        parentPort.postMessage("submitted");
+        await new Promise(() => {}); // never resolve; the parent terminates this worker
+      `,
+    });
+    const file = path.join(dir, "gate.db");
+    const blocker = new Database(file);
+    try {
+      blocker.exec("CREATE TABLE gate (value INTEGER)");
+      for (let round = 0; round < rounds; round++) {
+        blocker.exec("BEGIN IMMEDIATE");
+        blocker.run("INSERT INTO gate VALUES (0)"); // hold the write lock
+        const baseline = asyncSQLiteConnectionStatsForTesting();
+        const worker = new Worker(path.join(dir, "worker.js"), { type: "module", workerData: file });
+        try {
+          await new Promise((resolve, reject) => {
+            worker.once("message", resolve);
+            worker.once("error", reject);
+            worker.once("exit", code => reject(new Error(`worker exited before submitting work: ${code}`)));
+          });
+          await waitForAsyncSQLiteStats(
+            asyncSQLiteConnectionStatsForTesting,
+            current => current.activeConnectionOperations === baseline.activeConnectionOperations + 1,
+            "worker did not publish an active public operation",
+          );
+          await worker.terminate();
+        } finally {
+          await worker.terminate();
+        }
+        blocker.exec("COMMIT");
+        await waitForAsyncSQLiteStats(
+          asyncSQLiteConnectionStatsForTesting,
+          current =>
+            current.liveConnections === baseline.liveConnections &&
+            current.liveJobs === baseline.liveJobs &&
+            current.liveResults === baseline.liveResults &&
+            current.liveRequests === baseline.liveRequests &&
+            current.activeConnectionOperations === baseline.activeConnectionOperations,
+          "worker teardown leaked public connection state",
+        );
+        const final = asyncSQLiteConnectionStatsForTesting();
+        expect(final.liveConnections).toBe(baseline.liveConnections);
+        expect(final.liveJobs).toBe(baseline.liveJobs);
+        expect(final.liveResults).toBe(baseline.liveResults);
+        expect(final.liveRequests).toBe(baseline.liveRequests);
+        expect(final.activeConnectionOperations).toBe(baseline.activeConnectionOperations);
+        expect(final.connectionInterrupts).toBe(baseline.connectionInterrupts + 1);
+        expect(final.physicalCloses).toBe(baseline.physicalCloses + 1);
+        // The interrupted and queued writes must never have been applied.
+        expect(blocker.query("SELECT COUNT(*) AS n FROM gate WHERE value IN (1, 2)").get()).toEqual({ n: 0 });
+        blocker.exec("DELETE FROM gate");
+      }
+    } finally {
+      blocker.close();
+    }
+  }, 30000);
+
+  it("keeps an accepted unawaited write alive across a natural process exit", async () => {
+    const { dir, stdout, stderr, exitCode } = await runScript({
+      "main.js": `
+        import { AsyncDatabase } from "bun:sqlite";
+        const db = await AsyncDatabase.open("data.db");
+        await db.exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)");
+        // Fire-and-forget: never awaited, never closed. The pending op refs the
+        // event loop, so a natural process exit must still let it complete.
+        db.run("INSERT INTO t VALUES (4242)");
+        console.log("SUBMITTED");
+      `,
+    });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "SUBMITTED", exitCode: 0 });
+    const reader = new Database(path.join(dir, "data.db"), { readonly: true });
+    try {
+      expect(reader.query("SELECT v FROM t").get()).toEqual({ v: 4242 });
+    } finally {
+      reader.close();
+    }
+  }, 30000);
+
+  it("survives an explicit process.exit while a public write is in flight", async () => {
+    const { stdout, stderr, exitCode } = await runScript({
+      "main.js": `
+        import { AsyncDatabase } from "bun:sqlite";
+        const db = await AsyncDatabase.open("data.db");
+        await db.exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)");
+        db.run("INSERT INTO t VALUES (1)"); // in flight
+        console.log("EXITING");
+        process.exit(0); // the abandon path must drop in-flight work without a crash
+      `,
+    });
+    // Under debug + ASAN a use-after-free on abrupt teardown would abort with a
+    // nonzero exit; a clean exit is the assertion.
+    expect({ stdout: stdout.trim(), exitCode }).toMatchObject({ stdout: "EXITING", exitCode: 0 });
+    expect(stderr).not.toContain("Sanitizer");
+  }, 30000);
+
+  it("reaps a dropped AsyncDatabase via finalization without leaking or double-closing", async () => {
+    const { stdout, stderr, exitCode } = await runScript(
+      {
+        "main.js": `
+          import { AsyncDatabase } from "bun:sqlite";
+          const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+          const yieldLoop = () => new Promise(resolve => setImmediate(resolve));
+          const settle = async () => {
+            for (let i = 0; i < 4; i++) { Bun.gc(true); await yieldLoop(); }
+          };
+
+          const baseline = asyncSQLiteConnectionStatsForTesting();
+
+          // (a) explicit close, then drop the wrapper + GC. The finalizer was
+          // unregistered by close(), so it must NOT run a second physical close.
+          {
+            const db = await AsyncDatabase.open("close.db");
+            await db.exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)");
+            await db.run("INSERT INTO t VALUES (1)");
+            await db.close();
+          }
+          await settle();
+          const afterExplicit = asyncSQLiteConnectionStatsForTesting();
+
+          // (b) drop the wrapper WITHOUT close(); finalization must reap the
+          // still-open native connection under forced GC while queued/ran work.
+          {
+            const db = await AsyncDatabase.open("drop.db");
+            await db.exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)");
+            await db.run("INSERT INTO t VALUES (1)");
+          }
+          for (let i = 0; i < 200; i++) {
+            await settle();
+            if (asyncSQLiteConnectionStatsForTesting().liveConnections === baseline.liveConnections) break;
+          }
+          const after = asyncSQLiteConnectionStatsForTesting();
+
+          console.log(JSON.stringify({
+            explicitLeakedConnections: afterExplicit.liveConnections - baseline.liveConnections,
+            explicitCloses: afterExplicit.physicalCloses - baseline.physicalCloses,
+            leakedConnections: after.liveConnections - baseline.liveConnections,
+            leakedJobs: after.liveJobs - baseline.liveJobs,
+            leakedResults: after.liveResults - baseline.liveResults,
+            leakedRequests: after.liveRequests - baseline.liveRequests,
+          }));
+        `,
+      },
+      { env: { BUN_DESTRUCT_VM_ON_EXIT: "1" } },
+    );
+    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(stderr).not.toContain("Sanitizer");
+    const summary = JSON.parse(stdout.trim().split("\n").at(-1));
+    // Explicit close performed exactly one physical close and left nothing alive.
+    expect(summary.explicitLeakedConnections).toBe(0);
+    expect(summary.explicitCloses).toBe(1);
+    // The dropped-without-close connection was reaped; nothing native leaked.
+    expect(summary.leakedConnections).toBe(0);
+    expect(summary.leakedJobs).toBe(0);
+    expect(summary.leakedResults).toBe(0);
+    expect(summary.leakedRequests).toBe(0);
+  }, 30000);
+
+  it("runs a full public open/work/close lifecycle inside a Worker and tears down cleanly", async () => {
+    const { stdout, stderr, exitCode } = await runScript(
+      {
+        "main.js": `
+          import { Worker } from "node:worker_threads";
+          const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module", workerData: "worker.db" });
+          const result = await new Promise((resolve, reject) => {
+            let value;
+            worker.once("message", message => { value = message; });
+            worker.once("error", reject);
+            worker.once("exit", code => resolve({ value, code }));
+          });
+          console.log(JSON.stringify(result));
+        `,
+        "worker.js": `
+          import { parentPort, workerData } from "node:worker_threads";
+          import { AsyncDatabase } from "bun:sqlite";
+          const db = await AsyncDatabase.open(workerData);
+          await db.exec("CREATE TABLE IF NOT EXISTS t (v INTEGER)");
+          await db.run("INSERT INTO t VALUES (7)");
+          const row = await db.get("SELECT v FROM t");
+          await db.close();
+          parentPort.postMessage(row.v);
+          // No pending work remains; release the port so the Worker exits naturally.
+          parentPort.close();
+        `,
+      },
+      { env: { BUN_DESTRUCT_VM_ON_EXIT: "1" } },
+    );
+    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expect(stderr).not.toContain("Sanitizer");
+    const result = JSON.parse(stdout.trim().split("\n").at(-1));
+    expect(result).toEqual({ value: 7, code: 0 });
+  }, 30000);
+});
+
+describe("AsyncDatabase cancellation (Gate D)", () => {
+  const cancelTmp = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "cancel.db");
+
+  // Opens a synchronous blocker that holds the write lock via BEGIN IMMEDIATE so
+  // that a subsequent async write becomes deterministically active-but-blocked.
+  const withWriteLock = fn => {
+    return async (...args) => {
+      const file = cancelTmp("async-cancel");
+      const blocker = new Database(file);
+      blocker.exec("CREATE TABLE t (v INTEGER)");
+      blocker.exec("BEGIN IMMEDIATE");
+      blocker.run("INSERT INTO t VALUES (0)"); // hold the write lock
+      try {
+        return await fn({ file, blocker }, ...args);
+      } finally {
+        try {
+          blocker.exec("COMMIT");
+        } catch {}
+        blocker.close();
+      }
+    };
+  };
+
+  const waitForActive = async (stats, baseline, delta = 1) =>
+    waitForAsyncSQLiteStats(
+      stats,
+      current => current.activeConnectionOperations === baseline.activeConnectionOperations + delta,
+      "an active connection operation never became visible",
+    );
+
+  it("rejects an already-aborted signal without admitting the operation", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const reason = new Error("gone before it began");
+    const controller = new AbortController();
+    controller.abort(reason);
+    // The rejection is the signal's own reason and the write never executed.
+    await expect(db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal })).rejects.toBe(reason);
+    await expect(db.get("SELECT v FROM t", undefined, { signal: controller.signal })).rejects.toBe(reason);
+    expect(await db.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 0 });
+  });
+
+  it("rejects an already-aborted default signal with an AbortError", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const controller = new AbortController();
+    controller.abort();
+    const error = await db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal }).catch(e => e);
+    expect(error).toBe(controller.signal.reason);
+    expect(error.name).toBe("AbortError");
+    expect(await db.get("SELECT COUNT(*) AS n FROM t")).toEqual({ n: 0 });
+  });
+
+  it(
+    "removes a queued operation on abort so it never enters SQLite, keeping the FIFO usable",
+    withWriteLock(async ({ file, blocker }) => {
+      const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+      const { AsyncDatabase } = await import("bun:sqlite");
+      await using db = await AsyncDatabase.open(file, { busyTimeout: 60000 });
+      const baseline = asyncSQLiteConnectionStatsForTesting();
+
+      const active = db.run("INSERT INTO t VALUES (1)"); // becomes active, blocks on the lock
+      active.catch(() => {});
+      await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+
+      const controller = new AbortController();
+      const queued = db.run("INSERT INTO t VALUES (2)", [], { signal: controller.signal }); // queued behind active
+      queued.catch(() => {});
+      const reason = new Error("cancel the queued write");
+      controller.abort(reason);
+      await expect(queued).rejects.toBe(reason);
+      // No interrupt was issued: the queued op was erased, not stepped.
+      expect(asyncSQLiteConnectionStatsForTesting().connectionInterrupts).toBe(baseline.connectionInterrupts);
+
+      blocker.exec("COMMIT"); // release the lock so the active op finishes
+      await active;
+      // FIFO remains usable and the cancelled write was never applied.
+      await db.run("INSERT INTO t VALUES (3)");
+      expect(await db.get("SELECT COUNT(*) AS n FROM t WHERE v = 2")).toEqual({ n: 0 });
+      expect(await db.all("SELECT v FROM t WHERE v IN (1, 3) ORDER BY v")).toEqual([{ v: 1 }, { v: 3 }]);
+    }),
+  );
+
+  it(
+    "interrupts a running operation that is waiting on a contended lock",
+    withWriteLock(async ({ file, blocker }) => {
+      const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+      const { AsyncDatabase } = await import("bun:sqlite");
+      await using db = await AsyncDatabase.open(file, { busyTimeout: 60000 });
+      const baseline = asyncSQLiteConnectionStatsForTesting();
+
+      const controller = new AbortController();
+      const running = db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal });
+      running.catch(() => {});
+      await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+
+      controller.abort();
+      const error = await running.catch(e => e);
+      expect(error).toBe(controller.signal.reason);
+      expect(asyncSQLiteConnectionStatsForTesting().connectionInterrupts).toBe(baseline.connectionInterrupts + 1);
+
+      // The connection survives the interrupt and remains usable.
+      blocker.exec("COMMIT");
+      await db.run("INSERT INTO t VALUES (5)");
+      expect(await db.get("SELECT COUNT(*) AS n FROM t WHERE v = 5")).toEqual({ n: 1 });
+    }),
+  );
+
+  it("interrupts a running recursive query and keeps the connection usable", async () => {
+    const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+
+    const controller = new AbortController();
+    // An unbounded recursive CTE steps forever until sqlite3_interrupt lands.
+    const runaway = db.get(
+      "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) AS n FROM c",
+      undefined,
+      { signal: controller.signal },
+    );
+    runaway.catch(() => {});
+    await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+
+    controller.abort();
+    await expect(runaway).rejects.toBe(controller.signal.reason);
+    expect(asyncSQLiteConnectionStatsForTesting().connectionInterrupts).toBe(baseline.connectionInterrupts + 1);
+
+    // A fresh query after the interrupt succeeds: the connection is intact.
+    await db.run("INSERT INTO t VALUES (9)");
+    expect(await db.get("SELECT v FROM t")).toEqual({ v: 9 });
+  });
+
+  it("lets a completion win when it settles before the abort (abort after settle is a no-op)", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const controller = new AbortController();
+    // The op completes fast; awaiting resolves before we abort.
+    const value = await db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal });
+    expect(value).toMatchObject({ changes: 1 });
+    // Aborting an already-settled operation must not throw or double-settle.
+    controller.abort();
+    expect(await db.get("SELECT v FROM t")).toEqual({ v: 1 });
+  });
+
+  it(
+    "aborting operation N never disturbs operation N+1 and a later query still succeeds",
+    withWriteLock(async ({ file, blocker }) => {
+      const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+      const { AsyncDatabase } = await import("bun:sqlite");
+      await using db = await AsyncDatabase.open(file, { busyTimeout: 60000 });
+      const baseline = asyncSQLiteConnectionStatsForTesting();
+
+      const active = db.run("INSERT INTO t VALUES (1)"); // active, blocked on the lock
+      active.catch(() => {});
+      await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+
+      const controller = new AbortController();
+      const n = db.run("INSERT INTO t VALUES (2)", [], { signal: controller.signal }); // queued: N
+      const nPlus1 = db.run("INSERT INTO t VALUES (3)"); // queued: N+1
+      n.catch(() => {});
+      controller.abort();
+      await expect(n).rejects.toThrow();
+
+      blocker.exec("COMMIT");
+      await Promise.all([active, nPlus1]); // both survive N's cancellation
+      const rows = await db.all("SELECT v FROM t WHERE v > 0 ORDER BY v");
+      expect(rows).toEqual([{ v: 1 }, { v: 3 }]); // N (value 2) never applied
+    }),
+  );
+
+  it(
+    "settles a running abort cleanly when close() races the interrupt",
+    withWriteLock(async ({ file, blocker }) => {
+      const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+      const { AsyncDatabase } = await import("bun:sqlite");
+      const db = await AsyncDatabase.open(file, { busyTimeout: 60000 });
+      const baseline = asyncSQLiteConnectionStatsForTesting();
+
+      const controller = new AbortController();
+      const running = db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal });
+      running.catch(() => {});
+      await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+
+      const closing = db.close(); // fences admission; the physical close waits for the active op
+      controller.abort(); // interrupt races the close
+      await expect(running).rejects.toThrow();
+      blocker.exec("COMMIT");
+      await closing; // close resolves exactly once with no crash
+      await expect(db.run("INSERT INTO t VALUES (2)")).rejects.toThrow();
+    }),
+  );
+
+  it("cleans up abort listeners and pending requests on every terminal path", async () => {
+    const { asyncSQLiteTaskStatsForTesting, asyncSQLiteConnectionStatsForTesting } = await import(
+      "bun:internal-for-testing"
+    );
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await using db = await AsyncDatabase.open(":memory:");
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    const baseline = asyncSQLiteTaskStatsForTesting();
+
+    // (a) success with a never-fired signal: the algorithm is removed on resolve.
+    {
+      const controller = new AbortController();
+      await db.run("INSERT INTO t VALUES (1)", [], { signal: controller.signal });
+    }
+    // (b) running interrupt: the algorithm is removed on the abort settlement.
+    {
+      const controller = new AbortController();
+      const connBaseline = asyncSQLiteConnectionStatsForTesting();
+      const runaway = db.get(
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) AS n FROM c",
+        undefined,
+        { signal: controller.signal },
+      );
+      runaway.catch(() => {});
+      await waitForActive(asyncSQLiteConnectionStatsForTesting, connBaseline);
+      controller.abort();
+      await expect(runaway).rejects.toThrow();
+    }
+    // (c) already-aborted: no algorithm/request is ever retained.
+    {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(db.get("SELECT 1", undefined, { signal: controller.signal })).rejects.toThrow();
+    }
+
+    await waitForAsyncSQLiteStats(
+      asyncSQLiteTaskStatsForTesting,
+      current =>
+        current.liveAbortAlgorithms === baseline.liveAbortAlgorithms && current.liveRequests === baseline.liveRequests,
+      "cancellation leaked abort algorithms or pending requests",
+    );
+    const final = asyncSQLiteTaskStatsForTesting();
+    expect(final.liveAbortAlgorithms).toBe(baseline.liveAbortAlgorithms);
+    expect(final.liveRequests).toBe(baseline.liveRequests);
+  });
+
+  it("interrupts a write and leaves the connection usable without assuming rollback", async () => {
+    const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+    const { AsyncDatabase } = await import("bun:sqlite");
+    const file = cancelTmp("async-cancel-tx");
+    await using db = await AsyncDatabase.open(file);
+    await db.exec("CREATE TABLE t (v INTEGER)");
+    await db.exec("BEGIN"); // explicit transaction
+    const baseline = asyncSQLiteConnectionStatsForTesting();
+
+    const controller = new AbortController();
+    // A long recursive INSERT inside the open transaction, interrupted mid-write.
+    const write = db.run(
+      "INSERT INTO t SELECT x FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT x FROM c)",
+      [],
+      { signal: controller.signal },
+    );
+    write.catch(() => {});
+    await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+    controller.abort();
+    await expect(write).rejects.toThrow();
+
+    // Observe the ACTUAL post-interrupt state instead of assuming a rollback:
+    // finish the transaction (whichever way the engine left it) and confirm the
+    // connection is fully usable afterwards.
+    await db.exec("ROLLBACK").catch(() => db.exec("COMMIT").catch(() => {}));
+    await db.exec("DELETE FROM t");
+    await db.run("INSERT INTO t VALUES (42)");
+    expect(await db.get("SELECT v FROM t")).toEqual({ v: 42 });
+
+    const reader = new Database(file, { readonly: true });
+    try {
+      expect(reader.query("SELECT v FROM t").get()).toEqual({ v: 42 });
+    } finally {
+      reader.close();
+    }
+  });
+
+  it("tears down a Worker with signalled active and queued work without leaking", async () => {
+    const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
+    const { Worker } = await import("node:worker_threads");
+    const rounds = isASAN || isDebug ? 2 : 4;
+    const dir = tempDirWithFiles("sqlite-async-cancel-worker-teardown", {
+      "worker.js": `
+        import { parentPort, workerData } from "node:worker_threads";
+        import { AsyncDatabase } from "bun:sqlite";
+        const db = await AsyncDatabase.open(workerData, { maxPending: 8, busyTimeout: 60000 });
+        const activeController = new AbortController();
+        const queuedController = new AbortController();
+        const active = db.run("INSERT INTO gate VALUES (1)", [], { signal: activeController.signal });
+        const queued = db.run("INSERT INTO gate VALUES (2)", [], { signal: queuedController.signal });
+        active.catch(() => {});
+        queued.catch(() => {});
+        parentPort.postMessage("submitted");
+        await new Promise(() => {}); // never resolves; the parent terminates this worker
+      `,
+    });
+    const file = path.join(dir, "gate.db");
+    const blocker = new Database(file);
+    try {
+      blocker.exec("CREATE TABLE gate (value INTEGER)");
+      for (let round = 0; round < rounds; round++) {
+        blocker.exec("BEGIN IMMEDIATE");
+        blocker.run("INSERT INTO gate VALUES (0)"); // hold the write lock
+        const baseline = asyncSQLiteConnectionStatsForTesting();
+        const worker = new Worker(path.join(dir, "worker.js"), { type: "module", workerData: file });
+        try {
+          await new Promise((resolve, reject) => {
+            worker.once("message", resolve);
+            worker.once("error", reject);
+            worker.once("exit", code => reject(new Error(`worker exited before submitting work: ${code}`)));
+          });
+          await waitForActive(asyncSQLiteConnectionStatsForTesting, baseline);
+          await worker.terminate();
+        } finally {
+          await worker.terminate();
+        }
+        blocker.exec("COMMIT");
+        await waitForAsyncSQLiteStats(
+          asyncSQLiteConnectionStatsForTesting,
+          current =>
+            current.liveConnections === baseline.liveConnections &&
+            current.liveJobs === baseline.liveJobs &&
+            current.liveResults === baseline.liveResults &&
+            current.liveRequests === baseline.liveRequests,
+          "worker teardown with signals leaked connection state",
+        );
+        const final = asyncSQLiteConnectionStatsForTesting();
+        expect(final.liveConnections).toBe(baseline.liveConnections);
+        expect(final.liveRequests).toBe(baseline.liveRequests);
+        // Neither the interrupted nor the queued signalled write was applied.
+        expect(blocker.query("SELECT COUNT(*) AS n FROM gate WHERE value IN (1, 2)").get()).toEqual({ n: 0 });
+        blocker.exec("DELETE FROM gate");
+      }
+    } finally {
+      blocker.close();
+    }
+  }, 30000);
 });
 
 describe("safeIntegers", () => {

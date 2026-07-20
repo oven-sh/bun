@@ -1,0 +1,12 @@
+{
+    "name": "optional-peer-deps",
+    "version": "1.0.1",
+    "peerDependencies": {
+        "no-deps": "*"
+    },
+    "peerDependenciesMeta": {
+        "no-deps": {
+            "optional": true
+        }
+    }
+}

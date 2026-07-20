@@ -1,0 +1,8 @@
+{
+    "name": "prefer-unplugged-false",
+    "version": "1.0.0",
+    "preferUnplugged": false,
+    "scripts": {
+      "postinstall": "echo hello"
+    }
+}

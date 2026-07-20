@@ -1,0 +1,7 @@
+{
+  "name": "what-bin",
+  "version": "1.5.0",
+  "bin": {
+    "what-bin": "./what-bin.js"
+  }
+}

@@ -1,0 +1,8 @@
+
+{
+    "name": "node-modules-path",
+    "version": "1.0.0",
+    "bin": {
+        "get-node-modules-path": "./bin.js"
+    }
+}

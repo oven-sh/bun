@@ -1,0 +1,7 @@
+{
+  "name": "duplicate-name-and-version",
+  "version": "1.0.2",
+  "dependencies": {
+    "a-dep": "1.0.1"
+  }
+}

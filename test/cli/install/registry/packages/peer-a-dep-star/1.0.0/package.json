@@ -1,0 +1,7 @@
+{
+    "name": "peer-a-dep-star",
+    "version": "1.0.0",
+    "peerDependencies": {
+        "a-dep": "*"
+    }
+}

@@ -1,0 +1,10 @@
+{
+    "name": "peer-deps-lvl1",
+    "version": "1.0.0",
+    "dependencies": {
+        "peer-deps-lvl2": "1.0.0"
+    },
+    "peerDependencies": {
+        "no-deps": "*"
+    }
+}

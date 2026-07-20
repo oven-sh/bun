@@ -1,0 +1,7 @@
+{
+    "name": "peer-a-dep-gte-1-0-3",
+    "version": "1.0.0",
+    "peerDependencies": {
+        "a-dep": ">=1.0.3"
+    }
+}

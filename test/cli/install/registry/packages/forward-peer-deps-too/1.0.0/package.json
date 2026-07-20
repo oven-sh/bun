@@ -1,0 +1,10 @@
+{
+    "name": "forward-peer-deps-too",
+    "version": "1.0.0",
+    "dependencies": {
+        "peer-deps": "1.0.0"
+    },
+    "peerDependencies": {
+        "no-deps": "*"
+    }
+}

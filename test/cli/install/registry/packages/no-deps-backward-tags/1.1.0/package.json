@@ -1,0 +1,8 @@
+{
+    "name": "no-deps-backward-tags",
+    "version": "1.1.0",
+    "dist-tags": {
+      "latest": "1.1.0",
+      "rc": "1.0.0-rc.1"
+    }
+}

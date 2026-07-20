@@ -9,11 +9,16 @@ import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
-import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, rm, writeFile } from "fs/promises";
-import fs, { closeSync, openSync, rmSync } from "node:fs";
+import { execSync } from "child_process";
+import { readdir, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
+import { NpmRegistry, type NpmRegistryOptions } from "npm-registry";
 import { dirname, isAbsolute, join } from "path";
+
+// Re-exported so install tests can reach the registry library (and its
+// types) through `harness` alone. See `test/npm-registry/README.md`.
+export { NpmRegistry, type NpmRegistryOptions, type VersionSpec } from "npm-registry";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -1813,120 +1818,82 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
-export class VerdaccioRegistry {
-  port: number;
-  process: ChildProcess | undefined;
-  configPath: string;
-  packagesPath: string;
-  users: Record<string, string> = {};
+/**
+ * The directory of package fixtures the install tests share. See
+ * `test/npm-registry/README.md` for the layout and how to add one.
+ */
+export const installRegistryFixtures = join(import.meta.dir, "cli", "install", "registry", "packages");
 
-  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
-    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
-    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
+/**
+ * The in-process npm registry the install tests use: `NpmRegistry` from
+ * `test/npm-registry/`, preloaded with the shared fixture tree and the
+ * access rules those fixtures assume, plus the bun-specific conveniences
+ * (`bunfig.toml`, the per-test project directory) that do not belong in
+ * the registry itself.
+ *
+ * Starting one costs a socket bind, so prefer one per test file (the
+ * `beforeAll(start)` / `afterAll(stop)` pattern) or even one per test.
+ * Nothing it does ever touches disk, so there is nothing to clean up
+ * and concurrent tests cannot interfere with each other.
+ *
+ * Spawn bun **asynchronously** against it (`Bun.spawn`, not
+ * `spawnSync`): the registry runs on this process's event loop, and a
+ * synchronous wait for the child deadlocks both.
+ */
+export class TestRegistry extends NpmRegistry {
+  constructor(options: NpmRegistryOptions = {}) {
+    super({
+      fixtures: installRegistryFixtures,
+      // These two scopes require a valid token to read or publish;
+      // everything else is open. npmrc and publish auth tests rely on it.
+      access: { "@needs-auth/*": "authenticated", "@secret/*": "authenticated" },
+      ...options,
+    });
   }
 
-  async start(silent: boolean = true) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
-      },
-    });
-
-    this.process.stderr?.on("data", data => {
-      console.error(`[verdaccio] stderr: ${data}`);
-    });
-
-    const started = Promise.withResolvers();
-
-    this.process.on("error", error => {
-      console.error(`Failed to start verdaccio: ${error}`);
-      started.reject(error);
-    });
-
-    this.process.on("exit", (code, signal) => {
-      if (code !== 0) {
-        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
-      } else {
-        console.log("Verdaccio exited successfully");
-      }
-    });
-
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
-      }
-    });
-
-    await started.promise;
-  }
-
+  /** @deprecated Use the `url` getter. */
   registryUrl() {
-    return `http://localhost:${this.port}/`;
-  }
-
-  stop() {
-    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    return this.url;
   }
 
   /**
-   * returns auth token
+   * Registers a user over HTTP (`PUT /-/user/org.couchdb.user:<name>`),
+   * the way `npm adduser` does, and returns its bearer token.
    */
   async generateUser(username: string, password: string): Promise<string> {
-    if (this.users[username]) {
-      throw new Error(`User ${username} already exists`);
-    } else this.users[username] = password;
-
-    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
-    const user = {
-      name: username,
-      password: password,
-      email: `${username}@example.com`,
-    };
-
-    const response = await fetch(url, {
+    if (this.users.users.has(username)) throw new Error(`User ${username} already exists`);
+    const response = await fetch(`${this.url}-/user/org.couchdb.user:${username}`, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(user),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: username, password, email: `${username}@example.com` }),
     });
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.token;
-    }
-
-    throw new Error("Failed to create user:", response.statusText);
+    if (!response.ok) throw new Error(`Failed to create user ${username}: ${await response.text()}`);
+    return ((await response.json()) as { token: string }).token;
   }
 
+  /** A `bunfig.toml` pointing at this registry with a fresh user's token. */
   async authBunfig(user: string) {
     const authToken = await this.generateUser(user, user);
     return `
         [install]
         cache = false
-        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
+        registry = { url = "${this.url}", token = "${authToken}" }
         `;
   }
 
+  /**
+   * A fresh project directory with a `bunfig.toml` pointing at this
+   * registry.
+   */
   async createTestDir(
     opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = {
       bunfigOpts: { linker: "hoisted" },
       files: {},
     },
   ) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
+    const packageDir = tempDir("npm-registry-test-", opts.files ?? {});
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
-    this.users = {};
     return { packageDir: String(packageDir), packageJson };
   }
 
@@ -1940,7 +1907,7 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
 `;
     }
     if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"\n`;
+      bunfig += `registry = "${this.url}"\n`;
     }
     if (opts.linker) {
       bunfig += `linker = "${opts.linker}"\n`;

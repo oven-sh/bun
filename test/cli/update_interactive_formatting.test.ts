@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, TestRegistry } from "harness";
 import { join } from "path";
 
-let registry: VerdaccioRegistry;
+let registry: TestRegistry;
 let registryUrl: string;
 
 beforeAll(async () => {
-  registry = new VerdaccioRegistry();
-  registryUrl = registry.registryUrl();
+  registry = new TestRegistry();
   await registry.start();
+  registryUrl = registry.url;
 });
 
 afterAll(() => {

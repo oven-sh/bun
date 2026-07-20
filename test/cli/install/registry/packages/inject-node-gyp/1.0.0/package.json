@@ -1,0 +1,7 @@
+{
+    "name": "inject-node-gyp",
+    "version": "1.0.0",
+    "scripts": {
+        "install": "node-gyp help"
+    }
+}

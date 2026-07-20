@@ -1,0 +1,7 @@
+{
+    "name": "depend-on-debug-1",
+    "version": "1.0.0",
+    "dependencies": {
+        "debug-1": "4.4.0"
+    }
+}

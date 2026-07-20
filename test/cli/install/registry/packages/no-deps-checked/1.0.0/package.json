@@ -1,0 +1,7 @@
+{
+    "name": "no-deps-checked",
+    "version": "1.0.0",
+    "scripts": {
+        "install": "echo 'module.exports = 42' > built.js"
+    }
+}

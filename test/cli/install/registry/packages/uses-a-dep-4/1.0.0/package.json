@@ -1,0 +1,7 @@
+{
+    "name": "uses-a-dep-4",
+    "version": "1.0.0",
+    "dependencies": {
+        "a-dep": "1.0.4"
+    }
+}

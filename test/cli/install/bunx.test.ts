@@ -1,11 +1,10 @@
 import { spawn } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, NpmRegistry, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
-import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -564,19 +563,16 @@ describe("--package flag", () => {
   });
 
   describe("with mock registry", () => {
+    let registry: NpmRegistry;
     let port: number;
 
-    beforeAll(() => {
-      dummyBeforeAll();
-      port = getPort()!;
-    });
-
-    afterAll(() => {
-      dummyAfterAll();
-    });
-
     beforeEach(async () => {
-      await dummyBeforeEach();
+      registry = await new NpmRegistry().start();
+      port = registry.port;
+    });
+
+    afterEach(() => {
+      registry.stop();
     });
 
     const runWithRegistry = async (
@@ -607,20 +603,19 @@ describe("--package flag", () => {
 
     it("should install specified package when binary differs from package name", async () => {
       const urls: string[] = [];
+      registry.intercept(req => void urls.push(req.url));
 
-      // Set up dummy registry with a package that has a different binary name
-      setHandler(
-        dummyRegistry(urls, {
-          "1.0.0": {
-            bin: {
-              "different-bin": "index.js",
-            },
-            as: "1.0.0",
+      // Set up the registry with a package that has a different binary name
+      registry.define("my-special-pkg", {
+        "1.0.0": {
+          bin: {
+            "different-bin": "index.js",
           },
-        }),
-      );
-
-      // Tarball already exists in test directory
+          tarball: {
+            "index.js": `#!/usr/bin/env node\nconsole.log("different-bin from my-special-pkg");\n`,
+          },
+        },
+      });
 
       // Without --package, bunx different-bin would fail
       // With --package, we correctly install my-special-pkg
@@ -649,19 +644,18 @@ describe("--package flag", () => {
 
     it("should support -p shorthand with mock registry", async () => {
       const urls: string[] = [];
+      registry.intercept(req => void urls.push(req.url));
 
-      setHandler(
-        dummyRegistry(urls, {
-          "2.0.0": {
-            bin: {
-              "tool": "cli.js",
-            },
-            as: "2.0.0",
+      registry.define("actual-package", {
+        "2.0.0": {
+          bin: {
+            "tool": "cli.js",
           },
-        }),
-      );
-
-      // Tarball already exists in test directory
+          tarball: {
+            "cli.js": `#!/usr/bin/env node\nconsole.log("tool from actual-package");\n`,
+          },
+        },
+      });
 
       const subprocess = spawn({
         cmd: [bunExe(), "x", "-p", "actual-package", "tool", "--version"],
@@ -686,19 +680,18 @@ describe("--package flag", () => {
 
     it("should support --package=<pkg> syntax with mock registry", async () => {
       const urls: string[] = [];
+      registry.intercept(req => void urls.push(req.url));
 
-      setHandler(
-        dummyRegistry(urls, {
-          "3.0.0": {
-            bin: {
-              "runner": "run.js",
-            },
-            as: "3.0.0",
+      registry.define("runner-pkg", {
+        "3.0.0": {
+          bin: {
+            "runner": "run.js",
           },
-        }),
-      );
-
-      // Tarball already exists in test directory
+          tarball: {
+            "run.js": `#!/usr/bin/env node\nconsole.log("runner from runner-pkg");\n`,
+          },
+        },
+      });
 
       const subprocess = spawn({
         cmd: [bunExe(), "x", "--package=runner-pkg", "runner", "--help"],
@@ -749,65 +742,21 @@ describe("--package flag", () => {
 
     it("should execute the correct binary when package has multiple binaries", async () => {
       const urls: string[] = [];
+      registry.intercept(req => void urls.push(req.url));
 
-      // Create the tarball with both binaries that output different messages
-      // First, let's create the package structure
-      const tempDir = tmpdirSync();
-      const packageDir = join(tempDir, "package");
-
-      await Bun.$`mkdir -p ${packageDir}/bin`;
-
-      await writeFile(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "multi-tool-pkg",
-          version: "1.0.0",
+      // Set up a package with two different binaries that output different messages
+      registry.define("multi-tool-pkg", {
+        "1.0.0": {
           bin: {
             "multi-tool": "bin/multi-tool.js",
             "multi-tool-alt": "bin/multi-tool-alt.js",
           },
-        }),
-      );
-
-      await writeFile(
-        join(packageDir, "bin", "multi-tool.js"),
-        `#!/usr/bin/env node
-console.log("EXECUTED: multi-tool (main binary)");
-`,
-      );
-
-      await writeFile(
-        join(packageDir, "bin", "multi-tool-alt.js"),
-        `#!/usr/bin/env node
-console.log("EXECUTED: multi-tool-alt (alternate binary)");
-`,
-      );
-
-      // Make the binaries executable
-      await Bun.$`chmod +x ${packageDir}/bin/multi-tool.js ${packageDir}/bin/multi-tool-alt.js`;
-
-      // Create the tarball with package/ prefix. It goes to a temp dir the
-      // registry is pointed at — writing it under import.meta.dir would
-      // rewrite a checked-in file on every run.
-      const tgzDir = tmpdirSync();
-      await Bun.$`cd ${tempDir} && tar -czf ${join(tgzDir, "multi-tool-pkg-1.0.0.tgz")} package`;
-
-      setHandler(
-        dummyRegistry(
-          urls,
-          {
-            "1.0.0": {
-              bin: {
-                "multi-tool": "bin/multi-tool.js",
-                "multi-tool-alt": "bin/multi-tool-alt.js",
-              },
-              as: "1.0.0",
-            },
+          tarball: {
+            "bin/multi-tool.js": `#!/usr/bin/env node\nconsole.log("EXECUTED: multi-tool (main binary)");\n`,
+            "bin/multi-tool-alt.js": `#!/usr/bin/env node\nconsole.log("EXECUTED: multi-tool-alt (alternate binary)");\n`,
           },
-          0,
-          tgzDir,
-        ),
-      );
+        },
+      });
 
       // Test 1: Without --package, bunx multi-tool-alt should fail or install wrong package
       // Test 2: With --package, we can run the alternate binary
@@ -846,44 +795,30 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
 // `bunx @uidotsh/install` matching /usr/bin/install — the system binary
 // was executed instead of the package's actual bin.
 describe("scoped packages should not match unrelated system binaries", () => {
+  let registry: NpmRegistry;
   let port: number;
 
-  beforeAll(() => {
-    dummyBeforeAll();
-    port = getPort()!;
-  });
-
-  afterAll(() => {
-    dummyAfterAll();
-  });
-
   beforeEach(async () => {
-    await dummyBeforeEach();
+    registry = await new NpmRegistry().start();
+    port = registry.port;
+  });
+
+  afterEach(() => {
+    registry.stop();
   });
 
   it("`bunx @scope/install` runs the package's bin, not a system binary named `install`", async () => {
-    // Create a scoped package whose bin name does NOT match the unscoped
+    // Define a scoped package whose bin name does NOT match the unscoped
     // portion of the package name, mirroring @uidotsh/install whose bin is
     // "uidotsh-installer".
-    const pkgRoot = tmpdirSync();
-    const packageDir = join(pkgRoot, "package");
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "@scope/install",
-        version: "1.0.0",
+    registry.define("@scope/install", {
+      "1.0.0": {
         bin: { "scoped-tool": "cli.js" },
-      }),
-    );
-    await writeFile(
-      join(packageDir, "cli.js"),
-      `#!/usr/bin/env node\nconsole.log("CORRECT: ran the scoped package's bin");\n`,
-    );
-    const tgzDir = tmpdirSync();
-    // The dummy registry serves the tarball by basename of the request URL,
-    // which for `@scope/install` + version 1.0.0 is `install-1.0.0.tgz`.
-    await Bun.$`tar -czf ${join(tgzDir, "install-1.0.0.tgz")} -C ${pkgRoot} package`;
+        tarball: {
+          "cli.js": `#!/usr/bin/env node\nconsole.log("CORRECT: ran the scoped package's bin");\n`,
+        },
+      },
+    });
 
     // Create a fake "install" binary in $PATH to simulate /usr/bin/install.
     const fakeBinDir = tmpdirSync();
@@ -894,9 +829,6 @@ describe("scoped packages should not match unrelated system binaries", () => {
       await writeFile(fakeBin, `#!/bin/sh\necho "WRONG: ran a system binary from PATH"\n`);
       await Bun.$`chmod +x ${fakeBin}`;
     }
-
-    const urls: string[] = [];
-    setHandler(dummyRegistry(urls, { "1.0.0": { bin: { "scoped-tool": "cli.js" }, as: "1.0.0" } }, 0, tgzDir));
 
     const subprocess = spawn({
       cmd: [bunExe(), "x", "@scope/install"],
@@ -1041,25 +973,16 @@ describe("scoped packages should not match unrelated system binaries", () => {
   // package.json — collides with a system binary, bunx must run the
   // cached bin via the absolute-path probe, not the system binary.
   it("bunx-cache-only `@scope/name` whose real bin collides with a system binary runs the cached bin", async () => {
-    // Create a scoped package with a bin name that differs from the
+    // Define a scoped package with a bin name that differs from the
     // unscoped portion AND collides with a system binary we control.
-    const pkgRoot = tmpdirSync();
-    const packageDir = join(pkgRoot, "package");
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "@cacheonly/pkg",
-        version: "1.0.0",
+    registry.define("@cacheonly/pkg", {
+      "1.0.0": {
         bin: { "colliding-tool": "cli.js" },
-      }),
-    );
-    await writeFile(
-      join(packageDir, "cli.js"),
-      `#!/usr/bin/env node\nconsole.log("CORRECT: ran the cached package's bin");\n`,
-    );
-    const tgzDir = tmpdirSync();
-    await Bun.$`tar -czf ${join(tgzDir, "pkg-1.0.0.tgz")} -C ${pkgRoot} package`;
+        tarball: {
+          "cli.js": `#!/usr/bin/env node\nconsole.log("CORRECT: ran the cached package's bin");\n`,
+        },
+      },
+    });
 
     // Put a decoy "colliding-tool" (the REAL bin name) in $PATH.
     const fakeBinDir = tmpdirSync();
@@ -1070,9 +993,6 @@ describe("scoped packages should not match unrelated system binaries", () => {
       await writeFile(fakeBin, `#!/bin/sh\necho "WRONG: ran a system binary from PATH"\n`);
       chmodSync(fakeBin, 0o755);
     }
-
-    const urls: string[] = [];
-    setHandler(dummyRegistry(urls, { "1.0.0": { bin: { "colliding-tool": "cli.js" }, as: "1.0.0" } }, 0, tgzDir));
 
     const runEnv = {
       ...env,
@@ -1127,19 +1047,16 @@ describe("scoped packages should not match unrelated system binaries", () => {
 });
 
 describe("package name aliases", () => {
+  let registry: NpmRegistry;
   let port: number;
 
-  beforeAll(() => {
-    dummyBeforeAll();
-    port = getPort()!;
-  });
-
-  afterAll(() => {
-    dummyAfterAll();
-  });
-
   beforeEach(async () => {
-    await dummyBeforeEach();
+    registry = await new NpmRegistry().start();
+    port = registry.port;
+  });
+
+  afterEach(() => {
+    registry.stop();
   });
 
   // `bunx claude` should resolve to `@anthropic-ai/claude-code` (same shape as
@@ -1147,7 +1064,7 @@ describe("package name aliases", () => {
   // unrelated squatter with no bin, so redirecting is strictly more useful.
   it("`bunx claude` requests @anthropic-ai/claude-code, not the 'claude' squatter", async () => {
     const urls: string[] = [];
-    setHandler(async request => {
+    registry.intercept(async request => {
       urls.push(request.url);
       return new Response("{}", { status: 404 });
     });

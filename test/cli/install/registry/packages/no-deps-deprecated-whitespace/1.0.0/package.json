@@ -1,0 +1,5 @@
+{
+  "name": "no-deps-deprecated-whitespace",
+  "version": "1.0.0",
+  "deprecated": "              "
+}

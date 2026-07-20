@@ -1,0 +1,7 @@
+{
+    "name": "vulnerable-dep",
+    "version": "1.0.0",
+    "dependencies": {
+        "vulnerable": "1.0.0"
+    }
+}

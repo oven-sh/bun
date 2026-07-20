@@ -1,7 +1,8 @@
-import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { file, spawn, write } from "bun";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { access, mkdir, writeFile } from "fs/promises";
 import {
+  NpmRegistry,
   bunExe,
   bunEnv as env,
   isWindows,
@@ -13,11 +14,12 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
-import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
-
+// None of these tests resolve anything from a registry; the empty one
+// exists so that an install that unexpectedly tried to would fail
+// loudly instead of reaching a real registry.
+let registry: NpmRegistry;
+let package_dir: string;
 let link_dir: string;
 
 expect.extend({
@@ -26,11 +28,22 @@ expect.extend({
 });
 
 beforeEach(async () => {
+  registry = await new NpmRegistry().start();
   link_dir = tmpdirSync();
-  await dummyBeforeEach({ linker: "hoisted" });
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+linker = "hoisted"
+`,
+  );
 });
-afterEach(async () => {
-  await dummyAfterEach();
+afterEach(() => {
+  registry.stop();
 });
 
 it("should link and unlink workspace package", async () => {

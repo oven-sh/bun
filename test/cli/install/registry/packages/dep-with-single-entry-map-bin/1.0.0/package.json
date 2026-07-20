@@ -1,0 +1,7 @@
+{
+  "name": "dep-with-single-entry-map-bin",
+  "version": "1.0.0",
+  "bin": {
+    "single-entry-map-bin": "./single-entry-map-bin"
+  }
+}

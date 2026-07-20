@@ -1,0 +1,7 @@
+{
+    "name": "binding-gyp-scripts",
+    "version": "1.0.0",
+    "dependencies": {
+        "node-gyp": "^1.0.0"
+    }
+}

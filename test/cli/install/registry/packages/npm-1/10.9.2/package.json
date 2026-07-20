@@ -1,0 +1,12 @@
+{
+    "name": "npm-1",
+    "version": "10.9.2",
+    "dependencies": {
+        "ms-1": "^2.1.2",
+        "depend-on-debug-1": "1.0.0"
+    },
+    "bundleDependencies": [
+        "ms-1",
+        "depend-on-debug-1"
+    ]
+}

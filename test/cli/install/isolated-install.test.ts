@@ -2,10 +2,10 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { TestRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 // With the global virtual store enabled, dependency symlinks inside a store
 // entry point at sibling global-store directories whose names carry a 16-hex
@@ -1598,60 +1598,16 @@ test("runs lifecycle scripts correctly", async () => {
 // the transitive peer's resolution unset (= invalid_package_id → filtered
 // from the install).
 test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
-  const packagesDir = join(import.meta.dir, "registry", "packages");
-
-  // Self-contained HTTP server that serves package manifests & tarballs
-  // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
-  // to replicate npmjs.org behavior (fully synchronous on warm cache).
-  using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      const pathname = url.pathname;
-
-      // Tarball: /<name>/-/<name>-<version>.tgz
-      if (pathname.endsWith(".tgz")) {
-        const match = pathname.match(/\/([^/]+)\/-\/(.+\.tgz)$/);
-        if (match) {
-          const tarball = file(join(packagesDir, match[1], match[2]));
-          if (await tarball.exists()) {
-            return new Response(tarball, {
-              headers: { "Content-Type": "application/octet-stream" },
-            });
-          }
-        }
-        return new Response("Not found", { status: 404 });
-      }
-
-      // Manifest: /<name>
-      const packageName = decodeURIComponent(pathname.slice(1));
-      const metaFile = file(join(packagesDir, packageName, "package.json"));
-      if (!(await metaFile.exists())) {
-        return new Response("Not found", { status: 404 });
-      }
-
-      // Rewrite tarball URLs to point at this server
-      const meta = await metaFile.json();
-      const port = server.port;
-      for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
-        if (info?.dist?.tarball) {
-          info.dist.tarball = `http://localhost:${port}/${packageName}/-/${packageName}-${ver}.tgz`;
-        }
-      }
-
-      return new Response(JSON.stringify(meta), {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "public, max-age=300",
-        },
-      });
-    },
-  });
+  // bun's warm-manifest gate is an on-disk cache entry younger than
+  // 300 s (`src/install/npm.rs`). On the second install the manifest
+  // cache is still fresh, so every resolution is synchronous, which is
+  // the bug trigger.
+  await using server = await new TestRegistry().start();
 
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
   const cacheDir = join(String(packageDir), ".bun-cache");
-  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`;
+  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "${server.url}"\nlinker = "isolated"\n`;
   await write(join(String(packageDir), "bunfig.toml"), bunfig);
 
   await write(

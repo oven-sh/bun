@@ -1,0 +1,10 @@
+{
+  "name": "@scoped/create-test-app",
+  "version": "1.0.0",
+  "bin": {
+      "create-test-app": "./bin.js"
+  },
+  "dependencies": {
+      "no-deps": "1.0.0"
+  }
+}

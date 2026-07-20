@@ -1,0 +1,7 @@
+{
+    "name": "one-fixed-dep-bins",
+    "version": "2.0.0",
+    "dependencies": {
+        "no-deps-bins": "2.0.0"
+    }
+}

@@ -1,0 +1,7 @@
+{
+    "name": "lifecycle-failing-postinstall-slow",
+    "version": "1.0.0",
+    "scripts": {
+        "postinstall": "sleep 1 && echo hello && exit 1"
+    }
+}

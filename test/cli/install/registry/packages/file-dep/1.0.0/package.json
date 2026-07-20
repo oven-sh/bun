@@ -1,0 +1,7 @@
+{
+    "name": "file-dep",
+    "version": "1.0.0",
+    "dependencies": {
+        "files": "file:./the-files"
+    }
+}

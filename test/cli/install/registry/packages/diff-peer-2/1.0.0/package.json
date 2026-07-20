@@ -1,0 +1,8 @@
+{
+  "name": "diff-peer-2",
+  "version": "1.0.0",
+  "dependencies": {
+    "has-peer": "1.0.0",
+    "peer-no-deps": "1.0.1"
+  }
+}

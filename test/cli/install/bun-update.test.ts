@@ -1,50 +1,59 @@
-import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { file, spawn, write } from "bun";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import { NpmRegistry, bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  requested,
-  root_url,
-  setHandler,
-} from "./dummy.registry.js";
-
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
-beforeEach(async () => {
-  await dummyBeforeEach();
-});
-afterEach(dummyAfterEach);
 
 expect.extend({
   toBeValidBin,
   toHaveBins,
 });
 
+const BAZ_INDEX_JS = '#! /usr/bin/env node\n\nconsole.log("run baz");\n';
+
+let registry: NpmRegistry;
+let root_url: string;
+let package_dir: string;
+
+beforeEach(async () => {
+  registry = await new NpmRegistry().start();
+  root_url = registry.url.slice(0, -1);
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+`,
+  );
+});
+
+afterEach(() => {
+  registry.stop();
+});
+
 for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   it(`should update to latest version of dependency (${input.baz[0]})`, async () => {
     const urls: string[] = [];
+    registry.intercept(req => void urls.push(req.url));
     const tilde = input.baz[0] === "~";
-    const registry = {
+    const versions = {
       "0.0.3": {
         bin: {
           "baz-run": "index.js",
         },
+        tarball: { "index.js": BAZ_INDEX_JS },
       },
       "0.0.5": {
         bin: {
           "baz-exec": "index.js",
         },
+        tarball: { "index.js": BAZ_INDEX_JS },
       },
-      latest: "0.0.3",
     };
-    setHandler(dummyRegistry(urls, registry));
+    registry.define("baz", versions, { distTags: { latest: "0.0.3" } });
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({
@@ -79,8 +88,8 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       "1 package installed",
     ]);
     expect(await exited1).toBe(0);
-    expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-    expect(requested).toBe(2);
+    expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.3.tgz`]);
+    expect(registry.requestCount).toBe(2);
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
     expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
     expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -96,8 +105,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     // Perform `bun update` with updated registry & lockfile from before
     await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
     urls.length = 0;
-    registry.latest = "0.0.5";
-    setHandler(dummyRegistry(urls, registry));
+    registry.define("baz", versions, { distTags: { latest: "0.0.5" } });
     const {
       stdout: stdout2,
       stderr: stderr2,
@@ -123,8 +131,8 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
       "1 package installed",
     ]);
     expect(await exited2).toBe(0);
-    expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-${tilde ? "0.0.5" : "0.0.3"}.tgz`]);
-    expect(requested).toBe(4);
+    expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-${tilde ? "0.0.5" : "0.0.3"}.tgz`]);
+    expect(registry.requestCount).toBe(4);
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
     expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([tilde ? "baz-exec" : "baz-run"]);
     expect(join(package_dir, "node_modules", ".bin", tilde ? "baz-exec" : "baz-run")).toBeValidBin(
@@ -150,21 +158,26 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   it(`should update to latest versions of dependencies (${input.baz[0]})`, async () => {
     const tilde = input.baz[0] === "~";
     const urls: string[] = [];
-    const registry = {
+    registry.intercept(req => void urls.push(req.url));
+    // Both `baz` and `@barn/moo` resolve from the same version set, like
+    // the old any-name registry served them.
+    const versions = {
       "0.0.3": {
         bin: {
           "baz-run": "index.js",
         },
+        tarball: { "index.js": BAZ_INDEX_JS },
       },
       "0.0.5": {
         bin: {
           "baz-exec": "index.js",
         },
+        tarball: { "index.js": BAZ_INDEX_JS },
       },
       "0.1.0": {},
-      latest: "0.0.3",
     };
-    setHandler(dummyRegistry(urls, registry));
+    registry.define("baz", versions, { distTags: { latest: "0.0.3" } });
+    registry.define("@barn/moo", { "0.1.0": {} });
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({
@@ -202,11 +215,11 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     expect(await exited1).toBe(0);
     expect(urls.sort()).toEqual([
       `${root_url}/@barn%2fmoo`,
-      `${root_url}/@barn/moo-0.1.0.tgz`,
+      `${root_url}/@barn/moo/-/moo-0.1.0.tgz`,
       `${root_url}/baz`,
-      `${root_url}/baz-0.0.3.tgz`,
+      `${root_url}/baz/-/baz-0.0.3.tgz`,
     ]);
-    expect(requested).toBe(4);
+    expect(registry.requestCount).toBe(4);
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "baz"]);
     expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
     expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -224,8 +237,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     // Perform `bun update` with updated registry & lockfile from before
     await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
     urls.length = 0;
-    registry.latest = "0.0.5";
-    setHandler(dummyRegistry(urls, registry));
+    registry.define("baz", versions, { distTags: { latest: "0.0.5" } });
     const {
       stdout: stdout2,
       stderr: stderr2,
@@ -265,11 +277,11 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
     expect(await exited2).toBe(0);
     expect(urls.sort()).toEqual([
       `${root_url}/@barn%2fmoo`,
-      `${root_url}/@barn/moo-0.1.0.tgz`,
+      `${root_url}/@barn/moo/-/moo-0.1.0.tgz`,
       `${root_url}/baz`,
-      tilde ? `${root_url}/baz-0.0.5.tgz` : `${root_url}/baz-0.0.3.tgz`,
+      tilde ? `${root_url}/baz/-/baz-0.0.5.tgz` : `${root_url}/baz/-/baz-0.0.3.tgz`,
     ]);
-    expect(requested).toBe(8);
+    expect(registry.requestCount).toBe(8);
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "baz"]);
     expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([tilde ? "baz-exec" : "baz-run"]);
     expect(join(package_dir, "node_modules", ".bin", tilde ? "baz-exec" : "baz-run")).toBeValidBin(
@@ -299,15 +311,10 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
 it("lockfile should not be modified when there are no version changes, issue#5888", async () => {
   // Install packages
   const urls: string[] = [];
-  const registry = {
-    "0.0.3": {
-      bin: {
-        "baz-run": "index.js",
-      },
-    },
-    latest: "0.0.3",
-  };
-  setHandler(dummyRegistry(urls, registry));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", {
+    "0.0.3": { bin: { "baz-run": "index.js" }, tarball: { "index.js": BAZ_INDEX_JS } },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -374,8 +381,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
 });
 
 it("should support catalog versions in update", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.defineFallback({ "0.0.2": {} });
 
   // Create a monorepo with catalog
   await writeFile(
@@ -484,13 +490,8 @@ it("should support --recursive flag", async () => {
 });
 
 it("should print UTF-8 arrows correctly with colors enabled", async () => {
-  const urls: string[] = [];
-  const registry = {
-    "0.0.3": {},
-    "0.0.5": {},
-    latest: "0.0.3",
-  };
-  setHandler(dummyRegistry(urls, registry));
+  const versions = { "0.0.3": {}, "0.0.5": {} };
+  registry.define("baz", versions, { distTags: { latest: "0.0.3" } });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -511,8 +512,7 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   expect(err1).not.toContain("error:");
   expect(await exited).toBe(0);
 
-  registry.latest = "0.0.5";
-  setHandler(dummyRegistry(urls, registry));
+  registry.define("baz", versions, { distTags: { latest: "0.0.5" } });
   const { stdout, exited: exited2 } = spawn({
     cmd: [bunExe(), "update", "--latest", "--linker=hoisted"],
     cwd: package_dir,
@@ -523,7 +523,10 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   const out = await new Response(stdout).text();
   expect(out).toContain("↑");
   expect(out).toContain("→");
-  // double-encoded UTF-8 (each byte of the arrow re-encoded as Latin-1)
-  expect(out).not.toContain("â");
+  // Double-encoded UTF-8 (each byte of the `↑` arrow, e2 86 91,
+  // re-encoded as Latin-1) begins U+00E2 U+0086. The second character
+  // is an invisible C1 control, so it is written as an escape that an
+  // editor cannot silently strip.
+  expect(out).not.toContain("â\u0086");
   expect(await exited2).toBe(0);
 });

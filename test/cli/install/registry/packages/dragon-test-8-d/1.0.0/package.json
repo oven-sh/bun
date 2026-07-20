@@ -1,0 +1,7 @@
+{
+  "name": "dragon-test-8-d",
+  "version": "1.0.0",
+  "peerDependencies": {
+    "dragon-test-8-c": "*"
+  }
+}

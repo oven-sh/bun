@@ -1,5 +1,5 @@
 import { file, listen, Socket, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readlinkSync, realpathSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
@@ -8,25 +8,18 @@ import {
   bunEnv as env,
   isWindows,
   joinP,
+  NpmRegistry,
   readdirSorted,
   runBunInstall,
   tempDir,
   tempDirWithFiles,
   textLockfile,
+  tmpdirSync,
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
 import { join, resolve, sep } from "path";
-import {
-  createTestContext,
-  destroyTestContext,
-  dummyAfterAll,
-  dummyBeforeAll,
-  dummyRegistryForContext,
-  setContextHandler,
-  type TestContext,
-} from "./dummy.registry.js";
 import { constructStdCollision } from "./wyhash-std-collision.js";
 
 expect.extend({
@@ -45,22 +38,54 @@ expect.extend({
 
 setDefaultTimeout(1000 * 60 * 5);
 
-beforeAll(() => {
-  dummyBeforeAll();
-});
+const BAZ_INDEX_JS = '#! /usr/bin/env node\n\nconsole.log("run baz");\n';
+// The two `baz` versions the old flat `baz-*.tgz` fixtures carried: each bin
+// points at `index.js`, so the file must exist in the served tarball for the
+// extracted-layout and `.bin`-link assertions.
+const BAZ_RUN = { bin: { "baz-run": "index.js" }, tarball: { "index.js": BAZ_INDEX_JS } };
+const BAZ_EXEC = { bin: { "baz-exec": "index.js" }, tarball: { "index.js": BAZ_INDEX_JS } };
 
-afterAll(dummyAfterAll);
+/**
+ * Per-test harness: a private in-process {@link NpmRegistry}, a temp project
+ * directory whose `bunfig.toml` points at it, and that registry's request
+ * counter. `registry_url` always ends in `/`.
+ */
+interface TestContext {
+  registry: NpmRegistry;
+  package_dir: string;
+  registry_url: string;
+  readonly requested: number;
+}
 
-// Helper function that sets up test context and ensures cleanup
+// Starts a fresh registry and temp project per test, and stops the registry
+// in a `finally` so a failing body can never leak its server.
 async function withContext(
   opts: { linker?: "hoisted" | "isolated" } | undefined,
   fn: (ctx: TestContext) => Promise<void>,
 ): Promise<void> {
-  const ctx = await createTestContext(opts ? { linker: opts.linker! } : undefined);
+  const registry = await new NpmRegistry().start();
   try {
-    await fn(ctx);
+    const package_dir = tmpdirSync();
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+${opts ? `linker = "${opts.linker}"` : ""}
+`,
+    );
+    await fn({
+      registry,
+      package_dir,
+      registry_url: registry.url,
+      get requested() {
+        return registry.requestCount;
+      },
+    });
   } finally {
-    destroyTestContext(ctx);
+    registry.stop();
   }
 }
 
@@ -72,7 +97,8 @@ describe.concurrent("bun-install", () => {
     it(`bun install --network-concurrency=${input} fails`, async () => {
       await withContext(defaultOpts, async ctx => {
         const urls: string[] = [];
-        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+        ctx.registry.intercept(req => void urls.push(req.url));
+        ctx.registry.define("bar", { "0.0.2": {} });
         await writeFile(
           join(ctx.package_dir, "package.json"),
           `
@@ -106,7 +132,7 @@ describe.concurrent("bun-install", () => {
       let maxConcurrentRequests = 0;
       let concurrentRequestCounter = 0;
       let totalRequests = 0;
-      setContextHandler(ctx, async function (request) {
+      ctx.registry.intercept(async function (request) {
         concurrentRequestCounter++;
         totalRequests++;
         try {
@@ -205,7 +231,8 @@ describe.concurrent("bun-install", () => {
   it("should not error when package.json has comments and trailing commas", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         `
@@ -250,23 +277,8 @@ describe.concurrent("bun-install", () => {
       if (!exeName) throw new Error("exeName not found");
 
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.5": {
-            bin: {
-              "baz-exec": "index.js",
-            },
-          },
-
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-          latest,
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.5": BAZ_EXEC, "0.0.3": BAZ_RUN }, { distTags: { latest } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -296,7 +308,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-${chosen}.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-${chosen}.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([exeName]);
@@ -609,7 +621,7 @@ describe.concurrent("bun-install", () => {
   it("should handle missing package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, async request => {
+      ctx.registry.intercept(async request => {
         expect(request.method).toBe("GET");
         expect(request.headers.get("accept")).toBe(
           "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
@@ -647,7 +659,7 @@ describe.concurrent("bun-install", () => {
       let seen_token = false;
       const url = `${ctx.registry_url}@foo%2fbar`;
       const urls: string[] = [];
-      setContextHandler(ctx, async request => {
+      ctx.registry.intercept(async request => {
         expect(request.method).toBe("GET");
         expect(request.headers.get("accept")).toBe(
           "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
@@ -803,7 +815,8 @@ describe.concurrent("bun-install", () => {
   it("should handle empty string in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -833,7 +846,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -1263,7 +1276,9 @@ describe.concurrent("bun-install", () => {
   it("should handle installing the same peerDependency with different versions", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("peer", { "0.0.2": {} });
+      ctx.registry.define("boba", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -1305,7 +1320,9 @@ describe.concurrent("bun-install", () => {
   it("should handle installing the same peerDependency with the same version", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("peer", { "0.0.2": {} });
+      ctx.registry.define("boba", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -1403,7 +1420,8 @@ describe.concurrent("bun-install", () => {
   it("should handle life-cycle scripts during re-installation", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("qux", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -1874,7 +1892,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -1904,7 +1923,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -1919,7 +1938,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^1 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -1956,7 +1976,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.0 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -1986,7 +2007,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -2001,7 +2022,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.1 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2038,7 +2060,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.0.0 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2075,7 +2098,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.0.2 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2106,7 +2130,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -2121,12 +2145,8 @@ describe.concurrent("bun-install", () => {
   it("should handle matching workspaces from dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.2.0": { as: "0.2.0" },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("moo", { "0.2.0": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2181,7 +2201,7 @@ describe.concurrent("bun-install", () => {
   it("should edit package json correctly with git dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       const package_json = JSON.stringify({
         name: "foo",
         version: "0.0.1",
@@ -2274,7 +2294,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.0.2-rc in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.2-rc": { as: "0.0.2" } }));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2-rc": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2305,13 +2326,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2-rc.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
-        version: "0.0.2",
+        version: "0.0.2-rc",
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -2320,7 +2341,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.2-alpha.3": { as: "0.0.2" } }));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2-alpha.3": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2351,13 +2373,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2-alpha.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
-        version: "0.0.2",
+        version: "0.0.2-alpha.3",
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -2366,7 +2388,8 @@ describe.concurrent("bun-install", () => {
   it("should choose the right version with prereleases", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.2-alpha.3": { as: "0.0.2" } }));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2-alpha.3": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2397,13 +2420,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2-alpha.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
-        version: "0.0.2",
+        version: "0.0.2-alpha.3",
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -2412,7 +2435,8 @@ describe.concurrent("bun-install", () => {
   it("should handle ^0.0.2rc1 in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.2rc1": { as: "0.0.2" } }));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2rc1": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2443,13 +2467,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2rc1.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
-        version: "0.0.2",
+        version: "0.0.2rc1",
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -2458,10 +2482,8 @@ describe.concurrent("bun-install", () => {
   it("should handle caret range in dependencies when the registry has prereleased packages, issue#4398", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, { "6.3.0": { as: "0.0.2" }, "7.0.0-rc2": { as: "0.0.3" } }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "6.3.0": {}, "7.0.0-rc2": {} }, { distTags: { latest: "7.0.0-rc2" } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2492,13 +2514,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-6.3.0.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
-        version: "0.0.2",
+        version: "6.3.0",
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -2507,22 +2529,8 @@ describe.concurrent("bun-install", () => {
   it("should prefer latest-tagged dependency", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-          "0.0.5": {
-            bin: {
-              "baz-exec": "index.js",
-            },
-          },
-          latest: "0.0.3",
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN, "0.0.5": BAZ_EXEC }, { distTags: { latest: "0.0.3" } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2552,7 +2560,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -2572,14 +2580,8 @@ describe.concurrent("bun-install", () => {
   it("should install latest with prereleases", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "1.0.0-0": { as: "0.0.3" },
-          "1.0.0-8": { as: "0.0.5" },
-          latest: "1.0.0-0",
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "1.0.0-0": {}, "1.0.0-8": {} }, { distTags: { latest: "1.0.0-0" } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2709,16 +2711,8 @@ describe.concurrent("bun-install", () => {
   it("should handle dependency aliasing", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2748,7 +2742,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -2768,16 +2762,8 @@ describe.concurrent("bun-install", () => {
   it("should handle dependency aliasing (versioned)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2807,7 +2793,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -2827,16 +2813,8 @@ describe.concurrent("bun-install", () => {
   it("should handle dependency aliasing (dist-tagged)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2866,7 +2844,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -2886,16 +2864,8 @@ describe.concurrent("bun-install", () => {
   it("should not reinstall aliased dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -2929,7 +2899,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited1).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -2986,16 +2956,8 @@ describe.concurrent("bun-install", () => {
   it("should handle aliased & direct dependency references", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3037,7 +2999,7 @@ describe.concurrent("bun-install", () => {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
         ".bin",
@@ -3073,17 +3035,9 @@ describe.concurrent("bun-install", () => {
   it("should not hoist if name collides with alias", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.2": {},
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3127,9 +3081,9 @@ describe.concurrent("bun-install", () => {
       expect(await exited).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}bar`,
-        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(4);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "moo"]);
@@ -3158,13 +3112,8 @@ describe.concurrent("bun-install", () => {
   it("should get npm alias with matching version", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": { as: "0.0.3" },
-          "0.0.5": { as: "0.0.5" },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": {}, "0.0.5": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3206,15 +3155,12 @@ describe.concurrent("bun-install", () => {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.5.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
       expect(await file(join(ctx.package_dir, "node_modules", "boba", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
-        bin: {
-          "baz-exec": "index.js",
-        },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -3223,12 +3169,8 @@ describe.concurrent("bun-install", () => {
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": { as: "0.0.3" },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3262,14 +3204,11 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
-        bin: {
-          "baz-run": "index.js",
-        },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -3278,7 +3217,8 @@ describe.concurrent("bun-install", () => {
   it("should handle unscoped alias on scoped dependency", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.1.0": {} }));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("@barn/moo", { "0.1.0": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3310,7 +3250,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}@barn%2fmoo`, `${ctx.registry_url}@barn/moo-0.1.0.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}@barn%2fmoo`, `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
@@ -3318,20 +3258,11 @@ describe.concurrent("bun-install", () => {
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
-        // not installed as these are absent from manifest above
-        dependencies: {
-          bar: "0.0.2",
-          baz: "latest",
-        },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
-        dependencies: {
-          bar: "0.0.2",
-          baz: "latest",
-        },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -3340,7 +3271,8 @@ describe.concurrent("bun-install", () => {
   it("should handle scoped alias on unscoped dependency", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3372,7 +3304,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@baz", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@baz"))).toEqual(["bar"]);
@@ -3393,24 +3325,10 @@ describe.concurrent("bun-install", () => {
   it("should handle aliased dependency with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.2": {},
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-          "0.1.0": {
-            dependencies: {
-              bar: "0.0.2",
-              baz: "latest",
-            },
-          },
-          latest: "0.0.3",
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("@barn/moo", { "0.1.0": { dependencies: { bar: "0.0.2", baz: "latest" } } });
+      ctx.registry.define("bar", { "0.0.2": {} });
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3446,11 +3364,11 @@ describe.concurrent("bun-install", () => {
       expect(await exited1).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}@barn%2fmoo`,
-        `${ctx.registry_url}@barn/moo-0.1.0.tgz`,
+        `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
         `${ctx.registry_url}bar`,
-        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(6);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -3512,9 +3430,9 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited2).toBe(0);
       expect(urls.sort()).toEqual([
-        `${ctx.registry_url}@barn/moo-0.1.0.tgz`,
-        `${ctx.registry_url}bar-0.0.2.tgz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
+        `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(9);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -3555,7 +3473,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (user/repo)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3614,7 +3532,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3684,7 +3602,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3763,7 +3681,7 @@ describe.concurrent("bun-install", () => {
       it(`install ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
-          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          ctx.registry.intercept(req => void urls.push(req.url));
           await writeFile(
             join(ctx.package_dir, "package.json"),
             JSON.stringify({
@@ -3801,7 +3719,7 @@ describe.concurrent("bun-install", () => {
       it(`add ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
-          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          ctx.registry.intercept(req => void urls.push(req.url));
           await writeFile(
             join(ctx.package_dir, "package.json"),
             JSON.stringify({
@@ -3843,7 +3761,7 @@ describe.concurrent("bun-install", () => {
       it(`install ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
-          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          ctx.registry.intercept(req => void urls.push(req.url));
           await writeFile(
             join(ctx.package_dir, "package.json"),
             JSON.stringify({
@@ -3881,7 +3799,7 @@ describe.concurrent("bun-install", () => {
       it(`add ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
-          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          ctx.registry.intercept(req => void urls.push(req.url));
           await writeFile(
             join(ctx.package_dir, "package.json"),
             JSON.stringify({
@@ -3919,7 +3837,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -3992,7 +3910,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4051,7 +3969,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#commit)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4124,7 +4042,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.git)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4183,7 +4101,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4241,7 +4159,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref) with custom GITHUB_API_URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4302,12 +4220,8 @@ describe.concurrent("bun-install", () => {
   it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "4.3.0": { as: "4.3.0" },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("loader-runner", { "4.3.0": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4360,7 +4274,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "bunfig.toml"),
         `
@@ -4496,21 +4410,8 @@ describe.concurrent("bun-install", () => {
   it("should consider peerDependencies during hoisting", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-          "0.0.5": {
-            bin: {
-              "baz-exec": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN, "0.0.5": BAZ_EXEC });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4565,8 +4466,8 @@ describe.concurrent("bun-install", () => {
       expect(await exited).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
-        `${ctx.registry_url}baz-0.0.5.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.5.tgz`,
       ]);
       expect(ctx.requested).toBe(3);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -4612,21 +4513,8 @@ describe.concurrent("bun-install", () => {
   it("should install peerDependencies when needed", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-          "0.0.5": {
-            bin: {
-              "baz-exec": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN, "0.0.5": BAZ_EXEC });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4681,8 +4569,8 @@ describe.concurrent("bun-install", () => {
       expect(await exited).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
-        `${ctx.registry_url}baz-0.0.5.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.5.tgz`,
       ]);
       expect(ctx.requested).toBe(3);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -4723,7 +4611,8 @@ describe.concurrent("bun-install", () => {
   it("should not regard peerDependencies declarations as duplicates", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -4756,7 +4645,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -4937,7 +4826,7 @@ describe.concurrent("bun-install", () => {
   it("should handle Git URL in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5000,7 +4889,7 @@ describe.concurrent("bun-install", () => {
   it("should handle Git URL in dependencies (SCP-style)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5063,7 +4952,7 @@ describe.concurrent("bun-install", () => {
   it("should handle Git URL with committish in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5128,7 +5017,7 @@ describe.concurrent("bun-install", () => {
   it("should fail on invalid Git URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5166,7 +5055,7 @@ describe.concurrent("bun-install", () => {
   it("should fail on ssh Git URL if invalid credentials", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5204,7 +5093,7 @@ describe.concurrent("bun-install", () => {
   it("should fail on Git URL with invalid committish", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5244,7 +5133,7 @@ describe.concurrent("bun-install", () => {
   it("should de-duplicate committish in Git URLs", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5333,7 +5222,7 @@ describe.concurrent("bun-install", () => {
   it("should handle Git URL with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "bunfig.toml"),
         `
@@ -5543,13 +5432,11 @@ describe.concurrent("bun-install", () => {
   it("should prefer optionalDependencies over dependencies of the same name", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {},
-          "0.0.5": {},
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", {
+        "0.0.3": { tarball: { "index.js": BAZ_INDEX_JS } },
+        "0.0.5": { tarball: { "index.js": BAZ_INDEX_JS } },
+      });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5582,16 +5469,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
-        bin: {
-          "baz-run": "index.js",
-        },
       });
     });
   });
@@ -5599,13 +5483,11 @@ describe.concurrent("bun-install", () => {
   it("should prefer dependencies over peerDependencies of the same name", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {},
-          "0.0.5": {},
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", {
+        "0.0.3": { tarball: { "index.js": BAZ_INDEX_JS } },
+        "0.0.5": { tarball: { "index.js": BAZ_INDEX_JS } },
+      });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5638,16 +5520,13 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.5.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
-        bin: {
-          "baz-exec": "index.js",
-        },
       });
     });
   });
@@ -5655,14 +5534,15 @@ describe.concurrent("bun-install", () => {
   it("should handle tarball URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -5680,12 +5560,12 @@ describe.concurrent("bun-install", () => {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        `+ baz@${ctx.registry_url}baz-0.0.3.tgz`,
+        `+ baz@${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
         "",
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(1);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -5705,7 +5585,7 @@ describe.concurrent("bun-install", () => {
   it("should handle tarball path", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5754,14 +5634,15 @@ describe.concurrent("bun-install", () => {
   it("should handle tarball URL with aliasing", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            bar: `${ctx.registry_url}baz-0.0.3.tgz`,
+            bar: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -5779,12 +5660,12 @@ describe.concurrent("bun-install", () => {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        `+ bar@${ctx.registry_url}baz-0.0.3.tgz`,
+        `+ bar@${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
         "",
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(1);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
@@ -5804,7 +5685,7 @@ describe.concurrent("bun-install", () => {
   it("should handle tarball path with aliasing", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5853,24 +5734,17 @@ describe.concurrent("bun-install", () => {
   it("should de-duplicate dependencies alongside tarball URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.2": {},
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("@barn/moo", { "0.1.0": { dependencies: { bar: "0.0.2", baz: "latest" } } });
+      ctx.registry.define("bar", { "0.0.2": {} });
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            "@barn/moo": `${ctx.registry_url}moo-0.1.0.tgz`,
+            "@barn/moo": `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
             bar: "<=0.0.2",
           },
         }),
@@ -5889,18 +5763,18 @@ describe.concurrent("bun-install", () => {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        `+ @barn/moo@${ctx.registry_url}moo-0.1.0.tgz`,
+        `+ @barn/moo@${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
         expect.stringContaining("+ bar@0.0.2"),
         "",
         "3 packages installed",
       ]);
       expect(await exited).toBe(0);
       expect(urls.sort()).toEqual([
+        `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
         `${ctx.registry_url}bar`,
-        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
-        `${ctx.registry_url}moo-0.1.0.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(5);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -5942,24 +5816,17 @@ describe.concurrent("bun-install", () => {
   it("should handle tarball URL with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.2": {},
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("@barn/moo", { "0.1.0": { dependencies: { bar: "0.0.2", baz: "latest" } } });
+      ctx.registry.define("bar", { "0.0.2": {} });
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            "@barn/moo": `${ctx.registry_url}moo-0.1.0.tgz`,
+            "@barn/moo": `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
           },
         }),
       );
@@ -5981,17 +5848,17 @@ describe.concurrent("bun-install", () => {
       expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        `+ @barn/moo@${ctx.registry_url}moo-0.1.0.tgz`,
+        `+ @barn/moo@${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
         "",
         "3 packages installed",
       ]);
       expect(await exited1).toBe(0);
       expect(urls.sort()).toEqual([
+        `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
         `${ctx.registry_url}bar`,
-        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
-        `${ctx.registry_url}moo-0.1.0.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(5);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -6048,15 +5915,15 @@ describe.concurrent("bun-install", () => {
       expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        `+ @barn/moo@${ctx.registry_url}moo-0.1.0.tgz`,
+        `+ @barn/moo@${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
         "",
         "3 packages installed",
       ]);
       expect(await exited2).toBe(0);
       expect(urls.sort()).toEqual([
-        `${ctx.registry_url}bar-0.0.2.tgz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
-        `${ctx.registry_url}moo-0.1.0.tgz`,
+        `${ctx.registry_url}@barn/moo/-/moo-0.1.0.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(8);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -6098,17 +5965,9 @@ describe.concurrent("bun-install", () => {
   it("should handle tarball path with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.2": {},
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
-          },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
+      ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6144,9 +6003,9 @@ describe.concurrent("bun-install", () => {
       expect(await exited1).toBe(0);
       expect(urls.sort()).toEqual([
         `${ctx.registry_url}bar`,
-        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
         `${ctx.registry_url}baz`,
-        `${ctx.registry_url}baz-0.0.3.tgz`,
+        `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(4);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -6208,7 +6067,7 @@ describe.concurrent("bun-install", () => {
         "3 packages installed",
       ]);
       expect(await exited2).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar-0.0.2.tgz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar/-/bar-0.0.2.tgz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(6);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
         ".bin",
@@ -6249,7 +6108,8 @@ describe.concurrent("bun-install", () => {
   it("should handle devDependencies from folder", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6288,7 +6148,7 @@ describe.concurrent("bun-install", () => {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -6305,7 +6165,8 @@ describe.concurrent("bun-install", () => {
   it("should deduplicate devDependencies from folder", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6346,7 +6207,7 @@ describe.concurrent("bun-install", () => {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -6363,7 +6224,8 @@ describe.concurrent("bun-install", () => {
   it("should install dependencies in root package of workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6400,7 +6262,7 @@ describe.concurrent("bun-install", () => {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -6417,7 +6279,8 @@ describe.concurrent("bun-install", () => {
   it("should install dependencies in root package of workspace (*)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6454,7 +6317,7 @@ describe.concurrent("bun-install", () => {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
@@ -6471,7 +6334,8 @@ describe.concurrent("bun-install", () => {
   it("should ignore invalid workspaces from parent directory", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       const foo_package = JSON.stringify({
         name: "foo",
         version: "0.1.0",
@@ -6510,7 +6374,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(ctx.package_dir)).toEqual(["bunfig.toml", "moo", "package.json"]);
       expect(await file(join(ctx.package_dir, "package.json")).text()).toEqual(foo_package);
@@ -6533,7 +6397,8 @@ describe.concurrent("bun-install", () => {
   it("should handle --cwd", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       const foo_package = JSON.stringify({
         name: "foo",
         version: "0.1.0",
@@ -6571,7 +6436,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(ctx.package_dir)).toEqual(["bunfig.toml", "moo", "package.json"]);
       expect(await file(join(ctx.package_dir, "package.json")).text()).toEqual(foo_package);
@@ -6594,10 +6459,8 @@ describe.concurrent("bun-install", () => {
   it("should handle --frozen-lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       let urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": {}, "0.0.5": {} });
 
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -6644,10 +6507,8 @@ describe.concurrent("bun-install", () => {
   it("should handle bun ci alias (to --frozen-lockfile)", async () => {
     await withContext(defaultOpts, async ctx => {
       let urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": {}, "0.0.5": {} });
 
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -6708,10 +6569,8 @@ describe.concurrent("bun-install", () => {
   it("should handle frozenLockfile in config file", async () => {
     await withContext(defaultOpts, async ctx => {
       let urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": {}, "0.0.5": {} });
 
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -7299,7 +7158,8 @@ describe.concurrent("bun-install", () => {
       await access(join(ctx.package_dir, "bun.lockb"));
 
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
 
       const {
         stdout: stdout2,
@@ -7318,7 +7178,7 @@ describe.concurrent("bun-install", () => {
       const out2 = await new Response(stdout2).text();
       expect(out2).toContain("installed bar");
       expect(await exited2).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -7351,7 +7211,8 @@ describe.concurrent("bun-install", () => {
       await writeFile(join(ctx.package_dir, "packages", "p2", "package.json"), p2_package);
 
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
 
       const {
         stdout: stdout1,
@@ -7396,7 +7257,7 @@ describe.concurrent("bun-install", () => {
       const out2 = await new Response(stdout2).text();
       expect(out2).toContain("installed bar");
       expect(await exited2).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -7728,8 +7589,12 @@ describe.concurrent("bun-install", () => {
         expect(await exited1).toBe(0);
         await access(join(ctx.package_dir, "bun.lockb"));
 
-        var urls: string[] = [];
-        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+        // Each iteration adds another interceptor, so it must close over its
+        // own array; a function-scoped `var` here would make every
+        // interceptor record into whichever array was assigned last.
+        const urls: string[] = [];
+        ctx.registry.intercept(req => void urls.push(req.url));
+        ctx.registry.define("bar", { "0.0.2": {} });
 
         const {
           stdout: stdout1_2,
@@ -7748,7 +7613,7 @@ describe.concurrent("bun-install", () => {
         const out1_2 = await new Response(stdout1_2).text();
         expect(out1_2).toContain("installed bar");
         expect(await exited1_2).toBe(0);
-        expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+        expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
         await access(join(ctx.package_dir, "bun.lockb"));
 
         await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
@@ -7944,7 +7809,7 @@ describe.concurrent("bun-install", () => {
   it("should override npm dependency by matching workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -7992,7 +7857,8 @@ describe.concurrent("bun-install", () => {
   it("should not override npm dependency by workspace with mismatched version", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8028,7 +7894,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
     });
   });
@@ -8036,7 +7902,7 @@ describe.concurrent("bun-install", () => {
   it("should override @scoped npm dependency by matching workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8089,7 +7955,7 @@ describe.concurrent("bun-install", () => {
   it("should override aliased npm dependency by matching workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8137,7 +8003,7 @@ describe.concurrent("bun-install", () => {
   it("should override child npm dependency by matching workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8193,7 +8059,8 @@ describe.concurrent("bun-install", () => {
   it("should not override child npm dependency by workspace with mismatched version", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8235,7 +8102,7 @@ describe.concurrent("bun-install", () => {
         "3 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
@@ -8258,7 +8125,7 @@ describe.concurrent("bun-install", () => {
   it("should override @scoped child npm dependency by matching workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8320,7 +8187,7 @@ describe.concurrent("bun-install", () => {
   it("should override aliased child npm dependency by matching workspace", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8386,7 +8253,7 @@ describe.concurrent("bun-install", () => {
   it("should handle `workspace:` with semver range", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8442,7 +8309,7 @@ describe.concurrent("bun-install", () => {
   it("should handle `workspace:` with alias & @scope", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8508,7 +8375,7 @@ describe.concurrent("bun-install", () => {
   it("should handle `workspace:*` on both root & child", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8617,7 +8484,8 @@ describe.concurrent("bun-install", () => {
   it("should install peer dependencies from root package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("bar", { "0.0.2": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8646,7 +8514,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
 
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -8656,13 +8524,8 @@ describe.concurrent("bun-install", () => {
   it("should install correct version of peer dependency from root package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": { as: "0.0.3" },
-          "0.0.5": { as: "0.0.5" },
-        }),
-      );
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": {}, "0.0.5": {} });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -8694,7 +8557,7 @@ describe.concurrent("bun-install", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz/-/baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
 
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -9177,7 +9040,8 @@ describe.concurrent("bun-install", () => {
 it("rejects dependency aliases containing '..' path segments", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];
-    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+    ctx.registry.intercept(req => void urls.push(req.url));
+    ctx.registry.define("baz", { "0.0.3": {} });
     // The alias (the key in `dependencies`) becomes the folder name under
     // node_modules/. An alias containing ".." segments must not be able to
     // place the package outside the project directory. The name is unique per
@@ -9217,7 +9081,8 @@ it("rejects dependency aliases containing '..' path segments", async () => {
 it("does not extract a tarball for a dependency alias containing '..' path segments", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];
-    setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+    ctx.registry.intercept(req => void urls.push(req.url));
+    ctx.registry.define("baz", { "0.0.3": BAZ_RUN });
 
     // The dependency alias (the key in `dependencies`) is used to derive the
     // temporary extraction folder name. Point bun's temp dir at a deep
@@ -9235,7 +9100,7 @@ it("does not extract a tarball for a dependency alias containing '..' path segme
         name: "foo",
         version: "0.0.1",
         dependencies: {
-          "x/../../../..": `${ctx.registry_url}baz-0.0.3.tgz`,
+          "x/../../../..": `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
         },
       }),
     );
@@ -9861,7 +9726,7 @@ it.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to disti
 it("reports an invalid URL for a manifest tarball URL containing a newline", async () => {
   await withContext(defaultOpts, async ctx => {
     const tarballRequests: string[] = [];
-    setContextHandler(ctx, async request => {
+    ctx.registry.intercept(async request => {
       const url = new URL(request.url);
       if (url.pathname.includes(".tgz")) {
         tarballRequests.push(request.url);
@@ -9914,7 +9779,7 @@ it("reports an invalid URL for a manifest tarball URL containing a newline", asy
 
 it("reports an invalid URL for a manifest tarball URL containing a space", async () => {
   await withContext(defaultOpts, async ctx => {
-    setContextHandler(ctx, async request => {
+    ctx.registry.intercept(async request => {
       const url = new URL(request.url);
       if (url.pathname.includes(".tgz")) {
         return new Response("Not Found", { status: 404 });
@@ -9969,7 +9834,7 @@ it.each([
 ])("reports an invalid URL for a manifest tarball URL containing a %s", async (_name, char) => {
   await withContext(defaultOpts, async ctx => {
     const tarballRequests: string[] = [];
-    setContextHandler(ctx, async request => {
+    ctx.registry.intercept(async request => {
       const url = new URL(request.url);
       if (url.pathname.includes(".tgz")) {
         tarballRequests.push(request.url);

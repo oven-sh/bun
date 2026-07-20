@@ -1,0 +1,9 @@
+{
+    "name": "no-deps-scripted",
+    "version": "1.0.0",
+    "scripts": {
+        "preinstall": "node scripts/preinstall",
+        "install": "node scripts/install",
+        "postinstall": "node scripts/postinstall"
+    }
+}

@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+console.log("SUCCESS: Using platform-specific bin at package root");
+process.exit(0);

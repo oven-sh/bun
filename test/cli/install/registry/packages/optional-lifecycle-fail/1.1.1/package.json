@@ -1,0 +1,7 @@
+{
+    "name": "optional-lifecycle-fail",
+    "version": "1.1.1",
+    "optionalDependencies": {
+        "lifecycle-fail": "1.1.1"
+    }
+}

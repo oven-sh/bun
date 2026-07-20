@@ -1,38 +1,48 @@
 import { file, spawn } from "bun";
-import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import { readFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
+import { bunExe, bunEnv as env, NpmRegistry, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "path";
-import {
-  createTestContext,
-  destroyTestContext,
-  dummyAfterAll,
-  dummyBeforeAll,
-  dummyRegistryForContext,
-  setContextHandler,
-  type TestContext,
-} from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
 
-beforeAll(() => {
-  dummyBeforeAll();
-});
+// The checked-in tarball has to stay on disk: the "local tarball" tests point
+// package.json straight at it. Serving those exact bytes over HTTP is what
+// keeps the URL-install and path-install integrity hashes comparable.
+const BAZ_TGZ_PATH = join(import.meta.dir, "baz-0.0.3.tgz");
+const BAZ_TGZ = new Uint8Array(readFileSync(BAZ_TGZ_PATH));
 
-afterAll(dummyAfterAll);
+interface TestContext {
+  registry: NpmRegistry;
+  package_dir: string;
+  /** `registry.url`: the registry origin, with a trailing slash. */
+  registry_url: string;
+}
 
-// Helper function that sets up test context and ensures cleanup
+// Helper function that sets up a per-test registry + project dir and ensures cleanup
 async function withContext(
   opts: { linker?: "hoisted" | "isolated" } | undefined,
   fn: (ctx: TestContext) => Promise<void>,
 ): Promise<void> {
-  const ctx = await createTestContext(opts ? { linker: opts.linker! } : undefined);
+  const registry = await new NpmRegistry().start();
   try {
-    await fn(ctx);
+    const package_dir = tmpdirSync();
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+${opts?.linker ? `linker = "${opts.linker}"` : ""}
+`,
+    );
+    await fn({ registry, package_dir, registry_url: registry.url });
   } finally {
-    destroyTestContext(ctx);
+    registry.stop();
   }
 }
 
@@ -42,15 +52,14 @@ const defaultOpts = { linker: "hoisted" as const };
 describe.concurrent("tarball integrity", () => {
   it("should store integrity hash for tarball URL in text lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -75,15 +84,13 @@ describe.concurrent("tarball integrity", () => {
 
   it("should store integrity hash for local tarball in text lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: join(import.meta.dir, "baz-0.0.3.tgz"),
+            baz: BAZ_TGZ_PATH,
           },
         }),
       );
@@ -107,15 +114,14 @@ describe.concurrent("tarball integrity", () => {
 
   it("should store consistent integrity hash for tarball URL across reinstalls", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -167,25 +173,14 @@ describe.concurrent("tarball integrity", () => {
 
   it("should fail integrity check when tarball URL content changes", async () => {
     await withContext(defaultOpts, async ctx => {
-      // Serve baz-0.0.3.tgz on first install, then baz-0.0.5.tgz (different content) on second
-      let requestCount = 0;
-      setContextHandler(ctx, async request => {
-        const url = request.url;
-        if (url.endsWith(".tgz")) {
-          requestCount++;
-          // First request: serve baz-0.0.3.tgz, subsequent: serve baz-0.0.5.tgz (different content)
-          const tgzFile = requestCount <= 1 ? "baz-0.0.3.tgz" : "baz-0.0.5.tgz";
-          return new Response(file(join(import.meta.dir, tgzFile)));
-        }
-        return new Response("Not found", { status: 404 });
-      });
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -211,6 +206,10 @@ describe.concurrent("tarball integrity", () => {
       // Remove node_modules to force re-download
       await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
 
+      // The same tarball URL now serves different bytes, so the re-download
+      // can no longer match the integrity hash the lockfile recorded.
+      ctx.registry.define("baz", { "0.0.3": { tarball: { "index.js": "// different bytes\n" } } });
+
       // Second install - server now returns different tarball, integrity should fail
       {
         await using proc = spawn({
@@ -230,8 +229,7 @@ describe.concurrent("tarball integrity", () => {
 
   it("should install successfully from text lockfile without integrity hash (backward compat)", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
 
       // Write a text lockfile WITHOUT integrity hash (old format / backward compat)
       await writeFile(
@@ -240,7 +238,7 @@ describe.concurrent("tarball integrity", () => {
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -253,12 +251,12 @@ describe.concurrent("tarball integrity", () => {
             "": {
               name: "foo",
               dependencies: {
-                baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+                baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
               },
             },
           },
           packages: {
-            baz: [`baz@${ctx.registry_url}baz-0.0.3.tgz`, { bin: { "baz-run": "index.js" } }],
+            baz: [`baz@${ctx.registry_url}baz/-/baz-0.0.3.tgz`, { bin: { "baz-run": "index.js" } }],
           },
         }),
       );
@@ -284,8 +282,7 @@ describe.concurrent("tarball integrity", () => {
 
   it("should add integrity hash to lockfile when re-resolving tarball dep", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
 
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -293,7 +290,7 @@ describe.concurrent("tarball integrity", () => {
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -318,15 +315,13 @@ describe.concurrent("tarball integrity", () => {
 
   it("should store consistent integrity hash for local tarball across reinstalls", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: join(import.meta.dir, "baz-0.0.3.tgz"),
+            baz: BAZ_TGZ_PATH,
           },
         }),
       );
@@ -376,8 +371,9 @@ describe.concurrent("tarball integrity", () => {
 
   it("should produce same integrity hash for same tarball via URL and local path", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      // The registry serves the checked-in tarball's exact bytes, so the URL
+      // install must hash to the same value as the local-path install.
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
 
       // Install via URL
       await writeFile(
@@ -386,7 +382,7 @@ describe.concurrent("tarball integrity", () => {
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+            baz: `${ctx.registry_url}baz/-/baz-0.0.3.tgz`,
           },
         }),
       );
@@ -418,7 +414,7 @@ describe.concurrent("tarball integrity", () => {
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: join(import.meta.dir, "baz-0.0.3.tgz"),
+            baz: BAZ_TGZ_PATH,
           },
         }),
       );
@@ -443,18 +439,13 @@ describe.concurrent("tarball integrity", () => {
 
   it("should install successfully from text lockfile without integrity hash for local tarball (backward compat)", async () => {
     await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-
-      const tgzPath = join(import.meta.dir, "baz-0.0.3.tgz");
-
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "foo",
           version: "0.0.1",
           dependencies: {
-            baz: tgzPath,
+            baz: BAZ_TGZ_PATH,
           },
         }),
       );
@@ -467,12 +458,12 @@ describe.concurrent("tarball integrity", () => {
             "": {
               name: "foo",
               dependencies: {
-                baz: tgzPath,
+                baz: BAZ_TGZ_PATH,
               },
             },
           },
           packages: {
-            baz: [`baz@${tgzPath}`, { bin: { "baz-run": "index.js" } }],
+            baz: [`baz@${BAZ_TGZ_PATH}`, { bin: { "baz-run": "index.js" } }],
           },
         }),
       );
@@ -500,79 +491,17 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
   // `enqueuePackageForDownload` returned early on `found_existing` and the
   // installer waited forever for a callback that was never dispatched.
   //
-  // We trigger the mismatch by advertising one tarball's SHA-512 in the
-  // manifest while serving a different tarball's bytes. No existing lockfile
-  // means the failure happens in the resolve phase, where the runTasks
-  // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
-  // fix in runTasks.zig now cleans up.
+  // We trigger the mismatch by advertising a SHA-512 in the manifest that
+  // does not match the bytes the registry actually serves. No existing
+  // lockfile means the failure happens in the resolve phase, where the
+  // runTasks callback is the void `onPackageDownloadError = {}` — i.e. the
+  // branch the fix in runTasks.zig now cleans up.
   it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
-    function octal(n: number, width: number) {
-      return n.toString(8).padStart(width - 1, "0") + "\0";
-    }
-    function tarHeader(name: string, size: number) {
-      const buf = Buffer.alloc(512, 0);
-      buf.write(name, 0, 100, "utf8");
-      buf.write(octal(0o644, 8), 100);
-      buf.write(octal(0, 8), 108);
-      buf.write(octal(0, 8), 116);
-      buf.write(octal(size, 12), 124);
-      buf.write(octal(0, 12), 136);
-      buf.fill(" ", 148, 156);
-      buf.write("0", 156);
-      buf.write("ustar\0", 257);
-      buf.write("00", 263);
-      let sum = 0;
-      for (let i = 0; i < 512; i++) sum += buf[i];
-      buf.write(octal(sum, 8), 148);
-      return buf;
-    }
-    function pad512(len: number) {
-      return Buffer.alloc((512 - (len % 512)) % 512, 0);
-    }
-    function buildTarball(body: Buffer) {
-      const tar = Buffer.concat([
-        tarHeader("package/package.json", body.length),
-        body,
-        pad512(body.length),
-        Buffer.alloc(1024, 0),
-      ]);
-      const tgz = gzipSync(tar);
-      return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
-    }
+    // A well-formed SHA-512 SRI that cannot match the bytes the registry serves.
+    const lyingIntegrity = "sha512-" + createHash("sha512").update("not the served tarball").digest("base64");
 
-    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
-    const lie = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
-
-    // Custom server instead of the dummy registry — we need to advertise an
-    // integrity hash that deliberately does not match the served bytes, which
-    // the dummy registry doesn't support.
-    await using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname.endsWith("/pkg")) {
-          return Response.json({
-            name: "pkg",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "pkg",
-                version: "1.0.0",
-                dist: {
-                  integrity: lie.integrity,
-                  tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
-                },
-              },
-            },
-          });
-        }
-        if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
-          return new Response(real.tgz, { headers: { "content-length": String(real.tgz.length) } });
-        }
-        return new Response("Not found", { status: 404 });
-      },
-    });
+    await using registry = await new NpmRegistry().start();
+    registry.define("pkg", { "1.0.0": { dist: { integrity: lyingIntegrity } } });
 
     using dir = tempDir("integrity-mismatch-" + linker, {
       "package.json": JSON.stringify({
@@ -580,7 +509,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
         version: "1.0.0",
         dependencies: { pkg: "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "${linker}"\n`,
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
     });
 
     await using proc = spawn({
@@ -755,40 +684,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
   it("should fail (not hang) when registry returns 404 for tarball", async () => {
     await withContext({ linker }, async ctx => {
       const urls: string[] = [];
-      let tarballStatus = 200;
-      setContextHandler(ctx, async request => {
-        const url = request.url.replaceAll("%2f", "/");
-        urls.push(url);
-        if (url.endsWith(".tgz")) {
-          if (tarballStatus !== 200) {
-            return new Response(
-              new ReadableStream({
-                start(controller) {
-                  controller.enqueue(
-                    new TextEncoder().encode(
-                      JSON.stringify({ errors: [{ status: 404, message: "Could not find resource" }] }),
-                    ),
-                  );
-                  controller.close();
-                },
-              }),
-              { status: tarballStatus, headers: { "content-type": "application/json" } },
-            );
-          }
-          return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
-        }
-        return Response.json({
-          name: "baz",
-          versions: {
-            "0.0.3": {
-              name: "baz",
-              version: "0.0.3",
-              dist: { tarball: `${ctx.registry_url}baz-0.0.3.tgz` },
-            },
-          },
-          "dist-tags": { latest: "0.0.3" },
-        });
-      });
+      ctx.registry.intercept(req => void urls.push(req.url));
+      ctx.registry.define("baz", { "0.0.3": { tarball: BAZ_TGZ } });
 
       // Project-local .npmrc takes precedence over any user-level ~/.npmrc.
       await writeFile(join(ctx.package_dir, ".npmrc"), `registry=${ctx.registry_url}\n`);
@@ -815,11 +712,13 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
         expect(exitCode).toBe(0);
       }
 
-      // Second install with node_modules removed and tarball now 404: should
-      // fail with a clear error, not hang. The lockfile is kept so the resolve
-      // phase is a no-op and the tarball download happens in the install phase.
+      // Second install with node_modules removed and the tarball now a 404
+      // (still listed in the packument, but the registry lost the object):
+      // should fail with a clear error, not hang. The lockfile is kept so the
+      // resolve phase is a no-op and the tarball download happens in the
+      // install phase.
       await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
-      tarballStatus = 404;
+      ctx.registry.define("baz", { "0.0.3": { tarball: null } });
       urls.length = 0;
 
       {

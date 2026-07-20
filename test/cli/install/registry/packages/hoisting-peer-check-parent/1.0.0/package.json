@@ -1,0 +1,8 @@
+{
+    "name": "hoisting-peer-check-parent",
+    "version": "1.0.0",
+    "dependencies": {
+        "hoisting-peer-check-child": "1.0.0",
+        "no-deps": "2.0.0"
+    }
+}

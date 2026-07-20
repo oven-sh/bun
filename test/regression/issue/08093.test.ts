@@ -1,36 +1,43 @@
-import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted } from "harness";
+import { file, spawn, write } from "bun";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+import { access } from "fs/promises";
+import { NpmRegistry, bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
 import { join } from "path";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  requested,
-  root_url,
-  setHandler,
-} from "./../../cli/install/dummy.registry.js";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+let registry: NpmRegistry;
+let root_url: string;
+let package_dir: string;
+
 beforeEach(async () => {
-  await dummyBeforeEach();
+  registry = await new NpmRegistry().start();
+  root_url = registry.url.slice(0, -1);
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+`,
+  );
 });
-afterEach(dummyAfterEach);
+
+afterEach(() => {
+  registry.stop();
+});
 
 it("should install vendored node_modules with hardlink", async () => {
-  const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.1": {},
-      latest: "0.0.1",
-    }),
-  );
-  await writeFile(
+  // A package that ships a nested node_modules of its own.
+  registry.define("vendor-baz", {
+    "0.0.1": {
+      tarball: {
+        "index.js": '#! /usr/bin/env node\n\nconsole.log("run vendor-baz");\n',
+        "cjs/node_modules/foo-dep/index.js": '#! /usr/bin/env node\n\nconsole.log("run foo-dep");\n',
+      },
+    },
+  });
+  await write(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "foo",
@@ -57,8 +64,8 @@ it("should install vendored node_modules with hardlink", async () => {
   expect(out).toContain("1 package installed");
 
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/vendor-baz`, `${root_url}/vendor-baz-0.0.1.tgz`]);
-  expect(requested).toBe(2);
+  expect(registry.urls.sort()).toEqual([`${root_url}/vendor-baz`, `${root_url}/vendor-baz/-/vendor-baz-0.0.1.tgz`]);
+  expect(registry.requestCount).toBe(2);
 
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "vendor-baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "vendor-baz"))).toEqual([

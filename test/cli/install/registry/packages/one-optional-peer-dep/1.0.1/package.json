@@ -1,0 +1,7 @@
+{
+  "name": "one-optional-peer-dep",
+  "version": "1.0.1",
+  "peerDependencies": {
+    "no-deps": "^1.0.0"
+  }
+}

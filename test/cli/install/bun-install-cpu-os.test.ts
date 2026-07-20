@@ -1,39 +1,41 @@
-import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { spawn, write } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, readdirSorted, toMatchNodeModulesAt } from "harness";
+import { NpmRegistry, bunEnv, bunExe, readdirSorted, tmpdirSync, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  setHandler,
-} from "./dummy.registry.js";
 
 expect.extend({
   toMatchNodeModulesAt,
 });
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+let registry: NpmRegistry;
+let package_dir: string;
+
 beforeEach(async () => {
-  await dummyBeforeEach({ linker: "hoisted" });
+  registry = await new NpmRegistry().start();
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+linker = "hoisted"
+`,
+  );
 });
-afterEach(dummyAfterEach);
+afterEach(() => {
+  registry.stop();
+});
 
 describe("bun install --cpu and --os flags", () => {
   it("should filter dependencies by CPU architecture", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["x64"],
-        },
-      }),
-    );
+    registry.define("dep-x64-only", {
+      "1.0.0": {
+        cpu: ["x64"],
+      },
+    });
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -81,14 +83,11 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should filter dependencies by OS", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          os: ["linux"],
-        },
-      }),
-    );
+    registry.define("dep-linux-only", {
+      "1.0.0": {
+        os: ["linux"],
+      },
+    });
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -136,20 +135,18 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should filter dependencies by both CPU and OS", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["arm64"],
-          os: ["darwin"],
-        },
-        "2.0.0": {
-          cpu: ["x64"],
-          os: ["linux"],
-        },
-        "3.0.0": {},
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        cpu: ["arm64"],
+        os: ["darwin"],
+      },
+      "2.0.0": {
+        cpu: ["x64"],
+        os: ["linux"],
+      },
+      "3.0.0": {},
+    };
+    for (const name of ["dep-darwin-arm64", "dep-linux-x64", "dep-universal"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -185,14 +182,11 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should handle multiple CPU architectures in package metadata", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["x64", "arm64"],
-        },
-      }),
-    );
+    registry.define("dep-multi-cpu", {
+      "1.0.0": {
+        cpu: ["x64", "arm64"],
+      },
+    });
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -273,17 +267,15 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should skip installing packages with negated CPU/OS", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["!arm64"],
-        },
-        "2.0.0": {
-          os: ["!linux"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        cpu: ["!arm64"],
+      },
+      "2.0.0": {
+        os: ["!linux"],
+      },
+    };
+    for (const name of ["dep-not-arm64", "dep-not-linux"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -314,20 +306,18 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should support multiple CPU architectures", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["x64"],
-        },
-        "2.0.0": {
-          cpu: ["arm64"],
-        },
-        "3.0.0": {
-          cpu: ["ppc64"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        cpu: ["x64"],
+      },
+      "2.0.0": {
+        cpu: ["arm64"],
+      },
+      "3.0.0": {
+        cpu: ["ppc64"],
+      },
+    };
+    for (const name of ["dep-x64", "dep-arm64", "dep-ppc64"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -359,20 +349,18 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should support multiple operating systems", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          os: ["linux"],
-        },
-        "2.0.0": {
-          os: ["darwin"],
-        },
-        "3.0.0": {
-          os: ["win32"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        os: ["linux"],
+      },
+      "2.0.0": {
+        os: ["darwin"],
+      },
+      "3.0.0": {
+        os: ["win32"],
+      },
+    };
+    for (const name of ["dep-linux", "dep-darwin", "dep-win32"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -404,27 +392,26 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should support multiple CPU and OS combinations", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["x64"],
-          os: ["linux"],
-        },
-        "2.0.0": {
-          cpu: ["arm64"],
-          os: ["darwin"],
-        },
-        "3.0.0": {
-          cpu: ["x64"],
-          os: ["darwin"],
-        },
-        "4.0.0": {
-          cpu: ["arm64"],
-          os: ["linux"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        cpu: ["x64"],
+        os: ["linux"],
+      },
+      "2.0.0": {
+        cpu: ["arm64"],
+        os: ["darwin"],
+      },
+      "3.0.0": {
+        cpu: ["x64"],
+        os: ["darwin"],
+      },
+      "4.0.0": {
+        cpu: ["arm64"],
+        os: ["linux"],
+      },
+    };
+    for (const name of ["dep-x64-linux", "dep-arm64-darwin", "dep-x64-darwin", "dep-arm64-linux"])
+      registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -461,20 +448,18 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should support * wildcard for all architectures", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["x64"],
-        },
-        "2.0.0": {
-          cpu: ["arm64"],
-        },
-        "3.0.0": {
-          cpu: ["ppc64"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        cpu: ["x64"],
+      },
+      "2.0.0": {
+        cpu: ["arm64"],
+      },
+      "3.0.0": {
+        cpu: ["ppc64"],
+      },
+    };
+    for (const name of ["dep-x64", "dep-arm64", "dep-ppc64"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -511,20 +496,18 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should support * wildcard for all operating systems", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          os: ["linux"],
-        },
-        "2.0.0": {
-          os: ["darwin"],
-        },
-        "3.0.0": {
-          os: ["win32"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        os: ["linux"],
+      },
+      "2.0.0": {
+        os: ["darwin"],
+      },
+      "3.0.0": {
+        os: ["win32"],
+      },
+    };
+    for (const name of ["dep-linux", "dep-darwin", "dep-win32"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -561,20 +544,18 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   it("should support negation with ! prefix", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "1.0.0": {
-          cpu: ["x64"],
-        },
-        "2.0.0": {
-          cpu: ["arm64"],
-        },
-        "3.0.0": {
-          cpu: ["ppc64"],
-        },
-      }),
-    );
+    const versions = {
+      "1.0.0": {
+        cpu: ["x64"],
+      },
+      "2.0.0": {
+        cpu: ["arm64"],
+      },
+      "3.0.0": {
+        cpu: ["ppc64"],
+      },
+    };
+    for (const name of ["dep-x64", "dep-arm64", "dep-ppc64"]) registry.define(name, versions);
 
     await writeFile(
       join(package_dir, "package.json"),

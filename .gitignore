@@ -146,8 +146,7 @@ test/node.js/upstream
 scripts/env.local
 *.generated.ts
 src/bake/generated.ts
-test/cli/install/registry/packages/publish-pkg-*
-test/cli/install/registry/packages/@secret/publish-pkg-8
+
 test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 tmp
 codegen-for-zig-team.tar.gz
@@ -216,3 +215,9 @@ src/jsc/bindings/GeneratedBindings.zig
 # Web Streams rewrite working notes (design docs, spec transcription, review logs).
 # Kept locally for the ongoing work; not part of the source tree.
 /specs/
+
+# test/npm-registry serves these trees byte-for-byte; nothing under them
+# may be ignored. Last so they re-include anything a pattern above
+# happened to match (bundled node_modules, publish-pkg-*, dist/, ...).
+!/test/cli/install/registry/packages/**
+!/test/npm-registry/goldens/**

@@ -1,0 +1,7 @@
+{
+  "name": "self-require-dep",
+  "version": "1.0.0",
+  "dependencies": {
+    "various-requires": "1.0.0"
+  }
+}

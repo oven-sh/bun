@@ -1,0 +1,7 @@
+{
+    "name": "dev-deps",
+    "version": "1.0.0",
+    "devDependencies": {
+        "no-deps": "1.0.0"
+    }
+}

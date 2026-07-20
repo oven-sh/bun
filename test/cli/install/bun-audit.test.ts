@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, DirectoryTree, lazyPromiseLike, NpmRegistry, tempDirWithFiles } from "harness";
 import { join } from "node:path";
-import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
+import auditFixturesJson from "./registry/fixtures/audit/audit-fixtures.json" with { type: "json" };
 
 function fixture(
   folder:
@@ -14,27 +14,51 @@ function fixture(
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
-let server: Bun.Server;
+let server: NpmRegistry;
 
-beforeAll(() => {
-  server = Bun.serve({
-    fetch: async req => {
-      const body = await gunzipJsonRequest(req);
-
-      const fixture = resolveBulkAdvisoryFixture(body);
-
-      if (!fixture) {
-        console.log("No fixture found for", body);
-        return new Response("No fixture found", { status: 404 });
+beforeAll(async () => {
+  server = await new NpmRegistry().start();
+  // Load every real advisory the canned registry.npmjs.org responses
+  // carried; the store's own range-matching re-derives the response.
+  // `bun audit` gzips its body, so this reaching handleBulk at all is
+  // the end-to-end proof that readJsonObject's decode works.
+  const seen = new Set<number>();
+  for (const response of Object.values(auditFixturesJson)) {
+    for (const [module_name, advisories] of Object.entries(response)) {
+      for (const advisory of advisories as {
+        id: number;
+        url: string;
+        title: string;
+        severity: "low" | "moderate" | "high" | "critical";
+        vulnerable_versions: string;
+        cwe?: string[];
+        cvss?: { score: number; vectorString: string | null };
+      }[]) {
+        if (seen.has(advisory.id)) continue;
+        seen.add(advisory.id);
+        server.advisories.add({ ...advisory, module_name });
       }
-
-      return Response.json(fixture);
-    },
-  });
+    }
+  }
 });
 
 afterAll(() => {
   server.stop();
+});
+
+// The keys of audit-fixtures.json are the exact bulk bodies bun sent to the
+// real registry.npmjs.org; the values are what it answered. Replaying them
+// pins `Bun.semver.satisfies` against npm's node-semver over these ranges.
+test("the derived advisory store reproduces registry.npmjs.org's recorded responses", async () => {
+  for (const [requestBody, recorded] of Object.entries(auditFixturesJson)) {
+    const response = await fetch(`${server.url}-/npm/v1/security/advisories/bulk`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: requestBody,
+    });
+    expect({ requestBody, status: response.status, body: await response.json() }) //
+      .toEqual({ requestBody, status: 200, body: recorded });
+  }
 });
 
 function doAuditTest(

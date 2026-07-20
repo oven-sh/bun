@@ -1,0 +1,7 @@
+{
+  "name": "golden-with-bin",
+  "version": "1.0.0",
+  "bin": {
+    "golden": "cli.js"
+  }
+}

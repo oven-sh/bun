@@ -1,22 +1,17 @@
-import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { file, spawn, write } from "bun";
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join } from "path";
 import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  requested,
-  root_url,
-  setHandler,
-} from "./dummy.registry";
-
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+  NpmRegistry,
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
+import { join } from "path";
 
 expect.extend({
   toHaveBins,
@@ -24,20 +19,29 @@ expect.extend({
   toBeWorkspaceLink,
 });
 
-let port: string;
-let add_dir: string;
 setDefaultTimeout(1000 * 60 * 5);
 
-beforeAll(() => {
-  port = new URL(root_url).port;
-});
+let registry: NpmRegistry;
+let root_url: string;
+let package_dir: string;
 
 beforeEach(async () => {
-  add_dir = tmpdirSync();
-  await dummyBeforeEach();
+  registry = await new NpmRegistry().start();
+  root_url = registry.url.slice(0, -1);
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+`,
+  );
 });
-afterEach(async () => {
-  await dummyAfterEach();
+
+afterEach(() => {
+  registry.stop();
 });
 
 // Manifest request 302-redirects and the redirect target answers a retryable
@@ -45,7 +49,7 @@ afterEach(async () => {
 it("retries a manifest whose redirect target 500s once", async () => {
   const urls: string[] = [];
   let redirectTargetHits = 0;
-  setHandler(async request => {
+  registry.intercept(async request => {
     const { pathname } = new URL(request.url);
     urls.push(pathname);
     if (pathname === "/BaR") {
@@ -123,7 +127,7 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
       });
     },
   });
-  setHandler(async request => {
+  registry.intercept(async request => {
     const { pathname } = new URL(request.url);
     registryUrls.push(pathname);
     if (pathname === "/BaR") {
@@ -173,7 +177,7 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
 it("retries a tarball whose redirect target 500s once", async () => {
   const urls: string[] = [];
   let redirectTargetHits = 0;
-  setHandler(async request => {
+  registry.intercept(async request => {
     const { pathname } = new URL(request.url);
     urls.push(pathname);
     if (pathname === "/BaR") {
@@ -227,9 +231,11 @@ it("retries a tarball whose redirect target 500s once", async () => {
 });
 
 it("retries on 500", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, undefined, 4));
-  await writeFile(
+  registry.define("BaR", { "0.0.2": {} });
+  // The registry answers each distinct URL with five 500s before it
+  // recovers; bun must keep retrying and still install successfully.
+  registry.simulateFailures({ timesPerUrl: 5, status: 500 });
+  await write(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "foo",
@@ -256,27 +262,27 @@ it("retries on 500", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([
+  expect(registry.urls.sort()).toEqual([
     `${root_url}/BaR`,
     `${root_url}/BaR`,
     `${root_url}/BaR`,
     `${root_url}/BaR`,
     `${root_url}/BaR`,
     `${root_url}/BaR`,
-    `${root_url}/BaR-0.0.2.tgz`,
-    `${root_url}/BaR-0.0.2.tgz`,
-    `${root_url}/BaR-0.0.2.tgz`,
-    `${root_url}/BaR-0.0.2.tgz`,
-    `${root_url}/BaR-0.0.2.tgz`,
-    `${root_url}/BaR-0.0.2.tgz`,
+    `${root_url}/BaR/-/BaR-0.0.2.tgz`,
+    `${root_url}/BaR/-/BaR-0.0.2.tgz`,
+    `${root_url}/BaR/-/BaR-0.0.2.tgz`,
+    `${root_url}/BaR/-/BaR-0.0.2.tgz`,
+    `${root_url}/BaR/-/BaR-0.0.2.tgz`,
+    `${root_url}/BaR/-/BaR-0.0.2.tgz`,
   ]);
-  expect(requested).toBe(12);
+  expect(registry.requestCount).toBe(12);
   await Promise.all([
     (async () => expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]))(),
     (async () => expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]))(),
     (async () =>
       expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-        name: "bar",
+        name: "BaR",
         version: "0.0.2",
       }))(),
     (async () =>
@@ -308,7 +314,7 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
     { status: 500, expectedGets: 6 },
   ])("does not re-download a tarball that already failed with $status", async ({ status, expectedGets }) => {
     const urls: string[] = [];
-    setHandler(async request => {
+    registry.intercept(async request => {
       const { pathname } = new URL(request.url);
       urls.push(pathname);
       if (pathname === "/BaR") {
@@ -355,7 +361,7 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
 
   it("does not re-download an optional dependency's tarball that already failed", async () => {
     const urls: string[] = [];
-    setHandler(async request => {
+    registry.intercept(async request => {
       const { pathname } = new URL(request.url);
       urls.push(pathname);
       if (pathname === "/BaR") {

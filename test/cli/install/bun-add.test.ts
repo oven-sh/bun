@@ -1,23 +1,17 @@
-import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { file, spawn, write } from "bun";
+import { afterEach, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, relative, resolve } from "path";
 import {
-  check_npm_auth_type,
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  requested,
-  root_url,
-  setHandler,
-} from "./dummy.registry";
-
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+  NpmRegistry,
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
+import { join, relative, resolve } from "path";
 
 expect.extend({
   toHaveBins,
@@ -25,20 +19,34 @@ expect.extend({
   toBeWorkspaceLink,
 });
 
+const BAZ_INDEX_JS = '#! /usr/bin/env node\n\nconsole.log("run baz");\n';
+
+let registry: NpmRegistry;
+let root_url: string;
+let package_dir: string;
 let port: string;
 let add_dir: string;
 setDefaultTimeout(1000 * 60 * 5);
 
-beforeAll(() => {
-  port = new URL(root_url).port;
-});
-
 beforeEach(async () => {
+  registry = await new NpmRegistry().start();
+  root_url = registry.url.slice(0, -1);
+  port = new URL(registry.url).port;
   add_dir = tmpdirSync();
-  await dummyBeforeEach({ linker: "hoisted" });
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+linker = "hoisted"
+`,
+  );
 });
-afterEach(async () => {
-  await dummyAfterEach();
+afterEach(() => {
+  registry.stop();
 });
 
 it("should add existing package", async () => {
@@ -128,7 +136,8 @@ it("should reject missing package", async () => {
 
 it("bun add --only-missing should not install existing package", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -158,8 +167,8 @@ it("bun add --only-missing should not install existing package", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
@@ -202,7 +211,8 @@ it("bun add --only-missing should not install existing package", async () => {
 
 it("bun add --analyze should scan dependencies", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -233,8 +243,8 @@ it("bun add --analyze should scan dependencies", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
@@ -399,16 +409,7 @@ it("should reject positionals longer than 2048 bytes without stack overflow", as
 
 it("should handle semver-like names", async () => {
   const urls: string[] = [];
-  setHandler(async request => {
-    expect(request.method).toBe("GET");
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
-    expect(await request.text()).toBe("");
-    urls.push(request.url);
-    return new Response("not to be found", { status: 404 });
-  });
+  registry.intercept(req => void urls.push(req.url));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -429,7 +430,7 @@ it("should handle semver-like names", async () => {
   expect(await stdout.text()).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/1.2.3`]);
-  expect(requested).toBe(1);
+  expect(registry.requestCount).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
     expect(() => {}).toThrow();
@@ -440,16 +441,7 @@ it("should handle semver-like names", async () => {
 
 it("should handle @scoped names", async () => {
   const urls: string[] = [];
-  setHandler(async request => {
-    expect(request.method).toBe("GET");
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
-    expect(await request.text()).toBe("");
-    urls.push(request.url);
-    return new Response("not to be found", { status: 404 });
-  });
+  registry.intercept(req => void urls.push(req.url));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -470,7 +462,7 @@ it("should handle @scoped names", async () => {
   expect(await stdout.text()).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
-  expect(requested).toBe(1);
+  expect(registry.requestCount).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
     expect(() => {}).toThrow();
@@ -481,7 +473,8 @@ it("should handle @scoped names", async () => {
 
 it("should add dependency with capital letters", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -509,12 +502,12 @@ it("should add dependency with capital letters", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -535,7 +528,8 @@ it("should add dependency with capital letters", async () => {
 
 it("should add exact version with --exact", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -563,12 +557,12 @@ it("should add exact version with --exact", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -588,7 +582,8 @@ it("should add exact version with --exact", async () => {
 });
 it("should add to devDependencies with --dev", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -616,12 +611,12 @@ it("should add to devDependencies with --dev", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -641,7 +636,8 @@ it("should add to devDependencies with --dev", async () => {
 });
 it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -670,12 +666,12 @@ it("should add to optionalDependencies with --optional", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -695,7 +691,8 @@ it("should add to optionalDependencies with --optional", async () => {
 });
 it("should add to peerDependencies with --peer", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -723,12 +720,12 @@ it("should add to peerDependencies with --peer", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -749,7 +746,8 @@ it("should add to peerDependencies with --peer", async () => {
 
 it("should add exact version with install.exact", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -778,12 +776,12 @@ it("should add exact version with install.exact", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -804,7 +802,8 @@ it("should add exact version with install.exact", async () => {
 
 it("should add exact version with -E", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("BaR", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -831,12 +830,12 @@ it("should add exact version with -E", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR/-/BaR-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
+    name: "BaR",
     version: "0.0.2",
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -856,8 +855,6 @@ it("should add exact version with -E", async () => {
 });
 
 it("should add dependency with package.json in it and http tarball", async () => {
-  const old_check_npm_auth_type = check_npm_auth_type.check;
-  check_npm_auth_type.check = false;
   using server = Bun.serve({
     port: 0,
     fetch(req) {
@@ -869,20 +866,21 @@ it("should add dependency with package.json in it and http tarball", async () =>
     },
   });
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.3": {
-        bin: {
-          "baz-run": "index.js",
-        },
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", {
+    "0.0.3": {
+      bin: {
+        "baz-run": "index.js",
       },
-      "0.0.5": {
-        bin: {
-          "baz-run": "index.js",
-        },
+      tarball: { "index.js": BAZ_INDEX_JS },
+    },
+    "0.0.5": {
+      bin: {
+        "baz-run": "index.js",
       },
-    }),
-  );
+      tarball: { "index.js": BAZ_INDEX_JS },
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -920,8 +918,8 @@ it("should add dependency with package.json in it and http tarball", async () =>
     "2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.5.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bap", "booop"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bap"))).toEqual(["index.js", "package.json"]);
@@ -929,7 +927,7 @@ it("should add dependency with package.json in it and http tarball", async () =>
     name: "baz",
     version: "0.0.5",
     bin: {
-      "baz-exec": "index.js",
+      "baz-run": "index.js",
     },
   });
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
@@ -941,21 +939,19 @@ it("should add dependency with package.json in it and http tarball", async () =>
     },
   });
   await access(join(package_dir, "bun.lockb"));
-  // Reset to old value for other tests
-  check_npm_auth_type.check = old_check_npm_auth_type;
 });
 
 it("should add dependency with specified semver", async () => {
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.3": {
-        bin: {
-          "baz-run": "index.js",
-        },
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", {
+    "0.0.3": {
+      bin: {
+        "baz-run": "index.js",
       },
-    }),
-  );
+      tarball: { "index.js": BAZ_INDEX_JS },
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -984,8 +980,8 @@ it("should add dependency with specified semver", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.3.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
@@ -1015,7 +1011,7 @@ it("should add dependency with specified semver", async () => {
 
 it("should add dependency (GitHub)", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1045,7 +1041,7 @@ it("should add dependency (GitHub)", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(registry.requestCount).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
@@ -1084,15 +1080,15 @@ it("should add dependency (GitHub)", async () => {
 
 it("should add dependency alongside workspaces", async () => {
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.3": {
-        bin: {
-          "baz-run": "index.js",
-        },
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", {
+    "0.0.3": {
+      bin: {
+        "baz-run": "index.js",
       },
-    }),
-  );
+      tarball: { "index.js": BAZ_INDEX_JS },
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1133,8 +1129,8 @@ it("should add dependency alongside workspaces", async () => {
     "2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.3.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
     ".bin",
     ".bun",
@@ -1175,15 +1171,15 @@ it("should add dependency alongside workspaces", async () => {
 
 it("should add aliased dependency (npm)", async () => {
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.3": {
-        bin: {
-          "baz-run": "index.js",
-        },
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", {
+    "0.0.3": {
+      bin: {
+        "baz-run": "index.js",
       },
-    }),
-  );
+      tarball: { "index.js": BAZ_INDEX_JS },
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1212,8 +1208,8 @@ it("should add aliased dependency (npm)", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.3.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
@@ -1243,7 +1239,7 @@ it("should add aliased dependency (npm)", async () => {
 
 it("should add aliased dependency (GitHub)", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1273,7 +1269,7 @@ it("should add aliased dependency (GitHub)", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(registry.requestCount).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
@@ -1386,7 +1382,8 @@ it("git dep without package.json and with default branch", async () => {
 
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", { "0.0.3": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1420,15 +1417,12 @@ it("should let you add the same package twice", async () => {
     "1 package installed",
   ]);
   expect(await exited1).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.3.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
-    bin: {
-      "baz-run": "index.js",
-    },
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
@@ -1472,14 +1466,11 @@ it("should let you add the same package twice", async () => {
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`]);
-  expect(requested).toBe(3);
+  expect(registry.requestCount).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
-    bin: {
-      "baz-run": "index.js",
-    },
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
@@ -1499,13 +1490,8 @@ it("should let you add the same package twice", async () => {
 
 it("should install version tagged with `latest` by default", async () => {
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.3": {},
-      "0.0.5": {},
-      latest: "0.0.3",
-    }),
-  );
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("baz", { "0.0.3": {}, "0.0.5": {} }, { distTags: { latest: "0.0.3" } });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1539,15 +1525,12 @@ it("should install version tagged with `latest` by default", async () => {
     "1 package installed",
   ]);
   expect(await exited1).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz/-/baz-0.0.3.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
-    bin: {
-      "baz-run": "index.js",
-    },
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
@@ -1589,15 +1572,12 @@ it("should install version tagged with `latest` by default", async () => {
     "1 package installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/baz-0.0.3.tgz`]);
-  expect(requested).toBe(3);
+  expect(urls.sort()).toEqual([`${root_url}/baz/-/baz-0.0.3.tgz`]);
+  expect(registry.requestCount).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
-    bin: {
-      "baz-run": "index.js",
-    },
   });
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
@@ -1617,7 +1597,7 @@ it("should install version tagged with `latest` by default", async () => {
 
 it("should handle Git URL in dependencies (SCP-style)", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1653,7 +1633,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(registry.requestCount).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
   expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
@@ -1713,12 +1693,16 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(registry.requestCount).toBe(0);
 }, 20000);
 
 it("should not save git urls twice", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  // The cloned repo's package.json declares `peerDependencies:
+  // { typescript: "^5.0.0" }`, which `bun add` resolves from the
+  // registry. Any answer keeps the add alive (an unsatisfiable peer
+  // version is only a warning) but a 404 is fatal, so the registry has
+  // to know *some* version of every name, like the old any-name mock.
+  registry.defineFallback({ "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1761,20 +1745,21 @@ it("should not save git urls twice", async () => {
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.2": {
-        dependencies: {
-          baz: "0.0.3",
-        },
-        optionalDependencies: {
-          baz: "0.0.5",
-        },
+  registry.intercept(req => void urls.push(req.url));
+  const versions = {
+    "0.0.2": {
+      dependencies: {
+        baz: "0.0.3",
       },
-      "0.0.3": {},
-      "0.0.5": {},
-    }),
-  );
+      optionalDependencies: {
+        baz: "0.0.5",
+      },
+    },
+    "0.0.3": { tarball: { "index.js": BAZ_INDEX_JS } },
+    "0.0.5": { tarball: { "index.js": BAZ_INDEX_JS } },
+  };
+  registry.define("bar", versions);
+  registry.define("baz", versions);
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar@0.0.2"],
     cwd: package_dir,
@@ -1797,43 +1782,47 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([
     `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/bar/-/bar-0.0.2.tgz`,
     `${root_url}/baz`,
-    `${root_url}/baz-0.0.5.tgz`,
+    `${root_url}/baz/-/baz-0.0.5.tgz`,
   ]);
-  expect(requested).toBe(4);
+  expect(registry.requestCount).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
     name: "bar",
     version: "0.0.2",
+    dependencies: {
+      baz: "0.0.3",
+    },
+    optionalDependencies: {
+      baz: "0.0.5",
+    },
   });
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.5",
-    bin: {
-      "baz-exec": "index.js",
-    },
   });
 });
 
 it("should prefer dependencies over peerDependencies of the same name", async () => {
   const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.0.2": {
-        dependencies: {
-          baz: "0.0.3",
-        },
-        peerDependencies: {
-          baz: "0.0.5",
-        },
+  registry.intercept(req => void urls.push(req.url));
+  const versions = {
+    "0.0.2": {
+      dependencies: {
+        baz: "0.0.3",
       },
-      "0.0.3": {},
-      "0.0.5": {},
-    }),
-  );
+      peerDependencies: {
+        baz: "0.0.5",
+      },
+    },
+    "0.0.3": { tarball: { "index.js": BAZ_INDEX_JS } },
+    "0.0.5": { tarball: { "index.js": BAZ_INDEX_JS } },
+  };
+  registry.define("bar", versions);
+  registry.define("baz", versions);
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar@0.0.2"],
     cwd: package_dir,
@@ -1856,30 +1845,34 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([
     `${root_url}/bar`,
-    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/bar/-/bar-0.0.2.tgz`,
     `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
+    `${root_url}/baz/-/baz-0.0.3.tgz`,
   ]);
-  expect(requested).toBe(4);
+  expect(registry.requestCount).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
     name: "bar",
     version: "0.0.2",
+    dependencies: {
+      baz: "0.0.3",
+    },
+    peerDependencies: {
+      baz: "0.0.5",
+    },
   });
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
-    bin: {
-      "baz-run": "index.js",
-    },
   });
 });
 
 it("should add dependency without duplication", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1911,8 +1904,8 @@ it("should add dependency without duplication", async () => {
     "1 package installed",
   ]);
   expect(await exited1).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
@@ -1962,7 +1955,7 @@ it("should add dependency without duplication", async () => {
     "installed bar@0.0.2",
   ]);
   expect(await exited2).toBe(0);
-  expect(requested).toBe(3);
+  expect(registry.requestCount).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
@@ -2234,7 +2227,8 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
 
 it("should add dependency alongside peerDependencies", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -2264,8 +2258,8 @@ it("should add dependency alongside peerDependencies", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
@@ -2283,7 +2277,7 @@ it("should add dependency alongside peerDependencies", async () => {
 
 it("should add local tarball dependency", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -2315,7 +2309,7 @@ it("should add local tarball dependency", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(registry.requestCount).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
@@ -2325,7 +2319,6 @@ it("should add local tarball dependency", async () => {
 });
 
 it("should not add duplicate package.json entries when installing the same local folder twice (#30933)", async () => {
-  setHandler(dummyRegistry([]));
   // `add_dir` is a fresh tmpdir created in beforeEach; use it as the local dep source.
   await writeFile(
     join(add_dir, "package.json"),
@@ -2408,7 +2401,6 @@ it("should not add duplicate package.json entries when installing the same tarba
     },
   });
   const tarball_url = `${server.url.href.replace(/\/+$/, "")}/baz-0.0.3.tgz`;
-  setHandler(dummyRegistry([]));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -2472,7 +2464,6 @@ it("should not add duplicate package.json entries when installing the same tarba
 });
 
 it("should add multiple dependencies specified on command line", async () => {
-  expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({
     port: 0,
     fetch(req) {
@@ -2480,8 +2471,7 @@ it("should add multiple dependencies specified on command line", async () => {
     },
   });
   const server_url = server.url.href.replace(/\/+$/, "");
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.define("bar", { "0.0.2": {} });
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", `${server_url}/baz-0.0.3.tgz`, "bar"],
     cwd: package_dir,
@@ -2586,9 +2576,6 @@ it("should install tarball with tarball dependencies", async () => {
       name: "foo",
     }),
   );
-
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", `${server_url}/parent.tgz`, "--linker=hoisted"],

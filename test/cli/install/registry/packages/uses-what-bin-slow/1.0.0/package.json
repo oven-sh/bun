@@ -1,0 +1,10 @@
+{
+    "name": "uses-what-bin-slow",
+    "version": "1.0.0",
+    "scripts": {
+        "install": "bun sleep.js && what-bin"
+    },
+    "dependencies": {
+        "what-bin": "1.0.0"
+    }
+}

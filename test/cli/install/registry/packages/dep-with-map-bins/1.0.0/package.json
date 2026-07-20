@@ -1,0 +1,8 @@
+{
+  "name": "dep-with-map-bins",
+  "version": "1.0.0",
+  "bin": {
+    "map-bin-1": "./map-bin-1",
+    "map-bin-2": "./map-bin-2"
+  }
+}

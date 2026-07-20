@@ -1,0 +1,7 @@
+{
+    "name": "peer-deps",
+    "version": "1.0.0",
+    "peerDependencies": {
+        "no-deps": "*"
+    }
+}

@@ -1,0 +1,7 @@
+{
+    "name": "peer-a-dep-tilde-1-0-2",
+    "version": "1.0.0",
+    "peerDependencies": {
+        "a-dep": "~1.0.2"
+    }
+}

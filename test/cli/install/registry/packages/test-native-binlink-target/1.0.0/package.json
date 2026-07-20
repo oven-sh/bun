@@ -1,0 +1,13 @@
+{
+  "name": "test-native-binlink-target",
+  "version": "1.0.0",
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ]
+}

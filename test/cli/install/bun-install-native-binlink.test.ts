@@ -2,27 +2,27 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, TestRegistry } from "harness";
 import { join } from "path";
 
-let verdaccio: VerdaccioRegistry;
+let registry: TestRegistry;
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
-  await verdaccio.start();
+  registry = new TestRegistry();
+  await registry.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
+  registry.stop();
 });
 
 describe.skipIf(isWindows).concurrent("native binlink optimization", () => {
   for (const linker of ["hoisted", "isolated"]) {
     test(`uses platform-specific bin instead of main package bin with linker ${linker}`, async () => {
       let env = { ...bunEnv };
-      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      const { packageDir, packageJson } = await registry.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -32,7 +32,7 @@ describe.skipIf(isWindows).concurrent("native binlink optimization", () => {
         `
 [install]
 cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
+registry = "${registry.registryUrl()}"
 linker = "${linker}"
 `,
       );
@@ -158,7 +158,7 @@ linker = "${linker}"
     // and `.bin/<cmd>` was never created (broke `bunx @anthropic-ai/claude-code`).
     test(`falls back to main package bin when platform dep has no matching bin file with linker ${linker}`, async () => {
       let env = { ...bunEnv };
-      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      const { packageDir, packageJson } = await registry.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -167,7 +167,7 @@ linker = "${linker}"
         `
 [install]
 cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
+registry = "${registry.registryUrl()}"
 linker = "${linker}"
 `,
       );
@@ -246,7 +246,7 @@ linker = "${linker}"
     // un-execable stub.
     test(`finds native bin at package root when parent bin path differs with linker ${linker}`, async () => {
       let env = { ...bunEnv };
-      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      const { packageDir, packageJson } = await registry.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -255,7 +255,7 @@ linker = "${linker}"
         `
 [install]
 cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${verdaccio.registryUrl()}"
+registry = "${registry.registryUrl()}"
 linker = "${linker}"
 `,
       );

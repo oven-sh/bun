@@ -1,0 +1,5 @@
+{
+    "name": "prefer-unplugged-true",
+    "version": "1.0.0",
+    "preferUnplugged": true
+}

@@ -1,0 +1,1 @@
+require("fs").writeFileSync("preinstall.txt", "preinstall success!");

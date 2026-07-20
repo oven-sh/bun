@@ -1,0 +1,7 @@
+{
+  "name": "one-one-dep",
+  "version": "1.0.0",
+  "dependencies": {
+    "one-dep": "1.0.0"
+  }
+}

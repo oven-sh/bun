@@ -1,0 +1,7 @@
+{
+  "name": "self-dep",
+  "version": "1.0.2",
+  "dependencies": {
+    "self-dep": "1.0.1"
+  }
+}

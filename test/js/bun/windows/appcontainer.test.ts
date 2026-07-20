@@ -248,7 +248,13 @@ async function main() {
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  r.realpath = fs.realpathSync(".") === fs.realpathSync.native(".");
+  // User-facing fs.realpath stays Node-parity: the component walk lstats the
+  // drive root (denied), and uv_fs_realpath's mount-manager query is denied.
+  // Bun internals go through get_fd_path, not these.
+  r.realpath = (() => {
+    const errno = fn => { try { fn(); return "OK"; } catch (e) { return e.code || e.name; } };
+    return { sync: errno(() => fs.realpathSync(".")), native: errno(() => fs.realpathSync.native(".")) };
+  })();
 
   r.pipeNonLocal = await new Promise(resolve => {
     const srv = net.createServer(() => {});
@@ -267,18 +273,6 @@ async function main() {
       resolve("LISTENED");
     });
   });
-
-  r.realpathVariants = await (async () => {
-    const { promisify } = require("util");
-    const vals = [
-      fs.realpathSync("."),
-      fs.realpathSync.native("."),
-      await fs.promises.realpath("."),
-      await promisify(fs.realpath)("."),
-      await promisify(fs.realpath.native)("."),
-    ];
-    return vals.every(v => v === vals[0]) ? "OK" : JSON.stringify(vals);
-  })();
 
   r.forkIpc = await (async () => {
     fs.writeFileSync("fork-child.js", 'process.send("ping"); process.on("message", () => process.exit(0));');
@@ -341,13 +335,12 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
-      expect(r.realpath).toBe(true);
+      expect(r.realpath).toEqual({ sync: "EPERM", native: "EPERM" });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
       // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once
       // the disambiguation probe lands on the libuv side.
       expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
       expect(r.pipeLocal).toBe("LISTENED");
-      expect(r.realpathVariants).toBe("OK");
       expect(r.forkIpc).toBe("OK");
       // No network capability + no loopback exemption: the probe records a
       // classified outcome; this guards only an unset key, an unclassified

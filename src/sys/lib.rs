@@ -3923,47 +3923,6 @@ mod windows_impl {
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         sys_uv::readlink(path, buf).map(|s| s.len())
     }
-    /// Canonicalize `path` by opening it and reading the final path back off
-    /// the handle. `uv_fs_realpath` is denied for sandboxed processes (the
-    /// DOS volume-name translation opens the mount manager); the handle-based
-    /// resolution goes through the lowbox-aware `GetFinalPathNameByHandle`
-    /// fallback instead.
-    pub fn realpath_handle<'a>(
-        path: &ZStr,
-        out: &'a mut bun_paths::PathBuffer,
-    ) -> Maybe<&'a mut [u8]> {
-        use bun_windows_sys::externs as k32;
-        if !bun_paths::string_paths::fits_in_wide_path_buffer(
-            bun_paths::string_paths::without_nt_prefix(path.as_bytes()),
-        ) {
-            return Err(Error::new(E::ENAMETOOLONG, Tag::realpath).with_path(path.as_bytes()));
-        }
-        let mut wbuf = WPathBuffer::default();
-        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
-        // Mirror libuv's fs__realpath open: no access bits (metadata only),
-        // backup semantics so directories open too.
-        // SAFETY: wpath is NUL-terminated; null security/template handles.
-        let handle = unsafe {
-            k32::CreateFileW(
-                wpath.as_ptr(),
-                0,
-                0,
-                core::ptr::null_mut(),
-                k32::OPEN_EXISTING,
-                k32::FILE_FLAG_BACKUP_SEMANTICS,
-                core::ptr::null_mut(),
-            )
-        };
-        if handle == bun_windows_sys::INVALID_HANDLE_VALUE {
-            return Err(Error::new(w::get_last_errno(), Tag::realpath).with_path(path.as_bytes()));
-        }
-        let res = crate::get_fd_path(Fd::from_system(handle), out);
-        // SAFETY: handle is a valid handle from CreateFileW.
-        unsafe {
-            let _ = k32::CloseHandle(handle);
-        }
-        res
-    }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
     }

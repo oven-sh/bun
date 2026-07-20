@@ -666,24 +666,6 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-let insideAppContainer: boolean | undefined;
-// Defer a denied component to native only inside an AppContainer (denied
-// ancestors are the sandbox norm and can hide links); outside one, Node
-// parity: the walk's error propagates. Lazy: probe on first denial only.
-function shouldDeferDeniedComponent(err: any) {
-  if (!(insideAppContainer ??= fs.isInsideAppContainer())) return false;
-  const code = err?.code;
-  return code === "EPERM" || code === "EACCES";
-}
-// A denied component (e.g. drive roots when sandboxed) can hide a link, so
-// never assume it is a plain directory: resolve through the native path
-// (true chain); if that also fails, its more definitive error propagates.
-function resolveDeniedComponentSync(p: string, encoding: any) {
-  return encodeRealpathResult(fs.realpathNativeSync(p, undefined), encoding);
-}
-function resolveDeniedComponent(p: string, encoding: any, callback: any) {
-  fs.realpathNative(p, undefined).then(resolved => callback(null, encodeRealpathResult(resolved, encoding)), callback);
-}
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
     ? (fs.realpathSync.bind(fs) as any)
@@ -698,9 +680,9 @@ const realpathSync: typeof import("node:fs").realpathSync =
             );
           }
         }
-        // Ported from node.js to emulate not resolving subst drives (the
-        // native call sees through them) - except permission-denied
-        // components, which defer to native (resolveDeniedComponentSync).
+        // This function is ported 1:1 from node.js, to emulate how it is unable to
+        // resolve subst drives to their underlying location. The native call is
+        // able to see through that.
         if (p instanceof URL) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {
@@ -730,13 +712,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
         pos = current.length;
 
         // On windows, check that the root exists. On unix there is no need.
-        let lastStat: StatsType;
-        try {
-          lastStat = lstatSync(base, { throwIfNoEntry: true });
-        } catch (err) {
-          if (!shouldDeferDeniedComponent(err)) throw err;
-          return resolveDeniedComponentSync(p, encoding);
-        }
+        let lastStat: StatsType = lstatSync(base, { throwIfNoEntry: true });
         if (lastStat === undefined) return;
         knownHard.$add(base);
 
@@ -769,12 +745,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           }
 
           let resolvedLink;
-          try {
-            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
-          } catch (err) {
-            if (!shouldDeferDeniedComponent(err)) throw err;
-            return resolveDeniedComponentSync(p, encoding);
-          }
+          lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
           if (lastStat === undefined) return;
 
           if (!lastStat.isSymbolicLink()) {
@@ -795,12 +766,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
 
           // On windows, check that the root exists. On unix there is no need.
           if (!knownHard.$has(base)) {
-            try {
-              lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
-            } catch (err) {
-              if (!shouldDeferDeniedComponent(err)) throw err;
-              return resolveDeniedComponentSync(p, encoding);
-            }
+            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
             if (lastStat === undefined) return;
             knownHard.$add(base);
           }
@@ -871,11 +837,8 @@ const realpath: typeof import("node:fs").realpath =
         // On windows, check that the root exists. On unix there is no need.
         if (!knownHard.has(base)) {
           lstat(base, (err, s) => {
-            if (err) {
-              if (!shouldDeferDeniedComponent(err)) return callback(err);
-              return resolveDeniedComponent(p, encoding, callback);
-            }
             lastStat = s;
+            if (err) return callback(err);
             knownHard.add(base);
             LOOP();
           });
@@ -919,10 +882,7 @@ const realpath: typeof import("node:fs").realpath =
         }
 
         function gotStat(err, stats) {
-          if (err) {
-            if (!shouldDeferDeniedComponent(err)) return callback(err);
-            return resolveDeniedComponent(p, encoding, callback);
-          }
+          if (err) return callback(err);
 
           // If not a symlink, skip to the next path part
           if (!stats.isSymbolicLink()) {
@@ -957,10 +917,7 @@ const realpath: typeof import("node:fs").realpath =
           // On windows, check that the root exists. On unix there is no need.
           if (!knownHard.has(base)) {
             lstat(base, err => {
-              if (err) {
-                if (!shouldDeferDeniedComponent(err)) return callback(err);
-                return resolveDeniedComponent(p, encoding, callback);
-              }
+              if (err) return callback(err);
               knownHard.add(base);
               LOOP();
             });

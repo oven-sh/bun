@@ -406,21 +406,6 @@ impl Binding {
         call_sync::<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>();
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
-
-    /// `fs.isInsideAppContainer()` — true iff the process holds a Windows
-    /// AppContainer (lowbox) token. fs.ts gates the realpath denied-component
-    /// deferral on it; membership is fixed at process start (cached JS-side).
-    pub fn is_inside_app_container(
-        _this: &Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        #[cfg(windows)]
-        let inside = bun_sys::windows::is_app_container();
-        #[cfg(not(windows))]
-        let inside = false;
-        Ok(JSValue::js_boolean(inside))
-    }
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {

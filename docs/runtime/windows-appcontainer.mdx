@@ -71,9 +71,10 @@ shipped apps cannot rely on.
   container. Drive roots (`C:\`) are not listable either; Bun's resolver
   treats those inaccessible ancestors as opaque directories (a
   `node_modules` physically inside one is not found — keep dependencies
-  under the granted project tree), and `fs.realpath` resolves through them
-  via the handle-based native path for paths on the system volume. On any
-  other volume `fs.realpath` fails with `EPERM` as the underlying query does.
+  under the granted project tree). `fs.realpath` fails with `EPERM` inside a
+  container: its component walk stats the drive root, and the native variant's
+  DOS-name translation opens the mount manager. Bun's own module resolution
+  and `bun install` do not go through `fs.realpath` and are unaffected.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
   works.
@@ -95,7 +96,7 @@ A minimal smoke test that exercises the historically fragile paths:
 const { spawnSync } = require("child_process");
 const r = spawnSync(process.execPath, ["-e", "0"], { stdio: ["inherit", "pipe", "pipe"] });
 console.log("spawn+pipes:", r.status === 0 ? "ok" : r.error);
-console.log("realpath:", require("fs").realpathSync("."));
+console.log("resolve:", require.resolve("./smoke.js"));
 require("net")
   .createServer(() => {})
   .listen("\\\\.\\pipe\\LOCAL\\smoke-" + process.pid, function () {

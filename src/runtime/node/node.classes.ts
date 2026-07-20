@@ -340,7 +340,6 @@ export default [
       writevSync: { async: false, fn: "writevSync", length: 3 },
       realpathNative: { async: true, fn: "realpathNative", length: 3 },
       realpathNativeSync: { async: false, fn: "realpathNativeSync", length: 3 },
-      isInsideAppContainer: { async: false, fn: "isInsideAppContainer", length: 0 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
     },

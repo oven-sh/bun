@@ -181,33 +181,23 @@ mod posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let triggered = {
-            // Kernel never returns partial events. Align the read buffer to
-            // `inotify_event` so the header deref below is sound.
-            #[repr(C)]
-            struct InotifyEvent {
-                wd: i32,
-                mask: u32,
-                cookie: u32,
-                len: u32,
-            }
-            #[repr(C, align(4))]
-            struct AlignedBuf([u8; 4096]);
-            let mut buf = AlignedBuf([0u8; 4096]);
+            const HDR: usize = 16; // sizeof(struct inotify_event) up to `name[]`
+            let mut buf = [0u8; 4096];
             let mut hit = false;
             loop {
-                let n = match bun_sys::read(fd, &mut buf.0) {
+                let n = match bun_sys::read(fd, &mut buf) {
                     Ok(n) if n > 0 => n,
                     _ => break,
                 };
                 let mut off = 0usize;
-                while off + core::mem::size_of::<InotifyEvent>() <= n {
-                    // SAFETY: `buf` is 4-byte aligned and `off` advances by the
-                    // kernel-supplied event stride, so the header is aligned
-                    // and fully within `buf[..n]`.
-                    let ev = unsafe { &*buf.0.as_ptr().add(off).cast::<InotifyEvent>() };
-                    let name_len = ev.len as usize;
-                    let name_off = off + core::mem::size_of::<InotifyEvent>();
-                    let name = &buf.0[name_off..name_off + name_len];
+                while off + HDR <= n {
+                    // The header is `{ wd:i32, mask:u32, cookie:u32, len:u32 }`;
+                    // we only need `len` (bytes 12..16). The kernel never
+                    // returns a partial event.
+                    let name_len = u32::from_ne_bytes(buf[off + 12..off + 16].try_into().unwrap())
+                        as usize;
+                    let name_off = off + HDR;
+                    let name = &buf[name_off..name_off + name_len];
                     let name = name.split(|&b| b == 0).next().unwrap_or(name);
                     if name == b"resolv.conf" || name == b"nsswitch.conf" {
                         hit = true;

@@ -919,8 +919,9 @@ mod draft {
     pub enum TraceSeed<'a> {
         /// Signal/exception handler saved the fault register context: walk frame
         /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
-        /// becomes frame 0.
-        Fault(FaultRegisters),
+        /// becomes frame 0. Borrowed: the register file lives on the signal
+        /// handler's stack; boxing it would allocate inside a signal handler.
+        Fault(&'a FaultRegisters),
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
         /// Walk the current stack and trim the capture machinery above this PC.
@@ -1175,7 +1176,7 @@ mod draft {
 
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;
-                    let mut fault_regs: Option<FaultRegisters> = None;
+                    let mut fault_regs: Option<&FaultRegisters> = None;
 
                     let trace: &StackTrace = 'blk: {
                         let idx: usize = match seed {
@@ -1222,7 +1223,7 @@ mod draft {
                                 trace,
                                 reason,
                                 action: TraceStringAction::ViewTrace,
-                                regs: fault_regs.as_ref(),
+                                regs: fault_regs,
                             }
                         )
                         .is_err()
@@ -1308,7 +1309,7 @@ mod draft {
                                 trace,
                                 reason,
                                 action: TraceStringAction::OpenIssue,
-                                regs: fault_regs.as_ref(),
+                                regs: fault_regs,
                             }
                         )
                         .is_err()
@@ -1884,6 +1885,7 @@ mod draft {
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
 
+        let regs = fault_context_from_ucontext(ctx);
         crash_handler(
             match sig {
                 libc::SIGSEGV => CrashReason::SegmentationFault(addr),
@@ -1893,8 +1895,8 @@ mod draft {
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
-            match fault_context_from_ucontext(ctx) {
-                Some(regs) => TraceSeed::Fault(regs),
+            match regs.as_ref() {
+                Some(r) => TraceSeed::Fault(r),
                 None => TraceSeed::None,
             },
         );
@@ -2286,7 +2288,7 @@ mod draft {
         // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
         // by `pc`; the frame-pointer slot is unused.
         let regs = fault_context_from_windows_context(info.ContextRecord, fallback_pc);
-        crash_handler(reason, TraceSeed::Fault(regs));
+        crash_handler(reason, TraceSeed::Fault(&regs));
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

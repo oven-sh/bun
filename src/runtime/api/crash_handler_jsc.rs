@@ -112,7 +112,7 @@ pub mod js_bindings {
         );
         crash_handler::crash_handler(
             crash_handler::CrashReason::SegmentationFault(0xDEADBEEF),
-            crash_handler::TraceSeed::Fault(regs),
+            crash_handler::TraceSeed::Fault(&regs),
         );
     }
 

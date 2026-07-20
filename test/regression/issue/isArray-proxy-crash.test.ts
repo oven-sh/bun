@@ -93,22 +93,19 @@ describe("isArray + Proxy crash fixes", () => {
   test("vm.compileFunction propagates isArray() error for revoked Proxy", () => {
     const rp = Proxy.revocable([], {});
     rp.revoke();
-    // Before: the isArray exception was ignored and ERR::INVALID_ARG_INSTANCE
-    // re-threw from determineSpecificType's [[Get]] on the revoked proxy
-    // ("No more operations are allowed"). Now the isArray error propagates
-    // directly, matching Node's shape.
-    expect(() => vm.compileFunction("return 1", rp.proxy)).toThrow(/isArray/i);
-    expect(() => vm.compileFunction("return 1", [], { contextExtensions: rp.proxy })).toThrow(/isArray/i);
+    // The isArray() exception must propagate directly, not be overwritten by the
+    // downstream [[Get]] in determineSpecificType ("No more operations are allowed").
+    const msg = "Array.isArray cannot be called on a Proxy that has been revoked";
+    expect(() => vm.compileFunction("return 1", rp.proxy)).toThrow(msg);
+    expect(() => vm.compileFunction("return 1", [], { contextExtensions: rp.proxy })).toThrow(msg);
   });
 
-  // vm.compileFunction's params/contextExtensions validation calls JSC::isArray(),
-  // which can throw (Proxy path). The exception must be checked before building
-  // the ERR_INVALID_ARG_TYPE message; BUN_JSC_validateExceptionChecks=1 aborts
-  // the process if not. On builds without exception-scope verification the
-  // option is a no-op and the child exits 0 either way.
+  // BUN_JSC_validateExceptionChecks=1 aborts if the isArray() exception isn't
+  // checked before determineSpecificType's scope is entered. No-op on builds
+  // without exception-scope verification (child exits 0 either way).
   test("vm.compileFunction Proxy validation checks isArray() exception", async () => {
     const src = `
-      const vm = require("vm");
+      import vm from "node:vm";
       const rp = Proxy.revocable([], {}); rp.revoke();
       for (const params of [new Proxy([], {}), rp.proxy]) {
         try { vm.compileFunction("return 1", params); } catch {}

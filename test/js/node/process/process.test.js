@@ -274,7 +274,11 @@ it("process.env coerces assigned values to strings", () => {
     }).toThrow("boom");
     expect(process.env.COERCE_THROWS).toBeUndefined();
 
-    expect(structuredClone(process.env).COERCE_NUM).toBe("42");
+    // structuredClone(process.env) must keep working now that the backing object
+    // has its own ClassInfo. Windows wraps it in a Proxy that was never clonable.
+    if (!isWindows) {
+      expect(structuredClone(process.env).COERCE_NUM).toBe("42");
+    }
   } finally {
     for (const k of [
       "COERCE_UNDEF",

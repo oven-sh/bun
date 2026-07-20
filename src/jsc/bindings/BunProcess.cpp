@@ -3318,10 +3318,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto process = globalObject->processObject();
 
     if (Bun__Node__ProcessPendingDeprecation) {
-        // Node latches DEP0111 through its deprecate() wrapper: once per process.
-        // Bun's own builtins call process.binding() too (node's internals use
-        // internalBinding), so internal callers neither warn nor latch.
-        static bool warnedProcessBinding = false;
+        // Node latches DEP0111 through its deprecate() wrapper, once per
+        // Environment (each worker warns once). Bun's own builtins call
+        // process.binding() too (node's internals use internalBinding), so
+        // internal callers neither warn nor latch.
         String callerURL;
         JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
             if (Zig::isImplementationVisibilityPrivate(visitor))
@@ -3333,8 +3333,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
             return WTF::IterationStatus::Continue;
         });
         bool isInternalCaller = callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
-        if (!warnedProcessBinding && !isInternalCaller) {
-            warnedProcessBinding = true;
+        if (!process->m_warnedProcessBinding && !isInternalCaller) {
+            process->m_warnedProcessBinding = true;
             Process::emitWarning(globalObject,
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),
                 jsString(vm, String("DeprecationWarning"_s)),

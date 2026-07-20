@@ -353,10 +353,10 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     auto& vm = JSC::getVM(globalObject);
 
     if (Bun__Node__ProcessPendingDeprecation) {
-        // Node latches DEP0119 once per process (EmitErrNameWarning).
-        static bool warnedErrname = false;
-        if (!warnedErrname) {
-            warnedErrname = true;
+        // Node latches DEP0119 per Environment (each worker warns once).
+        auto* process = defaultGlobalObject(globalObject)->processObject();
+        if (!process->m_warnedErrname) {
+            process->m_warnedErrname = true;
             auto scope = DECLARE_THROW_SCOPE(vm);
             Process::emitWarning(globalObject,
                 JSC::jsString(vm, WTF::String("Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead."_s)),

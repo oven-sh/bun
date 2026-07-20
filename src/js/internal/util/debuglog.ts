@@ -4,8 +4,12 @@ const kSecond = 1000;
 const kMinute = 60 * kSecond;
 const kHour = 60 * kMinute;
 
+const StringPrototypePadStart = String.prototype.padStart;
+const StringPrototypeSplit = String.prototype.split;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
+
 function pad(value) {
-  return `${value}`.padStart(2, "0");
+  return StringPrototypePadStart.$call(`${value}`, 2, "0");
 }
 
 function formatTime(ms: number) {
@@ -26,16 +30,16 @@ function formatTime(ms: number) {
   }
 
   if (hours !== 0 || minutes !== 0) {
-    ({ 0: seconds, 1: ms } = (seconds as number).toFixed(3).split(".") as any);
+    ({ 0: seconds, 1: ms } = StringPrototypeSplit.$call(NumberPrototypeToFixed.$call(seconds, 3), ".") as any);
     const res = hours !== 0 ? `${hours}:${pad(minutes)}` : minutes;
     return `${res}:${pad(seconds)}.${ms} (${hours !== 0 ? "h:m" : ""}m:ss.mmm)`;
   }
 
   if (seconds !== 0) {
-    return `${(seconds as number).toFixed(3)}s`;
+    return `${NumberPrototypeToFixed.$call(seconds, 3)}s`;
   }
 
-  return `${Number(ms.toFixed(3))}ms`;
+  return `${Number(NumberPrototypeToFixed.$call(ms, 3))}ms`;
 }
 
 export default {

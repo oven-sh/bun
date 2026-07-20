@@ -1665,3 +1665,30 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
+
+// DEP0111/DEP0119 latch once per thread, like node's per-Environment
+// deprecate() closures: a worker warns again even after the main thread did.
+it("process.binding deprecation warnings latch per thread, not per process", () => {
+  using dir = tempDir("binding-deprecation-latch", {
+    "main.js": `const { Worker } = require("worker_threads");
+let count = 0;
+process.on("warning", w => { if (w.code === "DEP0119") count++; });
+process.binding("uv").errname(-2);
+process.binding("uv").errname(-2); // second call must not warn again
+const w = new Worker(require("path").join(__dirname, "worker.js"));
+w.on("message", m => console.log(m));
+w.on("exit", () => console.log("main-warned:" + count));`,
+    "worker.js": `const { parentPort } = require("worker_threads");
+process.on("warning", x => { if (x.code === "DEP0119") parentPort.postMessage("worker-warned"); });
+process.binding("uv").errname(-2);`,
+  });
+  const child = spawnSync({
+    cmd: [bunExe(), "--pending-deprecation", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const out = child.stdout.toString();
+  expect(out).toContain("worker-warned");
+  expect(out).toContain("main-warned:1");
+  expect(child.exitCode).toBe(0);
+});

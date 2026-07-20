@@ -2435,7 +2435,8 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
       // Node fails the test but still awaits the returned promise, so hooks
       // and later tests never race a still-running body.
       returnedPromise = true;
-      const fail = () => reject(makeTestFailure("passed a callback but also returned a Promise", "callbackAndPromisePresent"));
+      const fail = () =>
+        reject(makeTestFailure("passed a callback but also returned a Promise", "callbackAndPromisePresent"));
       (result as Promise<unknown>).then(fail, fail);
       return;
     }
@@ -2471,7 +2472,10 @@ function createStopController(timeout: number | undefined) {
   const promise = new Promise<never>((_, reject) => {
     // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
     // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
-    timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")), timeout);
+    timer = realSetTimeout(
+      () => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
+      timeout,
+    );
   });
   // Swallow the rejection when nothing is racing it anymore.
   promise.catch(() => {});
@@ -2501,7 +2505,10 @@ async function raceWithTimeoutAndSignal(
     if (typeof timeout === "number" && Number.isFinite(timeout)) {
       racers.push(
         new Promise<never>((_, reject) => {
-          timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")), timeout);
+          timer = realSetTimeout(
+            () => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
+            timeout,
+          );
         }),
       );
     }
@@ -2586,7 +2593,9 @@ async function runOwnBeforeHooks(node: TestNode) {
 type ExecutionEntry = { node: TestNode; fail: (err: Error) => void };
 const executionStack: ExecutionEntry[] = [];
 let processErrorAttributionInstalled = false;
-let testContextStorage: { run: (store: TestNode, fn: () => unknown) => unknown; getStore: () => TestNode | undefined } | undefined;
+let testContextStorage:
+  | { run: (store: TestNode, fn: () => unknown) => unknown; getStore: () => TestNode | undefined }
+  | undefined;
 
 function getTestContextStorage() {
   testContextStorage ??= new (require("node:async_hooks").AsyncLocalStorage)();
@@ -2748,7 +2757,10 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
     const { failedSubtests, firstSubtestError } = node;
     if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
+      const error = makeTestFailure(
+        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
+        "subtestsFailed",
+      );
       if (firstSubtestError !== undefined) {
         (error as { cause?: unknown }).cause = firstSubtestError;
       }
@@ -3321,8 +3333,7 @@ async function attachStandaloneReporters(stream: TestsStream): Promise<unknown> 
     // shared prototype carries an AsyncGeneratorFunction constructor) as-is.
     if (
       (reporter as { prototype?: object })?.prototype &&
-      Object.getOwnPropertyDescriptor((reporter as { prototype: object }).prototype, "constructor")?.value ===
-        reporter
+      Object.getOwnPropertyDescriptor((reporter as { prototype: object }).prototype, "constructor")?.value === reporter
     ) {
       reporter = new (reporter as new () => unknown)();
     }

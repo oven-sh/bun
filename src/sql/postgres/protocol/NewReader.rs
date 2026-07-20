@@ -9,6 +9,9 @@ pub trait ReaderContext {
     fn peek(&self) -> &[u8];
     fn skip(&mut self, count: usize);
     fn ensure_length(&mut self, count: usize) -> bool;
+    /// On `Ok`, the returned slice is exactly `count` bytes; otherwise
+    /// `Err(ShortRead)`. Callers rely on this: `int<Int>()` passes the
+    /// result straight to `from_be_slice` without re-checking length.
     fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError>;
     fn read_z(&mut self) -> Result<Data, AnyPostgresError>;
 }

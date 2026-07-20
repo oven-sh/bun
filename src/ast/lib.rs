@@ -3141,10 +3141,6 @@ pub struct ToSourceOptions {
     pub convert_bom: bool,
 }
 
-/// Downstream-compat alias: some callers (`ini::load_npmrc_config`) spell the
-/// option-struct as `bun_ast::ToSourceOpts { convert_bom: true }`.
-pub type ToSourceOpts = ToSourceOptions;
-
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2).

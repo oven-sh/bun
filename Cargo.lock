@@ -196,7 +196,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -241,7 +240,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -347,7 +345,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_ast",
@@ -607,7 +604,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -1077,7 +1073,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -1142,7 +1137,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
@@ -1374,7 +1368,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
@@ -1560,7 +1553,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_ast",
@@ -1826,7 +1818,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -1870,7 +1861,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",

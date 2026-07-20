@@ -35,9 +35,7 @@ pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
-// Compat alias — `tagged_pointer` exports the short name; some downstream code
-// uses the long one.
-pub use tagged_pointer::TaggedPtr as TaggedPointer;
+pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{

@@ -44,8 +44,13 @@ pub fn valkey_error_to_js(
     let tag: &'static str = err.into();
     if msg.is_empty() {
         error_code.fmt(global, format_args!("Valkey error: {tag}"))
-    } else {
+    } else if matches!(error_code, ErrorCode::REDIS_INVALID_RESPONSE) {
+        // Several parser variants collapse into this one code; append the
+        // variant name so InvalidDouble/NestingDepthExceeded/etc. are
+        // distinguishable. Other codes are already 1:1 with their variant.
         error_code.fmt(global, format_args!("{}: {tag}", bstr::BStr::new(msg)))
+    } else {
+        error_code.fmt(global, format_args!("{}", bstr::BStr::new(msg)))
     }
 }
 

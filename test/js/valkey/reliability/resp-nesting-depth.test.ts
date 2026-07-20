@@ -114,6 +114,7 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
       } catch (error: any) {
         // The client should surface an error rather than crashing.
         expect(error.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+        expect(error.message).toContain("NestingDepthExceeded");
       } finally {
         client.close();
       }
@@ -297,7 +298,7 @@ describe("Valkey: RESP line-terminated replies (>512KB)", () => {
           () => null,
           (e: any) => e,
         );
-        expect(rejection?.message).toBe(`${body}: ServerError`);
+        expect(rejection?.message).toBe(body);
         // Client must survive and serve the next command.
         expect(await client.send("PING", [])).toBe("PONG");
       } finally {

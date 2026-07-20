@@ -2410,7 +2410,7 @@ my_config:
       const { input, expected } = buildTest(24);
 
       expect(YAML.parse(input)).toEqual(expected);
-    }, 100);
+    }, isDebug || isASAN ? 2000 : 100);
 
     describe("merge keys", () => {
       test("merge overrides", () => {

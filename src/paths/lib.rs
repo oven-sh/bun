@@ -105,10 +105,9 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
     is_absolute_windows_t::<u16>(p)
 }
 
-// The set `RtlIsDosDeviceName_U` recognises, documented at
-// https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file and
-// unchanged since DOS. `COM0`/`LPT0` and the superscript-digit variants are
-// only reserved on some Windows builds and are intentionally omitted.
+// The set `RtlIsDosDeviceName_U` recognises (unchanged since DOS); see
+// https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file.
+// `COM0`/`LPT0` and superscript-digit variants are build-dependent and omitted.
 bun_core::comptime_string_map! {
     static WINDOWS_RESERVED_DEVICE_NAMES: &'static [u8] = {
         b"nul" => b"NUL", b"con" => b"CON", b"prn" => b"PRN", b"aux" => b"AUX",

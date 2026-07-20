@@ -348,9 +348,10 @@ class ReusePortHandle {
       // The port is already claimed by this cluster under an overlapping host
       // key; mirror that claim instead of test-binding against our own
       // workers' REUSEPORT sockets (a plain bind would collide on Linux).
-      if (owned.pending) {
+      const ownedPending = owned.pending;
+      if (ownedPending) {
         this.pending = [];
-        owned.pending.push(errno => {
+        ownedPending.push(errno => {
           this.errno = errno;
           this.#settle();
         });
@@ -381,7 +382,8 @@ class ReusePortHandle {
 
   add(worker, send) {
     this.workers.set(worker.id, worker);
-    if (this.pending) this.pending.push(send);
+    const { pending } = this;
+    if (pending) pending.push(send);
     else send(this.errno);
   }
 

@@ -576,7 +576,8 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
-      if (typeof arg0.fd === "number" && arg0.fd >= 0) fd = arg0.fd;
+      const arg0Fd = arg0.fd;
+      if (typeof arg0Fd === "number" && arg0Fd >= 0) fd = arg0Fd;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -653,9 +654,10 @@ Server.prototype.listen = function () {
         // the message itself (see ipc.rs $hasHandle receive path).
         const received = reply["$fd"];
         const sharedFd = typeof received === "number" && received >= 0 ? received : undefined;
-        if (reply.errno || sharedFd === undefined) {
+        const replyErrno = reply.errno;
+        if (replyErrno || sharedFd === undefined) {
           if (sharedFd !== undefined) closeSharedFd(sharedFd);
-          server.emit("error", new ExceptionWithHostPort(reply.errno || -9, "listen", null, 0));
+          server.emit("error", new ExceptionWithHostPort(replyErrno || -9, "listen", null, 0));
           return;
         }
         try {
@@ -676,8 +678,9 @@ Server.prototype.listen = function () {
     const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
     if (askPrimary) {
       cluster._sendInternal({ act: "probePort", address: host ?? null, port, addressType: 4 }, reply => {
-        if (reply.errno) {
-          server.emit("error", new ExceptionWithHostPort(reply.errno, "bind", host ?? null, port));
+        const replyErrno = reply.errno;
+        if (replyErrno) {
+          server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
           return;
         }
         try {

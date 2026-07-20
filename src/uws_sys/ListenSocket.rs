@@ -93,6 +93,28 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
+    /// Swap the default `SSL_CTX` subsequent accepts build their `SSL` from. C
+    /// `SSL_CTX_up_ref`s `ssl_ctx` and releases the retiring reference, so the
+    /// caller keeps the one `create_ssl_context` handed it. `hostname` is the
+    /// name the retiring context was registered under in the SNI tree, if any.
+    /// Returns false for a non-TLS listener.
+    pub fn set_ssl_ctx(
+        &mut self,
+        ssl_ctx: *mut SslCtx,
+        hostname: Option<&core::ffi::CStr>,
+    ) -> bool {
+        // SAFETY: `self` is a valid listen socket; caller guarantees `ssl_ctx`
+        // is non-null and points at a live SSL_CTX (C up-refs and stores it);
+        // `hostname` is NUL-terminated and valid for the duration of the call.
+        unsafe {
+            us_listen_socket_set_ssl_ctx(
+                self,
+                ssl_ctx,
+                hostname.map_or(core::ptr::null(), |h| h.as_ptr()),
+            ) != 0
+        }
+    }
+
     /// Returns the raw userdata pointer registered via `add_server_name` for
     /// `hostname`, cast to `*mut T`. Returned as `NonNull<T>` (not `&mut T`)
     /// because the pointee is caller-owned external storage — materializing a
@@ -131,6 +153,11 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_set_ssl_ctx(
+        ls: *mut ListenSocket,
+        ssl_ctx: *mut SslCtx,
+        hostname: *const c_char,
+    ) -> c_int;
     fn us_listen_socket_find_server_name_userdata(
         ls: *mut ListenSocket,
         hostname: *const c_char,

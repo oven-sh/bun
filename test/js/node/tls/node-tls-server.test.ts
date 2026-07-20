@@ -1099,9 +1099,12 @@ it("SNICallback runs even when the requested servername matches the bind hostnam
   });
   server.listen(0, "localhost");
   await once(server, "listening");
-  const port = (server.address() as AddressInfo).port;
-  // host: "localhost" defaults servername to "localhost" - the bind hostname.
-  const client = connect({ port, host: "localhost", rejectUnauthorized: false });
+  const { port, address } = server.address() as AddressInfo;
+  // Dial the address listen() resolved "localhost" to: the name has both an A
+  // and an AAAA record on most hosts and connect() need not pick the same one
+  // (Node has the same split). servername stays "localhost" - the bind hostname
+  // the internal SNI entry was registered under.
+  const client = connect({ port, host: address, servername: "localhost", rejectUnauthorized: false });
   await once(client, "secureConnect");
   expect(sniCalls).toBe(1);
   // The peer certificate must be the SNICallback's RSA cert, not COMMON_CERT.
@@ -1129,6 +1132,162 @@ it("setSecureContext() clears omitted options instead of keeping stale values", 
   expect((server as any).ciphers).toBeUndefined();
   expect((server as any).cert).toBe(COMMON_CERT.cert);
   expect((server as any).key).toBe(COMMON_CERT.key);
+});
+
+// Common name of the certificate the server presented, plus the ALPN protocol
+// it negotiated.
+async function handshakeWith(options: Record<string, unknown>) {
+  const client = connect({ rejectUnauthorized: false, ...options } as any);
+  try {
+    await once(client, "secureConnect");
+    return {
+      cn: (client.getPeerCertificate() as PeerCertificate).subject.CN,
+      alpn: client.alpnProtocol,
+    };
+  } finally {
+    client.destroy();
+    await once(client, "close");
+  }
+}
+
+it("setSecureContext() serves the replacement certificate on subsequent handshakes", async () => {
+  // Live certificate rotation (certbot/ACME renew hooks): the native context is
+  // built once at listen() time, so setSecureContext() on a listening server has
+  // to rebuild it rather than only updating the JS-side options.
+  const server: Server = createServer({ ...COMMON_CERT });
+  server.on("secureConnection", socket => socket.end());
+  server.listen(0, "localhost");
+  await once(server, "listening");
+  const { port, address } = server.address() as AddressInfo;
+  // "localhost" is the bind hostname, which listen() also registered the
+  // default context under in the SNI tree - that entry has to move too.
+  const options = { port, host: address, servername: "localhost" };
+
+  expect(await handshakeWith(options)).toMatchObject({ cn: "server-bun" });
+  server.setSecureContext({ key: rawKey, cert });
+  expect(await handshakeWith(options)).toMatchObject({ cn: "localhost" });
+
+  server.close();
+  await once(server, "close");
+});
+
+it("setSecureContext() leaves addContext() entries and ALPNProtocols alone", async () => {
+  // Node replaces only the default context: SNI entries and the server's ALPN
+  // list survive the swap.
+  const server: Server = createServer({ key: rawKey, cert, ALPNProtocols: ["h2", "http/1.1"] });
+  server.on("secureConnection", socket => socket.end());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  server.addContext("other.example", { ...COMMON_CERT });
+  const options = { port, host: "127.0.0.1", ALPNProtocols: ["h2"] };
+
+  expect(await handshakeWith({ ...options, servername: "other.example" })).toMatchObject({ cn: "server-bun" });
+  expect(await handshakeWith(options)).toEqual({ cn: "localhost", alpn: "h2" });
+
+  server.setSecureContext({ ...COMMON_CERT });
+  expect((server as any).ALPNProtocols).toEqual(Buffer.from("\x02h2\x08http/1.1", "latin1"));
+  expect(await handshakeWith({ ...options, servername: "other.example" })).toMatchObject({ cn: "server-bun" });
+  expect(await handshakeWith(options)).toEqual({ cn: "server-bun", alpn: "h2" });
+
+  server.close();
+  await once(server, "close");
+});
+
+it("setSecureContext() with an unusable certificate throws and keeps the live context", async () => {
+  const server: Server = createServer({ ...COMMON_CERT });
+  server.on("secureConnection", socket => socket.end());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  let error: any;
+  try {
+    server.setSecureContext({ key: rawKey, cert: "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----" });
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code).toBe("ERR_OSSL_ASN1_DECODE_ERROR");
+  // A rotation whose context fails to build must not take the server down.
+  expect(await handshakeWith({ port, host: "127.0.0.1" })).toMatchObject({ cn: "server-bun" });
+
+  server.close();
+  await once(server, "close");
+});
+
+it("setSecureContext() keeps the verify mode a server without requestCert listened with", async () => {
+  // A server with `ca` but no `requestCert` listens with reject_unauthorized
+  // clamped to 0 (net.ts does this before Bun.listen). The rotation path has
+  // to apply the same clamp, or the rebuilt context ends up with
+  // SSL_VERIFY_FAIL_IF_NO_PEER_CERT and every certless client is aborted at the
+  // handshake - `secureConnection` never fires, `tlsClientError` does.
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const server: Server = createServer({
+    key: keys("agent1-key.pem"),
+    cert: keys("agent1-cert.pem"),
+    ca: [keys("ca1-cert.pem")],
+  });
+  const accepted = Promise.withResolvers<true>();
+  server.on("secureConnection", socket => {
+    accepted.resolve(true);
+    socket.end();
+  });
+  server.on("tlsClientError", err => accepted.reject(err));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  server.setSecureContext({ key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem"), ca: [keys("ca1-cert.pem")] });
+
+  const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  expect(await accepted.promise).toBe(true);
+  client.destroy();
+  await once(client, "close");
+
+  server.close();
+  await once(server, "close");
+});
+
+it("setSecureContext() keeps requesting a client certificate when requestCert was omitted", async () => {
+  // Node never touches requestCert/rejectUnauthorized in setSecureContext(); a
+  // key/cert-only rotation on an mTLS server has to keep sending
+  // CertificateRequest so getPeerCertificate() stays populated.
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const server: Server = createServer({
+    key: keys("agent1-key.pem"),
+    cert: keys("agent1-cert.pem"),
+    ca: [keys("ca1-cert.pem")],
+    requestCert: true,
+    rejectUnauthorized: false,
+  });
+  const seen = Promise.withResolvers<string | undefined>();
+  server.on("secureConnection", socket => {
+    seen.resolve((socket.getPeerCertificate() as PeerCertificate)?.subject?.CN);
+    socket.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  server.setSecureContext({ key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") });
+  expect((server as any)._requestCert).toBe(true);
+  expect((server as any)._rejectUnauthorized).toBe(false);
+
+  const client = connect({
+    port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+    key: keys("agent1-key.pem"),
+    cert: keys("agent1-cert.pem"),
+  });
+  await once(client, "secureConnect");
+  expect(await seen.promise).toBe("agent1");
+  client.destroy();
+  await once(client, "close");
+
+  server.close();
+  await once(server, "close");
 });
 
 it("SNICallback rejecting with a non-Error value drops the connection (no hang)", async () => {

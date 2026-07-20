@@ -4,6 +4,7 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
 const { throwNotImplemented } = require("internal/shared");
 const {
   throwOnInvalidTLSArray,
@@ -1176,11 +1177,10 @@ function Server(options, secureConnectionListener): void {
       options = processPfxOptions(options);
       const { ALPNProtocols } = options;
 
+      // Unlike every other field below, an omitted ALPNProtocols keeps the
+      // previous value: Node's setSecureContext() never touches it.
       if (ALPNProtocols) {
         convertALPNProtocols(ALPNProtocols, this);
-      } else {
-        // An omitted ALPNProtocols clears the previous call's protocols.
-        this.ALPNProtocols = undefined;
       }
 
       let cert = options.cert;
@@ -1274,16 +1274,22 @@ function Server(options, secureConnectionListener): void {
       }
       this.secureOptions = secureOptions;
 
-      const requestCert = options.requestCert || false;
-
-      if (requestCert) this._requestCert = requestCert;
-      else this._requestCert = undefined;
+      // Node only sets requestCert/rejectUnauthorized in the constructor, not
+      // in setSecureContext(), and the constructor runs through here - so
+      // update only when the option was explicitly passed. These reach the
+      // native listener again on every rotation below, so fail closed:
+      // rejectUnauthorized is true unless explicitly `false`.
+      const requestCert = options.requestCert;
+      if (typeof requestCert !== "undefined") {
+        this._requestCert = requestCert || undefined;
+      }
 
       const rejectUnauthorized = options.rejectUnauthorized;
-
       if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault();
+        this._rejectUnauthorized = rejectUnauthorized !== false;
+      } else if (typeof this._rejectUnauthorized !== "boolean") {
+        this._rejectUnauthorized = rejectUnauthorizedDefault();
+      }
 
       const ciphers = options.ciphers;
       if (typeof ciphers !== "undefined") {
@@ -1304,6 +1310,21 @@ function Server(options, secureConnectionListener): void {
       this.secureProtocol = options.secureProtocol;
       this.minVersion = options.minVersion;
       this.maxVersion = options.maxVersion;
+
+      // The native context is built from these fields at listen() time, so an
+      // already-listening server needs it rebuilt now - that is the whole point
+      // of setSecureContext (live certificate rotation). Connections already
+      // accepted keep the certificate they handshook with, matching Node.
+      const handle = this._handle;
+      if (handle) {
+        const tls = this[buntls](0, undefined, false)[0];
+        // Same transformation net.ts's listen path applies before Bun.listen:
+        // without it the verify mode on the rebuilt context ends up at
+        // SSL_VERIFY_FAIL_IF_NO_PEER_CERT for any server that has `ca` but did
+        // not set `requestCert`.
+        if (!tls.requestCert) tls.rejectUnauthorized = false;
+        setListenerSecureContext(handle, tls);
+      }
     }
   };
 

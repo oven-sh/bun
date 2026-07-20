@@ -398,6 +398,13 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     __attribute__((nonnull(1, 2, 3)));
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* Swap the default context subsequent accepts build their SSL from; already
+ * accepted sockets keep the one they handshook with. `hostname_pattern` is the
+ * name the retiring context was registered under in the SNI tree (nullable);
+ * its entry follows the swap. Returns 0 for a non-TLS listener. */
+int us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ssl_ctx, const char *hostname_pattern)
+    __attribute__((nonnull(1, 2)));  /* hostname_pattern nullable */
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Returns an owned reference; the caller must release it. */

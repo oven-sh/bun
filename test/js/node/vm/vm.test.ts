@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1236,3 +1236,54 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test.skipIf(!isASAN)(
+  "indirect-eval dynamic import in a contextified realm passes JSC exception-scope validation",
+  async () => {
+    const fixture = `
+      import { Script, SourceTextModule, createContext } from "node:vm";
+
+      const foo = new SourceTextModule("export const a = 1;");
+      await foo.link(() => {});
+      await foo.evaluate();
+
+      // Indirect eval has no ScriptFetcher and no source URL, so the module
+      // loader falls back to the context-level importModuleDynamically hook.
+      const ctx = createContext({}, { importModuleDynamically: () => foo });
+      const s = new Script("Promise.resolve(\\"import('foo')\\").then(eval)", {
+        importModuleDynamically: () => { throw new Error("must not call"); },
+      });
+      const ns = await s.runInContext(ctx);
+      if (ns.a !== 1) throw new Error("unexpected namespace");
+
+      // Same path but with no context-level hook: the loader rejects with
+      // ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING.
+      const ctx2 = createContext({});
+      const s2 = new Script("Promise.resolve(\\"import('foo')\\").then(eval)", {
+        importModuleDynamically: () => { throw new Error("must not call"); },
+      });
+      let code;
+      try {
+        await s2.runInContext(ctx2);
+      } catch (e) {
+        code = e.code;
+      }
+      if (code !== "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING") throw new Error("unexpected code: " + code);
+
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+);

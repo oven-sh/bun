@@ -41,7 +41,6 @@ test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/web/websocket/websocket.test.js
-test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/bun/resolve/resolve.test.ts
 test/cli/install/bunx.test.ts
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js

@@ -362,8 +362,16 @@ describe("Valkey: RESP push frame routing", () => {
   });
 
   for (const [label, cmd, ack] of [
-    ["psubscribe()", (c: Bun.RedisClient) => c.psubscribe("news.*"), ">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n"],
-    ["send('SSUBSCRIBE', ...)", (c: Bun.RedisClient) => c.send("SSUBSCRIBE", ["shard-ch"]), ">3\r\n$10\r\nssubscribe\r\n$8\r\nshard-ch\r\n:1\r\n"],
+    [
+      "psubscribe()",
+      (c: Bun.RedisClient) => c.psubscribe("news.*"),
+      ">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n",
+    ],
+    [
+      "send('SSUBSCRIBE', ...)",
+      (c: Bun.RedisClient) => c.send("SSUBSCRIBE", ["shard-ch"]),
+      ">3\r\n$10\r\nssubscribe\r\n$8\r\nshard-ch\r\n:1\r\n",
+    ],
   ] as const) {
     test(`${label} does not enter subscriber mode (get/set still allowed)`, async () => {
       const getReply = Buffer.from("$5\r\nvalue\r\n");

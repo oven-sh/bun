@@ -1059,6 +1059,26 @@ describe.concurrent(() => {
     );
   });
 
+  it("dlopen ERR_DLOPEN_FAILED message matches Node.js", () => {
+    const missing = join(tmpdirSync(), "does-not-exist.node");
+    let err;
+    try {
+      process.dlopen({ exports: {} }, missing);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe("ERR_DLOPEN_FAILED");
+    if (isWindows) {
+      // Node: uv_dlerror() (FormatMessage, trailing \r\n preserved) + filename.
+      expect(err.message).not.toMatch(/^LoadLibrary failed:/);
+      expect(err.message.endsWith("\r\n" + missing)).toBe(true);
+    } else {
+      // Node: raw dlerror() text, which embeds the path.
+      expect(err.message).toContain(missing);
+    }
+  });
+
   it("process.constrainedMemory()", () => {
     expect(process.constrainedMemory() >= 0).toBe(true);
   });

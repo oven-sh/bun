@@ -1515,12 +1515,18 @@ impl FFI {
             }
             // Report the error from the original path the user asked for;
             // the cwd-absolutized retry's error is usually just ENOENT.
+            // `dlopen_error()` matches libuv and keeps trailing CR/LF on
+            // Windows; trim for presentation (bun:ffi need not match Node).
+            let mut end = first_err.len();
+            while end > 0 && matches!(first_err[end - 1], b' ' | b'\r' | b'\n') {
+                end -= 1;
+            }
             let mut msg = Vec::new();
             write!(
                 &mut msg,
                 "Failed to open library \"{}\": {}",
                 BStr::new(name),
-                BStr::new(&first_err)
+                BStr::new(&first_err[..end])
             )
             .ok();
             let system_error = SystemError {

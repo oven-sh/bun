@@ -6248,7 +6248,7 @@ impl DynLib {
         let z = ZStr::from_buf(&buf.0[..], len);
         match dlopen(z, RTLD::LAZY) {
             Some(h) => Ok(Self { handle: h }),
-            None => Err(dlopen_error()),
+            None => Err(dlopen_error(path)),
         }
     }
     /// `dlsym` typed lookup.
@@ -6340,13 +6340,15 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
 }
 
 /// Formatted message for the most recent `dlopen`/`LoadLibrary` failure on
-/// the calling thread. POSIX: heap copy of `dlerror()` (its storage is reused
-/// by the next call). Windows: `FormatMessageW(GetLastError())`, trailing
-/// whitespace/CRLF trimmed, falling back to `"error code {N}"` when the
-/// system has no text for that code.
-pub fn dlopen_error() -> Box<[u8]> {
+/// the calling thread. Matches libuv's `uv__dlerror` so `process.dlopen`
+/// errors are byte-identical to Node.js. POSIX: heap copy of `dlerror()`.
+/// Windows: `FormatMessageW(GetLastError())` tried with English first then
+/// the default language, trailing `\r\n` preserved, `%1` substituted with
+/// `filename` for `ERROR_BAD_EXE_FORMAT`, falling back to `"error: {N}"`.
+pub fn dlopen_error(filename: &[u8]) -> Box<[u8]> {
     #[cfg(unix)]
     {
+        let _ = filename;
         // SAFETY: dlerror() is thread-safe on glibc/musl/Darwin; the returned
         // pointer is valid until the next dl* call on this thread.
         let msg: &[u8] = unsafe {
@@ -6366,40 +6368,52 @@ pub fn dlopen_error() -> Box<[u8]> {
         const FORMAT_MESSAGE_ALLOCATE_BUFFER: u32 = 0x0000_0100;
         const FORMAT_MESSAGE_IGNORE_INSERTS: u32 = 0x0000_0200;
         const FORMAT_MESSAGE_FROM_SYSTEM: u32 = 0x0000_1000;
-        const FORMAT_MESSAGE_MAX_WIDTH_MASK: u32 = 0x0000_00FF;
+        const LANG_ENGLISH_US: u32 = 0x0409;
+        const ERROR_BAD_EXE_FORMAT: u32 = 193;
+        const ERROR_RESOURCE_TYPE_NOT_FOUND: u32 = 1813;
+        const ERROR_MUI_FILE_NOT_FOUND: u32 = 15100;
+
         let err = kernel32::GetLastError();
-        let mut buf: *mut u16 = core::ptr::null_mut();
-        // SAFETY: with ALLOCATE_BUFFER, lpBuffer receives an LPWSTR* and the
-        // system allocates the result (freed via LocalFree below).
-        let n = unsafe {
-            kernel32::FormatMessageW(
-                FORMAT_MESSAGE_ALLOCATE_BUFFER
-                    | FORMAT_MESSAGE_FROM_SYSTEM
-                    | FORMAT_MESSAGE_IGNORE_INSERTS
-                    | FORMAT_MESSAGE_MAX_WIDTH_MASK,
-                core::ptr::null(),
-                err,
-                0,
-                core::ptr::from_mut(&mut buf).cast::<u16>(),
-                0,
-                core::ptr::null_mut(),
-            )
+        let format = |lang: u32, buf: &mut *mut u16| -> u32 {
+            // SAFETY: with ALLOCATE_BUFFER, lpBuffer receives an LPWSTR* and the
+            // system allocates the result (freed via LocalFree below).
+            unsafe {
+                kernel32::FormatMessageW(
+                    FORMAT_MESSAGE_ALLOCATE_BUFFER
+                        | FORMAT_MESSAGE_FROM_SYSTEM
+                        | FORMAT_MESSAGE_IGNORE_INSERTS,
+                    core::ptr::null(),
+                    err,
+                    lang,
+                    core::ptr::from_mut(buf).cast::<u16>(),
+                    0,
+                    core::ptr::null_mut(),
+                )
+            }
         };
+        let mut buf: *mut u16 = core::ptr::null_mut();
+        let mut n = format(LANG_ENGLISH_US, &mut buf);
+        if n == 0
+            && matches!(
+                kernel32::GetLastError(),
+                ERROR_MUI_FILE_NOT_FOUND | ERROR_RESOURCE_TYPE_NOT_FOUND
+            )
+        {
+            n = format(0, &mut buf);
+        }
         let out = if n > 0 && !buf.is_null() {
             // SAFETY: FormatMessageW wrote `n` WCHARs at `buf`.
             let wide = unsafe { core::slice::from_raw_parts(buf, n as usize) };
-            let mut end = wide.len();
-            while end > 0
-                && (wide[end - 1] == u16::from(b' ')
-                    || wide[end - 1] == u16::from(b'\r')
-                    || wide[end - 1] == u16::from(b'\n'))
-            {
-                end -= 1;
+            let mut out = bun_core::strings::to_utf8_alloc(wide);
+            if err == ERROR_BAD_EXE_FORMAT {
+                if let Some(i) = bun_core::strings::index_of(&out, b"%1") {
+                    out.splice(i..i + 2, filename.iter().copied());
+                }
             }
-            bun_core::strings::to_utf8_alloc(&wide[..end]).into_boxed_slice()
+            out.into_boxed_slice()
         } else {
             let mut v = Vec::new();
-            write!(&mut v, "error code {}", err).ok();
+            write!(&mut v, "error: {}", err).ok();
             v.into_boxed_slice()
         };
         if !buf.is_null() {
@@ -6415,8 +6429,9 @@ pub fn dlopen_error() -> Box<[u8]> {
 /// `bun:ffi` and `process.dlopen` share one error formatter. Caller owns the
 /// returned `BunString`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__dlerror() -> bun_core::String {
-    bun_core::String::clone_utf8(&dlopen_error())
+pub extern "C" fn Bun__dlerror(filename: &bun_core::String) -> bun_core::String {
+    let filename = filename.to_utf8();
+    bun_core::String::clone_utf8(&dlopen_error(filename.slice()))
 }
 
 /// `dlsym(handle, name)`.

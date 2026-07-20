@@ -315,7 +315,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
-extern "C" BunString Bun__dlerror();
+extern "C" BunString Bun__dlerror(BunString* filename);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -529,9 +529,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     Bun__process_dlopen_count++;
 
+    BunString filename_str = Bun::toString(filename);
     CrashHandler__setDlOpenAction(utf8.data());
 #if OS(WINDOWS)
-    BunString filename_str = Bun::toString(filename);
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
@@ -546,9 +546,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
 
     if (!handle) {
-        BunString err = Bun__dlerror();
+        BunString err = Bun__dlerror(&filename_str);
 #if OS(WINDOWS)
-        WTF::String msg = makeString("LoadLibrary failed: "_s, err.toWTFString());
+        // Node.js (src/node_binding.cc) appends the filename after uv_dlerror() on Windows.
+        WTF::String msg = makeString(err.toWTFString(), filename);
         // Since we're relying on LastError(), we have to delete after checking for errors
         tryToDeleteIfNecessary();
 #else

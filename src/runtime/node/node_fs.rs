@@ -4924,9 +4924,8 @@ impl NodeFS {
         stat_size: usize,
         wrote: &mut u64,
     ) -> Maybe<ret::CopyFile> {
-        // We only reach this loop after the kernel-side fast paths have bailed.
-        // Doubling the readahead window is a measurable win (~1.35x on a
-        // cold-cache 512 MiB copy with the 64 KiB buffer); ignore failures.
+        // Kernel-side fast paths have already bailed; double the readahead
+        // window for the sequential read()s below. Best-effort.
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             // SAFETY: `src_fd` is a valid open fd; `posix_fadvise` only reads it.

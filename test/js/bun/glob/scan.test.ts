@@ -23,7 +23,8 @@
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1123,5 +1124,54 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
+  });
+});
+
+describe.skipIf(isWindows)("special file kinds (fifo, socket)", () => {
+  function makeTree(prefix: string) {
+    const dir = tempDir(prefix, {
+      "reg.txt": "x",
+      "sub/inner.txt": "x",
+    });
+    const cwd = String(dir);
+    mkfifo(path.join(cwd, "p.fifo"));
+    mkfifo(path.join(cwd, "sub", "q.fifo"));
+    const server = Bun.listen({ unix: path.join(cwd, "s.sock"), socket: { data() {} } });
+    return { dir, cwd, server };
+  }
+
+  test("scanSync yields FIFOs and unix sockets with onlyFiles: false", () => {
+    const { dir, cwd, server } = makeTree("glob-scan-special-sync");
+    using _dir = dir;
+    try {
+      expect([...new Glob("*").scanSync({ cwd, onlyFiles: false })].sort()).toEqual([
+        "p.fifo",
+        "reg.txt",
+        "s.sock",
+        "sub",
+      ]);
+      expect([...new Glob("*").scanSync({ cwd, onlyFiles: true })].sort()).toEqual(["reg.txt"]);
+      expect([...new Glob("*").scanSync({ cwd })].sort()).toEqual(["reg.txt"]);
+      expect([...new Glob("**/*.fifo").scanSync({ cwd, onlyFiles: false })].sort()).toEqual([
+        "p.fifo",
+        path.join("sub", "q.fifo"),
+      ]);
+      expect([...new Glob("s.sock").scanSync({ cwd, onlyFiles: false })]).toEqual(["s.sock"]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("scan (async) yields FIFOs and unix sockets with onlyFiles: false", async () => {
+    const { dir, cwd, server } = makeTree("glob-scan-special-async");
+    using _dir = dir;
+    try {
+      const all = await Array.fromAsync(new Glob("*").scan({ cwd, onlyFiles: false }));
+      expect(all.sort()).toEqual(["p.fifo", "reg.txt", "s.sock", "sub"]);
+      const files = await Array.fromAsync(new Glob("*").scan({ cwd, onlyFiles: true }));
+      expect(files.sort()).toEqual(["reg.txt"]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

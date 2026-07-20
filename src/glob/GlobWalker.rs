@@ -1233,11 +1233,45 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         }
                                     }
                                 }
-                                _ => {}
+                                bun_sys::FileKind::NamedPipe
+                                | bun_sys::FileKind::UnixDomainSocket
+                                | bun_sys::FileKind::BlockDevice
+                                | bun_sys::FileKind::CharacterDevice
+                                | bun_sys::FileKind::Whiteout
+                                | bun_sys::FileKind::Door
+                                | bun_sys::FileKind::EventPort
+                                | bun_sys::FileKind::Unknown => {
+                                    if !self.walker.only_files
+                                        && self.walker.eval_file(&active, entry_name)
+                                    {
+                                        match self
+                                            .walker
+                                            .prepare_matched_path(entry_name, dir_dir_path)?
+                                        {
+                                            Some(prepared) => return Ok(Ok(Some(prepared))),
+                                            None => continue,
+                                        }
+                                    }
+                                }
                             }
                             continue;
                         }
-                        _ => continue,
+                        bun_sys::FileKind::NamedPipe
+                        | bun_sys::FileKind::UnixDomainSocket
+                        | bun_sys::FileKind::BlockDevice
+                        | bun_sys::FileKind::CharacterDevice
+                        | bun_sys::FileKind::Whiteout
+                        | bun_sys::FileKind::Door
+                        | bun_sys::FileKind::EventPort => {
+                            if !self.walker.only_files && self.walker.eval_file(&active, entry_name)
+                            {
+                                match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
+                                    Some(prepared) => return Ok(Ok(Some(prepared))),
+                                    None => continue,
+                                }
+                            }
+                            continue;
+                        }
                     }
                 }
             }

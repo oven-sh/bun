@@ -3961,7 +3961,7 @@ pub mod http_server_agent {
                 this.next_server_id,
                 (*instance.vm()).hot_reload_counter as i32,
                 &url,
-                bun_core::time::milli_timestamp_allow_mocked_time(),
+                bun_core::time::milli_timestamp() as f64,
                 instance.ptr.cast(),
             );
         }

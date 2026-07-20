@@ -140,10 +140,9 @@ describe("BackPressure buffer", () => {
     expect(hash.digest("hex")).toBe(expectedHash);
   }, 30_000);
 
-  // Small (<16KB) sends take getSendBuffer(): once the cork buffer fills they
-  // hit BackPressure.resize() + the in-place tail write, then write(nullptr,0)
-  // drains (erase). Keeping the window full forces append()/resize() to reuse
-  // the drained head gap via a compact instead of reallocating.
+  // Small (<16KB) sends go through getSendBuffer(): cork overflow hits
+  // BackPressure.resize() then erase(); keeping the window full makes
+  // append() compact into the drained head gap instead of reallocating.
   it("delivers many corked frames while appending into a partly-drained buffer", async () => {
     const FRAME = 4096;
     const COUNT = 4096; // 16MB of payload through the cork->backpressure path

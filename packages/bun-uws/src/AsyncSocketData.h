@@ -20,16 +20,15 @@
 #define UWS_ASYNCSOCKETDATA_H
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
 namespace uWS {
 
-/* Contiguous write-behind buffer with a moving head cursor. erase() is a
- * pointer bump; append()/resize() reuse the drained head gap via one memmove
- * before ever growing. The previous std::string shape front-erased + shrank to
- * fit every ~1/32 drained, so a drain of N bytes moved ~60N bytes and briefly
- * held 2x the live data during each realloc. */
+/* Contiguous buffer with a moving head cursor: erase() bumps head,
+ * append()/resize() compact into the drained head gap before growing, so
+ * draining never memmoves or reallocates. */
 struct BackPressure {
     BackPressure() = default;
     BackPressure(BackPressure &&other) noexcept
@@ -96,6 +95,9 @@ private:
     /* Ensure [tail, tail+n) is writable. Prefers compacting into the drained
      * head gap over growing so steady-state producer/consumer never reallocs. */
     void ensureTailRoom(size_t n) {
+        /* tail + n and live + n cannot wrap past this; cap * 2 wrapping is
+         * harmless because live + n then wins the max(). */
+        if (n > SIZE_MAX - tail) std::abort();
         if (tail + n <= cap) return;
 
         size_t live = tail - head;

@@ -370,8 +370,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .print(&mut rel_path, !c.options.compile)
                 .expect("write to Vec<u8>");
             // An empty `[ext]` leaves the template's literal `.` dangling;
-            // Win32 (and our NT open path) strip trailing `.`/` ` at open time,
-            // so keep the path in sync with what lands on disk.
+            // Win32 strips trailing `.`/` ` at open time, so trim here so the
+            // path stays in sync with what lands on disk.
             while matches!(rel_path.last(), Some(&b'.' | &b' ')) {
                 rel_path.pop();
             }

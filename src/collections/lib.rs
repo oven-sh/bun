@@ -529,11 +529,5 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-// All of these aliases collapse to `Vec<T>` (global mimalloc); they exist for
-// back-compat at existing call sites.
-pub use array_list::ArrayList;
-pub use array_list::ArrayListAligned;
-pub use array_list::ArrayListAlignedDefault;
 pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;
-pub use array_list::ArrayListIn;

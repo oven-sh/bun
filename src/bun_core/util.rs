@@ -642,9 +642,6 @@ pub struct Mutex<T>(std::sync::Mutex<T>);
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
-/// Alias for [`Mutex`].
-pub type Guarded<T> = Mutex<T>;
-
 impl<T> Mutex<T> {
     #[inline]
     pub const fn new(value: T) -> Self {

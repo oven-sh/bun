@@ -77,11 +77,12 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, false)
 }
 
-/// Wrap `protocol::valkey_error_to_js` as a `JsResult<JSValue>` for host
-/// functions.
+/// Return a rejected `Promise` wrapping the Redis error as a
+/// `JsResult<JSValue>` for host functions.
 #[inline]
 fn send_err_to_js(global: &JSGlobalObject, message: &str, err: RedisError) -> JsResult<JSValue> {
-    Ok(protocol::valkey_error_to_js(global, message, err))
+    let err_value = protocol::valkey_error_to_js(global, message, err);
+    Ok(JSPromise::rejected_promise(global, err_value).to_js())
 }
 
 /// `JSValkeyClient::send` returns a `*mut JSPromise`; route through the

@@ -746,7 +746,9 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     const reader = rs.getReader();
     await reader.read();
     await reader.cancel();
-    expect(() => capturedController.write("b")).toThrow();
+    expect(() => capturedController.write("b")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "ReadableStreamDirectController is now closed" }),
+    );
   });
 
   it("releasing a direct stream's reader during an async pull does not crash close", async () => {

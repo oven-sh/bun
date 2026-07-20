@@ -1504,6 +1504,10 @@ impl VirtualMachine {
         ExitHandler::dispatch_on_exit(self);
         self.is_shutting_down = true;
 
+        // Node's inspector Agent::WaitForDisconnect: with a CDP frontend
+        // attached, exit blocks until it goes away. No-op otherwise.
+        crate::debugger::wait_for_debugger_to_disconnect(self);
+
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.
         // Note: each iteration re-fetches `rare_data` so the FFI hook

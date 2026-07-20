@@ -97,6 +97,9 @@ type CreateBackendFn = (
   // Marks a connection whose frontend speaks CDP, so the inspected thread can
   // send it events only InspectorCDPAdapter understands.
   isCDP?: boolean,
+  // Node's InspectorSession::preventShutdown(): a remote frontend takes part in
+  // the exit handshake; the in-process inspector.Session does not.
+  preventShutdown?: boolean,
 ) => unknown;
 
 // CDP translation is only needed for node:inspector servers, so load it lazily.
@@ -117,9 +120,12 @@ export default function (
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
   enableNodeCDP: boolean,
   isWaitingForDebuggerFor: (executionContextId: number) => boolean,
+  isAcceptingConnectionsFor: (executionContextId: number) => boolean,
 ): void {
   // Per context: a waiting worker must not answer for the main thread.
   const isWaitingForDebugger = () => isWaitingForDebuggerFor(executionContextId);
+  // False once the exit handshake has begun; see #fetch.
+  const isAcceptingConnections = () => isAcceptingConnectionsFor(executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -185,6 +191,7 @@ export default function (
               true,
               false,
               isWaitingForDebugger,
+              isAcceptingConnections,
             );
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
@@ -222,7 +229,17 @@ export default function (
     };
 
     try {
-      debug = new Debugger(executionContextId, url, createBackend, send, close, true, false, isWaitingForDebugger);
+      debug = new Debugger(
+        executionContextId,
+        url,
+        createBackend,
+        send,
+        close,
+        true,
+        false,
+        isWaitingForDebugger,
+        isAcceptingConnections,
+      );
     } catch (error) {
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
@@ -246,6 +263,7 @@ export default function (
       false,
       enableNodeCDP,
       isWaitingForDebugger,
+      isAcceptingConnections,
     );
   } catch (error) {
     exit("Failed to start inspector:\n", error);
@@ -321,7 +339,12 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
-  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void, isCDP?: boolean) => Backend;
+  #createBackend: (
+    refEventLoop: boolean,
+    receive: (...messages: string[]) => void,
+    isCDP?: boolean,
+    preventShutdown?: boolean,
+  ) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
@@ -331,6 +354,16 @@ class Debugger {
   #enableNodeCDP = false;
   // Reads the inspected context's wait-for-frontend state; see cdp.ts.
   #isWaitingForDebugger: () => boolean;
+  // False once the inspected thread has begun its exit handshake.
+  #isAcceptingConnections: () => boolean;
+  // Shared by every CDP session on this server so the exit handshake's
+  // notify-vs-executionContextDestroyed choice is made across sessions, as
+  // Node's notifyWaitingForDisconnect does. `adapters` is populated by cdp.ts.
+  #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: any } = {
+    handshakeStarted: false,
+    retaining: 0,
+    adapters: undefined,
+  };
   #server?: WebSocketServer;
   // Secondary loopback listener; see #listen().
   #loopbackServer?: WebSocketServer;
@@ -344,12 +377,14 @@ class Debugger {
     isNodeInspector: boolean = false,
     enableNodeCDP: boolean = false,
     isWaitingForDebugger: () => boolean = () => false,
+    isAcceptingConnections: () => boolean = () => true,
   ) {
     this.#nodeInspector = isNodeInspector;
     this.#enableNodeCDP = enableNodeCDP;
     this.#isWaitingForDebugger = isWaitingForDebugger;
-    this.#createBackend = (refEventLoop, receive, isCDP = false) => {
-      const backend = createBackend(executionContextId, refEventLoop, receive, isCDP);
+    this.#isAcceptingConnections = isAcceptingConnections;
+    this.#createBackend = (refEventLoop, receive, isCDP = false, preventShutdown = false) => {
+      const backend = createBackend(executionContextId, refEventLoop, receive, isCDP, preventShutdown);
       return {
         write: (message: string | string[]) => {
           send.$call(backend, message);
@@ -614,6 +649,17 @@ class Debugger {
 
     const isCDP = this.#cdpPathname !== undefined && pathname === this.#cdpPathname;
 
+    // Node's InspectorIo::StopAcceptingNewConnections(): the inspected thread
+    // is in its exit handshake and waiting on a fixed set of sessions, so a new
+    // CDP client must be turned away rather than joining a set nobody will wait
+    // for. Refusing here is also what keeps a client that reconnects on close
+    // from holding the process open forever.
+    if ((this.#nodeInspector || isCDP) && !this.#isAcceptingConnections()) {
+      return new Response(null, {
+        status: 503, // Service Unavailable
+      });
+    }
+
     if (!isUnix && !isCDP && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
@@ -656,11 +702,14 @@ class Debugger {
           }
         },
         true,
+        // A remote frontend: exit waits for it to disconnect, as Node does.
+        true,
       );
       adapter = new (cdpAdapterConstructor())(
         (message: string) => void backend.write(message),
         (message: string) => void client.write(message),
         this.#isWaitingForDebugger,
+        this.#disconnectNotify,
       );
 
       data.client = client;
@@ -698,15 +747,25 @@ class Debugger {
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
+    adapter?.handleClientDisconnect();
     backend?.close();
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
     console.error(error);
+    // Retire the session and close the socket together, for CDP frontends only:
+    // dropping the backend while leaving the socket up would let the exit
+    // handshake finish with that frontend still connected and none the wiser.
+    // JSC-protocol clients take no part in the handshake, so leave their
+    // long-standing behaviour (backend closed, socket left alone) untouched.
+    adapter?.handleClientDisconnect();
     backend?.close();
+    if (this.#nodeInspector || data.isCDP) {
+      connection.close?.(1003, "Unexpected binary message");
+    }
   }
 }
 
@@ -1002,6 +1061,9 @@ function exit(...args: unknown[]): never {
 
 type ConnectionOwner = {
   data: Connection;
+  // Bun.serve passes the ServerWebSocket itself to these handlers; #error
+  // closes it so a retired session cannot linger with its socket open.
+  close?: (code?: number, reason?: string) => void;
 };
 
 type Connection = {

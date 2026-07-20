@@ -105,6 +105,16 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
+// Per-server, shared by every CDP session attached to one inspected context.
+interface DisconnectNotifyState {
+  handshakeStarted: boolean;
+  // Node's Agent::retaining_context_: how many sessions were retaining the
+  // context at handshake time. Snapshotted, so a session opting in afterwards
+  // can neither suppress nor duplicate the deferred executionContextDestroyed.
+  retaining: number;
+  adapters: Set<InspectorCDPAdapter> | undefined;
+}
+
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
@@ -117,16 +127,74 @@ class InspectorCDPAdapter {
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
+  #notifyWhenWaitingForDisconnect = false;
+  // This session's slice of retaining_context_, fixed when the handshake began.
+  #retainingContext = false;
+  #sentContextDestroyed = false;
+  // Shared with this context's other sessions. Node's notifyWaitingForDisconnect
+  // ORs the flag across every channel: one opt-in suppresses
+  // executionContextDestroyed for all of them at handshake time, and the
+  // sessions that did not opt in get it once the last retaining session leaves.
+  #disconnectNotify: DisconnectNotifyState;
   #isWaitingForDebugger: () => boolean;
 
   constructor(
     writeToBackend: (message: string) => void,
     writeToClient: (message: string) => void,
     isWaitingForDebugger: () => boolean = () => false,
+    disconnectNotify: DisconnectNotifyState = {
+      handshakeStarted: false,
+      retaining: 0,
+      adapters: undefined,
+    },
   ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
     this.#isWaitingForDebugger = isWaitingForDebugger;
+    this.#disconnectNotify = disconnectNotify;
+    (disconnectNotify.adapters ??= new Set()).add(this);
+  }
+
+  // Node takes retaining_context_ once, inside notifyWaitingForDisconnect, so
+  // fix every session's share of it the first time any session is told.
+  #startHandshakeOnce(): void {
+    const state = this.#disconnectNotify;
+    if (state.handshakeStarted) return;
+    state.handshakeStarted = true;
+    state.retaining = 0;
+    const peers = state.adapters;
+    if (!peers) return;
+    for (const peer of peers) {
+      if (!peer.#notifyWhenWaitingForDisconnect) continue;
+      peer.#retainingContext = true;
+      state.retaining++;
+    }
+  }
+
+  // The WebSocket for this session went away. Mirrors Node's
+  // disconnectFrontend: if this was the last session retaining the context
+  // during the exit handshake, the others finally see the context go.
+  handleClientDisconnect(): void {
+    const state = this.#disconnectNotify;
+    state.adapters?.delete(this);
+    this.#notifyWhenWaitingForDisconnect = false;
+    // Only a session that was retaining the context at handshake time can
+    // release it, and only once.
+    if (!this.#retainingContext) return;
+    this.#retainingContext = false;
+    state.retaining--;
+    if (state.retaining > 0 || !state.handshakeStarted) return;
+    const peers = state.adapters;
+    if (!peers) return;
+    for (const peer of peers) peer.#emitContextDestroyed();
+  }
+
+  #emitContextDestroyed(): void {
+    if (this.#sentContextDestroyed) return;
+    this.#sentContextDestroyed = true;
+    this.#emitToClient("Runtime.executionContextDestroyed", {
+      executionContextId: EXECUTION_CONTEXT_ID,
+    });
   }
 
   handleClientMessage(message: string): void {
@@ -525,7 +593,15 @@ class InspectorCDPAdapter {
       case "Target.setRemoteLocations":
       case "NodeWorker.enable":
       case "NodeWorker.disable":
+        this.#replyToClient(id, {});
+        return;
+
       case "NodeRuntime.notifyWhenWaitingForDisconnect":
+        // Node's RuntimeAgent keeps this per session and, at exit, sends this
+        // session waitingForDisconnect instead of executionContextDestroyed.
+        // Setting it after the handshake has begun is inert, as in Node:
+        // retaining_context_ was already taken.
+        this.#notifyWhenWaitingForDisconnect = !!params.enabled;
         this.#replyToClient(id, {});
         return;
 
@@ -667,6 +743,20 @@ class InspectorCDPAdapter {
 
       case "Console.messageAdded":
         this.#translateConsoleMessage(params.message || {});
+        return;
+
+      case "Bun.waitingForDisconnect":
+        // The inspected thread reached exit and is blocking for this frontend.
+        // Node: sessions that opted in get waitingForDisconnect; if *any*
+        // session opted in, the rest get nothing yet — the context is still
+        // live enough to answer Runtime.evaluate, so they only see it destroyed
+        // once the last retaining session disconnects.
+        this.#startHandshakeOnce();
+        if (this.#retainingContext) {
+          this.#emitToClient("NodeRuntime.waitingForDisconnect", {});
+        } else if (this.#disconnectNotify.retaining === 0) {
+          this.#emitContextDestroyed();
+        }
         return;
 
       case "Bun.waitingForDebugger":

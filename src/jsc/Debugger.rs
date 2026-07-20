@@ -117,6 +117,14 @@ pub struct Debugger {
     // default `""`.
     pub from_environment_variable: &'static [u8],
     pub script_execution_context_id: u32,
+    /// Set once the exit handshake has run for this thread; see
+    /// `wait_for_debugger_to_disconnect`.
+    pub has_waited_for_disconnect: bool,
+    /// `process._debugEnd()` on this thread. Node's `_debugEnd` drops this
+    /// agent's IO thread, after which `WaitForDisconnect` has no `io_` and
+    /// does not wait; a later `inspector.open()` undoes it. Per-thread, like
+    /// Node's per-agent state — a worker must not disarm the main thread.
+    pub debug_ended: bool,
     pub next_debugger_id: u64,
     pub poll_ref: KeepAlive,
     pub wait_for_connection: Wait,
@@ -140,6 +148,8 @@ impl Default for Debugger {
             path_or_port: None,
             from_environment_variable: b"",
             script_execution_context_id: 0,
+            has_waited_for_disconnect: false,
+            debug_ended: false,
             next_debugger_id: 1,
             poll_ref: KeepAlive::default(),
             wait_for_connection: Wait::Off,
@@ -161,6 +171,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn BunDebugger__notifyWaitingForDebugger(ctx_id: u32);
+    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32, is_worker: bool);
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
@@ -727,6 +738,50 @@ pub fn abandon_node_inspector_wait() {
 // HOST_EXPORT(Debugger__isWaitingForDebugger, c)
 pub fn is_waiting_for_debugger(ctx_id: u32) -> bool {
     ctx_id != 0 && WAITING_FOR_DEBUGGER_CONTEXT.load(Ordering::Relaxed) == ctx_id
+}
+
+/// Node's `Agent::WaitForDisconnect`, run from the exit funnel: announce the
+/// teardown to every attached CDP frontend and block until each disconnects.
+/// A no-op unless a CDP frontend is attached to this thread's context.
+pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
+    // The borrow must end before the call below: it blocks, and pumping the
+    // inspector runs user JS on this thread (Runtime.evaluate), which can
+    // re-enter anything that takes `&mut Debugger` — `inspector.open()`, or
+    // `did_connect()` for a frontend finishing its handshake.
+    let ctx_id = {
+        let Some(dbg) = vm.debugger_mut() else {
+            return;
+        };
+        // process.exit() inside an exit handler re-enters the funnel; wait once.
+        if dbg.has_waited_for_disconnect || dbg.debug_ended {
+            return;
+        }
+        dbg.has_waited_for_disconnect = true;
+        dbg.script_execution_context_id
+    };
+    if ctx_id == 0 {
+        return;
+    }
+    BunDebugger__waitForDebuggerToDisconnect(ctx_id, !vm.is_main_thread());
+}
+
+/// `inspector.open()` brings this thread's inspector back up, so a previous
+/// `process._debugEnd()` no longer suppresses the exit handshake. The reopen
+/// path reuses the existing `Debugger`, so clearing it here is required.
+// HOST_EXPORT(Debugger__clearDebugEnd, c)
+pub fn clear_debug_end() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.debug_ended = false;
+    }
+}
+
+/// `process._debugEnd()`. Only the exit-handshake half of Node's `_debugEnd`
+/// is implemented: this thread's listener and any live session stay up.
+// HOST_EXPORT(Debugger__debugEnd, c)
+pub fn debug_end() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.debug_ended = true;
+    }
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)

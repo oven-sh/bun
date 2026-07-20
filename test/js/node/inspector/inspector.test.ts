@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 
+// Node prints this and blocks while a CDP frontend is still attached at exit.
+const DISCONNECT_NOTICE = "Waiting for the debugger to disconnect...";
+
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
 });
@@ -444,17 +447,27 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
   ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
 
   // Keep draining stderr so the pipe cannot fill while the fixture finishes.
+  const waitingToDisconnect = Promise.withResolvers<void>();
   const drained = (async () => {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       stderrText += decoder.decode(value);
+      if (stderrText.includes(DISCONNECT_NOTICE)) waitingToDisconnect.resolve();
     }
+    // Resolve on EOF too so a regressed handshake fails on the assertion below
+    // rather than hanging until the suite timeout.
+    waitingToDisconnect.resolve();
   })();
+
+  // Node's exit handshake: the fixture is done but blocks while this client is
+  // still attached, so detach before awaiting exit.
+  await waitingToDisconnect.promise;
+  expect(stderrText).toContain(DISCONNECT_NOTICE);
+  ws.close();
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   await drained;
-  ws.close();
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
@@ -877,12 +890,17 @@ export { after };
     stderrText += decoder.decode(value);
     wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
   }
+  const waitingToDisconnect = Promise.withResolvers<void>();
   const stderrDrained = (async () => {
     for (;;) {
       const { value, done } = await stderrReader.read();
       if (done) break;
       stderrText += decoder.decode(value);
+      if (stderrText.includes(DISCONNECT_NOTICE)) waitingToDisconnect.resolve();
     }
+    // Resolve on EOF too so a regressed handshake fails on the assertion below
+    // rather than hanging until the suite timeout.
+    waitingToDisconnect.resolve();
   })();
 
   const ws = new WebSocket(wsUrl);
@@ -941,6 +959,14 @@ export { after };
   // the socket first. The JSON on stdout is the real proof the resume landed.
   ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
 
+  // process.exit(0) blocks in Node's exit handshake while this client is
+  // attached, so detach once the child announces the wait; stdout only reaches
+  // EOF after the child is actually gone.
+  awaiting = "the exit handshake";
+  await waitingToDisconnect.promise;
+  expect(stderrText).toContain(DISCONNECT_NOTICE);
+  ws.close();
+
   const stdoutReader = proc.stdout.getReader();
   let stdoutText = "";
   for (;;) {
@@ -948,7 +974,6 @@ export { after };
     if (done) break;
     stdoutText += decoder.decode(value);
   }
-  ws.close();
   await stderrDrained;
 
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });

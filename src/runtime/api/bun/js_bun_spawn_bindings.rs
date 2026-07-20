@@ -317,11 +317,7 @@ fn get_argv(
         arg_index += 1;
     }
 
-    if argv.is_empty() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
-        );
-    }
+    debug_assert!(!argv.is_empty()); // unconditional push at `argv.push(argv0_result.arg0..)` above
     Ok(())
 }
 

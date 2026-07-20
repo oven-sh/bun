@@ -85,7 +85,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 /// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
 /// root). All four `get_js_handlers` slots follow the identical
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
-/// `setFunctionData(self)` → store pattern.
+/// store pattern.
 #[inline]
 fn lazy_js_handler(
     shadow: &mut JSValue,
@@ -100,7 +100,6 @@ fn lazy_js_handler(
     }
     let callback = host_fn::new_function_with_data(global, None, 0, func, this_ptr);
     callback.ensure_still_alive();
-    host_fn::set_function_data(callback, Some(this_ptr));
     set_slot(js_wrapper, global, callback);
     *shadow = callback;
     callback

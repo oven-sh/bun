@@ -767,17 +767,14 @@ impl TimerObjectInternals {
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
         let scheduled_time = now.add_ms(i64::from(self.interval.get()));
-        let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
-        if was_active {
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
-            // `&mut` to `.timer` for this call only.
-            unsafe { (*state).timer.remove(self.event_loop_timer()) };
-        } else {
+        if self.event_loop_timer_state() != EventLoopTimerState::ACTIVE {
             self.ref_();
         }
 
-        // SAFETY: as above — `event_loop_timer()` derives a fresh raw ptr (no
-        // `&mut` aliasing across `update`).
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh `&mut`
+        // to `.timer` for this call only. `event_loop_timer()` derives a fresh
+        // raw ptr (no `&mut` aliasing across `update`). `update()` removes the
+        // timer from the heap if it is still ACTIVE.
         unsafe {
             (*state)
                 .timer
@@ -938,11 +935,8 @@ impl TimerObjectInternals {
         // `refresh` method
         debug_assert!(self.flags.get().kind() != Kind::SetImmediate);
 
-        // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if self.id == -1
-            || self.flags.get().kind() == Kind::SetImmediate
-            || self.flags.get().has_cleared_timer()
-        {
+        // we do not support refreshing after cleanup
+        if self.id == -1 || self.flags.get().has_cleared_timer() {
             return Ok(this_value);
         }
 

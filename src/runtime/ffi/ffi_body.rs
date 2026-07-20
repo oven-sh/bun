@@ -1821,7 +1821,6 @@ pub(super) fn generate_symbol_for_function(
     }
 
     *function = Function::default();
-    function.base_name = None;
     function.arg_types = abi_types;
     function.return_type = return_type;
     function.threadsafe = threadsafe;

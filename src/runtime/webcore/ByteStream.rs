@@ -217,7 +217,6 @@ impl ByteStream {
                     p.result.release();
                     p.result = streams::Result::Done;
                 });
-                self.buffer_action.set(None);
 
                 return res;
             }
@@ -502,7 +501,6 @@ impl ByteStream {
                 global,
                 &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
             );
-            self.buffer_action.set(None);
         }
     }
 

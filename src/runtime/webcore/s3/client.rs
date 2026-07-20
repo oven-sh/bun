@@ -555,7 +555,6 @@ pub(crate) fn writable_stream(
     // explicitly set it to a dead pointer
     // we use this memory address to disable signals being sent
     sink.signal.clear();
-    assert!(sink.signal.is_dead());
     Ok(sink.to_js(global_this))
 }
 

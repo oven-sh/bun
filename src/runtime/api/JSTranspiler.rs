@@ -174,59 +174,53 @@ impl Config {
         }
 
         if let Some(define) = object.get_truthy(global, "define")? {
-            'define: {
-                if define.is_undefined_or_null() {
-                    break 'define;
+            let Some(define_obj) = define.get_object() else {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("define must be an object"))
+                );
+            };
+
+            // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
+            let define_obj_ref = unsafe { &*define_obj };
+            let mut define_iter =
+                JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
+            // `defer define_iter.deinit()` → Drop
+
+            // `define_iter.i` is the property position, not a dense index of yielded
+            // entries. With `skip_empty_name = true` (or a skipped property getter),
+            // writing at `define_iter.i` would leave earlier slots uninitialized.
+            // Use Vecs so the stored slice is always exactly what was appended.
+            let mut names: Vec<Box<[u8]>> = Vec::new();
+            let mut values: Vec<Box<[u8]>> = Vec::new();
+            names.reserve_exact(define_iter.len);
+            values.reserve_exact(define_iter.len);
+
+            while let Some(prop) = define_iter.next()? {
+                let property_value = define_iter.value;
+                let value_type = property_value.js_type();
+
+                if !value_type.is_string_like() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "define \"{}\" must be a JSON string",
+                        prop
+                    )));
                 }
 
-                let Some(define_obj) = define.get_object() else {
-                    return Err(
-                        global.throw_invalid_arguments(format_args!("define must be an object"))
-                    );
-                };
-
-                // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
-                let define_obj_ref = unsafe { &*define_obj };
-                let mut define_iter =
-                    JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
-                // `defer define_iter.deinit()` → Drop
-
-                // `define_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `define_iter.i` would leave earlier slots uninitialized.
-                // Use Vecs so the stored slice is always exactly what was appended.
-                let mut names: Vec<Box<[u8]>> = Vec::new();
-                let mut values: Vec<Box<[u8]>> = Vec::new();
-                names.reserve_exact(define_iter.len);
-                values.reserve_exact(define_iter.len);
-
-                while let Some(prop) = define_iter.next()? {
-                    let property_value = define_iter.value;
-                    let value_type = property_value.js_type();
-
-                    if !value_type.is_string_like() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "define \"{}\" must be a JSON string",
-                            prop
-                        )));
-                    }
-
-                    names.push(prop.to_owned_slice().into());
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global)?;
-                    if val.len == 0 {
-                        val = ZigString::init(b"\"\"");
-                    }
-                    let mut buf = Vec::new();
-                    write!(&mut buf, "{}", val).expect("unreachable");
-                    values.push(buf.into_boxed_slice());
+                names.push(prop.to_owned_slice().into());
+                let mut val = ZigString::init(b"");
+                property_value.to_zig_string(&mut val, global)?;
+                if val.len == 0 {
+                    val = ZigString::init(b"\"\"");
                 }
-
-                self.transform.define = Some(api::StringMap {
-                    keys: names,
-                    values,
-                });
+                let mut buf = Vec::new();
+                write!(&mut buf, "{}", val).expect("unreachable");
+                values.push(buf.into_boxed_slice());
             }
+
+            self.transform.define = Some(api::StringMap {
+                keys: names,
+                values,
+            });
         }
 
         if let Some(external) = object.get(global, "external")? {
@@ -342,9 +336,6 @@ impl Config {
 
         if let Some(macros) = object.get_truthy(global, "macro")? {
             'macros: {
-                if macros.is_undefined_or_null() {
-                    break 'macros;
-                }
                 if macros.is_boolean() {
                     self.no_macros = !macros.as_boolean();
                     break 'macros;

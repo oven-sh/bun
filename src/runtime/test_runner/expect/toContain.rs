@@ -55,9 +55,6 @@ impl Expect {
                 pass = true;
             } else if strings::contains(value_string.slice(), expected_string.slice()) {
                 pass = true;
-            } else if value_string.slice().is_empty() && expected_string.slice().is_empty() {
-                // edge case two empty strings are true
-                pass = true;
             }
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {

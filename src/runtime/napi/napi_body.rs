@@ -1502,8 +1502,7 @@ pub(super) extern "C" fn napi_is_dataview(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *result =
-        !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
+    *result = !value.is_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
     env.ok()
 }
 

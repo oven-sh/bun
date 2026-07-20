@@ -864,15 +864,9 @@ pub(super) fn build_with_vm(
 
         let server_file = router_type.server_file;
         let server_entry_point = pt.load_bundled_module(server_file)?;
-        let server_render_func = 'brk: {
-            let Some(raw) = bake_get_on_module_namespace(global, server_entry_point, b"prerender")
-            else {
-                break 'brk None;
-            };
-            if !raw.is_callable() {
-                break 'brk None;
-            }
-            break 'brk Some(raw);
+        let server_render_func = {
+            let raw = bake_get_on_module_namespace(global, server_entry_point, b"prerender");
+            raw.is_callable().then_some(raw)
         };
         let Some(server_render_func) = server_render_func else {
             bun_core::err_generic!("Framework does not support static site generation");
@@ -887,16 +881,9 @@ pub(super) fn build_with_vm(
         };
 
         let server_param_func = if router.dynamic_routes.count() > 0 {
-            let f = 'brk: {
-                let Some(raw) =
-                    bake_get_on_module_namespace(global, server_entry_point, b"getParams")
-                else {
-                    break 'brk None;
-                };
-                if !raw.is_callable() {
-                    break 'brk None;
-                }
-                break 'brk Some(raw);
+            let f = {
+                let raw = bake_get_on_module_namespace(global, server_entry_point, b"getParams");
+                raw.is_callable().then_some(raw)
             };
             match f {
                 Some(f) => f,
@@ -1287,7 +1274,7 @@ fn bake_get_on_module_namespace(
     global: &JSGlobalObject,
     module: JSValue,
     property: &[u8],
-) -> Option<JSValue> {
+) -> JSValue {
     unsafe extern "C" {
         // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
         // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
@@ -1301,7 +1288,7 @@ fn bake_get_on_module_namespace(
     // `&[u8]` for the call duration — discharges the ptr+len precondition above.
     let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
     debug_assert!(!result.is_empty());
-    Some(result)
+    result
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.

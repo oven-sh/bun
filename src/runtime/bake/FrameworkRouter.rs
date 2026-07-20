@@ -1101,7 +1101,7 @@ impl FrameworkRouter {
                         route_index = current;
                         continue 'outer;
                     }
-                    next = match self.route_ptr(next.unwrap()).next_sibling {
+                    next = match self.route_ptr(current).next_sibling {
                         Some(s) => Some(s),
                         None => break,
                     };

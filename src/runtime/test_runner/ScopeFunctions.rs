@@ -308,11 +308,11 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
         // per-use reborrow.
         // SAFETY: parent backrefs are stable for the lifetime of the collection tree.
         parent = scope.base.parent.map(|p| unsafe { &*p });
-        if scope.base.name.is_none() {
+        let Some(name) = scope.base.name.as_deref() else {
             continue;
-        }
+        };
         rem.write_end(SEP);
-        rem.write_end(scope.base.name.as_deref().unwrap_or(b""));
+        rem.write_end(name);
     }
 }
 

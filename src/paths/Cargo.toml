@@ -1,0 +1,32 @@
+[package]
+name = "bun_paths"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bytemuck = "1"
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_errno.workspace = true
+
+thiserror.workspace = true
+
+[dev-dependencies]
+# Nominal `SIMDUTFResult`/`Status` for the test-only simdutf stubs in
+# `string_paths.rs` — Miri requires the stub's signature to match the extern
+# declaration's types exactly, not just their ABI layout.
+bun_simdutf_sys.workspace = true

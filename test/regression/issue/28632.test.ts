@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/28632
 import { SQL } from "bun";
 import { beforeAll, expect, test } from "bun:test";
-import { describeWithContainer, isASAN, isDockerEnabled } from "harness";
+import { describeWithContainer, isASAN, isDebug, isDockerEnabled } from "harness";
 
 if (isDockerEnabled()) {
   describeWithContainer(
@@ -65,10 +65,14 @@ if (isDockerEnabled()) {
         const growthMB = (rssAfterQueries - rssAfterWarmup) / 1024 / 1024;
 
         // Without the fix, ~17MB growth (50 leaked name_or_index allocs × 5000 queries).
-        // With the fix, ~7MB (allocator noise + ASAN shadow memory). Double the
-        // threshold under ASAN where RSS measurements are noisier and the
-        // shadow memory makes the headroom much tighter.
-        expect(growthMB).toBeLessThan(isASAN ? 24 : 12);
+        // With the fix, ~7MB (allocator noise + ASAN shadow memory). Under ASAN the
+        // Rust global allocator routes every alloc through the interceptor, so the
+        // per-query free/alloc churn (row cells, etc.) lands in ASAN's 256 MB
+        // quarantine and shows up as RSS even though nothing leaks — give it 3×
+        // headroom there. Debug builds enable ASAN by default on Linux/macOS, so
+        // treat them the same. The non-ASAN bound is what guards the actual
+        // regression.
+        expect(growthMB).toBeLessThan(isASAN || isDebug ? 36 : 12);
 
         await sql`DROP TABLE IF EXISTS leak_test_28632`.catch(() => {});
       });

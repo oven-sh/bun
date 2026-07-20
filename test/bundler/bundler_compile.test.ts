@@ -22,6 +22,46 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
+  // standalone module graph treating those bytes as Latin-1, which would
+  // print "rÃ©sumÃ©" / "ã\x81\x93ã\x82\x93..." (one Latin-1 char per UTF-8
+  // byte) instead of the original codepoints.
+  for (const [where, flag] of [
+    ["Footer", "--footer"],
+    ["Banner", "--banner"],
+  ] as const) {
+    test(`compile/${where}NonAsciiUTF8`, async () => {
+      using dir = tempDir(`compile-${where.toLowerCase()}-nonascii`, {
+        "entry.ts": `export const x = 1;`,
+      });
+      const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+      {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            flag,
+            `console.log("résumé", "こんにちは");`,
+            "./entry.ts",
+            "--outfile",
+            outfile,
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("résumé こんにちは\n");
+      expect(exitCode).toBe(0);
+    });
+  }
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -97,6 +137,40 @@ describe("bundler", () => {
       },
     },
   });
+
+  // `import defer * as ns from "..."` must not break bytecode generation.
+  // The bundler inlines the deferred module into the entry chunk (documented
+  // out-of-scope limitation — same as esbuild), so the defer semantics are
+  // lost in the compiled output; this test verifies that the syntax is
+  // accepted by the bundler parser, the resulting source bytecode-compiles
+  // cleanly in JSC, and the compiled binary loads from the bytecode cache.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`compile/ImportDeferBytecode+${format}`, {
+      compile: true,
+      bytecode: true,
+      format,
+      files: {
+        "/entry.ts": /* js */ `
+          import defer * as ns from "./dep.ts";
+          console.log("before");
+          console.log("value:", ns.value);
+        `,
+        "/dep.ts": /* js */ `
+          console.log("dep evaluated");
+          export const value = 42;
+        `,
+      },
+      run: {
+        stdout: "dep evaluated\nbefore\nvalue: 42",
+        env: {
+          BUN_JSC_verboseDiskCache: "1",
+        },
+        validate({ stderr }) {
+          expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+        },
+      },
+    });
+  }
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
@@ -303,19 +377,25 @@ describe("bundler", () => {
       stdout: "Hello, world!\nWorker loaded!\n",
       file: "dist/out",
       setCwd: true,
-      stderr: [
-        "[Disk Cache] Cache hit for sourceCode",
-
-        // TODO: remove this line once bun:main is removed.
-        "[Disk Cache] Cache miss for sourceCode",
-
-        "[Disk Cache] Cache hit for sourceCode",
-
-        // TODO: remove this line once bun:main is removed.
-        "[Disk Cache] Cache miss for sourceCode",
-      ].join("\n"),
       env: {
         BUN_JSC_verboseDiskCache: "1",
+      },
+      // The main thread and the worker each report one hit and one miss (the
+      // miss is bun:main). The two threads interleave, so only the multiset of
+      // lines is stable, not their order.
+      validate({ stderr }) {
+        const lines = stderr
+          .split("\n")
+          .map(line => line.trim())
+          .filter(line => line.startsWith("[Disk Cache]"))
+          .sort();
+        expect(lines).toEqual([
+          "[Disk Cache] Cache hit for sourceCode",
+          "[Disk Cache] Cache hit for sourceCode",
+          // TODO: remove these two lines once bun:main is removed.
+          "[Disk Cache] Cache miss for sourceCode",
+          "[Disk Cache] Cache miss for sourceCode",
+        ]);
       },
     },
   });
@@ -369,6 +449,60 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/Bun.isStandaloneExecutable", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { heapStats } from "bun:jsc";
+        import "./asset.file";
+
+        const blobCount = () => heapStats().objectTypeCounts.Blob ?? 0;
+
+        // Reading isStandaloneExecutable must not materialize embedded files as Blobs.
+        Bun.gc(true);
+        const baseline = blobCount();
+        if (Bun.isStandaloneExecutable !== true) {
+          throw new Error("expected Bun.isStandaloneExecutable === true, got " + Bun.isStandaloneExecutable);
+        }
+        const afterRead = blobCount();
+        if (afterRead !== baseline) {
+          throw new Error("reading Bun.isStandaloneExecutable changed Blob count (" + baseline + " -> " + afterRead + ")");
+        }
+
+        // Accessing embeddedFiles allocates a Blob per embedded asset; if it did not,
+        // the afterRead === baseline check above would be vacuous.
+        const files = Bun.embeddedFiles;
+        if (files.length !== 1) throw new Error("expected 1 embedded file, got " + files.length);
+        const afterEmbedded = blobCount();
+        if (afterEmbedded <= baseline) {
+          throw new Error("expected Blob count to increase after reading Bun.embeddedFiles (" + baseline + " -> " + afterEmbedded + ")");
+        }
+        console.log("ok", JSON.stringify({ baseline, afterRead, afterEmbedded }));
+      `,
+      "/asset.file": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: /^ok \{"baseline":\d+,"afterRead":\d+,"afterEmbedded":\d+\}$/ },
+  });
+  test("Bun.isStandaloneExecutable is false when not compiled", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify({ value: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `{"value":false,"type":"boolean"}`,
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.
@@ -408,7 +542,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO(@paperclover)
+    todo: isWindows, // TODO
     compile: true,
     files: {
       "/entry.ts": `
@@ -795,17 +929,29 @@ error: Hello World`,
     files: {
       "/entry.ts": /* js */ `
         console.log("This is compiled code");
+        console.log(JSON.stringify({ isStandaloneExecutable: Bun.isStandaloneExecutable }));
       `,
     },
     run: [
       {
-        stdout: "This is compiled code",
+        stdout: `This is compiled code\n{"isStandaloneExecutable":true}`,
       },
       {
         env: { BUN_BE_BUN: "1" },
         validate({ stdout }) {
           expect(stdout).not.toContain("This is compiled code");
         },
+      },
+      {
+        // With BUN_BE_BUN=1 the compiled executable behaves like the plain `bun` CLI:
+        // the embedded standalone module graph is never loaded, so Bun.isStandaloneExecutable
+        // must be false even though the binary itself contains one.
+        env: { BUN_BE_BUN: "1" },
+        args: [
+          "-e",
+          `console.log(JSON.stringify({ isStandaloneExecutable: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`,
+        ],
+        stdout: `{"isStandaloneExecutable":false,"type":"boolean"}`,
       },
     ],
   });
@@ -944,3 +1090,143 @@ const server = serve({
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
   }, 30_000);
 });
+
+test("compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds", async () => {
+  // `bun build --compile --target=bun-darwin-*` patches the application bundle into the
+  // __BUN,__bun section of the base executable named by --compile-executable-path. The
+  // segment/section offsets in that file's load commands must be validated against the
+  // actual file size before they are used as memmove destinations.
+  const MH_MAGIC_64 = 0xfeedfacf;
+  const CPU_TYPE_X86_64 = 0x01000007;
+  const MH_EXECUTE = 2;
+  const LC_SEGMENT_64 = 0x19;
+
+  // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
+  // __LINKEDIT segment. `bunFileOff`/`bunFileSize` are where the load commands claim the
+  // __BUN data lives; `fileSize` is how many bytes the template actually contains.
+  function machoTemplate(bunFileOff: number, bunFileSize = 0x4000, fileSize = 0x8100): Buffer {
+    const segCmdSize = 72; // sizeof(segment_command_64)
+    const sectSize = 80; // sizeof(section_64)
+    const sizeofcmds = segCmdSize + sectSize + segCmdSize;
+    const buf = Buffer.alloc(fileSize);
+    const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
+
+    // mach_header_64
+    buf.writeUInt32LE(MH_MAGIC_64, 0);
+    buf.writeInt32LE(CPU_TYPE_X86_64, 4);
+    buf.writeInt32LE(3, 8); // cpusubtype
+    buf.writeUInt32LE(MH_EXECUTE, 12);
+    buf.writeUInt32LE(2, 16); // ncmds
+    buf.writeUInt32LE(sizeofcmds, 20);
+
+    // LC_SEGMENT_64 __BUN with one section
+    let o = 32;
+    buf.writeUInt32LE(LC_SEGMENT_64, o);
+    buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
+    writeName(o + 8, "__BUN");
+    buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
+    buf.writeInt32LE(7, o + 56); // maxprot
+    buf.writeInt32LE(3, o + 60); // initprot
+    buf.writeUInt32LE(1, o + 64); // nsects
+
+    // section_64 __bun
+    o += segCmdSize;
+    writeName(o, "__bun");
+    writeName(o + 16, "__BUN");
+    buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
+    buf.writeUInt32LE(bunFileOff, o + 48); // offset
+    buf.writeUInt32LE(14, o + 52); // align = 2^14
+
+    // LC_SEGMENT_64 __LINKEDIT
+    o += sectSize;
+    buf.writeUInt32LE(LC_SEGMENT_64, o);
+    buf.writeUInt32LE(segCmdSize, o + 4);
+    writeName(o + 8, "__LINKEDIT");
+    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
+    buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(bunFileOff + bunFileSize), o + 40); // fileoff (right after __BUN)
+    buf.writeBigUInt64LE(0x100n, o + 48); // filesize
+    buf.writeInt32LE(1, o + 56); // maxprot
+    buf.writeInt32LE(1, o + 60); // initprot
+
+    return buf;
+  }
+
+  using dir = tempDir("compile-macho-template-bounds", {
+    "entry.js": `console.log("compiled-from-template");`,
+  });
+  const cwd = String(dir);
+
+  for (const [name, bytes, wantErr] of [
+    // __BUN fileoff points 1 GiB past the end of the 33 KB file.
+    ["fileoff-past-eof", machoTemplate(0x40000000), "OffsetOutOfRange"],
+    // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
+    // before the growth `reserve()` (which would otherwise see a negative size_diff).
+    ["filesize-past-eof", machoTemplate(0, 0x8000, 256), "OffsetOutOfRange"],
+    // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
+    // write_section only grows, so a template that would require shrinking is rejected.
+    ["filesize-needs-shrink", machoTemplate(0x4000, 0x8000, 0xc100), "InvalidObject"],
+  ] as const) {
+    const badTemplate = join(cwd, `template-${name}`);
+    await Bun.write(badTemplate, bytes);
+    const outBad = join(cwd, `out-${name}`);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        badTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outBad,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The invalid template must be reported as a clean error...
+    expect({ name, stderr }).toEqual({ name, stderr: expect.stringContaining(wantErr) });
+    // ...no output executable is produced...
+    expect(await Bun.file(outBad).exists()).toBe(false);
+    // ...and the build exits with a normal failure code instead of crashing.
+    expect(exitCode).toBe(1);
+  }
+
+  // The same template with in-bounds offsets is still accepted.
+  const goodTemplate = join(cwd, "template-good");
+  await Bun.write(goodTemplate, machoTemplate(0x4000));
+  const outGood = join(cwd, "out-good");
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        goodTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outGood,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("OffsetOutOfRange");
+    const outBytes = Buffer.from(await Bun.file(outGood).arrayBuffer());
+    expect(outBytes.includes("compiled-from-template")).toBe(true);
+    expect(exitCode).toBe(0);
+  }
+}, 60_000);

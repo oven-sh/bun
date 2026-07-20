@@ -8,15 +8,15 @@ Bun's bundler has built-in support for CSS with the following features:
 - Transpiling modern/future features to work on all browsers (including vendor prefixing)
 - Minification
 - CSS Modules
-- Tailwind (via a native bundler plugin)
+- Tailwind (through a native bundler plugin)
 
 ## Transpiling
 
-Bun's CSS bundler lets you use modern/future CSS features without having to worry about browser compatibility — all thanks to its transpiling and vendor prefixing features which are enabled by default.
+Transpiling and vendor prefixing are enabled by default, so you can use modern and future CSS features without worrying about browser compatibility.
 
-Bun's CSS parser and bundler is a direct Rust → Zig port of LightningCSS, with a bundling approach inspired by esbuild. The transpiler converts modern CSS syntax into backwards-compatible equivalents that work across browsers.
+Bun's CSS parser and bundler is a direct port of LightningCSS, with a bundling approach inspired by esbuild. The transpiler converts modern CSS syntax into backwards-compatible equivalents that work across browsers.
 
-<Note>A huge thanks goes to the amazing work from the authors of LightningCSS and esbuild.</Note>
+<Note>Thanks to the authors of LightningCSS and esbuild for their work.</Note>
 
 ## Browser Compatibility
 
@@ -32,7 +32,7 @@ By default, Bun's CSS bundler targets the following browsers:
 
 ### Nesting
 
-The CSS Nesting specification allows you to write more concise and intuitive stylesheets by nesting selectors inside one another. Instead of repeating parent selectors across your CSS file, you can write child styles directly within their parent blocks.
+With CSS Nesting, you write child styles directly inside their parent blocks instead of repeating parent selectors across your CSS file.
 
 ```scss title="styles.css" icon="file-code"
 /* With nesting */
@@ -70,7 +70,7 @@ Bun's CSS bundler automatically converts this nested syntax into traditional fla
 }
 ```
 
-You can also nest media queries and other at-rules inside selectors, eliminating the need to repeat selector patterns:
+You can also nest media queries and other at-rules inside selectors:
 
 ```scss title="styles.css" icon="file-code"
 .responsive-element {
@@ -98,7 +98,7 @@ This compiles to:
 
 ### Color mix
 
-The `color-mix()` function blends two colors together according to a specified ratio in a chosen color space. Use it to create color variations without manually calculating the resulting values.
+The `color-mix()` function blends two colors at a given ratio in a chosen color space. Use it to create color variations without calculating the resulting values yourself.
 
 ```scss title="styles.css" icon="file-code"
 .button {
@@ -125,11 +125,9 @@ Bun's CSS bundler evaluates these color mixes at build time when all color value
 }
 ```
 
-This feature is particularly useful for creating color systems with programmatically derived shades, tints, and accents without needing preprocessors or custom tooling.
-
 ### Relative colors
 
-CSS allows you to modify individual components of a color using relative color syntax. Create color variations by adjusting specific attributes like lightness, saturation, or individual channels without having to recalculate the entire color.
+Relative color syntax modifies individual components of an existing color. Adjust attributes like lightness, saturation, or individual channels without recalculating the entire color.
 
 ```css title="styles.css" icon="file-code"
 .theme-color {
@@ -150,11 +148,11 @@ Bun's CSS bundler computes these relative color modifications at build time (whe
 }
 ```
 
-This approach is extremely useful for theme generation, creating accessible color variants, or building color scales based on mathematical relationships instead of hard-coding each value.
+Use it for theme generation, accessible color variants, or color scales derived from a base color instead of hard-coding each value.
 
 ### LAB colors
 
-Modern CSS supports perceptually uniform color spaces like LAB, LCH, OKLAB, and OKLCH that offer significant advantages over traditional RGB. These color spaces can represent colors outside the standard RGB gamut, resulting in more vibrant and visually consistent designs.
+Modern CSS supports the perceptually uniform color spaces LAB, LCH, OKLAB, and OKLCH, which can represent colors outside the standard RGB gamut.
 
 ```css title="styles.css" icon="file-code"
 .vibrant-element {
@@ -166,7 +164,7 @@ Modern CSS supports perceptually uniform color spaces like LAB, LCH, OKLAB, and 
 }
 ```
 
-Bun's CSS bundler automatically converts these advanced color formats to backwards-compatible alternatives for browsers that don't yet support them:
+Bun's CSS bundler converts these color formats to backwards-compatible alternatives for browsers that don't support them:
 
 ```css title="styles.css" icon="file-code"
 .vibrant-element {
@@ -182,11 +180,9 @@ Bun's CSS bundler automatically converts these advanced color formats to backwar
 }
 ```
 
-This layered approach ensures optimal color rendering across all browsers while allowing you to use the latest color technologies in your designs.
-
 ### Color function
 
-The `color()` function provides a standardized way to specify colors in various predefined color spaces, expanding your design options beyond the traditional RGB space. This allows you to access wider color gamuts and create more vibrant designs.
+The `color()` function specifies colors in predefined color spaces beyond traditional RGB, giving you access to wider color gamuts.
 
 ```css title="styles.css" icon="file-code"
 .vivid-element {
@@ -198,7 +194,7 @@ The `color()` function provides a standardized way to specify colors in various 
 }
 ```
 
-For browsers that don't support these advanced color functions yet, Bun's CSS bundler provides appropriate RGB fallbacks:
+For browsers that don't support these color spaces, Bun's CSS bundler adds RGB fallbacks:
 
 ```css title="styles.css" icon="file-code"
 .vivid-element {
@@ -212,11 +208,9 @@ For browsers that don't support these advanced color functions yet, Bun's CSS bu
 }
 ```
 
-This functionality lets you use modern color spaces immediately while ensuring your designs remain functional across all browsers, with optimal colors displayed in supporting browsers and reasonable approximations elsewhere.
-
 ### HWB colors
 
-The HWB (Hue, Whiteness, Blackness) color model expresses colors based on how much white or black is mixed with a pure hue. Many designers find this approach more natural for creating color variations compared to manipulating RGB or HSL values.
+The HWB (Hue, Whiteness, Blackness) color model expresses colors based on how much white or black is mixed with a pure hue. This makes tints and shades more direct to create than with RGB or HSL values.
 
 ```css title="styles.css" icon="file-code"
 .easy-theming {
@@ -234,7 +228,7 @@ The HWB (Hue, Whiteness, Blackness) color model expresses colors based on how mu
 }
 ```
 
-Bun's CSS bundler automatically converts HWB colors to RGB for compatibility with all browsers:
+Bun's CSS bundler converts HWB colors to RGB for compatibility with all browsers:
 
 ```css title="styles.css" icon="file-code"
 .easy-theming {
@@ -245,11 +239,9 @@ Bun's CSS bundler automatically converts HWB colors to RGB for compatibility wit
 }
 ```
 
-The HWB model is well-suited for creating systematic color variations for design systems, providing a more direct approach to creating consistent tints and shades than working with RGB or HSL values.
-
 ### Color notation
 
-Modern CSS has introduced more concise ways to express colors. Space-separated color syntax eliminates the need for commas in RGB and HSL values, while hex colors with alpha channels provide a compact way to specify transparency.
+Modern CSS supports space-separated RGB and HSL values (no commas) and hex colors with an alpha channel.
 
 ```css title="styles.css" icon="file-code"
 .modern-styling {
@@ -267,7 +259,7 @@ Modern CSS has introduced more concise ways to express colors. Space-separated c
 }
 ```
 
-Bun's CSS bundler automatically converts these modern color formats to ensure compatibility with older browsers:
+Bun's CSS bundler converts these formats for older browsers:
 
 ```css title="styles.css" icon="file-code"
 .modern-styling {
@@ -284,11 +276,9 @@ Bun's CSS bundler automatically converts these modern color formats to ensure co
 }
 ```
 
-This conversion process lets you write cleaner, more modern CSS while ensuring your styles work correctly across all browsers.
-
 ### light-dark() color function
 
-The `light-dark()` function implements color schemes that respect the user's system preference without requiring media queries. This function accepts two color values and automatically selects the appropriate one based on the current color scheme context.
+The `light-dark()` function takes two colors and applies one based on the current color scheme, so styles respect the user's system preference without media queries.
 
 ```css title="styles.css" icon="file-code"
 :root {
@@ -313,46 +303,44 @@ The `light-dark()` function implements color schemes that respect the user's sys
 }
 ```
 
-For browsers that don't support this feature yet, Bun's CSS bundler converts it to use CSS variables with proper fallbacks:
+For browsers that don't support `light-dark()`, Bun's CSS bundler converts it to CSS variables with fallbacks:
 
 ```css title="styles.css" icon="file-code"
 :root {
-  --lightningcss-light: initial;
-  --lightningcss-dark: ;
+  --buncss-light: initial;
+  --buncss-dark: ;
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --lightningcss-light: ;
-    --lightningcss-dark: initial;
+    --buncss-light: ;
+    --buncss-dark: initial;
   }
 }
 
 .light-theme {
-  --lightningcss-light: initial;
-  --lightningcss-dark: ;
+  --buncss-light: initial;
+  --buncss-dark: ;
   color-scheme: light;
 }
 
 .dark-theme {
-  --lightningcss-light: ;
-  --lightningcss-dark: initial;
+  --buncss-light: ;
+  --buncss-dark: initial;
   color-scheme: dark;
 }
 
 .themed-component {
-  background-color: var(--lightningcss-light, #ffffff) var(--lightningcss-dark, #121212);
-  color: var(--lightningcss-light, #333333) var(--lightningcss-dark, #eeeeee);
-  border-color: var(--lightningcss-light, #dddddd) var(--lightningcss-dark, #555555);
+  background-color: var(--buncss-light, #ffffff) var(--buncss-dark, #121212);
+  color: var(--buncss-light, #333333) var(--buncss-dark, #eeeeee);
+  border-color: var(--buncss-light, #dddddd) var(--buncss-dark, #555555);
 }
 ```
 
-This approach gives you a clean way to handle light and dark themes without duplicating styles or writing complex media queries, while maintaining compatibility with browsers that don't yet support the feature natively.
-
 ### Logical properties
 
-CSS logical properties let you define layout, spacing, and sizing relative to the document's writing mode and text direction rather than physical screen directions. This is crucial for creating truly international layouts that automatically adapt to different writing systems.
+CSS logical properties define layout, spacing, and sizing relative to the document's writing mode and text direction rather than physical screen directions, so layouts adapt to different writing systems.
 
 ```css title="styles.css" icon="file-code"
 .multilingual-component {
@@ -371,7 +359,7 @@ CSS logical properties let you define layout, spacing, and sizing relative to th
 }
 ```
 
-For browsers that don't fully support logical properties, Bun's CSS bundler compiles them to physical properties with appropriate directional adjustments:
+For browsers that don't fully support logical properties, Bun's CSS bundler compiles them to physical properties for each text direction:
 
 ```css title="styles.css" icon="file-code"
 /* For left-to-right languages */
@@ -395,11 +383,11 @@ For browsers that don't fully support logical properties, Bun's CSS bundler comp
 }
 ```
 
-If the `:dir()` selector isn't supported, additional fallbacks are automatically generated to ensure your layouts work properly across all browsers and writing systems. This makes creating internationalized designs much simpler while maintaining compatibility with older browsers.
+If the `:dir()` selector isn't supported, Bun generates additional fallbacks.
 
 ### :dir() selector
 
-The `:dir()` pseudo-class selector allows you to style elements based on their text direction (RTL or LTR), letting you create direction-aware designs without JavaScript. This selector matches elements based on their directionality as determined by the document or explicit direction attributes.
+The `:dir()` pseudo-class styles elements based on their text direction (RTL or LTR), as determined by the document or explicit direction attributes. Use it to write direction-aware styles without JavaScript.
 
 ```css title="styles.css" icon="file-code"
 /* Apply different styles based on text direction */
@@ -421,7 +409,7 @@ The `:dir()` pseudo-class selector allows you to style elements based on their t
 }
 ```
 
-For browsers that don't support the `:dir()` selector yet, Bun's CSS bundler converts it to the more widely supported `:lang()` selector with appropriate language mappings:
+For browsers that don't support the `:dir()` selector, Bun's CSS bundler converts it to the more widely supported `:lang()` selector with appropriate language mappings:
 
 ```css title="styles.css" icon="file-code"
 /* Converted to use language-based selectors as fallback */
@@ -442,11 +430,11 @@ For browsers that don't support the `:dir()` selector yet, Bun's CSS bundler con
 }
 ```
 
-This conversion lets you write direction-aware CSS that works reliably across browsers, even those that don't yet support the `:dir()` selector natively. If multiple arguments to `:lang()` aren't supported, further fallbacks are automatically provided.
+If multiple arguments to `:lang()` aren't supported, Bun generates further fallbacks.
 
 ### :lang() selector
 
-The `:lang()` pseudo-class selector targets elements based on the language they're in, enabling language-specific styling. Modern CSS supports passing multiple language codes to `:lang()`, letting you group language-specific rules more efficiently.
+The `:lang()` pseudo-class targets elements based on their language. To group rules for related languages, pass multiple language codes to a single `:lang()`.
 
 ```css title="styles.css" icon="file-code"
 /* Typography adjustments for CJK languages */
@@ -465,7 +453,7 @@ blockquote:lang(de, nl, da, sv) {
 }
 ```
 
-For browsers that don't support multiple arguments in the `:lang()` selector, Bun's CSS bundler converts this syntax to use the `:is()` selector to maintain the same behavior:
+For browsers that don't support multiple arguments in the `:lang()` selector, Bun's CSS bundler converts this syntax to the `:is()` selector with the same behavior:
 
 ```css title="styles.css" icon="file-code"
 /* Multiple languages grouped with :is() for better browser support */
@@ -483,11 +471,11 @@ blockquote:is(:lang(de), :lang(nl), :lang(da), :lang(sv)) {
 }
 ```
 
-If needed, Bun can provide additional fallbacks for `:is()` as well, ensuring your language-specific styles work across all browsers. This approach simplifies creating internationalized designs with distinct typographic and styling rules for different language groups.
+If needed, Bun can generate additional fallbacks for `:is()` as well.
 
 ### :is() selector
 
-The `:is()` pseudo-class function (formerly `:matches()`) allows you to create more concise and readable selectors by grouping multiple selectors together. It accepts a selector list as its argument and matches if any of the selectors in that list match, significantly reducing repetition in your CSS.
+The `:is()` pseudo-class function (formerly `:matches()`) takes a selector list and matches if any selector in the list matches.
 
 ```css title="styles.css" icon="file-code"
 /* Instead of writing these separately */
@@ -543,14 +531,13 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 ```
 
 <Warning>
-  The vendor-prefixed versions have some limitations compared to the standardized `:is()` selector, particularly with
-  complex selectors. Bun handles these limitations intelligently, only using prefixed versions when they'll work
-  correctly.
+  The vendor-prefixed versions have limitations compared to the standardized `:is()` selector, particularly with complex
+  selectors. Bun only uses the prefixed versions when they work correctly.
 </Warning>
 
 ### :not() selector
 
-The `:not()` pseudo-class allows you to exclude elements that match a specific selector. The modern version of this selector accepts multiple arguments, letting you exclude multiple patterns with a single, concise selector.
+The `:not()` pseudo-class excludes elements that match a selector. The modern version accepts multiple arguments to exclude several patterns with one `:not()`.
 
 ```css title="styles.css" icon="file-code"
 /* Select all buttons except primary and secondary variants */
@@ -565,7 +552,7 @@ h2:not(.sidebar *, footer *) {
 }
 ```
 
-For browsers that don't support multiple arguments in `:not()`, Bun's CSS bundler converts this syntax to a more compatible form while preserving the same behavior:
+For browsers that don't support multiple arguments in `:not()`, Bun's CSS bundler converts this syntax to a more compatible form with the same behavior:
 
 ```css title="styles.css" icon="file-code"
 /* Converted to use :not with :is() for compatibility */
@@ -599,11 +586,11 @@ button:not(:is(.primary, .secondary)) {
 }
 ```
 
-This conversion ensures your negative selectors work correctly across all browsers while maintaining the correct specificity and behavior of the original selector.
+The converted selectors keep the specificity and behavior of the original.
 
 ### Math functions
 
-CSS now includes a rich set of mathematical functions that let you perform complex calculations directly in your stylesheets. These include standard math functions (`round()`, `mod()`, `rem()`, `abs()`, `sign()`), trigonometric functions (`sin()`, `cos()`, `tan()`, `asin()`, `acos()`, `atan()`, `atan2()`), and exponential functions (`pow()`, `sqrt()`, `exp()`, `log()`, `hypot()`).
+CSS includes standard math functions (`round()`, `mod()`, `rem()`, `abs()`, `sign()`), trigonometric functions (`sin()`, `cos()`, `tan()`, `asin()`, `acos()`, `atan()`, `atan2()`), and exponential functions (`pow()`, `sqrt()`, `exp()`, `log()`, `hypot()`).
 
 ```css title="styles.css" icon="file-code"
 .dynamic-sizing {
@@ -622,7 +609,7 @@ CSS now includes a rich set of mathematical functions that let you perform compl
 }
 ```
 
-Bun's CSS bundler evaluates these mathematical expressions at build time when all values are known constants (not variables), resulting in optimized output:
+Bun's CSS bundler evaluates these expressions at build time when all values are known constants (not variables):
 
 ```css title="styles.css" icon="file-code"
 .dynamic-sizing {
@@ -634,11 +621,9 @@ Bun's CSS bundler evaluates these mathematical expressions at build time when al
 }
 ```
 
-This approach lets you write more expressive and maintainable CSS with meaningful mathematical relationships, which then gets compiled to optimized values for maximum browser compatibility and performance.
-
 ### Media query ranges
 
-Modern CSS supports range syntax for media queries, allowing you to specify breakpoints using comparison operators like `<`, `>`, `<=`, and `>=` instead of the more verbose `min-` and `max-` prefixes. This syntax is more readable and matches how you typically think about values and ranges.
+Media query range syntax expresses breakpoints with comparison operators (`<`, `>`, `<=`, `>=`) instead of the more verbose `min-` and `max-` prefixes.
 
 ```css title="styles.css" icon="file-code"
 /* Modern syntax with comparison operators */
@@ -663,7 +648,7 @@ Modern CSS supports range syntax for media queries, allowing you to specify brea
 }
 ```
 
-Bun's CSS bundler converts these modern range queries to traditional media query syntax for compatibility with all browsers:
+Bun's CSS bundler converts range queries to traditional media query syntax for compatibility with all browsers:
 
 ```css title="styles.css" icon="file-code"
 /* Converted to traditional min/max syntax */
@@ -686,11 +671,9 @@ Bun's CSS bundler converts these modern range queries to traditional media query
 }
 ```
 
-This lets you write more readable media queries while ensuring your stylesheets work correctly across all browsers, including those that don't support the modern range syntax.
-
 ### Shorthands
 
-CSS has introduced several modern shorthand properties that improve code readability and maintainability. Bun's CSS bundler ensures these convenient shorthands work on all browsers by converting them to their longhand equivalents when needed.
+CSS has introduced several shorthand properties that combine multiple longhand properties.
 
 ```css title="styles.css" icon="file-code"
 /* Alignment shorthands */
@@ -726,7 +709,7 @@ CSS has introduced several modern shorthand properties that improve code readabi
 }
 ```
 
-For browsers that don't support these modern shorthands, Bun converts them to their component longhand properties:
+For browsers that don't support these shorthands, Bun converts them to their component longhand properties:
 
 ```css title="styles.css" icon="file-code"
 .flex-container {
@@ -763,11 +746,9 @@ For browsers that don't support these modern shorthands, Bun converts them to th
 }
 ```
 
-This conversion ensures your stylesheets remain clean and maintainable while providing the broadest possible browser compatibility.
-
 ### Double position gradients
 
-The double position gradient syntax is a modern CSS feature that allows you to create hard color stops in gradients by specifying the same color at two adjacent positions. This creates a sharp transition rather than a smooth fade, which is useful for creating stripes, color bands, and other multi-color designs.
+Double position gradient syntax specifies the same color at two adjacent positions to create a hard color stop: a sharp transition instead of a smooth fade. Use it for stripes, color bands, and other multi-color designs.
 
 ```css title="styles.css" icon="file-code"
 .striped-background {
@@ -796,7 +777,7 @@ The double position gradient syntax is a modern CSS feature that allows you to c
 }
 ```
 
-For browsers that don't support this syntax, Bun's CSS bundler automatically converts it to the traditional format by duplicating color stops:
+For browsers that don't support this syntax, Bun's CSS bundler converts it to the traditional format by duplicating color stops:
 
 ```css title="styles.css" icon="file-code"
 .striped-background {
@@ -827,11 +808,9 @@ For browsers that don't support this syntax, Bun's CSS bundler automatically con
 }
 ```
 
-This conversion lets you use the cleaner double position syntax in your source code while ensuring gradients display correctly in all browsers.
-
 ### system-ui font
 
-The `system-ui` generic font family lets you use the device's native UI font, creating interfaces that feel more integrated with the operating system. This provides a more native look and feel without having to specify different font stacks for each platform.
+The `system-ui` generic font family uses the device's native UI font.
 
 ```css title="styles.css" icon="file-code"
 .native-interface {
@@ -845,7 +824,7 @@ The `system-ui` generic font family lets you use the device's native UI font, cr
 }
 ```
 
-For browsers that don't support `system-ui`, Bun's CSS bundler automatically expands it to a comprehensive cross-platform font stack:
+For browsers that don't support `system-ui`, Bun's CSS bundler expands it to a cross-platform font stack:
 
 ```css title="styles.css" icon="file-code"
 .native-interface {
@@ -878,20 +857,20 @@ For browsers that don't support `system-ui`, Bun's CSS bundler automatically exp
 }
 ```
 
-This approach gives you the simplicity of writing just `system-ui` in your source code while ensuring your interface adapts correctly to all operating systems and browsers. The expanded font stack includes appropriate system fonts for macOS/iOS, Windows, Android, Linux, and fallbacks for older browsers.
+The expanded stack includes system fonts for macOS/iOS, Windows, Android, and Linux, plus fallbacks for older browsers.
 
 ## CSS Modules
 
-Bun's bundler also supports bundling CSS modules in addition to regular CSS with support for the following features:
+Bun's bundler also supports CSS modules, with the following features:
 
-- Automatically detecting CSS module files (`.module.css`) with zero configuration
+- Detecting CSS module files (`.module.css`) with no configuration
 - Composition (`composes` property)
 - Importing CSS modules into JSX/TSX
 - Warnings/errors for invalid usages of CSS modules
 
-A CSS module is a CSS file (with the `.module.css` extension) where are all class names and animations are scoped to the file. This helps you avoid class name collisions as CSS declarations are globally scoped by default.
+A CSS module is a CSS file (with the `.module.css` extension) where all class names and animations are scoped to the file. This helps you avoid class name collisions, as CSS declarations are globally scoped by default.
 
-Under the hood, Bun's bundler transforms locally scoped class names into unique identifiers.
+Bun's bundler transforms locally scoped class names into unique identifiers.
 
 ### Getting started
 
@@ -925,7 +904,7 @@ export default function App() {
 }
 ```
 
-The styles object from importing the CSS module file will be an object with all class names as keys and their unique identifiers as values:
+Importing a CSS module gives you an object that maps each class name to its unique identifier:
 
 ```ts title="app.tsx" icon="/icons/typescript.svg"
 import styles from "./styles.module.css";
@@ -935,7 +914,7 @@ console.log(styles);
 console.log(otherStyles);
 ```
 
-This will output:
+This outputs:
 
 ```ts title="app.tsx" icon="/icons/typescript.svg"
 {
@@ -947,11 +926,11 @@ This will output:
 }
 ```
 
-As you can see, the class names are unique to each file, avoiding any collisions!
+The class names are unique to each file, so they don't collide.
 
 ### Composition
 
-CSS modules allow you to compose class selectors together. This lets you reuse style rules across multiple classes.
+CSS modules can compose class selectors together to reuse style rules across multiple classes.
 
 For example:
 
@@ -966,7 +945,7 @@ For example:
 }
 ```
 
-Would be the same as writing:
+This is the same as writing:
 
 ```css title="styles.module.css" icon="file-code"
 .button {
@@ -979,7 +958,7 @@ Would be the same as writing:
 }
 ```
 
-There are a couple rules to keep in mind when using `composes`:
+Two rules apply when using `composes`:
 
 <Info>
   **Composition Rules:** - A `composes` property must come before any regular CSS properties or declarations - You can
@@ -1017,8 +996,8 @@ You can also compose from a separate CSS module file:
 ```
 
 <Warning>
-When composing classes from separate files, be sure that they do not contain the same properties.
+When composing classes from separate files, make sure they do not contain the same properties.
 
-The CSS module spec says that composing classes from separate files with conflicting properties is undefined behavior, meaning that the output may differ and be unreliable.
+The CSS module spec says that composing classes from separate files with conflicting properties is undefined behavior: the output may differ and be unreliable.
 
 </Warning>

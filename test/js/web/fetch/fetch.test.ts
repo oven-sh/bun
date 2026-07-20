@@ -7,7 +7,9 @@ import {
   exampleSite,
   exampleHtml as fixture,
   gc,
+  isASAN,
   isBroken,
+  isDebug,
   isFlaky,
   isMacOS,
   isWindows,
@@ -384,6 +386,113 @@ describe("AbortSignal", () => {
       expect(() => {}).toThrow();
     } catch (ex: any) {
       expect(ex.name).toBe("AbortError");
+    }
+  });
+
+  it("already-aborted signal returns an already-rejected promise", async () => {
+    // Fetch spec step 11: when the signal is already aborted, fetch() must
+    // return an already-rejected promise (not a pending one that settles after
+    // a round-trip to the HTTP thread).
+    {
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted");
+      controller.abort(reason);
+      const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // default reason → DOMException AbortError, identical to signal.reason
+      const controller = new AbortController();
+      controller.abort();
+      const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      const err = Bun.peek(p);
+      expect(err).toBeInstanceOf(DOMException);
+      expect((err as DOMException).name).toBe("AbortError");
+      expect(err).toBe(controller.signal.reason);
+      await p.catch(() => {});
+    }
+    {
+      // via Request input
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-req");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", { signal: controller.signal });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // AbortSignal.abort() static
+      const reason = new Error("pre-aborted-static");
+      const p = fetch("http://127.0.0.1:1/", { signal: AbortSignal.abort(reason) });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // plain-object first argument (request_init_object branch)
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-init");
+      controller.abort(reason);
+      const p = fetch({ url: "http://127.0.0.1:1/", signal: controller.signal } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request-constructor errors (spec step 4) still win over the abort:
+      // GET with a body rejects with TypeError, not the abort reason.
+      const reason = new Error("should-not-see-this");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "GET",
+        body: "x",
+        signal: AbortSignal.abort(reason),
+      } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBeInstanceOf(TypeError);
+      expect(Bun.peek(p)).not.toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request input body is consumed (step 4) before the abort (step 11).
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-bodyused");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", {
+        method: "POST",
+        body: "hello",
+        signal: controller.signal,
+      });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      expect(req.bodyUsed).toBe(true);
+      await p.catch(() => {});
+    }
+    {
+      // ReadableStream body is cancelled with the abort reason (abort-a-fetch
+      // step: "cancel request's body with error").
+      let cancelReason: unknown = "not called";
+      const stream = new ReadableStream({
+        cancel(r) {
+          cancelReason = r;
+        },
+      });
+      const reason = new Error("pre-aborted-stream");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "POST",
+        body: stream,
+        signal: AbortSignal.abort(reason),
+      });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+      expect(cancelReason).toBe(reason);
+      expect(stream.locked).toBe(false);
     }
   });
 });
@@ -1214,16 +1323,18 @@ describe("Response", () => {
   });
   describe("Response.redirect", () => {
     it("works", () => {
+      // Location is the serialization of the parsed url, so an empty path
+      // gains a trailing "/". https://fetch.spec.whatwg.org/#dom-response-redirect
       const inputs = [
-        "http://example.com",
-        "http://example.com/",
-        "http://example.com/hello",
-        "http://example.com/hello/",
-        "http://example.com/hello/world",
-        "http://example.com/hello/world/",
+        ["http://example.com", "http://example.com/"],
+        ["http://example.com/", "http://example.com/"],
+        ["http://example.com/hello", "http://example.com/hello"],
+        ["http://example.com/hello/", "http://example.com/hello/"],
+        ["http://example.com/hello/world", "http://example.com/hello/world"],
+        ["http://example.com/hello/world/", "http://example.com/hello/world/"],
       ];
-      for (let input of inputs) {
-        expect(Response.redirect(input).headers.get("Location")).toBe(input);
+      for (const [input, expected] of inputs) {
+        expect(Response.redirect(input).headers.get("Location")).toBe(expected);
       }
     });
 
@@ -1237,7 +1348,7 @@ describe("Response", () => {
         status: 307,
       });
       expect(response.headers.get("x-hello")).toBe("world");
-      expect(response.headers.get("Location")).toBe("https://example.com");
+      expect(response.headers.get("Location")).toBe("https://example.com/");
       expect(response.status).toBe(307);
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
@@ -1923,6 +2034,46 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
+describe("maxRedirects", () => {
+  let server: Server;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/hop/")) {
+          const hop = Number(url.pathname.slice("/hop/".length));
+          if (hop >= 4) {
+            return new Response("done");
+          }
+          return new Response(null, { status: 302, headers: { Location: `/hop/${hop + 1}` } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("rejects once the chain exceeds maxRedirects", async () => {
+    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+  });
+
+  it("follows the chain when maxRedirects is large enough", async () => {
+    const resp = await fetch(`${server.url}hop/0`, { maxRedirects: 4 });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("done");
+    expect(new URL(resp.url).pathname).toBe("/hop/4");
+  });
+
+  it("rejects invalid values", async () => {
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: -1 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: 1.5 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: NaN })).toThrow();
+  });
+});
+
 it.concurrent("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
   using server = Bun.serve({
@@ -2406,6 +2557,10 @@ describe("fetch should allow duplex", () => {
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
   for (const type of ["normal", "delay"]) {
     await using server = net.createServer(socket => {
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let body = "";
       socket.on("data", data => {
         body += data.toString("utf8");
@@ -2462,3 +2617,432 @@ it("should allow to follow redirect if connection is closed, abort should work e
     }
   }
 });
+
+it("rejects a response with an unparseable Content-Length instead of treating it as empty", async () => {
+  // RFC 9112 section 6.3: an invalid Content-Length (or duplicate Content-Length
+  // headers with differing values) is an unrecoverable framing error. Falling
+  // back to "0" would deliver an empty body and return a desynchronized socket
+  // to the keep-alive pool with the unread response bytes still in flight,
+  // where they would be read as the response to the next request.
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      const path = data.toString("utf8").split(" ")[1];
+      if (path === "/invalid") {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: x\r\nConnection: keep-alive\r\n\r\n" +
+            "HTTP/1.1 200 OK\r\nContent-Length: 25\r\n\r\ninjected follow-up bytes!",
+        );
+      } else if (path === "/conflicting") {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        );
+      } else {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+        );
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  for (const path of ["invalid", "conflicting"]) {
+    const result = await fetch(`http://localhost:${port}/${path}`)
+      .then(res => res.text())
+      .catch(e => e);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as any).code).toBe("InvalidContentLength");
+  }
+
+  // A well-formed Content-Length is still delivered normally.
+  const ok = await fetch(`http://localhost:${port}/valid`);
+  expect(await ok.text()).toBe("hello");
+});
+
+it("combines duplicate response headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(), except Set-Cookie which is stored as separate
+  // values exposed by getSetCookie(). Previously Bun overwrote duplicate
+  // non-common header names with the last value, dropping earlier values.
+  await using server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.end(
+        "HTTP/1.1 200 OK\r\n" +
+          "Content-Length: 2\r\n" +
+          "X-Dup: first\r\n" +
+          "X-Dup: second\r\n" +
+          "X-Dup: third\r\n" +
+          "X-Once: only\r\n" +
+          "X-Gap: a\r\n" +
+          "X-Gap:\r\n" +
+          "X-Gap: c\r\n" +
+          "X-Empty:\r\n" +
+          "Accept: text/html\r\n" +
+          "Accept: application/json\r\n" +
+          "Set-Cookie: a=1\r\n" +
+          "Set-Cookie: b=2\r\n" +
+          "Connection: close\r\n" +
+          "\r\n" +
+          "ok",
+      );
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect(await res.text()).toBe("ok");
+  expect(res.headers.get("x-dup")).toBe("first, second, third");
+  expect(res.headers.get("x-once")).toBe("only");
+  // the combine step has no empty-value exception, and a lone empty header is
+  // still visible — undici returns "a, , c" and "" here, not "a, c" and null
+  expect(res.headers.get("x-gap")).toBe("a, , c");
+  expect(res.headers.get("x-empty")).toBe("");
+  expect(res.headers.get("accept")).toBe("text/html, application/json");
+  expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
+});
+
+it("drops a custom Host header when following a cross-origin redirect", async () => {
+  // A per-request Host override must not survive a change of origin: the
+  // follow-up request's Host header (and the TLS SNI / certificate identity
+  // derived from the same field) has to be re-computed from the redirect
+  // target's URL, not carried over from the previous origin.
+  await using target = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      return new Response(request.headers.get("host") ?? "<no host header>");
+    },
+  });
+
+  await using origin = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      if (new URL(request.url).pathname === "/redirect") {
+        return new Response(null, {
+          status: 302,
+          headers: { "Location": `http://${target.hostname}:${target.port}/landed` },
+        });
+      }
+      return new Response(request.headers.get("host") ?? "<no host header>");
+    },
+  });
+
+  // Cross-origin redirect: the redirect target must see its own authority,
+  // not the caller-supplied Host override naming the previous origin.
+  const redirected = await fetch(`http://${origin.hostname}:${origin.port}/redirect`, {
+    headers: { "Host": "tenant.shared-cdn.example" },
+  });
+  expect(redirected.redirected).toBe(true);
+  expect(await redirected.text()).toBe(`${target.hostname}:${target.port}`);
+
+  // Without a redirect the explicit Host header is still honored.
+  const direct = await fetch(`http://${origin.hostname}:${origin.port}/direct`, {
+    headers: { "Host": "tenant.shared-cdn.example" },
+  });
+  expect(await direct.text()).toBe("tenant.shared-cdn.example");
+});
+
+it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding header and sends only Content-Length", async () => {
+  // RFC 9112 section 6.2/6.3: a sender must never emit both Transfer-Encoding and
+  // Content-Length on the same message. For a fixed-size (non-streaming) body,
+  // fetch() writes the body as raw bytes framed by a computed Content-Length, so a
+  // caller-supplied "Transfer-Encoding: chunked" header (e.g. headers copied wholesale
+  // from an inbound request in a gateway) must be dropped rather than forwarded
+  // alongside Content-Length, where a TE-preferring upstream would mis-frame the body.
+  const requests: string[] = [];
+  await using server = net.createServer(socket => {
+    let raw = "";
+    socket.on("data", data => {
+      raw += data.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = raw.slice(0, headerEnd);
+      const contentLength = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+      if (raw.length < headerEnd + 4 + contentLength) return;
+      requests.push(raw);
+      raw = "";
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // A body whose raw bytes look like a terminal chunk followed by a second request.
+  const body = "0\r\n\r\nGET /other HTTP/1.1\r\nHost: upstream\r\nX-Pad: junk";
+  const bodyLength = Buffer.byteLength(body);
+
+  // Caller-supplied Transfer-Encoding header alongside a buffered (string) body.
+  const withTE = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Transfer-Encoding": "chunked", "Content-Type": "text/plain" },
+    body,
+  });
+  expect(await withTE.text()).toBe("OK");
+
+  // The same request without the header still works the same way.
+  const plain = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body,
+  });
+  expect(await plain.text()).toBe("OK");
+
+  expect(requests).toHaveLength(2);
+  for (const rawRequest of requests) {
+    const [head, ...bodyParts] = rawRequest.split("\r\n\r\n");
+    const headerLines = head
+      .split("\r\n")
+      .slice(1)
+      .map(line => line.toLowerCase());
+    // Exactly one framing header reaches the wire: the computed Content-Length.
+    expect(headerLines.filter(line => line.startsWith("transfer-encoding:"))).toEqual([]);
+    expect(headerLines.filter(line => line.startsWith("content-length:"))).toEqual([`content-length: ${bodyLength}`]);
+    // The body is the raw bytes described by Content-Length, with no chunk framing added.
+    expect(bodyParts.join("\r\n\r\n")).toBe(body);
+  }
+});
+
+it("fetch() does not forward a caller-supplied Content-Length on a request without a body", async () => {
+  // The Content-Length emitted on the wire must always describe the body fetch() is
+  // actually about to send. A Content-Length copied from an inbound request (e.g. by a
+  // gateway forwarding headers wholesale) on a request with no body would make the
+  // upstream wait for body bytes that never arrive and read the start of the next
+  // request on a kept-alive connection as that body.
+  const requests: string[] = [];
+  await using server = net.createServer(socket => {
+    let raw = "";
+    socket.on("data", data => {
+      raw += data.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = raw.slice(0, headerEnd);
+      const method = head.split(" ")[0];
+      if (method !== "GET") {
+        // wait for the declared body before replying
+        const contentLength = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+        if (raw.length < headerEnd + 4 + contentLength) return;
+      }
+      requests.push(raw);
+      raw = "";
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // GET request with no body: a caller-supplied Content-Length must not reach the wire.
+  const bodyless = await fetch(`http://localhost:${port}/`, {
+    headers: { "Content-Length": "52", "X-Custom": "still-forwarded" },
+  });
+  expect(await bodyless.text()).toBe("OK");
+
+  // POST request with a real body: the emitted Content-Length is computed from the
+  // body, not taken from the caller-supplied header.
+  const withBody = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Content-Length": "999" },
+    body: "hi",
+  });
+  expect(await withBody.text()).toBe("OK");
+
+  expect(requests).toHaveLength(2);
+  const headerLinesOf = (request: string) =>
+    request
+      .split("\r\n\r\n")[0]
+      .split("\r\n")
+      .slice(1)
+      .map(line => line.toLowerCase());
+
+  const bodylessHeaders = headerLinesOf(requests[0]);
+  // No Content-Length at all on the bodyless request: the bogus value is dropped.
+  expect(bodylessHeaders.filter(line => line.startsWith("content-length:"))).toEqual([]);
+  // Other caller-supplied headers are still forwarded.
+  expect(bodylessHeaders).toContain("x-custom: still-forwarded");
+
+  const withBodyHeaders = headerLinesOf(requests[1]);
+  expect(withBodyHeaders.filter(line => line.startsWith("content-length:"))).toEqual(["content-length: 2"]);
+});
+
+it("releases interim 1xx response bytes as they are parsed while waiting for the final response", async () => {
+  // A misbehaving origin can stream an arbitrarily long sequence of interim (1xx)
+  // responses before the final status line. Bytes belonging to interim responses that
+  // have already been parsed must be released from the header accumulation buffer as
+  // they are consumed, instead of being retained (and re-parsed) for the lifetime of
+  // the request. The flood below totals ~48 MB of interim responses, so process RSS
+  // must not grow by anywhere near that amount while the request is still waiting for
+  // its final status line, and the final response must still be delivered normally.
+  const informational = "HTTP/1.1 103 Early Hints\r\nx-filler: " + "a".repeat(1024) + "\r\n\r\n";
+  const responseLength = informational.length;
+  const writeSize = 256 * 1024 - 13; // never a multiple of responseLength, so writes end mid-response
+  const pattern = Buffer.from(informational.repeat(Math.ceil(writeSize / responseLength) + 2), "latin1");
+  const floodBytes = 48 * 1024 * 1024;
+
+  let floodedBytes = 0;
+  const { promise: floodDone, resolve: floodDoneResolve } = Promise.withResolvers<void>();
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    sockets.push(socket);
+    socket.once("data", () => {
+      const writeMore = () => {
+        while (floodedBytes < floodBytes) {
+          const offset = floodedBytes % responseLength;
+          const slice = pattern.subarray(offset, offset + writeSize);
+          floodedBytes += slice.length;
+          if (!socket.write(slice)) {
+            socket.once("drain", writeMore);
+            return;
+          }
+        }
+        floodDoneResolve();
+      };
+      writeMore();
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    Bun.gc(true);
+    const rssBefore = process.memoryUsage.rss();
+    const responsePromise = fetch(`http://localhost:${port}/`);
+    await floodDone;
+    Bun.gc(true);
+    const rssDuringFlood = process.memoryUsage.rss();
+
+    // Complete the partially written interim response, then send the real response.
+    const socket = sockets[0];
+    const tail = floodedBytes % responseLength;
+    if (tail !== 0) socket.write(pattern.subarray(tail, responseLength));
+    socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndone");
+
+    // The final response after the interim responses is still delivered normally.
+    const response = await responsePromise;
+    expect(await response.text()).toBe("done");
+
+    // Only a small parse tail may be retained while the interim responses stream in;
+    // the ~48 MB of already-consumed 1xx bytes must not accumulate in the process.
+    const deltaMB = (rssDuringFlood - rssBefore) / 1024 / 1024;
+    // A local `bun bd` debug build is ASAN-instrumented but not named
+    // `bun-asan`, so isASAN is false there; its quarantine retains the freed
+    // flood bytes the same way - give it the same allowance.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 48 : 16);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+}, 60_000);
+
+it("does not reuse a keep-alive connection whose response carried more bytes than its Content-Length", async () => {
+  // Surplus bytes past the declared Content-Length mean the connection's framing can
+  // no longer be trusted: anything still buffered on (or later delivered to) that
+  // socket would be parsed as the response to whichever request next reuses it from
+  // the keep-alive pool. The mis-framed response itself is still delivered (truncated
+  // to its declared length), but the connection must be closed instead of pooled.
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) break;
+        const head = buffered.slice(0, headerEnd);
+        buffered = buffered.slice(headerEnd + 4);
+        const path = head.split("\r\n")[0].split(" ")[1];
+        if (path === "/overshoot") {
+          // Declares 5 body bytes but sends those 5 plus a complete pipelined
+          // "injected" response that the declared framing never accounted for.
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello" +
+              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
+          );
+        } else {
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!",
+          );
+        }
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    // The mis-framed response is still delivered, truncated to its declared length.
+    const first = await fetch(`http://localhost:${port}/overshoot`);
+    expect(await first.text()).toBe("hello");
+
+    // The follow-up request must go out on a fresh connection, so it can never be
+    // answered by the leftover "injected" bytes on the desynchronized socket.
+    const second = await fetch(`http://localhost:${port}/after`);
+    expect(await second.text()).toBe("legit!");
+    expect(connections).toBe(2);
+
+    // A correctly framed keep-alive response is still pooled and reused.
+    const third = await fetch(`http://localhost:${port}/again`);
+    expect(await third.text()).toBe("legit!");
+    expect(connections).toBe(2);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/16682
+it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
+  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
+  // talks to an in-process server whose handler holds every request idle for
+  // 10s (longer than the worst-case firing window of the 1s idle timer, which
+  // is swept on uSockets' 4s tick) before responding.
+  //
+  //   - `timeout: 60_000` must override the 1s idle default and resolve.
+  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
+  //   - no `timeout` at all must still hit the 1s idle default (control that
+  //     proves the env override and the stall are both real).
+  const script = /* js */ `
+    const HOLD_MS = 10_000;
+    using server = Bun.serve({
+      port: 0,
+      // Disable Bun.serve's own request idle timeout; only the client-side
+      // idle timer under test may abort anything here.
+      idleTimeout: 0,
+      async fetch(req) {
+        const arrived = Date.now();
+        // Hold the connection idle (no bytes in either direction) until the
+        // hold window has really elapsed on the server's clock.
+        while (Date.now() - arrived < HOLD_MS) {
+          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
+        }
+        return new Response("hello");
+      },
+    });
+    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
+    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
+      get({ timeout: 60_000 }),
+      get({ timeout: 0 }),
+      get({ timeout: Infinity }),
+      get(undefined),
+    ]);
+    console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
+  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
+    withTimeout: "hello",
+    withZero: "hello",
+    withInfinity: "hello",
+  });
+  // Control: without an explicit `timeout`, the 1s idle default still aborts
+  // the stalled request.
+  expect(out.withDefault).toStartWith("ERR:");
+  expect(exitCode).toBe(0);
+}, 60_000);

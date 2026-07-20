@@ -24,7 +24,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  return fs.promises.rmdir(tmp, { recursive: true });
+  return fs.promises.rm(tmp, { recursive: true, force: true });
 });
 
 describe("fs.glob", () => {
@@ -48,12 +48,12 @@ describe("fs.glob", () => {
 
   it("can filter out files", done => {
     const exclude = (path: string) => path.endsWith(".js");
-    fs.glob("a/*", { cwd: tmp, exclude }, (err, paths) => {
+    fs.glob("a/**", { cwd: tmp, exclude }, (err, paths) => {
       if (err) done(err);
       if (isWindows) {
-        expect(paths).toStrictEqual(["a\\bar.txt"]);
+        expect(paths.sort()).toStrictEqual(["a", "a\\bar.txt"]);
       } else {
-        expect(paths).toStrictEqual(["a/bar.txt"]);
+        expect(paths.sort()).toStrictEqual(["a", "a/bar.txt"]);
       }
       done();
     });
@@ -105,7 +105,7 @@ describe("fs.globSync", () => {
 
   it.each([
     ["*.txt", ["foo.txt"]],
-    ["a/**", isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"]],
+    ["a/**", isWindows ? ["a", "a\\bar.txt", "a\\baz.js"] : ["a", "a/bar.txt", "a/baz.js"]],
   ])("fs.glob(%p, { cwd: /tmp/fs-glob }) === %p", (pattern, expected) => {
     expect(fs.globSync(pattern, { cwd: tmp }).sort()).toStrictEqual(expected);
   });
@@ -127,8 +127,8 @@ describe("fs.globSync", () => {
 
   it("can filter out files", () => {
     const exclude = (path: string) => path.endsWith(".js");
-    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
-    expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
+    const expected = isWindows ? ["a", "a\\bar.txt"] : ["a", "a/bar.txt"];
+    expect(fs.globSync("a/**", { cwd: tmp, exclude }).sort()).toStrictEqual(expected);
   });
   it("can filter out files (2)", () => {
     const exclude = ["**/*.js"];
@@ -168,6 +168,40 @@ describe("fs.promises.glob", () => {
 
   it("is named 'glob'", () => {
     expect(fs.promises.glob.name).toEqual("glob");
+  });
+
+  describe("invalid arguments", () => {
+    // Node's fs.promises.glob is an async generator: the iterator is always
+    // returned and validation errors reject the first .next() instead of
+    // throwing synchronously at the call site.
+    it.each([
+      ["non-string pattern", () => fs.promises.glob(1 as any)],
+      ["non-object options", () => fs.promises.glob("*", 1 as any)],
+      ["object pattern", () => fs.promises.glob({} as any)],
+      ["non-string array element", () => fs.promises.glob(["*", 1] as any)],
+      ["invalid exclude", () => fs.promises.glob("*", { exclude: "bad" as any })],
+      ["invalid followSymlinks", () => fs.promises.glob("*", { followSymlinks: 1 as any })],
+    ])("%s: returns iterator, first .next() rejects", async (_name, mk) => {
+      let it: any;
+      expect(() => (it = mk())).not.toThrow();
+      expect(typeof it[Symbol.asyncIterator]).toBe("function");
+      const next = it.next();
+      expect(next).toBeInstanceOf(Promise);
+      await expect(next).rejects.toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+
+    it("for-await catches the validation error", async () => {
+      const it = fs.promises.glob("*", { exclude: "bad" as any });
+      let caught: any;
+      try {
+        for await (const _ of it) {
+        }
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(TypeError);
+      expect(caught.code).toBe("ERR_INVALID_ARG_TYPE");
+    });
   });
 
   it("returns an AsyncIterable over matched paths", async () => {
@@ -211,8 +245,9 @@ describe("fs.promises.glob", () => {
 
   it("can filter out files", async () => {
     const exclude = (path: string) => path.endsWith(".js");
-    const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
-    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+    const expected = isWindows ? ["a", "a\\bar.txt"] : ["a", "a/bar.txt"];
+    const paths = await Array.fromAsync(fs.promises.glob("a/**", { cwd: tmp, exclude }));
+    expect(paths.sort()).toStrictEqual(expected);
   });
 
   it("can filter out files (2)", async () => {
@@ -232,3 +267,31 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+describe("fs.globSync exclude with withFileTypes", () => {
+  it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {
+    const dir = tempDirWithFiles("glob-exclude-dirent", {
+      "skip/inner.txt": "x",
+      "keep/inner.txt": "y",
+    });
+    // The Dirents handed to exclude must be stat'ed relative to options.cwd,
+    // not process.cwd() (a relative lookup would silently skip the callback).
+    const seen: string[] = [];
+    const results = fs.globSync("**", {
+      cwd: dir,
+      withFileTypes: true,
+      exclude: (dirent: any) => {
+        seen.push(dirent.name);
+        return dirent.name === "skip";
+      },
+    }) as any[];
+    expect(seen).toContain("skip");
+    const names = results.map(d => d.name);
+    expect(names).toContain("keep");
+    expect(names).not.toContain("skip");
+    // skip/inner.txt pruned with its directory; keep/inner.txt survives
+    const inners = results.filter(d => d.name === "inner.txt");
+    expect(inners).toHaveLength(1);
+    expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});

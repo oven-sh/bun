@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -139,6 +139,16 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
+    it("bails out on optional-chain index into enum", () => {
+      const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      expect(lastLine(ts.parsed(pre + 'export let y = Foo["A"];', false))).toBe("export let y = 0 /* A */;");
+      expect(lastLine(ts.parsed(pre + 'export let y = Foo?.["A"];', false))).toBe('export let y = Foo?.["A"];');
+      expect(lastLine(ts.parsed(pre + 'export let y = Foo?.["A"]();', false))).toBe('export let y = Foo?.["A"]();');
+      expect(lastLine(ts.parsed(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
+      expect(lastLine(ts.parsedMin(pre + 'export let y = Foo?.["A"];', false))).toBe("export let y = Foo?.A;");
+      expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
+    });
   });
 
   describe("TypeScript", () => {
@@ -153,6 +163,267 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it('reports Expected ":" for a conditional expression missing its colon', () => {
+      const err = ts.expectParseError;
+      err("let x = a ? b;", 'Expected ":" but found ";"');
+      err("(a ? b)", 'Expected ":" but found ")"');
+      err("x = a ? b c", 'Expected ":" but found "c"');
+    });
+
+    it("contextual keywords used as plain identifiers keep their statements", () => {
+      const exp = ts.expectPrinted_;
+
+      exp("declare = t => 0;", "declare = (t) => 0;\n");
+      exp("declare = (...t) => R;", "declare = (...t) => R;\n");
+      exp("declare.foo = 1;", "declare.foo = 1;\n");
+      exp("interface = t => 0;", "interface = (t) => 0;\n");
+      exp("type = t => 0;", "type = (t) => 0;\n");
+      exp("namespace = t => 0;", "namespace = (t) => 0;\n");
+      exp("module = t => 0;", "module = (t) => 0;\n");
+      exp("abstract = t => 0;", "abstract = (t) => 0;\n");
+      exp("global = t => 0;", "global = (t) => 0;\n");
+      exp(
+        "abstract = () => {}\nclass Foo { m() { return 1 } }",
+        "abstract = () => {};\n\nclass Foo {\n  m() {\n    return 1;\n  }\n}",
+      );
+
+      exp("declare const x: number", "");
+      exp("declare let x: number", "");
+      exp("declare function f(): void", "");
+      exp("declare class Foo {}", "");
+    });
+
+    it("contextual keywords followed by a newline apply ASI instead of acting as modifiers", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // Statement-level "declare": a newline splits into "declare;" + the following declaration.
+      exp("declare\nfunction foo() { return 1 }\nfoo()", "declare;\nfunction foo() {\n  return 1;\n}\nfoo();\n");
+      exp("declare\nlet x = 1\nuse(x)", "declare;\nlet x = 1;\nuse(x);\n");
+      exp("declare\nclass Foo {}\nnew Foo", "declare;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("declare function foo(): void", "");
+      exp("declare let x: number", "");
+
+      // Statement-level "abstract": a newline splits into "abstract;" + "class Foo {}".
+      exp("abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("abstract class Foo { abstract bar(): void }\nnew Foo", "class Foo {\n}\nnew Foo;\n");
+
+      // Statement-level "interface": a newline splits into three statements.
+      exp("interface\nFoo\n{ sideEffect() }", "interface;\nFoo;\n{\n  sideEffect();\n}");
+      exp("interface Foo { x: number }", "");
+
+      // "export interface \n Foo {}" is a syntax error, matching esbuild.
+      err("export interface\nFoo {}", 'Unexpected "interface"');
+      // "export default interface \n Foo {}" is allowed (the interface name can be on the next line).
+      exp("export default interface\nFoo {}", "");
+      exp("export default interface Foo {}", "");
+
+      // "export default abstract \n class A {}" exports the identifier `abstract` and declares A separately.
+      exp(
+        "export default abstract\nclass A { foo() { return 1 } }\nnew A",
+        "export default abstract;\n\nclass A {\n  foo() {\n    return 1;\n  }\n}\nnew A;\n",
+      );
+      exp("export default abstract class A {}", "export default class A {\n}");
+
+      // Class body "declare": a newline makes it a field named "declare" followed by a method.
+      exp(
+        "class Foo { declare\n foo() { return 1 } }\nnew Foo().foo()",
+        "class Foo {\n  declare;\n  foo() {\n    return 1;\n  }\n}\nnew Foo().foo();\n",
+      );
+      exp("class Foo { declare foo: number }", "class Foo {\n}");
+
+      // Class body "abstract": a newline makes it a field named "abstract" followed by a method.
+      exp("abstract class A { abstract\n foo() {} }\nnew A", "class A {\n  abstract;\n  foo() {}\n}\nnew A;\n");
+      exp("abstract class A { abstract foo(): void }\nnew A", "class A {\n}\nnew A;\n");
+
+      // Class body "accessor": a newline makes it a field named "accessor" followed by a field.
+      exp("class A { accessor\n x = 1 }\nnew A", "class A {\n  accessor;\n  x = 1;\n}\nnew A;\n");
+
+      // Class body "get"/"set" followed by "*": the asterisk starts a generator; the prior word is a field.
+      exp("class A { get\n *x() {} }\nnew A", "class A {\n  get;\n  *x() {}\n}\nnew A;\n");
+      exp("class A { set\n *x() {} }\nnew A", "class A {\n  set;\n  *x() {}\n}\nnew A;\n");
+      // "get"/"set" without the generator star still bind to the next key across a newline.
+      exp("class A { get\n x() { return 1 } }", "class A {\n  get x() {\n    return 1;\n  }\n}");
+
+      // "declare X" where X is not a valid ambient declaration is rejected, so a
+      // newline-split keyword cannot leave the remainder as live runtime code.
+      err("declare interface\nFoo\n{ sideEffect() }", 'Unexpected "interface"');
+      err("declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("declare type\nFoo = number", 'Unexpected "type"');
+      err("declare namespace\nFoo { sideEffect() }", 'Unexpected "namespace"');
+      err("declare module\nFoo { sideEffect() }", 'Unexpected "module"');
+      err("declare declare\nlet x = 1", 'Unexpected "declare"');
+      err("declare foo", 'Unexpected "foo"');
+      err("declare foo: bar", 'Unexpected "foo"');
+      err("declare module : es2015", 'Unexpected "module"');
+      err("export declare interface\nFoo {}", 'Unexpected "interface"');
+      err("export declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      // All valid "declare X" forms still emit nothing.
+      exp("declare function f(): void", "");
+      exp("declare class C {}", "");
+      exp("declare enum E { A }", "");
+      exp("declare namespace N { let x: number }", "");
+      exp("declare abstract class C {}", "");
+      exp("export declare function f(): void", "");
+      exp("export declare const x: number", "");
+      // "export abstract \n class" and "export declare \n class" fall through silently like esbuild.
+      exp("export abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("export declare\nclass Foo {}\nnew Foo", "declare;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("export declare\nlet x = 1\nuse(x)", "declare;\nlet x = 1;\nuse(x);\n");
+      // Inside an ambient body the flag is propagated for body semantics, but the whole
+      // block is erased regardless, so newline-split keywords in the body are harmless.
+      exp("declare namespace N { abstract\nclass Foo {} }", "");
+      exp("declare namespace N { declare\nlet x: number }", "");
+      exp('declare module "m" { abstract\n class Foo {} }', "");
+      exp("declare global { abstract\nclass Foo {} }\nexport {}", "export {};\n");
+
+      // Decorators before "declare"/"abstract" with a newline must still demand a class.
+      err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected "declare"');
+      err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("function dec(c){return c}\n@dec export default abstract\nclass Foo {}", 'Unexpected "abstract"');
+    });
+
+    it("does not crash when export default abstract is an expression followed by a class", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("export default abstract = 1\nclass Foo {}", "export default abstract = 1;\n\nclass Foo {\n}");
+      exp("export default abstract ?? 1\nclass Foo {}", "export default abstract ?? 1;\n\nclass Foo {\n}");
+      exp("export default abstract = 1", "export default abstract = 1;\n");
+
+      exp("export default abstract class Foo { abstract bar(): void }", "export default class Foo {\n}");
+      exp("export default abstract class {}", "export default class {\n}");
+
+      err("@dec export default abstract = 1", 'Expected "class" but found end of file');
+      err("@dec(() => 0) export default abstract = 1\nclass Foo {}", 'Expected "class" but found "class"');
+    });
+
+    it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
+      exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
+      exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
+      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
+
+      exp(
+        "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
+        "abstract = (t) => 0;\n\nclass Foo {\n  m() {\n    return () => () => 0;\n  }\n}",
+      );
+      err("type = (t) => 0 Foo = number; () => () => 0", 'Expected ";" but found "Foo"');
+      err("namespace = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+      err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+    });
+
+    it("scope tracking stays balanced for a forward-declared function inside an if", () => {
+      const exp = ts.expectPrinted_;
+
+      // A function declaration in a single-statement `if`/`else` body gets a fake
+      // block scope so it can be wrapped when it has a body. A TypeScript forward
+      // declaration (no body) emits nothing, so that fake block scope must be
+      // discarded from the scope order; otherwise the next statement's scope is
+      // read out of sync and the parser pops past the topmost scope.
+      exp("if(l)function f(ag): g;\nfor (g in {}) {}", "if (l)\n  ;\nfor (g in {}) {}");
+      exp("if (x) function f(): void;\nfor (y in {}) {}", "if (x)\n  ;\nfor (y in {}) {}");
+      exp("if (x) {} else function g(): void;\nfor (z in {}) {}", "if (x) {}\nfor (z in {}) {}");
+
+      // A function declaration with a body in the same position is still wrapped.
+      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  let f = function(ag) {};\n}\nfor (g in {}) {}");
+
+      // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
+      const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
+      expect(dce.transformSync("if(l)function f(ag): g;\r\nfor (g in {}) {}\r")).toBe(
+        "if (l)\n  ;\nfor (g in {}) {}\n",
+      );
+    });
+
+    it("export default interface that is not an interface declaration does not crash", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      const unexpected = 'Unexpected "interface"';
+
+      // "interface" turns out to start an expression or a labeled statement, not an
+      // interface declaration. None of these can be a default export value.
+      err("export default interface=2", unexpected);
+      err("export default interface + 1", unexpected);
+      err("export default interface.foo()", unexpected);
+      err("export default interface => 1", unexpected);
+      err("export default interface: 2", unexpected);
+
+      // The exact fuzz repro: tsx loader, no trailing newline.
+      expect(() => transpiler.transformSync("export default interface=2")).toThrow(unexpected);
+
+      // Same shapes through the plain JavaScript loader must not crash either.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(() => js.transformSync("export default interface=2")).toThrow(unexpected);
+      expect(() => js.transformSync("export default interface => 1")).toThrow(unexpected);
+      expect(() => js.transformSync("export default interface: 2")).toThrow(unexpected);
+
+      // Real interface declarations still parse and get erased.
+      exp("export default interface Foo {}", "");
+      exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
+    });
+
+    it("export default of an identifier written with unicode escapes does not crash", () => {
+      // `\u{66}` decodes to `f`, but the decoded buffer lives outside the source
+      // contents, so the parse-time Ref is tagged AllocatedName rather than
+      // SourceContentsSlice. The visit pass must still replace it with a real
+      // symbol before calling record_declared_symbol.
+      const exp = ts.expectPrinted_;
+      exp("export default \\u{66}", "export default f");
+      exp("export default \\u0066", "export default f");
+      exp("export default \\u{66}oo", "export default foo");
+      exp("const \\u{66} = 1; export default \\u{66};", "const f = 1;\nexport default f;\n");
+      exp("export default (function \\u{66}() {})", "export default (function f() {})");
+      exp("export default (class \\u{66} {})", "export default (class f {\n})");
+      exp("export default function \\u{66}() {}", "export default function f() {}");
+      exp("export default class \\u{66} {}", "export default class f {\n}");
+
+      // The exact fuzz repro used the ts loader with target:"node".
+      const node = new Bun.Transpiler({ loader: "ts", target: "node" });
+      expect(node.transformSync("export default \\u{66}")).toBe("export default f;\n");
+
+      // The same shape through the plain JavaScript loader.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(js.transformSync("export default \\u{66}")).toBe("export default f;\n");
+      expect(js.transformSync("export default \\u0066oo")).toBe("export default foo;\n");
+
+      // exports.eliminate marks the default export dead and returns early before
+      // the default_name ref is rewritten to a symbol. record_on_exit must not
+      // feed that parse-time ref to record_declared_symbol.
+      const elim = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ["default"] } });
+      expect(elim.transformSync("export default foo")).toBe("");
+      expect(elim.transformSync("export default \\u{66}")).toBe("");
+      expect(elim.transformSync("export default \\u{66}oo")).toBe("");
+    });
+
+    it("rejects export clauses inside a non-declare namespace", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // Fuzz repro: an export clause referencing a sibling namespace member
+      // used to panic in the printer ("index out of bounds" on import_records).
+      err("namespace M {\rexport import M_A = M;}\r\nexport namespace M {\rexport {M_A as a};}\r", "Unexpected {");
+      err("namespace M { export import M_A = M; }\nexport namespace M { export { M_A as a }; }", "Unexpected {");
+
+      // esbuild and tsc (TS1194) both reject export declarations in a namespace.
+      err("namespace M { const x = 1; export { x }; }", "Unexpected {");
+      err("namespace M { export {}; }", "Unexpected {");
+      err("module M { const x = 1; export { x }; }", "Unexpected {");
+      err("namespace M { export { x } from 'y'; }", "Unexpected {");
+      err("namespace M { export * from 'y'; }", "Unexpected *");
+
+      // Still allowed in ambient contexts, where the body is type-only and erased.
+      exp("declare namespace M { export { x }; }", "");
+      exp("declare module 'm' { export { x }; }", "");
+      exp("declare namespace M { export * from 'y'; }", "");
+      exp("declare namespace A { namespace B { export { x }; } }", "");
+
+      // "export import" aliases inside a namespace keep working.
+      exp("namespace M { export import M_A = M; }", "var M;\n((M) => {\n  M.M_A = M;\n})(M ||= {})");
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -163,10 +434,159 @@ describe("Bun.Transpiler", () => {
       err("const x: Foo<> = {}", "Unexpected >");
     });
 
+    it("does not crash on an unterminated template literal after type arguments", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      err("new C<T>\n`", "Unterminated string literal");
+      err("new C<T>`", "Unterminated string literal");
+      err("f<T>`", "Unterminated string literal");
+      exp("new C<T>`ok`", "new C`ok`;\n");
+      exp("f<T>`ok`", "f`ok`;\n");
+    });
+
+    it("reports a parse error for a truncated class-in-extends without tripping the scope-order assert", async () => {
+      // An unterminated class-in-extends pushes two ClassBody scopes at the same
+      // EOF loc during error recovery. Run in a subprocess so the debug-only
+      // scope-order assert surfaces as a test failure instead of killing the runner.
+      const cases = {
+        "class o extends class": 'Expected "{" but found end of file',
+        "(class extends class": 'Expected "{" but found end of file',
+        "class o extends (class": 'Expected "{" but found end of file',
+        "class o extends class extends class": 'Expected "{" but found end of file',
+      };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const t = new Bun.Transpiler({ loader: "tsx", target: "bun" });
+            const out = [];
+            for (const input of ${JSON.stringify(Object.keys(cases))}) {
+              try {
+                t.transformSync(input);
+                out.push("<no error>");
+              } catch (e) {
+                out.push((e instanceof AggregateError ? e.errors[0] : e).message);
+              }
+            }
+            process.stdout.write(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: Object.values(cases),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("should parse infer extends ternary correctly #9959", () => {
       ts.expectPrinted_("type Foo<T> = T extends infer U ? U : never;", "");
       ts.expectPrinted_("var foo: Foo extends string | infer Foo extends string ? Foo : never", "var foo");
       ts.expectPrinted_("var foo: Foo extends string & infer Foo extends string ? Foo : never", "var foo");
+    });
+
+    it("deeply nested infer constraints in template literal types do not hang the parser", async () => {
+      // Every `infer X extends` constraint attempt that backtracks gets re-parsed as
+      // the `extends` clause of a conditional type. Without memoizing backtracked
+      // attempts, that re-parse repeats the attempts nested inside it, so inputs that
+      // nest the pattern inside template literal types take O(2^depth) time (found by
+      // fuzzing Bun.build with a ~140-level input).
+      const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+      const depth = 128;
+      // Shape found by fuzzing: every constraint attempt fails near EOF (hard error).
+      const malformed =
+        "type LengthDown<\r\n  ? unknown extends " + fill(depth, "`${infer own extends ") + "`${infer $Rest}`\r";
+      // Valid variant: every constraint parses but is followed by "?", so every level
+      // backtracks and re-parses the constraint as part of a conditional type.
+      const valid =
+        "type X = " + fill(depth, "`${infer o extends ") + "number" + fill(depth, " ? 0 : 1}`") + ";\nexport {};\n";
+
+      using dir = tempDir("ts-infer-constraint-hang", {
+        "malformed.ts": malformed,
+        "valid.ts": valid,
+        "check.ts": `
+          const malformed = await Bun.build({ entrypoints: ["./malformed.ts"], target: "browser", throw: false });
+          if (malformed.success) throw new Error("malformed input should fail to parse");
+          const valid = await Bun.build({ entrypoints: ["./valid.ts"], target: "browser", throw: false });
+          if (!valid.success) throw new Error("valid input should build: " + valid.logs.join("\\n"));
+          console.log("DONE");
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "check.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("DONE");
+      expect(exitCode).toBe(0);
+    }, 90_000);
+
+    it("type arguments in expression require a bare '>' closer", () => {
+      // TypeScript's "parseTypeArgumentsInExpression" only accepts a bare ">"
+      // to close the list, so a ">=" (or ">>", ">>>", ">>=", ">>>=") forces
+      // backtracking to the relational/shift interpretation. Previously we
+      // split the ">=" and committed to the type-argument parse, turning e.g.
+      // "f('s', x < 0, x >= 0 ? a : b)" into "f('s', x = b)".
+      const exp = ts.expectPrinted_;
+
+      exp('f("s", x < 0, x >= 0 ? "p:" + x : undefined);', 'f("s", x < 0, x >= 0 ? "p:" + x : undefined);\n');
+      exp("f(x < y, x >= z);", "f(x < y, x >= z);\n");
+      exp("const a = (x < 0, x >= 0 ? y : z);", "const a = (x < 0, x >= 0 ? y : z);\n");
+      exp("f<x>=g<y>;", "f < x >= g;\n");
+      exp("f<x>>g<y>;", "f < x >> g;\n");
+      exp("f<x>>>g<y>;", "f < x >>> g;\n");
+      exp("new C(a < b, a >= b);", "new C(a < b, a >= b);\n");
+
+      // Nested type arguments still work: the inner list runs in a type
+      // context and strips one ">" from ">>" before the outer closer sees it.
+      exp("f<Array<number>>();", "f();\n");
+      exp("f<Array<Array<number>>>();", "f();\n");
+      exp("new f<Array<number>>();", "new f;\n");
+      exp("const g = f<Array<number>>;", "const g = f;\n");
+
+      // A bare ">" followed by "=" on the next token still commits.
+      exp("f<x> = g<y>;", "f = g;\n");
+    });
+
+    it("does not turn '<' ... '>=' into an assignment at runtime", async () => {
+      const source = `
+        const out: unknown[] = [];
+        const f = (...a: unknown[]) => out.push(a);
+        let x: number = 5;
+        f("s", x < 0, x >= 0 ? "p:" + x : undefined);
+        out.push(x);
+        class C { constructor(...a: unknown[]) { out.push(a); } }
+        let a: number = 1, b: number = 2;
+        new C(a < b, a >= b);
+        out.push(a);
+        console.log(JSON.stringify(out));
+      `;
+      using dir = tempDir("ts-ge-type-args", { "entry.ts": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: JSON.stringify([["s", false, "p:5"], 5, [true, false], 1]),
+        exitCode: 0,
+      });
     });
 
     it.todo("instantiation expressions", async () => {
@@ -211,7 +631,7 @@ describe("Bun.Transpiler", () => {
       exp("f.x<<T>() => T>;", "f.x;\n");
       exp("f['x']<<T>() => T>;", 'f["x"];\n');
       exp("f<x>g<y>;", "f < x > g;\n");
-      exp("f<x>=g<y>;", "f = g;\n");
+      exp("f<x>=g<y>;", "f < x >= g;\n");
       exp("f<x>>g<y>;", "f < x >> g;\n");
       exp("f<x>>>g<y>;", "f < x >>> g;\n");
       err("f<x>>=g<y>;", "Invalid assignment target");
@@ -332,6 +752,96 @@ describe("Bun.Transpiler", () => {
       err("enum [] { a }", 'Expected identifier but found "["');
     });
 
+    it("rejects yield/await/this/super in enum initializers", () => {
+      const err = ts.expectParseError;
+      const exp = ts.expectPrinted_;
+
+      // The enum body is lowered into an arrow IIFE, so an enclosing function's
+      // generator/async context must not leak into initializer expressions.
+      err("function *f() { enum x { y = yield 1 } }", 'Cannot use "yield" outside a generator function');
+      err("async function f() { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("async function f() { const enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("let g = async () => { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("enum x { y = await 1 }", '"await" can only be used inside an "async" function');
+      err("enum x { y = this }", 'Cannot use "this" here');
+      err("enum x { y = () => this }", 'Cannot use "this" here');
+      err("class C { m() { enum x { y = this } } }", 'Cannot use "this" here');
+      err("class C extends B { m() { enum x { y = super.foo } } }", 'Unexpected "super"');
+      err("class C extends B { constructor() { super(); enum x { y = super() } } }", 'Unexpected "super"');
+      err("class C { static { enum x { y = super.foo } } }", 'Unexpected "super"');
+      err("declare enum x { y = await 1 }", '"await" can only be used inside an "async" function');
+      err("declare enum x { y = this }", 'Cannot use "this" here');
+
+      // A nested function establishes its own context, so these remain valid.
+      exp(
+        "function *f() { enum x { y = (function*() { yield 1 })() } }",
+        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
+      );
+      exp(
+        "async function f() { enum x { y = (async () => await 1)() } }",
+        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
+      );
+      exp(
+        "enum x { y = (function() { return this })() }",
+        'var x;\n((x) => {\n  x[x["y"] = function() {\n    return this;\n  }()] = "y";\n})(x ||= {})',
+      );
+      // The enclosing context is restored after the body: sibling statements
+      // keep their yield/await/super permissions.
+      exp(
+        "function *f() { enum x { y = 1 } yield 1; }",
+        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
+      );
+      exp(
+        "async function f() { enum x { y = 1 } await 1; }",
+        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
+      );
+      exp(
+        "class C extends B { m() { enum x { y = 1 } super.foo(); } }",
+        'class C extends B {\n  m() {\n    let x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
+      );
+    });
+
+    it("rejects await/this/return in namespace bodies", () => {
+      const err = ts.expectParseError;
+      const exp = ts.expectPrinted_;
+
+      err("namespace x { export const y = await 1; }", '"await" can only be used inside an "async" function');
+      err("namespace x { await 1; }", '"await" can only be used inside an "async" function');
+      err("namespace x { return 1; }", "A return statement cannot be used here");
+      err("namespace x { return; }", "A return statement cannot be used here");
+      err("namespace x { const y: string = this; }", 'Cannot use "this" here');
+      err("namespace x { export const y = () => this; }", 'Cannot use "this" here');
+      err("namespace x.y { return 1; }", "A return statement cannot be used here");
+      err("module x { return 1; }", "A return statement cannot be used here");
+      err("declare namespace x { export const y = this; }", 'Cannot use "this" here');
+      err("namespace x { for await (const y of []); }", 'Cannot use "await" outside an async function');
+
+      // The namespace body lowers into a non-async arrow, where "await" is a
+      // valid binding identifier; the module-level reserved-word rule must
+      // not leak into it.
+      exp("namespace x { let await = 1; }", "var x;\n((x) => {\n  let await = 1;\n})(x ||= {})");
+      exp(
+        "namespace x { export function f() { return 1; } }",
+        "var x;\n((x) => {\n  function f() {\n    return 1;\n  }\n  x.f = f;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export const y = async () => await 1; }",
+        "var x;\n((x) => {\n  x.y = async () => await 1;\n})(x ||= {})",
+      );
+      // Class methods and fields introduce their own "this" binding.
+      exp(
+        "namespace x { export class C { m() { return this } } }",
+        "var x;\n((x) => {\n\n  class C {\n    m() {\n      return this;\n    }\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export class C { f = this } }",
+        "var x;\n((x) => {\n\n  class C {\n    f = this;\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      // The enclosing context is restored after the body: top-level await is
+      // still accepted immediately after a namespace.
+      exp("namespace x { export const y = 1; } await 1;", "var x;\n((x) => {\n  x.y = 1;\n})(x ||= {});\nawait 1");
+    });
+
     it("doesn't crash with functions assigned to enum values", () => {
       const exp = ts.expectPrinted_;
 
@@ -389,6 +899,14 @@ function foo() {}
       exp("let x: [keyof: string]", "let x;\n");
       exp("let x: [readonly: string]", "let x;\n");
       exp("let x: [infer: string]", "let x;\n");
+      exp("let x: [keyof?: string]", "let x;\n");
+      exp("let x: [readonly?: string]", "let x;\n");
+      exp("let x: [infer?: string]", "let x;\n");
+      exp("let x: [import?: string]", "let x;\n");
+      exp("let x: [new?: string]", "let x;\n");
+      exp("let x: [typeof?: string]", "let x;\n");
+      exp("let x: [function?: string]", "let x;\n");
+      exp("let x: [a: number, readonly?: string, ...infer: number[]]", "let x;\n");
       err("let x: A extends B ? keyof : string", "Unexpected :");
       err("let x: A extends B ? readonly : string", "Unexpected :");
       err("let x: A extends B ? infer : string", 'Expected identifier but found ":"');
@@ -450,6 +968,9 @@ function foo() {}
       exp("type Foo = {} extends (infer T extends {}) ? A<T> : never", "");
       exp("let x: A extends B<infer C extends D> ? D : never", "let x;\n");
       exp("let x: A extends B<infer C extends D ? infer C : never> ? D : never", "let x;\n");
+      exp("type Foo = `${infer T extends `${infer U extends `${infer V}`}`}`", "");
+      exp("type Foo = `${infer T extends `${infer U extends string ? 1 : 2}` ? 3 : 4}`", "");
+      exp("let x: T extends infer U extends `${infer V extends W ? 1 : 2}` ? U : never", "let x;\n");
       exp("let x: ([e1, e2, ...es]: any) => any", "let x;\n");
       exp("let x: (...[e1, e2, es]: any) => any", "let x;\n");
       exp("let x: (...[e1, e2, ...es]: any) => any", "let x;\n");
@@ -927,6 +1448,42 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
+    it("re-declaring an import binding that is kept in the output is an error", () => {
+      const err = ts.expectParseError;
+
+      err('import{Observable}from""\nimport{Observable} from "x"', '"Observable" has already been declared');
+      err('import { Foo } from "./x";\nexport class Foo {}', '"Foo" has already been declared');
+      err('import Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import * as Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nfunction Foo() {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;\nvar Foo = 2;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nlet Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nenum Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = require("./y");', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = Bar.Baz;', '"Foo" has already been declared');
+      err('import { Foo, Foo } from "./x";', '"Foo" has already been declared');
+    });
+
+    it("re-declaring an elided import binding is allowed", () => {
+      const exp = ts.expectPrinted_;
+
+      exp('import type { Foo } from "./x";\nclass Foo {}', "class Foo {\n}");
+      exp(
+        'import { type Foo, Bar } from "./x";\nclass Foo {}\nconsole.log(Bar);',
+        'import { Bar } from "./x";\n\nclass Foo {\n}\nconsole.log(Bar);\n',
+      );
+      exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo;\n');
+      exp('import { foo } from "./x";\nfunction foo(): void;', 'import { foo } from "./x";\n');
+
+      const trimming = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
+      expect(trimming.transformSync('import { Foo } from "./x";\nexport class Foo {}')).toBe("export class Foo {\n}\n");
+      expect(trimming.transformSync('import{Observable}from""\nimport{Observable} from "x"')).toBe("");
+      expect(trimming.transformSync('import { Foo } from "./x";\nnamespace Foo { export const x = 1 }')).toBe(
+        "var Foo;\n((Foo) => {\n  Foo.x = 1;\n})(Foo ||= {});\n",
+      );
+    });
+
     it("export = {foo: 123}", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
     });
@@ -953,6 +1510,42 @@ export default class {
   }
 }
       `.trim(),
+      );
+    });
+
+    it("identifier named async followed by as/satisfies is not an arrow function", () => {
+      // https://github.com/evanw/esbuild/issues/4027
+      // https://github.com/microsoft/TypeScript/pull/8444
+      ts.expectPrinted_("function f(async?) { g(async as boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async satisfies boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async in x) }", "function f(async) {\n  g(async in x);\n}");
+      ts.expectPrinted_("function f() { g(async as => boolean) }", "function f() {\n  g(async (as) => boolean);\n}");
+      ts.expectPrinted_(
+        "function f() { g(async satisfies => boolean) }",
+        "function f() {\n  g(async (satisfies) => boolean);\n}",
+      );
+      ts.expectPrinted_("let async = true; let x = async as boolean;", "let async = true;\nlet x = async;\n");
+      ts.expectPrinted_(
+        "let async = true; console.log(async satisfies boolean);",
+        "let async = true;\nconsole.log(async);\n",
+      );
+      ts.expectPrinted_("const async = 1; export default async as any;", "const async = 1;\nexport default async;\n");
+      ts.expectPrinted_("let f = async x => {}", "let f = async (x) => {}");
+      ts.expectParseError("function f(async) { g(async as) }", "Unexpected )");
+
+      // "for (async of" must stay rejected in TypeScript mode once the
+      // lookahead above stops the arrow commit; see the [lookahead != async of]
+      // restriction on the for-of grammar.
+      ts.expectParseError("for (async of [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      ts.expectPrinted_("for (async as any of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async satisfies T of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async! of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async of => {};;);", "for (async (of) => {};; )\n  ;\n");
+      ts.expectPrinted_(
+        "async function f() { for await (async of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
       );
     });
 
@@ -999,6 +1592,28 @@ export default class {
         'const b: { xyz: "baz" } = { xyz: "foo" } satisfies { xyz: "foo" | "bar" };',
         'const b = { xyz: "foo" };\n',
       );
+    });
+
+    it("rejects using declarations in ambient (declare) contexts", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // These used to crash the parser with an index-out-of-bounds panic
+      // because ambient ("declare") bindings are never declared as symbols.
+      err("declare await using basic;var", 'Cannot use "declare" with an "await using" declaration');
+      err("declare using basic;var", 'Cannot use "declare" with a "using" declaration');
+      err("declare using x", 'Cannot use "declare" with a "using" declaration');
+      err("declare await using x", 'Cannot use "declare" with an "await using" declaration');
+      err("declare using x = foo()", 'Cannot use "declare" with a "using" declaration');
+      err("declare await using x = foo()", 'Cannot use "declare" with an "await using" declaration');
+      err("declare namespace NS { using x; }", 'Cannot use "declare" with a "using" declaration');
+      err('declare module "m" { using x; }', 'Cannot use "declare" with a "using" declaration');
+      err("declare global { await using x; }", 'Cannot use "declare" with an "await using" declaration');
+
+      // "declare" on other declarations is still erased without error
+      exp("declare const x: number; var y", "var y");
+      exp("declare let x: number; var y", "var y");
+      exp("declare var x: number; var y", "var y");
     });
   });
 
@@ -1061,6 +1676,144 @@ export default class {
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
+    });
+
+    it("enum in a nested scope uses let", () => {
+      // tsc and esbuild both emit "let" for enums that aren't at the top level
+      // so the binding doesn't leak out of the enclosing block/function scope.
+      ts.expectPrinted_(
+        `{ enum x { y } }`,
+        `{
+  let x;
+  ((x) => {
+    x[x["y"] = 0] = "y";
+  })(x ||= {});
+}`,
+      );
+      ts.expectPrinted_(
+        `function f() { enum x { y } }`,
+        `function f() {
+  let x;
+  ((x) => {
+    x[x["y"] = 0] = "y";
+  })(x ||= {});
+}`,
+      );
+      // Top-level enum still emits "var" so sibling declarations can merge.
+      ts.expectPrinted_(
+        `enum x { y }`,
+        `var x;
+((x) => {
+  x[x["y"] = 0] = "y";
+})(x ||= {})`,
+      );
+    });
+
+    it("enum in a block scope does not leak into the enclosing scope at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{ enum a { b = 1 } }
+          try {
+            console.log(a);
+          } catch (e) {
+            console.log(e instanceof ReferenceError ? "ReferenceError" : e.constructor.name);
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "ReferenceError\n", exitCode: 0 });
+      void stderr;
+    });
+
+    // https://github.com/evanw/esbuild/commit/108484982c8f1d74bd87ce172ae02a6ffe8ddce3
+    it("same-named enums in separate block scopes do not merge at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+            enum a { b = 1 }
+          }
+          {
+            enum a { c = 2 }
+            console.log(JSON.stringify({ c: a.c, two: a[2], b: a.b, one: a[1] }));
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: '{"c":2,"two":"c"}\n', exitCode: 0 });
+      void stderr;
+    });
+
+    const input5 = `namespace ns {
+  export class ns {}
+}`;
+    const output5 = `var ns;
+((_ns) => {
+
+  class ns {
+  }
+  _ns.ns = ns;
+})(ns ||= {})`;
+
+    it("namespace argument renamed to avoid a member with the same name", () => {
+      ts.expectPrinted_(input5, output5);
+    });
+
+    const input6 = `namespace m2 {
+  class m2 {}
+  class _m2 {}
+}`;
+    const output6 = `var m2;
+((__m2) => {
+
+  class m2 {
+  }
+
+  class _m2 {
+  }
+})(m2 ||= {})`;
+
+    it("namespace argument does not collide with declarations in the namespace body", () => {
+      ts.expectPrinted_(input6, output6);
+    });
+
+    // The runtime transpiler does not run a renamer, so the generated closure
+    // argument must not shadow declarations inside the namespace body.
+    it("namespace closure argument does not redeclare members at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `namespace m2 {
+            class m2 {}
+            class _m2 {}
+            export const names = [m2.name, _m2.name];
+          }
+          console.log(JSON.stringify(m2.names));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["m2","_m2"]\n');
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -1302,6 +2055,30 @@ export default <>hi</>
     ).toThrow();
   });
 
+  it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
+    // indexed by the property position instead of a dense counter, leaving garbage in the
+    // skipped slot that `stringHashMapFromArrays` then tried to hash. Run in a subprocess
+    // so a crash surfaces as a test failure instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({ define: { "": "1", FOO: '"bar"' } });
+          process.stdout.write(t.transformSync("console.log(FOO);", "js"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('console.log("bar");');
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -1375,6 +2152,73 @@ console.log(<div {...obj} key="after" />);`),
       `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
 `,
     );
+  });
+
+  // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
+  // (prints symbol.original_name verbatim), so the `generatedSymbolName`
+  // hash suffix on the automatic JSX runtime import is the sole collision
+  // guard against a user local of the same name in the first JSX element's
+  // scope. With `minify.identifiers`, MinifyRenamer assigns distinct slots
+  // and the hash suffix is not emitted.
+  it("JSX automatic runtime import is not shadowed by a user local", () => {
+    const input =
+      "export function f() { let jsx: any; let jsxDEV: any; let Fragment: any; return [<><div /></>, jsx, jsxDEV, Fragment] }";
+
+    const noop = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    }).transformSync(input);
+    expect(noop).toContain("jsxDEV_7x81h0kn(");
+    expect(noop).toContain("Fragment_8vg9x3sq,");
+    expect(noop).toContain("let jsx;");
+    expect(noop).toContain("let jsxDEV;");
+    expect(noop).toContain("let Fragment;");
+    expect(noop).not.toMatch(/\bjsxDEV\(/);
+
+    const minified = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      minify: { identifiers: true },
+      autoImportJSX: true,
+    }).transformSync(input);
+    expect(minified).not.toContain("_7x81h0kn");
+    expect(minified).not.toContain("_8vg9x3sq");
+    // Import aliases must not collide with the user's `let` bindings.
+    const aliases = [...minified.matchAll(/\b\w+ as (\w+)\b/g)].map(m => m[1]);
+    const locals = [...minified.matchAll(/\blet (\w+);/g)].map(m => m[1]);
+    expect(aliases).toHaveLength(2);
+    expect(locals).toHaveLength(3);
+    for (const alias of aliases) {
+      expect(locals).not.toContain(alias);
+    }
+  });
+
+  it("JSX bare key prop followed by key with a value does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({
+            loader: "jsx",
+            define: { "process.env.NODE_ENV": JSON.stringify("development") },
+            logLevel: "error",
+          });
+          process.stdout.write(t.transformSync('console.log(<div key key="duplicate"></div>);'));
+          process.stdout.write(t.transformSync('console.log(<div key className="x" key="duplicate"></div>);'));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      'console.log(jsxDEV_7x81h0kn("div", {}, "duplicate", false, undefined, this));\n' +
+        'console.log(jsxDEV_7x81h0kn("div", {\n  className: "x"\n}, "duplicate", false, undefined, this));\n',
+    );
+    expect(exitCode).toBe(0);
   });
 
   it("parses TSX arrow functions correctly", () => {
@@ -1517,6 +2361,32 @@ console.log(<div {...obj} key="after" />);`),
 }, undefined, true, undefined, this);
 `,
     );
+  });
+
+  // https://github.com/oven-sh/bun/issues/30958
+  // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
+  // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer
+  // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
+  // entity with the same "JSX entity escape is too big" diagnostic it emits
+  // for i32-overflow, instead of forwarding an invalid code point.
+  describe("rejects out-of-range numeric JSX entities without panicking", () => {
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    // Covers: the original fuzzer input (0x76B22B), max+1, i32::MAX, and the
+    // negative-i32 path — parse_int::<i32> accepts a leading '-' so `&#-1;`
+    // lands as a negative CodePoint that must be rejected before it reaches
+    // the u32 cast in push_codepoint_utf16.
+    it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#-1;"])("%s is rejected", entity => {
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
+    });
+
+    // Boundary: 0x10FFFF is the maximum valid code point and must still work.
+    it("&#x10FFFF; (max valid) still transpiles", () => {
+      expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    });
   });
 
   it("require with a dynamic non-string expression", () => {
@@ -1720,6 +2590,35 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("await -x ** 0", "Unexpected **");
     });
 
+    it("for-of loop variable named async", () => {
+      // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
+      // variable, but printing it as the raw token sequence `async of` is a
+      // syntax error, so the printer must parenthesize it.
+      expectPrinted_("for (\\u0061sync of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_("for ((async) of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_(
+        "async function f() { for await (\\u0061sync of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+
+      // The same identifier needs no parentheses when it is not directly followed by `of`
+      expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync[0] of [7]);", "for (async[0] of [7])\n  ;\n");
+      expectPrinted_("for (x[\\u0061sync] of [7]);", "for (x[async] of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync in x);", "for (async in x)\n  ;\n");
+
+      // `let` as a for-of loop variable keeps its parentheses too
+      expectPrinted_("for ((let) of [7]);", "for ((let) of [7])\n  ;\n");
+
+      // The keyword spelling is a syntax error, which is why the parentheses matter
+      expect(() => parsed("for (async of [7]);", false, false)).toThrow();
+      expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      expectPrinted_(
+        "async function f() { for await (async\nof [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+    });
+
     it("await", () => {
       expectPrinted("await x", "await x");
       expectPrinted("await +x", "await +x");
@@ -1757,6 +2656,27 @@ console.log(<div {...obj} key="after" />);`),
     });
     it("import with quote", () => {
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
+    });
+
+    it("import with separator-only or trailing-separator path", () => {
+      expectPrinted_(`import "/"`, `import"/"`);
+      expectPrinted_(`import "//"`, `import"//"`);
+      expectPrinted_(`import "///"`, `import"///"`);
+      expectPrinted_(`import "foo//"`, `import"foo//"`);
+      expectPrinted_(`import "foo///"`, `import"foo///"`);
+      expectPrinted_(`export * from "/"`, `export * from "/"`);
+      expectPrinted_(`export * from "foo//"`, `export * from "foo//"`);
+      expectPrinted_(`export { a } from "/"`, `export { a } from "/"`);
+    });
+
+    it("empty string as import/export clause alias", () => {
+      // ModuleExportName may be any well-formed string literal, including "".
+      expectPrinted_(`import { "" as z } from "m"; z`, `import { "" as z } from "m";\nz`);
+      expectPrinted_(`let z = 1; export { z as "" }`, `let z = 1;\n\nexport { z as "" }`);
+      expectPrinted_(`export { "" as z } from "m"`, `export { "" as z } from "m"`);
+      expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
+      expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
+      expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
     });
 
     it("string quote selection", () => {
@@ -2140,6 +3060,36 @@ console.log(resolve.length)
       expectParseError("[{a = {}}]\nof()", 'Unexpected "="');
       expectParseError("for ([...a, b] in c) {}", 'Unexpected "," after rest pattern');
       expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
+    });
+
+    it("for-in and for-of loop initializers", () => {
+      // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
+      expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");
+
+      // A destructuring binding can never have an initializer in a for-in/for-of head
+      expectParseError("for (var [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var [a] = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // "let" and "const" bindings can never have an initializer in a for-in/for-of head
+      expectParseError("for (let x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (let [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // for-in/for-of heads must have exactly one declaration
+      expectParseError("for (var x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y of z) ;", "for-of loops must have a single declaration");
+
+      // Declarations without an initializer are still allowed
+      expectPrintedNoTrim("for (var x in y) ;", "for (x in y)\n  ;\nvar x;\n");
+      expectPrintedNoTrim("for (var [a] in y) ;", "for ([a] in y)\n  ;\nvar a;\n");
+      expectPrintedNoTrim("for (let [a] of y) ;", "for (let [a] of y)\n  ;\n");
+      expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
     it("regexp", () => {
@@ -2975,16 +3925,38 @@ console.log(foo, array);
       expectPrinted("typeof 'abc'", '"string"');
       expectPrinted("typeof function() {}", '"function"');
       expectPrinted("typeof (() => {})", '"function"');
-      expectPrinted("typeof {}", '"object"');
-      expectPrinted("typeof {foo: 123}", '"object"');
-      expectPrinted("typeof []", '"object"');
-      expectPrinted("typeof [0]", '"object"');
-      expectPrinted("typeof [null]", '"object"');
-      expectPrinted("typeof ['boolean']", '"object"');
+      // Array/object/class literals may contain side effects in their
+      // elements/properties, so `typeof` is not folded for them.
+      expectPrinted("typeof {}", "typeof {}");
+      expectPrinted("typeof {foo: 123}", "typeof { foo: 123 }");
+      expectPrinted("typeof []", "typeof []");
+      expectPrinted("typeof [0]", "typeof [0]");
+      expectPrinted("typeof [null]", "typeof [null]");
+      expectPrinted("typeof ['boolean']", 'typeof ["boolean"]');
+      expectPrinted("typeof [sideEffect()]", "typeof [sideEffect()]");
+      expectPrinted("typeof {x: sideEffect()}", "typeof { x: sideEffect() }");
+      expectPrinted("typeof class { static x = sideEffect(); }", "typeof class {\n  static x = sideEffect();\n}");
 
-      expectPrinted('typeof [] === "object"', "!0");
-      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "!0");
-      expectPrinted("typeof {foo: 123} !== typeof 123", "!0");
+      expectPrinted('typeof [] === "object"', 'typeof [] === "object"');
+      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "typeof { foo: 123 } === typeof { bar: 123 }");
+      expectPrinted("typeof {foo: 123} !== typeof 123", 'typeof { foo: 123 } !== "number"');
+
+      // `!` folds to a boolean only when the operand has no side effects or
+      // can be proven removable. Side-effecting operands are left intact.
+      expectPrinted("![]", "!1");
+      expectPrinted("!{}", "!1");
+      expectPrinted("![1, 2, 3]", "!1");
+      expectPrinted("!{ a: 1 }", "!1");
+      expectPrinted("![sideEffect()]", "![sideEffect()]");
+      expectPrinted("!{ x: sideEffect() }", "!{ x: sideEffect() }");
+      expectPrinted("!(class { static x = sideEffect(); })", "!class {\n  static x = sideEffect();\n}");
+      expectPrinted("!void sideEffect()", "!void sideEffect()");
+      expectPrinted("!!void sideEffect()", "!!void sideEffect()");
+      expectPrinted("!![sideEffect()]", "!![sideEffect()]");
+      expectPrinted("!(sideEffect(), true)", "(sideEffect(), !1)");
+      expectPrinted("!(sideEffect() || 1)", "!(sideEffect() || 1)");
+      expectPrinted("!(sideEffect() && 0)", "!(sideEffect() && 0)");
+      expectPrinted("!typeof sideEffect()", "!typeof sideEffect()");
 
       expectPrinted("undefined === undefined", "!0");
       expectPrinted("undefined !== undefined", "!1");
@@ -3027,8 +3999,19 @@ console.log(foo, array);
       expectPrinted('"" == 0', "!0");
       expectPrinted("1n == 1n", "!0");
       expectPrinted("1234n == 1234n", "!0");
+      expectPrinted("1n == 2n", "!1");
+      expectPrinted("!0n", "!0");
+      expectPrinted("!1n", "!1");
+      // Radix BigInt literals keep their source text, so folds that need a
+      // decimal string bail out instead of producing a wrong constant.
       expectPrinted("0x00n == 0n", "0x00n == 0n");
-      expectPrinted("1n == 2n", "1n == 2n");
+      expectPrinted("0x10n == 16n", "0x10n == 16n");
+      expectPrinted("0x10n == 0x10n", "!0");
+      expectPrinted("!0x0n", "!0x0n");
+      expectPrinted("!0x1n", "!0x1n");
+      expectPrinted("`${0x10n}`", "`${0x10n}`");
+      expectPrinted("`${0b1_0n}`", "`${0b10n}`");
+      expectPrinted("`${10n}`", '"10"');
 
       expectPrinted("'a' === '\\x61'", "!0");
       expectPrinted("'a' === '\\x62'", "!1");
@@ -3462,6 +4445,23 @@ console.log("boop");
     expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
   });
 
+  it("await of the identifier 'using' is not an await using declaration", () => {
+    // "await using" only starts a declaration when followed by an identifier on
+    // the same line. Otherwise it's an "await" expression of the identifier "using".
+    expectPrinted_(
+      "async function f() { await using instanceof o }",
+      "async function f() {\n  await using instanceof o;\n}",
+    );
+    expectPrinted_("async function f() { await using }", "async function f() {\n  await using;\n}");
+    expectPrinted_("async function f() { await using\n x = 1 }", "async function f() {\n  await using;\n  x = 1;\n}");
+    expectPrinted_("async function f() { await using.foo() }", "async function f() {\n  await using.foo();\n}");
+    expectPrinted_(
+      "async function f() { for (await using instanceof o;;); }",
+      "async function f() {\n  for (await using instanceof o;; )\n    ;\n}",
+    );
+    expectBunPrinted_("await using instanceof o", "await using instanceof o");
+  });
+
   it("using top level", () => {
     expectPrintedSnapshot(`
       using a = b;
@@ -3618,12 +4618,170 @@ it("Bun.Transpiler.transformSync stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+}, 60_000);
+
+it("deeply nested expressions error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("- ", n) + "1",
+      n => repeat("f(", n) + "1" + repeat(")", n),
+      n => repeat("[", n) + "1" + repeat("]", n),
+      n => "void " + repeat("- ", n) + "1",
+      n => repeat("[", n) + "() => 1" + repeat("]", n) + ";{ let x; }",
+      n => repeat("[", n) + "1" + repeat("]", n) + "; someLongIdentifier + anotherIdentifier;",
+      n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
+      n => "(a" + repeat(" && a", n) + ") == 1;",
+      n => "f() ? 1 : g()" + repeat(" || g()", n) + ";",
+      n => "let " + repeat("[", n) + "x" + repeat("]", n) + " = y;",
+    ];
+    const minifyShapes = [
+      n => "function f(){let x = 1; return a" + repeat(" && a", n) + " && x}",
+      n =>
+        "function f(){function g(){return x}" +
+        repeat("[", n) +
+        "1" +
+        repeat("]", n) +
+        ";let x = 1;return " +
+        repeat("a", 500) +
+        ";}",
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    for (const shape of minifyShapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js", minify: true }), shape(n));
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
+it("deeply nested TypeScript types error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      // TSX generic arrow function whose "extends" constraint is a deeply nested tuple type
+      { loader: "tsx", code: n => "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" },
+      // same shape nested inside array literals (matches the fuzzer-found input)
+      {
+        loader: "tsx",
+        code: n =>
+          repeat("[", 1000) + "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" + repeat("]", 1000),
+      },
+      // deeply nested tuple type in a type alias
+      { loader: "ts", code: n => "type A = " + repeat("[", n) + "0" + repeat("]", n) + ";" },
+      // deeply nested destructuring pattern in a function type's arguments
+      { loader: "ts", code: n => "type A = (" + repeat("[", n) + "a" + repeat("]", n) + ": any) => void;" },
+    ];
+    for (const { loader, code } of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        const transpiler = new Bun.Transpiler({
+          loader,
+          target: "bun",
+          minifyWhitespace: true,
+          deadCodeElimination: true,
+        });
+        try {
+          transpiler.transformSync(code(n));
+        } catch (e) {
+          if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+        }
+      }
+    }
+    console.log("type-depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("type-depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
+it("deeply nested statement blocks error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("{", n) + 'class Test1 { static "prop1" = 0; }' + repeat("}", n),
+      n => repeat("{", n) + "let x = 1;" + repeat("}", n),
+      n => repeat("if (x) {", n) + "y();" + repeat("}", n),
+      n => "if (x) { y(); }" + repeat(" else if (x) { y(); }", n),
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [600, 800, 990]) {
+        check(
+          new Bun.Transpiler({ loader: "tsx", target: "bun", minifyWhitespace: true, deadCodeElimination: true }),
+          shape(n),
+        );
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+});
+
+it("running a file with deeply nested unary operators does not crash the process", () => {
+  const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
+  const { exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", code],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(signalCode ?? undefined).toBeUndefined();
+  expect([0, 1]).toContain(exitCode);
+});
+
+it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
+  expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
 });
 
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
@@ -3752,5 +4910,404 @@ const Layout = () => {
     const result = transpiler.transformSync(code);
     expect(result).toContain("a: 1");
     expect(result).not.toContain("fn(");
+  });
+});
+
+describe("export of a block-scoped function declaration", () => {
+  const code = "{\n  function encrypt() {}\n}\nexport { encrypt }";
+
+  function expectNotDeclaredError(loader) {
+    const transpiler = new Bun.Transpiler({ loader });
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      const error = e instanceof AggregateError ? e.errors[0] : e;
+      expect(error.message).toBe('"encrypt" is not declared in this file');
+    }
+  }
+
+  it("is a parse error for JavaScript", () => {
+    expectNotDeclaredError("js");
+  });
+
+  it("is a parse error for JSX", () => {
+    expectNotDeclaredError("jsx");
+  });
+
+  it("is stripped like a type-only export for TypeScript", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const out = transpiler.transformSync(code);
+    expect(out).not.toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a top-level function declaration", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("function encrypt() {}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a var declared inside a block", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  var encrypt = 1;\n}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("does not affect block-level function declarations in sloppy mode", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  function f() {}\n}\nmodule.exports = f;");
+    expect(out).toContain("let f = function");
+    expect(out).toContain("module.exports = f");
+  });
+
+  it("reports the error when running a module with this pattern", async () => {
+    using dir = tempDir("block-scoped-fn-export", {
+      "mod.mjs": code + "\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "mod.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('"encrypt" is not declared in this file');
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("using declarations in switch statements", () => {
+  const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
+
+  it("lowers by wrapping the entire switch in a single try/finally", () => {
+    const input =
+      "switch (dom()) {\n case 0:\n using d23 = { [Se]() {} };\n default:\n using d24 = { [ose]() {} };\n }";
+
+    for (const minifyWhitespace of [false, true]) {
+      const out = new Bun.Transpiler({ loader: "jsx", target: "node", minifyWhitespace }).transformSync(input);
+      expect(() => reparse(out)).not.toThrow();
+      expect(out).toMatch(/try\s*\{\s*switch\s*\(dom\(\)\)/);
+      expect(out.match(/finally/g)).toHaveLength(1);
+    }
+  });
+
+  it("lowers `await using` in switch cases the same way", () => {
+    const input = `async function f(x) {
+      switch (x()) {
+        case 0:
+          await using a = y();
+        default:
+          await using b = z();
+      }
+    }`;
+    const out = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out).toMatch(/try\s*\{\s*switch\s*\(x\(\)\)/);
+    expect(out.match(/finally/g)).toHaveLength(1);
+  });
+
+  it("keeps generated temp refs unique across sibling switches in the same scope", () => {
+    const input = `
+      switch (a()) { case 0: using x = { [s]() {} }; }
+      switch (b()) { case 1: using y = { [t]() {} }; }
+    `;
+    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out.match(/finally/g)).toHaveLength(2);
+  });
+
+  it("keeps case bindings const when combined with top-level using declarations", () => {
+    const input = `
+      using top = r();
+      switch (a()) {
+        case 0:
+          using x = { [s]() {} };
+        default:
+          using y = { [t]() {} };
+      }
+    `;
+    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out).toMatch(/const x\s*=\s*__using/);
+    expect(out).toMatch(/const y\s*=\s*__using/);
+    expect(out).not.toMatch(/var [xy]\b/);
+  });
+
+  it("disposes at switch exit in reverse order and keeps bindings visible across cases", async () => {
+    const source = `
+      const order = [];
+      function resource(name) {
+        return { [Symbol.dispose]() { order.push("dispose " + name); } };
+      }
+      function run(value) {
+        switch (value) {
+          case 0:
+            using a = resource("a");
+            order.push("case 0");
+          default:
+            using b = resource("b");
+            order.push("default sees a: " + (a !== undefined));
+        }
+        order.push("after switch");
+      }
+      run(0);
+      console.log(JSON.stringify(order));
+    `;
+
+    const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
+    expect(lowered).toContain("__using");
+
+    using dir = tempDir("using-switch-lowering", { "lowered.mjs": lowered });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lowered.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["case 0", "default sees a: true", "dispose b", "dispose a", "after switch"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("minifyWhitespace keeps the space before keyword operators", () => {
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+
+  it("between a single-character identifier and 'instanceof'", () => {
+    expect(minifier.transformSync("x instanceof y")).toBe("x instanceof y;");
+  });
+
+  it("between a single-character identifier and 'in'", () => {
+    expect(minifier.transformSync("x in y")).toBe("x in y;");
+  });
+
+  it("between a numeric literal and 'in'", () => {
+    expect(minifier.transformSync("1 in y")).toBe("1 in y;");
+  });
+});
+
+it("transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight", async () => {
+  // The async transform parses the input on a work-pool thread. The input bytes
+  // must be copied before the thread hop so that detaching the ArrayBuffer from
+  // the JS thread mid-parse cannot change or free the memory being read.
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 20;
+    const source = "export const original = 12345;";
+    const bytes = new Uint8Array(size).fill(0x20);
+    new TextEncoder().encodeInto(source, bytes);
+    const expected = transpiler.transformSync(new TextDecoder().decode(bytes), "js");
+
+    const promise = transpiler.transform(bytes, "js");
+    // Detach the backing store while the worker thread may still be parsing it.
+    bytes.buffer.transfer(0);
+    // Recycle similarly-sized allocations holding different valid JS so a stale
+    // read of the old backing store would produce observably different output.
+    const decoys = [];
+    for (let i = 0; i < 8; i++) {
+      const decoy = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto("export const replaced" + i + " = " + i + ";", decoy);
+      decoys.push(decoy);
+    }
+    const out = await promise;
+    if (out === expected && !out.includes("replaced")) {
+      console.log("OK");
+    } else {
+      console.log("MISMATCH " + JSON.stringify(out.slice(0, 200)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+// A numeric literal property name like `1e999` overflows to the number Infinity, which the
+// printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
+// keys must be printed as computed properties instead.
+describe("numeric property keys that overflow to Infinity", () => {
+  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+  const plain = new Bun.Transpiler({ loader: "ts" });
+
+  it("are printed as computed properties when minifying whitespace", () => {
+    expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={[1/0]:1};");
+    expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={[1/0](){}};");
+    expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get[1/0](){}};");
+    expect(minifier.transformSync("x = { set 1e999(v) {} };")).toBe("x={set[1/0](v){}};");
+    expect(minifier.transformSync("x = class { 1e999() {} };")).toBe("x=class{[1/0](){}};");
+    expect(minifier.transformSync("x = class { static 1e999() {} };")).toBe("x=class{static[1/0](){}};");
+    expect(minifier.transformSync("x = class { 1e999 = 1 };")).toBe("x=class{[1/0]=1};");
+    expect(minifier.transformSync("x = class { static 1e999 = 1 };")).toBe("x=class{static[1/0]=1};");
+    expect(minifier.transformSync("const { 1e999: y } = x;")).toBe("const{[1/0]:y}=x;");
+    expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({[1/0]:x.y}=z);");
+  });
+
+  it("are printed as computed properties without minification", () => {
+    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { [1 / 0]: 1 };\n");
+    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  [1 / 0]() {}\n};\n");
+    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { [1 / 0]: y } = x;\n");
+  });
+
+  it("handles a method name with hundreds of digits", () => {
+    const digits = Buffer.alloc(325, "9").toString();
+    expect(minifier.transformSync(`(class { ${digits}() {} });`)).toBe("(class{[1/0](){}});");
+  });
+
+  it("still refers to the same property at runtime", () => {
+    const out = minifier.transformSync(`
+      const obj = { 1e999: "object" };
+      const { 1e999: destructured } = { 1e999: "destructured" };
+      class C {
+        1e999() { return "method"; }
+        static 1e999 = "static";
+      }
+      var result = [obj[Infinity], destructured, new C()[Infinity](), C[Infinity]];
+    `);
+    expect(new Function(`${out}; return result;`)()).toEqual(["object", "destructured", "method", "static"]);
+  });
+});
+
+describe("parse error flood", () => {
+  it("reports duplicate-binding floods in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({
+            loader: "js",
+            target: "browser",
+            minifyWhitespace: true,
+            deadCodeElimination: true,
+          });
+          const check = (label, statement, repeats) => {
+            const input = Buffer.alloc(statement.length * repeats, statement).toString();
+            let threw;
+            try {
+              transpiler.transformSync(input);
+            } catch (e) {
+              threw = e;
+            }
+            if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
+            if (!threw.errors.some(e => String(e.message).includes("has already been declared"))) {
+              throw new Error("expected duplicate-declaration errors");
+            }
+            console.log("OK " + label);
+          };
+          const bindings = Buffer.alloc(420, "a,").toString();
+          check("template catch flood", "try {} catch ([" + bindings + "a, \`]) {}\\n", 800);
+          check("duplicate catch flood", "try {} catch ([" + bindings + "a]) {}\\n", 400);
+          console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OK template catch flood");
+    expect(stdout).toContain("OK duplicate catch flood");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+});
+
+describe("multi-line comment scanning", () => {
+  // The lexer's block-comment scanner switches to a SIMD skip
+  // (bun_highway::index_of_interesting_character_in_multiline_comment) when at
+  // least 512 bytes of input remain, so cover sizes on both sides of that
+  // threshold and around vector-width boundaries, plus every byte class the
+  // skip has to stop at ('*', '\r', '\n', non-ASCII).
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const xPad = Buffer.alloc(8193, "x").toString();
+  const pad600 = xPad.slice(0, 600);
+
+  const expectParseError = (code, message) => {
+    try {
+      transpiler.transformSync(code);
+    } catch (er) {
+      let err = er;
+      if (er instanceof AggregateError) {
+        err = er.errors[0];
+      }
+      expect(err.message).toBe(message);
+      return;
+    }
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
+
+  it("strips block comments of every size around the SIMD threshold", () => {
+    const sizes = [];
+    for (let size = 480; size <= 576; size++) sizes.push(size);
+    sizes.push(1000, 4095, 4096, 4097, 8193);
+    for (const size of sizes) {
+      const out = transpiler.transformSync(`/*${xPad.slice(0, size)}*/ pass();`);
+      expect({ size, out }).toEqual({ size, out: "pass();\n" });
+    }
+  });
+
+  it("handles a lone '*' at every offset inside a large comment", () => {
+    const aPad = Buffer.alloc(80, "a").toString();
+    const bPad = Buffer.alloc(700, "b").toString();
+    for (let offset = 0; offset < 80; offset++) {
+      const body = aPad.slice(0, offset) + "*" + bPad.slice(0, 700 - offset);
+      const out = transpiler.transformSync(`/*${body}*/ pass();`);
+      expect({ offset, out }).toEqual({ offset, out: "pass();\n" });
+    }
+  });
+
+  it("handles comments made entirely of '*'", () => {
+    const stars = Buffer.alloc(600, "*").toString();
+    expect(transpiler.transformSync(`/*${stars}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${stars}/ pass();`)).toBe("pass();\n");
+  });
+
+  it("treats newlines inside a large block comment as line terminators (ASI)", () => {
+    for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+      const out = transpiler.transformSync(`function f() { return /*${pad600}${newline}${pad600}*/ 1 }`);
+      expect({ newline, out }).toEqual({ newline, out: "function f() {\n  return;\n}\n" });
+    }
+    // control: no newline anywhere inside the comment, so no ASI
+    expect(transpiler.transformSync(`function f() { return /*${pad600}${pad600}*/ 1 }`)).toBe(
+      "function f() {\n  return 1;\n}\n",
+    );
+  });
+
+  it("scans large comments containing non-ASCII text", () => {
+    expect(transpiler.transformSync(`/*${"é".repeat(400)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${"🦊".repeat(200)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/* ${pad600} 日本語のコメント ${pad600} */ pass();`)).toBe("pass();\n");
+  });
+
+  it("does not corrupt code around a large comment", () => {
+    const dashes = Buffer.alloc(700, "-").toString();
+    const out = transpiler.transformSync(`const a = "before";/*${dashes}*/const b = "after"; console.log(a, b);`);
+    expect(out).toBe('const a = "before";\nconst b = "after";\nconsole.log(a, b);\n');
+  });
+
+  it("handles a large comment that ends exactly at EOF", () => {
+    expect(transpiler.transformSync(`pass(); /*${pad600}*/`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`pass(); /*${pad600}**/`)).toBe("pass();\n");
+  });
+
+  it("reports unterminated large block comments", () => {
+    const message = 'Expected "*/" to terminate multi-line comment';
+    expectParseError(`/*${pad600}`, message);
+    expectParseError(`/*${pad600}*`, message);
+    expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
+    expectParseError(`/*${pad600}🦊`, message);
   });
 });

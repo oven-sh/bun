@@ -1,6 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
 // Helper to run REPL with piped stdin (non-TTY mode) and capture output
@@ -909,6 +910,32 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("string string\n");
       expect(exitCode).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/31225
+    test("bare top-level `this` does not throw (issue #31225)", async () => {
+      // Before the fix this threw `ReferenceError: exports is not defined`
+      // because the parser rewrote top-level `this` to `exports`, and the REPL
+      // IIFE has no `exports` binding.
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "this"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("top-level `this` evaluates to globalThis (issue #31225)", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(typeof this, this === globalThis)"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("object true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("member access on top-level `this` hits the global (issue #31225)", async () => {
+      // `Math` lives on the global, so `this.Math` should be the same object.
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(this.Math === Math)"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 
@@ -1051,5 +1078,174 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       send("test()\n");
       await waitFor("99");
     });
+  });
+
+  // Regression for #31871: the line editor read input one byte at a time and
+  // dropped every byte >= 0x80, so multi-byte UTF-8 (Korean, emoji, etc.) was
+  // silently discarded and the evaluated expression differed from what was typed.
+  test("keeps multi-byte UTF-8 characters typed into the line editor", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send('"a한b".length\n');
+      // "a한b".length is 3; before the fix the 한 was dropped and it was 2.
+      await waitFor(/\n\s*3\b/);
+      // The echoed input line must still contain the Korean character.
+      expect(allOutput()).toContain("한");
+    });
+  });
+
+  test("keeps a full Korean string typed into the line editor", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send('"안녕하세요 영재님".length\n');
+      // 9 characters; before the fix only the ASCII space survived -> 1.
+      await waitFor(/\n\s*9\b/);
+      expect(allOutput()).toContain("안녕하세요 영재님");
+    });
+  });
+
+  test("backspace deletes a whole multi-byte character", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type a Korean char then backspace over it; byte-wise stepping would
+      // leave a truncated UTF-8 sequence behind.
+      send("한");
+      await waitFor("한");
+      send("\x7f"); // Backspace
+      send('"ok".length\n');
+      await waitFor(/\n\s*2\b/);
+      // The dangling Korean char must be gone, leaving a clean expression.
+      expect(allOutput()).toContain('"ok".length');
+    });
+  });
+
+  test("left-arrow navigation steps over a whole multi-byte character", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type `"한"`, then left-arrow twice to land between the opening quote
+      // and 한 (the second move must skip all 3 bytes of 한, not land mid-char),
+      // and insert `b`. The buffer becomes `"b한"`, whose length is 2.
+      send('"한"');
+      await waitFor("한");
+      send("\x1b[D"); // left: between 한 and the closing quote
+      send("\x1b[D"); // left: between the opening quote and 한 (skips 3 bytes)
+      send("b");
+      send("\x05"); // Ctrl+E: move to end of line
+      send(".length\n");
+      await waitFor(/\n\s*2\b/);
+      expect(allOutput()).toContain('"b한"');
+    });
+  });
+
+  test("Ctrl+T transposes whole multi-byte characters", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type `"한b"`, move the cursor between 한 and b, then Ctrl+T. Byte-wise
+      // transposition would split 한; it must swap the two whole codepoints so
+      // the buffer becomes `"b한"` (length 2), not corrupted UTF-8.
+      send('"한b"');
+      await waitFor("한b");
+      send("\x1b[D"); // left: between b and the closing quote
+      send("\x1b[D"); // left: between 한 and b
+      send("\x14"); // Ctrl+T: transpose 한 and b -> "b한"
+      send("\x05"); // Ctrl+E: move to end of line
+      send(".length\n");
+      await waitFor(/\n\s*2\b/);
+      expect(allOutput()).toContain('"b한"');
+    });
+  });
+
+  test("drops a malformed UTF-8 sequence instead of corrupting the buffer", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      // ED A0 80 encodes the lone surrogate U+D800: it has a valid lead byte
+      // and continuation-byte shape but is not valid UTF-8. It must be dropped,
+      // leaving a clean "ab" (length 2), not fed into the buffer.
+      send('"a');
+      await waitFor("a");
+      terminal.write(new Uint8Array([0xed, 0xa0, 0x80]));
+      send('b".length\n');
+      await waitFor(/\n\s*2\b/);
+    });
+  });
+
+  test("a stray lead byte does not swallow the next keystroke", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      // 0xC2 is a 2-byte lead; the following byte (0x62 'b') is not a
+      // continuation byte, so the lead is dropped. The 'b' must still be
+      // processed, giving a clean "ab" (length 2), not "a" (length 1).
+      send('"a');
+      await waitFor("a");
+      terminal.write(new Uint8Array([0xc2, 0x62])); // stray lead + 'b'
+      send('".length\n');
+      await waitFor(/\n\s*2\b/);
+    });
+  });
+});
+
+// History file written on REPL exit must be owner-only (0600), since it can
+// contain pasted credentials. See src/runtime/cli/repl.rs History::save.
+describe.skipIf(isWindows)("REPL history file permissions", () => {
+  test("persists history readable only by the owner", async () => {
+    using dir = tempDir("repl-history-perms", {});
+    const home = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(['const dbUrl = "postgres://user:hunter2@db.internal/prod"', ".exit", ""].join("\n")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        TERM: "dumb",
+        NO_COLOR: "1",
+        HOME: home,
+      },
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    // Legitimate behavior still works: the typed line is persisted to
+    // $HOME/.bun_repl_history on exit.
+    const historyPath = path.join(home, ".bun_repl_history");
+    const content = await Bun.file(historyPath).text();
+    expect(content).toContain("const dbUrl");
+
+    // The file must not be readable or writable by group/other, while the
+    // owner keeps read/write access.
+    const mode = statSync(historyPath).mode & 0o777;
+    expect(mode & 0o077).toBe(0);
+    expect(mode & 0o600).toBe(0o600);
+
+    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(exitCode).toBe(0);
+  });
+
+  test("tightens permissions on a pre-existing history file", async () => {
+    using dir = tempDir("repl-history-perms-existing", {
+      ".bun_repl_history": "1 + 1\n",
+    });
+    const home = String(dir);
+    const historyPath = path.join(home, ".bun_repl_history");
+    chmodSync(historyPath, 0o644);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(['const dbUrl = "postgres://user:hunter2@db.internal/prod"', ".exit", ""].join("\n")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        TERM: "dumb",
+        NO_COLOR: "1",
+        HOME: home,
+      },
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const content = await Bun.file(historyPath).text();
+    expect(content).toContain("const dbUrl");
+
+    const mode = statSync(historyPath).mode & 0o777;
+    expect(mode & 0o077).toBe(0);
+    expect(mode & 0o600).toBe(0o600);
+
+    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(exitCode).toBe(0);
   });
 });

@@ -83,6 +83,15 @@ describe("Glob.match", () => {
     expect(glob.match("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
   });
 
+  test("comma inside a bracket class inside braces is not a branch separator", () => {
+    // `[,]` is a single-character class containing a literal comma, so the
+    // group has three branches: `ts`, `[,]foo`, and nothing after — not a
+    // spurious `]foo` branch split off at the class-interior comma.
+    expect(new Glob("x.{ts,[,]foo}").match("x.,foo")).toBeTrue();
+    expect(new Glob("x.{ts,[,]foo}").match("x.]foo")).toBeFalse();
+    expect(new Glob("x.{ts,[,]foo}").match("x.ts")).toBeTrue();
+  });
+
   test("no early globstar lock-in", () => {
     // see https://github.com/oven-sh/bun/issues/14934
     expect(new Glob(`**/*abc*`).match(`a/abc`)).toBeTrue();
@@ -318,6 +327,37 @@ describe("Glob.match", () => {
     expect(glob.match("ae")).toBeTrue();
     expect(glob.match("bce")).toBeTrue();
     expect(glob.match("bde")).toBeTrue();
+  });
+
+  test("deeply nested braces do not overflow depth counters", () => {
+    const opens = Buffer.alloc(300, "{").toString();
+    const closes = Buffer.alloc(300, "}").toString();
+
+    // First branch matches; skip_branch must scan past >255 nested braces to
+    // find the closing brace of the outer group.
+    let glob = new Glob("{a," + opens + closes + "}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeFalse();
+
+    // Deeply nested braces in the first (non-matching) branch, second branch matches.
+    glob = new Glob("{" + opens + closes + ",a}");
+    expect(glob.match("a")).toBeTrue();
+
+    // Deep nest with content, surrounded by matching branches on both sides.
+    glob = new Glob("{a," + opens + "x" + closes + ",b}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeTrue();
+    expect(glob.match("y")).toBeFalse();
+
+    // Same shape inside a wildcard backtrack.
+    glob = new Glob("*{a," + opens + closes + "}");
+    expect(glob.match("za")).toBeTrue();
+
+    // >32767 consecutive `{` overflows match_brace's group pre-scan counter.
+    // The group never closes, so nothing matches.
+    glob = new Glob(Buffer.alloc(40_000, "{").toString());
+    expect(glob.match("a")).toBeFalse();
+    expect(glob.match("{")).toBeFalse();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

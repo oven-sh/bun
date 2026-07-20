@@ -1,0 +1,70 @@
+# Standalone Windows binary-linking shim PE.
+#
+# This is built by `scripts/build/rust.ts` as a separate freestanding release
+# `exe` artifact (no libc, single-threaded) and `include_bytes!`'d into bun.exe.
+# The same source file (`bun_shim_impl.rs`) is compiled *twice*:
+#
+#   1. As a `mod` of `bun_install` (no `shim_standalone` feature) — exposes
+#      `try_startup_from_bun_js` / `read_without_launch` so bun.exe can run
+#      the launcher logic in-process and skip a CreateProcessW round-trip.
+#   2. As this crate's `[[bin]]` (with `shim_standalone`) — produces the tiny
+#      `bun_shim_impl.exe` that `bun_install` then `include_bytes!`s.
+#
+# The crate is *not* `bun_install` itself: putting `[[bin]]` there would make
+# the bin link the entire `bun_install` lib (50+ crates), and the lib's
+# `include_bytes!("bun_shim_impl.exe")` would depend on its own bin's output.
+# A separate crate keeps the dep graph at `bun_core` + `bun_sys` + `strum`.
+#
+# Dependencies are deliberately tiny: `bun_windows_sys` (leaf Win32 externs,
+# no native C, no `#[no_mangle]` exports) and `bun_opaque` (zero-dep,
+# `#![no_std]`, zero `#[no_mangle]`) are the ONLY workspace crates. Pulling
+# `bun_core` / `bun_sys` / `bun_string` would drag in their `#[no_mangle]`
+# C-ABI surface (`Bun__*`, `__bun_dispatch__*`), which references
+# libuv/simdutf/highway/ICU and makes those undefined symbols link roots — the
+# shim can't satisfy them and shouldn't carry them. `main.rs` provides local
+# stand-ins for the handful of helpers the shared source reaches for
+# (`bun_core::ffi::{slice,slice_mut,zeroed}`, `RacyCell`, `bun_str::w!`,
+# the `bun_sys::windows` re-export layer) under the same paths.
+#
+# Built by `scripts/build/rust.ts` (Windows targets only) before the main
+# `cargo build -p bun_bin`, with `--profile shim` (workspace `[profile.shim]`:
+# panic=abort, opt-level=z, lto, strip) plus `-Zbuild-std=core` /
+# `panic_immediate_abort` / `/ENTRY:shim_main` (no CRT), and the output is
+# copied to `src/install/windows-shim/bun_shim_impl.exe` for `include_bytes!`.
+
+[package]
+name = "bun_shim_impl"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bun_shim_impl"
+path = "main.rs"
+# Never built by `cargo build --workspace` — only the explicit
+# `cargo build -p bun_shim_impl --features shim_standalone` from the build
+# script picks it up.
+required-features = ["shim_standalone"]
+
+[features]
+shim_standalone = []
+
+# Almost no crates.io dependencies: `bstr` / `strum` would defeat `#![no_std]`
+# (they pull `alloc`/`std` into the link). The shared source's two former uses
+# of them — `strum::IntoStaticStr` on `FailReason` (never consumed) and
+# `bstr::BStr` for byte-slice display — are handled with `core`-only code
+# under `cfg(feature = "shim_standalone")`.
+#
+# `bytemuck` is the one exception: it is `#![no_std]` with no `alloc`, exports
+# no `#[no_mangle]` symbols, and inlines to the same (ptr, len*2) arithmetic
+# the hand-written `from_raw_parts` casts compiled to — so it adds zero link
+# roots and lets the shared source's `&[u16] → &[u8]` views stay safe.
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true
+bun_opaque.workspace = true
+bytemuck = { version = "1", default-features = false }

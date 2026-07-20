@@ -1,0 +1,72 @@
+[package]
+name = "bun_bundler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = "1"
+bun_opaque.workspace = true
+bun_dispatch.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+typed-arena.workspace = true
+bun_base64.workspace = true
+bun_alloc.workspace = true
+bun_errno.workspace = true
+bun_analytics.workspace = true
+bun_resolver.workspace = true
+# `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`
+# (both already in this graph), so no cycle.
+bun_resolve_builtins.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_crash_handler.workspace = true
+# bun_css — needed by Chunk.rs/ParseTask.rs/LinkerContext.rs. Unconditional:
+# `bun_js_parser` (an unconditional dep below) already pulls in `bun_css`
+# unconditionally for `BundledAst.css`'s field type, so there is no compile-time
+# saving to be had by gating it.
+bun_css.workspace = true
+bun_dotenv.workspace = true
+bun_event_loop.workspace = true
+bun_glob.workspace = true
+bun_http_types.workspace = true
+bun_parsers.workspace = true
+bun_io.workspace = true
+bun_js_parser.workspace = true
+bun_js_printer.workspace = true
+bun_ast.workspace = true
+bun_ptr.workspace = true
+lol_html.workspace = true
+bun_md.workspace = true
+bun_options_types.workspace = true
+bun_paths.workspace = true
+bun_perf.workspace = true
+bun_router.workspace = true
+bun_sourcemap.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_url.workspace = true
+bun_watcher.workspace = true
+bun_wyhash.workspace = true
+# `bundle_v2.rs:ContentHasher` uses xxh64. Streaming xxh64 comes
+# from `bun_hash::XxHash64Streaming` (the C++/Highway kernel) so the workspace
+# has exactly one xxhash implementation.
+bun_hash.workspace = true
+
+[features]
+default = []
+debug_logs = []
+show_crash_trace = ["bun_crash_handler/show_crash_trace"]

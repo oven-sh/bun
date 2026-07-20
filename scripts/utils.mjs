@@ -2283,6 +2283,20 @@ export async function getBuildMetadata(name) {
 }
 
 /**
+ * @param {string} name
+ * @param {string} value
+ * @returns {Promise<void>}
+ */
+export async function setBuildMetadata(name, value) {
+  if (isBuildkite) {
+    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
+    if (error) {
+      console.error(`Failed to set build meta-data '${name}':`, error);
+    }
+  }
+}
+
+/**
  * @typedef ConnectOptions
  * @property {string} hostname
  * @property {number} port
@@ -2638,26 +2652,32 @@ export function parseAnnotations(content) {
       annotations.push(annotation);
     }
 
-    // Zig compiler error
-    // e.g. /path/to/build.zig:8:19: error: ...
-    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
-    if (zigMessage) {
-      const [, filename, line, column, level] = zigMessage;
-
-      const { match: callStackMatch } = readUntil(/referenced by:/i);
-      if (callStackMatch) {
-        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
-      }
-
+    // rustc / cargo error
+    // e.g. error[E0308]: mismatched types
+    //        --> src/http/lib.rs:553:5
+    // The header line carries the level + (optional) code; the location
+    // arrives on the following `-->` line. Read until the blank line that
+    // separates rustc diagnostics so the annotation body contains the
+    // rendered span + help/note lines.
+    const rustHeader = line.match(/^(error|warning)(\[[A-Z0-9]+\])?: (.+)$/);
+    if (rustHeader && !/\b(generated|emitted)\b/.test(line) /* "warning: 3 warnings emitted" */) {
+      const [, level, code, title] = rustHeader;
+      const { match: locMatch } = readUntil(/-->\s+(.+?):(\d+):(\d+)/, 3);
+      // Swallow the diagnostic body up to the blank-line separator (rustc
+      // always emits one between diagnostics in the human format; cap at 30
+      // for `--message-format=short` which doesn't).
+      readUntil(/^$/, 30);
       const annotation = parseAnnotation({
-        source: "zig",
+        source: "rustc",
         level,
-        filename,
-        line,
-        column,
+        filename: locMatch?.[1],
+        line: locMatch?.[2],
+        column: locMatch?.[3],
+        title: code ? `${code} ${title}` : title,
         content: bufferedLines,
       });
       annotations.push(annotation);
+      continue;
     }
 
     const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
@@ -2738,37 +2758,57 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   if (!isBuildkite) {
     return;
   }
+  // BuildKite rejects annotation contexts > 100 chars (`400 Bad Request: This
+  // context is too long`). rustc diagnostic titles routinely exceed that and
+  // were silently dropped, leaving only short warnings visible in the UI.
+  const ctx = `${context || label}`.slice(0, 100);
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
       encoding: "utf-8",
-      timeout: 5_000,
+      timeout: 30_000,
     },
   );
   if (status === 0) {
     return;
   }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
+  const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
+  if (attempt === 0) {
+    console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
+    return reportAnnotationToBuildKite({ context, label, content, style, priority, attempt: attempt + 1 });
   }
-  const errorContent = formatAnnotationToHtml({
-    title: "annotation error",
-    content: stderr || "",
-    source: "buildkite",
-    level: "error",
+  // Annotations are best-effort: log and move on rather than throwing, which
+  // would abort the test runner mid-suite over a cosmetic failure.
+  console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
+  if (stderr) console.error(stderr);
+}
+
+/**
+ * Mark this Buildkite job as having handled its own failure reporting.
+ *
+ * The repository `.buildkite/hooks/pre-exit` hook posts a generic fallback
+ * annotation for any step that exits non-zero without this marker set, so
+ * infra failures that happen before (or crash) the runner/build scripts are
+ * still surfaced in the build's annotation list instead of being visible only
+ * in the raw job log. Call this from every controlled exit path that has
+ * already posted (or had nothing to post) so the fallback stays quiet. The
+ * marker is build meta-data, which is server-side and so remains visible to
+ * the host pre-exit hook even when the reporter ran inside an ephemeral VM.
+ */
+export function markBuildkiteStepReported() {
+  if (!isBuildkite) return;
+  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  if (!jobId) return;
+  const { status } = nodeSpawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
+    stdio: "ignore",
+    timeout: 30_000,
   });
-  reportAnnotationToBuildKite({
-    context,
-    label: `${label}-error`,
-    content: errorContent,
-    style,
-    priority,
-    attempt: attempt + 1,
-  });
+  if (status !== 0) {
+    console.error(`buildkite-agent meta-data set reported-${jobId} failed (non-fatal)`);
+  }
 }
 
 /**
@@ -3011,15 +3051,18 @@ export function getLoggedInUserCountOrDetails() {
     const users = stdout
       .split("\n")
       .filter(line => /tty|pts/i.test(line))
+      // Only count REMOTE logins (have an `(ip)` suffix from sshd). A local
+      // console/auto-login (e.g. cirruslabs CI VM images log the admin user in
+      // on ttys000 at boot) has no source host and isn't a human debugging the
+      // job — waiting for it would hang the runner forever.
+      .filter(line => /\([^)]+\)\s*$/.test(line))
       .map(line => {
-        // who output format: username terminal date/time (ip)
-        const [username, terminal, datetime, ip] = line.split(/\s+/);
-        return {
-          username,
-          terminal,
-          datetime,
-          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
-        };
+        // `who` output: `username terminal date time (host)`. The date/time
+        // field has spaces, so a plain split() can't slice it cleanly — take
+        // the first two tokens and pull the host from the trailing `(...)`.
+        const [username, terminal] = line.split(/\s+/);
+        const ip = line.match(/\(([^)]+)\)\s*$/)?.[1] || "";
+        return { username, terminal, ip };
       });
 
     if (users.length === 0) {
@@ -3029,7 +3072,7 @@ export function getLoggedInUserCountOrDetails() {
     let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
-      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+      message += `\n- ${user.username} on ${user.terminal}${user.ip ? ` from ${user.ip}` : ""}`;
     }
 
     return message;
@@ -3060,6 +3103,7 @@ const emojiMap = {
   rocket: ["🚀", "rocket"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
 };
 
 /**

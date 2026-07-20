@@ -4,6 +4,19 @@ import url from "node:url";
 
 describe("url.parse", () => {
   // TODO: Support correct prototype and null values.
+  test("parseQueryString returns a null-prototype query object", () => {
+    const inputs = ["/foo/bar?baz=quux", "/foo/bar", "http://example.com/a?baz=quux", "http://example.com/a"];
+    for (const input of inputs) {
+      const { query } = url.parse(input, true);
+      assert.strictEqual(Object.getPrototypeOf(query), null);
+    }
+
+    const { query } = url.parse("/foo/bar?baz=quux", true);
+    assert.strictEqual(query.baz, "quux");
+    assert.strictEqual(query.hasOwnProperty, undefined);
+    assert.strictEqual(query.toString, undefined);
+  });
+
   test.todo("with query string", () => {
     function createWithNoPrototype(properties = []) {
       const noProto = { __proto__: null };

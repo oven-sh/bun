@@ -12,7 +12,7 @@ The LinkerContext operates in several main phases:
 
 ## Main Functions
 
-### 1. `load()` - LinkerContext.zig:187
+### 1. `load()` - LinkerContext.rs:187
 
 **Purpose**: Initializes the LinkerContext with bundle data and prepares the graph for linking.
 
@@ -32,7 +32,7 @@ The LinkerContext operates in several main phases:
 - Entry point processing
 - Memory management setup
 
-### 2. `link()` - LinkerContext.zig:294
+### 2. `link()` - LinkerContext.rs:294
 
 **Purpose**: The main linking orchestrator that coordinates all bundling phases.
 
@@ -53,7 +53,7 @@ The LinkerContext operates in several main phases:
 - Memory corruption checks (in debug builds)
 - Returns the final chunk array
 
-### 3. `generateChunksInParallel()` - generateChunksInParallel.zig:1
+### 3. `generateChunksInParallel()` - generateChunksInParallel.rs:1
 
 **Purpose**: Generates the final output files from chunks using parallel processing.
 
@@ -80,7 +80,7 @@ The LinkerContext operates in several main phases:
 
 ### Core Analysis Phase
 
-#### `scanImportsAndExports.zig`
+#### `scanImportsAndExports.rs`
 
 **Purpose**: Analyzes all import/export relationships across the module graph, determining module compatibility, resolving dependencies, and setting up the foundation for code generation. This is the critical first phase of linking that establishes how modules will interact in the final bundle.
 
@@ -448,7 +448,7 @@ if (targetModule.needsWrapper) {
 
 This function is the foundation of Bun's module compatibility system, ensuring that mixed ES6/CommonJS codebases work correctly while enabling optimal bundling strategies.
 
-#### `doStep5.zig`
+#### `doStep5.rs`
 
 **Purpose**: Creates namespace exports for every file.
 
@@ -461,7 +461,7 @@ This function is the foundation of Bun's module compatibility system, ensuring t
 
 ### Optimization Phase
 
-#### `renameSymbolsInChunk.zig`
+#### `renameSymbolsInChunk.rs`
 
 **Purpose**: Performs symbol renaming within individual chunks to eliminate naming conflicts, enable minification, and ensure proper scoping isolation. This function is critical for generating final output code where variables can be safely renamed without breaking references.
 
@@ -485,17 +485,20 @@ This function is the foundation of Bun's module compatibility system, ensuring t
 
 **Why the Ref System Exists**: Bun's `Ref` struct solves the parallel parsing problem that occurs when processing thousands of files simultaneously:
 
-```zig
-pub const Ref = packed struct(u64) {
-    inner_index: u31,        // Symbol index within the source file
-    tag: enum(u2) {          // Type of reference (symbol, invalid, etc.)
-        invalid,
-        allocated_name,
-        source_contents_slice,
-        symbol,
-    },
-    source_index: u31,       // Index of the source file containing the symbol
+```rust
+// Single packed u64: inner_index | tag | source_index
+#[repr(C, packed(4))]
+pub struct Ref(u64);
+
+pub enum RefTag {
+    Invalid = 0,
+    AllocatedName = 1,
+    SourceContentsSlice = 2,
+    Symbol = 3,
 }
+// ref.inner_index()  -> symbol index within the source file
+// ref.tag()          -> RefTag
+// ref.source_index() -> index of the source file containing the symbol
 ```
 
 **Core Algorithm**: The function operates by analyzing all symbols within a chunk, computing reserved names that cannot be used, and then applying either minification-based renaming (for optimized builds) or number-based renaming (for readable builds).
@@ -533,11 +536,11 @@ _What happens_:
 
 _StableRef structure_:
 
-```zig
+```rust
 // Enables deterministic cross-chunk symbol ordering
-StableRef {
-    stable_source_index: u32,  // Consistent index across builds
-    ref: Ref,                  // Original symbol reference
+pub struct StableRef {
+    pub stable_source_index: IndexInt, // Consistent index across builds
+    pub r#ref: Ref,                    // Original symbol reference
 }
 ```
 
@@ -623,7 +626,7 @@ _CommonJS Wrapper Handling_ (`wrap = .cjs`):
 
 ```javascript
 // Generated wrapper structure:
-var require_moduleName = __commonJS((exports, module) => {
+var require_moduleName = __commonJS(function (exports, module) {
   // Original module code here with isolated scope
   exports.foo = 123;
 });
@@ -675,20 +678,20 @@ if (development) {
 
 _Essential Ref methods used throughout_:
 
-- `ref.isValid()` - returns `this.tag != .invalid`
-- `ref.sourceIndex()` - returns which file the symbol originated from
-- `ref.innerIndex()` - returns the symbol's index within that file
-- `ref.getSymbol(symbol_table)` - retrieves the actual symbol data
+- `ref.is_valid()` - returns `self.tag() != RefTag::Invalid`
+- `ref.source_index()` - returns which file the symbol originated from
+- `ref.inner_index()` - returns the symbol's index within that file
+- `ref.get_symbol(symbol_table)` - retrieves the actual symbol data
 
 _Symbol table organization_:
 
-```zig
+```rust
 // Two-dimensional array structure enables fast parallel merging
 symbol_table[source_index][inner_index] = Symbol {
     original_name: "myVariable",
     link: renamed_symbol_ref,  // Points to final renamed version
     // ... other symbol data
-}
+};
 ```
 
 **Error Handling and Edge Cases**:
@@ -717,7 +720,7 @@ The renamed symbols are then used during final code generation to produce output
 
 ### Chunk Computation Phase
 
-#### `computeChunks.zig`
+#### `computeChunks.rs`
 
 **Purpose**: Determines the final chunk structure based on entry points and code splitting.
 
@@ -729,7 +732,7 @@ The renamed symbols are then used during final code generation to produce output
 - Manages HTML chunk creation
 - Assigns unique keys and templates to chunks
 
-#### `computeCrossChunkDependencies.zig`
+#### `computeCrossChunkDependencies.rs`
 
 **Purpose**: Resolves dependencies between different chunks.
 
@@ -740,7 +743,7 @@ The renamed symbols are then used during final code generation to produce output
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
 
-#### `findAllImportedPartsInJSOrder.zig`
+#### `findAllImportedPartsInJSOrder.rs`
 
 **Purpose**: Determines the order of parts within JavaScript chunks.
 
@@ -751,7 +754,7 @@ The renamed symbols are then used during final code generation to produce output
 - Manages import precedence
 - Ensures proper evaluation order
 
-#### `findImportedCSSFilesInJSOrder.zig`
+#### `findImportedCSSFilesInJSOrder.rs`
 
 **Purpose**: Determines CSS file ordering for JavaScript chunks that import CSS.
 
@@ -761,7 +764,7 @@ The renamed symbols are then used during final code generation to produce output
 - Handles CSS dependency resolution
 - Manages CSS-in-JS import patterns
 
-#### `findImportedFilesInCSSOrder.zig`
+#### `findImportedFilesInCSSOrder.rs`
 
 **Purpose**: Determines the import order for CSS files.
 
@@ -773,7 +776,7 @@ The renamed symbols are then used during final code generation to produce output
 
 ### Code Generation Phase
 
-#### `generateCodeForFileInChunkJS.zig`
+#### `generateCodeForFileInChunkJS.rs`
 
 **Purpose**: Generates JavaScript code for a specific file within a chunk.
 
@@ -784,7 +787,7 @@ The renamed symbols are then used during final code generation to produce output
 - Manages HMR (Hot Module Replacement) code generation
 - Processes wrapper functions and runtime calls
 
-#### `generateCompileResultForJSChunk.zig`
+#### `generateCompileResultForJSChunk.rs`
 
 **Purpose**: Worker function that generates compile results for JavaScript chunks in parallel.
 
@@ -795,7 +798,7 @@ The renamed symbols are then used during final code generation to produce output
 - Error handling in parallel context
 - Integration with thread pool
 
-#### `generateCompileResultForCssChunk.zig`
+#### `generateCompileResultForCssChunk.rs`
 
 **Purpose**: Worker function that generates compile results for CSS chunks in parallel.
 
@@ -806,7 +809,7 @@ The renamed symbols are then used during final code generation to produce output
 - CSS import processing
 - Thread-safe CSS compilation
 
-#### `generateCompileResultForHtmlChunk.zig`
+#### `generateCompileResultForHtmlChunk.rs`
 
 **Purpose**: Worker function that generates compile results for HTML chunks.
 
@@ -817,7 +820,7 @@ The renamed symbols are then used during final code generation to produce output
 - HTML minification
 - Script/stylesheet injection
 
-#### `generateCodeForLazyExport.zig`
+#### `generateCodeForLazyExport.rs`
 
 **Purpose**: Generates code for expression-style loaders that defer code generation until linking.
 
@@ -865,7 +868,7 @@ The function resolves `composes` relationships by visiting the referenced classe
 
 ### Statement Processing
 
-#### `convertStmtsForChunk.zig`
+#### `convertStmtsForChunk.rs`
 
 **Purpose**: Converts and transforms AST statements for final inclusion in output chunks, handling the critical process of adapting module-level statements for different output formats and wrapper contexts.
 
@@ -998,7 +1001,7 @@ var init_demo = __esm(() => {
 
 This function is essential for maintaining JavaScript module semantics across different output formats while enabling optimal bundling strategies.
 
-#### `convertStmtsForChunkForDevServer.zig`
+#### `convertStmtsForChunkForDevServer.rs`
 
 **Purpose**: Special statement conversion for development server (HMR).
 
@@ -1010,7 +1013,7 @@ This function is essential for maintaining JavaScript module semantics across di
 
 ### Post-Processing Phase
 
-#### `prepareCssAstsForChunk.zig`
+#### `prepareCssAstsForChunk.rs`
 
 **Purpose**: Prepares CSS ASTs before final processing.
 
@@ -1020,7 +1023,7 @@ This function is essential for maintaining JavaScript module semantics across di
 - CSS optimization passes
 - Asset reference resolution
 
-#### `postProcessJSChunk.zig`
+#### `postProcessJSChunk.rs`
 
 **Purpose**: Final processing of JavaScript chunks after code generation.
 
@@ -1031,7 +1034,7 @@ This function is essential for maintaining JavaScript module semantics across di
 - Source map integration
 - Output formatting
 
-#### `postProcessCSSChunk.zig`
+#### `postProcessCSSChunk.rs`
 
 **Purpose**: Final processing of CSS chunks.
 
@@ -1042,7 +1045,7 @@ This function is essential for maintaining JavaScript module semantics across di
 - CSS minification
 - Source map generation
 
-#### `postProcessHTMLChunk.zig`
+#### `postProcessHTMLChunk.rs`
 
 **Purpose**: Final processing of HTML chunks.
 
@@ -1055,7 +1058,7 @@ This function is essential for maintaining JavaScript module semantics across di
 
 ### Output Phase
 
-#### `writeOutputFilesToDisk.zig`
+#### `writeOutputFilesToDisk.rs`
 
 **Purpose**: Writes all generated chunks and assets to the filesystem.
 

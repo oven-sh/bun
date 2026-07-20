@@ -1,42 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { fillRepeating, isBroken, isMacOS, isWindows } from "harness";
-
-const routes = {
-  "/foo": new Response("foo", {
-    headers: {
-      "Content-Type": "text/plain",
-      "X-Foo": "bar",
-    },
-  }),
-  "/big": new Response(
-    (() => {
-      const buf = Buffer.alloc(1024 * 1024 * 4);
-      const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_*^!@#$%^&*()+=?><:;{}[]|\\ \n";
-
-      function randomAnyCaseLetter() {
-        return alphabet[(Math.random() * alphabet.length) | 0];
-      }
-
-      for (let i = 0; i < 1024; i++) {
-        buf[i] = randomAnyCaseLetter();
-      }
-      fillRepeating(buf, 0, 1024);
-      return buf;
-    })(),
-  ),
-  "/redirect": Response.redirect("/foo/bar", 302),
-  "/foo/bar": new Response("/foo/bar", {
-    headers: {
-      "Content-Type": "text/plain",
-      "X-Foo": "bar",
-    },
-  }),
-  "/redirect/fallback": Response.redirect("/foo/bar/fallback", 302),
-};
-const static_responses = {};
-for (const [path, response] of Object.entries(routes)) {
-  static_responses[path] = await response.clone().blob();
-}
+import { isBroken, isMacOS, tempDir } from "harness";
+import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
   let server: Server;
@@ -102,70 +66,6 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
       expect(res.headers.get("Content-Length")).toBe(static_responses[path].size.toString());
       expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
     });
-
-    describe.each(["access .body", "don't access .body"])("stress (%s)", label => {
-      test.each(["arrayBuffer", "blob", "bytes", "text"])(
-        "%s",
-        async method => {
-          const byteSize = static_responses[path][method]?.size;
-
-          const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
-
-          // macOS limits backlog to 128.
-          // When we do the big request, reduce number of connections but increase number of iterations
-          const batchSize = Math.ceil((byteSize > 1024 * 1024 ? 48 : 64) / (isWindows ? 8 : 1));
-          const iterations = Math.ceil((byteSize > 1024 * 1024 ? 10 : 12) / (isWindows ? 8 : 1));
-
-          async function iterate() {
-            let array = new Array(batchSize);
-            const route = `${server.url}${path.substring(1)}`;
-            for (let i = 0; i < batchSize; i++) {
-              array[i] = fetch(route)
-                .then(res => {
-                  expect(res.status).toBe(200);
-                  expect(res.url).toBe(route);
-                  if (label === "access .body") {
-                    res.body;
-                  }
-                  return res[method]();
-                })
-                .then(output => {
-                  expect(output).toStrictEqual(bytes);
-                });
-            }
-
-            await Promise.all(array);
-
-            Bun.gc();
-          }
-
-          for (let i = 0; i < iterations; i++) {
-            await iterate();
-          }
-
-          Bun.gc(true);
-          const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          let lastRSS = baseline;
-          console.log("Start RSS", baseline);
-          for (let i = 0; i < iterations; i++) {
-            await iterate();
-            const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-            if (lastRSS + 50 < rss) {
-              console.log("RSS Growth", rss - lastRSS);
-            }
-            lastRSS = rss;
-          }
-          Bun.gc(true);
-
-          const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          expect(rss).toBeLessThan(4092);
-          const delta = rss - baseline;
-          console.log("Final RSS", rss);
-          console.log("Delta RSS", delta);
-        },
-        40 * 1000,
-      );
-    });
   });
 
   it("/redirect", async () => {
@@ -192,5 +92,163 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(`${server.url}foo/bar/fallback`);
     expect(handler.mock.calls.length, "Handler should be called").toBe(previousCallCount + 1);
+  });
+});
+
+describe("static route Content-Type", () => {
+  async function contentTypeOf(server: Server, path: string) {
+    const res = await fetch(new URL(path, server.url));
+    expect(res.status).toBe(200);
+    await res.arrayBuffer();
+    return res.headers.get("content-type");
+  }
+
+  // Registering a Response snapshots (and consumes) its body. Doing that must not
+  // change the Content-Type the next registration of the same Response produces.
+  test.each([
+    ["string body", () => new Response("hello"), "text/plain;charset=utf-8"],
+    [
+      "typed Blob body",
+      () => new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" })),
+      "text/html;charset=utf-8",
+    ],
+    ["explicit header", () => new Response("hello", { headers: { "Content-Type": "text/foo" } }), "text/foo"],
+    ["Response.json", () => Response.json({ a: 1 }), "application/json;charset=utf-8"],
+    ["Uint8Array body", () => new Response(new Uint8Array([1, 2, 3])), null],
+  ])("is stable across registrations: %s", async (_label, make, expected) => {
+    const response = make();
+
+    using server = Bun.serve({
+      port: 0,
+      static: { "/a": response, "/b": response },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect({
+      a: await contentTypeOf(server, "/a"),
+      b: await contentTypeOf(server, "/b"),
+    }).toEqual({ a: expected, b: expected });
+
+    // server.reload() re-registers the very same Response object.
+    server.reload({ static: { "/a": response }, fetch: () => new Response("fallback") });
+    expect(await contentTypeOf(server, "/a")).toBe(expected);
+  });
+
+  // Reading .headers materializes a Blob body's implicit Content-Type onto the
+  // Response, which used to be the only way a static route ever saw it.
+  test("does not depend on whether .headers was read first", async () => {
+    const untouched = new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" }));
+    const touched = new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" }));
+    touched.headers;
+
+    using server = Bun.serve({
+      port: 0,
+      static: { "/untouched": untouched, "/touched": touched },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect({
+      untouched: await contentTypeOf(server, "/untouched"),
+      touched: await contentTypeOf(server, "/touched"),
+    }).toEqual({
+      untouched: "text/html;charset=utf-8",
+      touched: "text/html;charset=utf-8",
+    });
+  });
+
+  test("a string body still serves its body bytes unchanged", async () => {
+    const response = new Response("▲");
+
+    using server = Bun.serve({
+      port: 0,
+      static: { "/a": response, "/b": response },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect(await (await fetch(new URL("/a", server.url))).text()).toBe("▲");
+    expect(await (await fetch(new URL("/b", server.url))).text()).toBe("▲");
+  });
+});
+
+// RFC 9110 §6.6.1: Date is a singleton field. When a Response already carries a
+// Date header, the static-route serializer must not append Bun's own clock.
+describe("static route Date header", () => {
+  const pinned = "Mon, 01 Jan 2001 00:00:00 GMT";
+
+  async function rawDateLines(port: number, path: string, method = "GET") {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let buf = "";
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        open(s) {
+          s.write(`${method} ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+        },
+        data(_s, d) {
+          buf += Buffer.from(d).toString("latin1");
+        },
+        close() {
+          resolve(buf);
+        },
+        error() {
+          resolve(buf);
+        },
+      },
+    });
+    const head = (await promise).split("\r\n\r\n")[0];
+    return head.split("\r\n").filter(l => /^date:/i.test(l));
+  }
+
+  test("a user-set Date is sent exactly once", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/static": new Response("B", { headers: { date: pinned } }),
+        "/handler": () => new Response("B", { headers: { date: pinned } }),
+      },
+      fetch: () => new Response("B", { headers: { date: pinned } }),
+    });
+
+    expect({
+      static: await rawDateLines(server.port, "/static"),
+      handler: await rawDateLines(server.port, "/handler"),
+      fallback: await rawDateLines(server.port, "/fallback"),
+    }).toEqual({
+      static: [`Date: ${pinned}`],
+      handler: [`Date: ${pinned}`],
+      fallback: [`Date: ${pinned}`],
+    });
+
+    // HEAD and 304 go through the same header-writing path.
+    expect(await rawDateLines(server.port, "/static", "HEAD")).toEqual([`Date: ${pinned}`]);
+  });
+
+  test("a user-set Date on a Bun.file route is sent exactly once", async () => {
+    using dir = tempDir("static-date", { "a.txt": "hi" });
+    await using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/file": new Response(Bun.file(`${dir}/a.txt`), { headers: { date: pinned } }),
+      },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect(await rawDateLines(server.port, "/file")).toEqual([`Date: ${pinned}`]);
+  });
+
+  test("without a user-set Date, exactly one auto Date is sent", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: { "/static": new Response("B") },
+      fetch: () => new Response("fallback"),
+    });
+
+    const dates = await rawDateLines(server.port, "/static");
+    expect(dates).toHaveLength(1);
+    expect(dates[0]).not.toContain(pinned);
   });
 });

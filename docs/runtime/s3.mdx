@@ -11,7 +11,7 @@ Production servers often read, upload, and write files to S3-compatible object s
   <img src="/images/bun-s3-node.gif" alt="Bun's S3 API is fast" />
 </Frame>
 
-Bun provides fast, native bindings for interacting with S3-compatible object storage services. Its S3 API is designed to feel similar to fetch's `Response` and `Blob` APIs (like Bun's local filesystem APIs).
+Bun provides fast, native bindings for interacting with S3-compatible object storage services. Its S3 API resembles fetch's `Response` and `Blob` APIs (like Bun's local filesystem APIs).
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { s3, write, S3Client } from "bun";
@@ -47,8 +47,6 @@ S3 is the [de facto standard](https://en.wikipedia.org/wiki/De_facto_standard) i
 
 ## Basic Usage
 
-There are several ways to interact with Bun's S3 API.
-
 ### `Bun.S3Client` & `Bun.s3`
 
 `Bun.s3` is equivalent to `new Bun.S3Client()`, relying on environment variables for credentials.
@@ -82,11 +80,11 @@ The **`file`** method in `S3Client` returns a **lazy reference to a file on S3**
 const s3file: S3File = client.file("123.json");
 ```
 
-Like `Bun.file(path)`, the `S3Client`'s `file` method is synchronous. It does zero network requests until you call a method that depends on a network request.
+Like `Bun.file(path)`, the `S3Client`'s `file` method is synchronous. It makes no network requests until you call a method that needs one.
 
 ### Reading files from S3
 
-If you've used the `fetch` API, you're familiar with the `Response` and `Blob` APIs. `S3File` extends `Blob`. The same methods that work on `Blob` also work on `S3File`.
+`S3File` extends `Blob`, so the same methods that work on `Blob` also work on `S3File`.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 // Read an S3File as text
@@ -112,9 +110,7 @@ for await (const chunk of stream) {
 
 Methods like `text()`, `json()`, `bytes()`, or `arrayBuffer()` avoid duplicating the string or bytes in memory when possible.
 
-If the text happens to be ASCII, Bun directly transfers the string to JavaScriptCore (the engine) without transcoding and without duplicating the string in memory. When you use `.bytes()` or `.arrayBuffer()`, it will also avoid duplicating the bytes in memory.
-
-These helper methods not only simplify the API, they also make it faster.
+If the text happens to be ASCII, Bun transfers the string directly to JavaScriptCore (the engine) without transcoding and without duplicating it in memory. `.bytes()` and `.arrayBuffer()` also avoid duplicating the bytes in memory.
 
 ### Writing & uploading files to S3
 
@@ -159,7 +155,7 @@ await Bun.write(s3file, "Hello World!");
 
 ### Working with large files (streams)
 
-Bun automatically handles multipart uploads for large files and provides streaming capabilities. The same API that works for local files also works for S3 files.
+Bun automatically handles multipart uploads for large files and supports streaming. The same API that works for local files also works for S3 files.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 // Write a large file
@@ -187,15 +183,15 @@ await writer.end();
 
 When your production service needs to let users upload files to your server, it's often more reliable for the user to upload directly to S3 instead of your server acting as an intermediary.
 
-To facilitate this, you can presign URLs for S3 files. This generates a URL with a signature that allows a user to securely upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
+To do this, presign URLs for S3 files. Presigning generates a URL with a signature that lets a user upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
 
-The default behaviour is to generate a `GET` URL that expires in 24 hours. Bun attempts to infer the content type from the file extension. If inference is not possible, it will default to `application/octet-stream`.
+By default, Bun generates a `GET` URL that expires in 24 hours.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { s3 } from "bun";
 
 // Generate a presigned URL that expires in 24 hours (default)
-const download = s3.presign("my-file.txt"); // GET, text/plain, expires in 24 hours
+const download = s3.presign("my-file.txt"); // GET, expires in 24 hours
 
 const upload = s3.presign("my-file", {
   expiresIn: 3600, // 1 hour
@@ -277,7 +273,7 @@ const url = s3file.presign({
 
 To redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.
 
-This will automatically redirect the user to the presigned URL for the S3 file, saving you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
+The response redirects the user to a presigned URL for the S3 file, saving you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 const response = new Response(s3file);
@@ -302,11 +298,11 @@ Response (0 KB) {
 
 ## Support for S3-Compatible Services
 
-Bun's S3 implementation works with any S3-compatible storage service. Just specify the appropriate endpoint:
+Bun's S3 implementation works with any S3-compatible storage service. Specify the appropriate endpoint:
 
 ### Using Bun's S3Client with AWS S3
 
-AWS S3 is the default. You can also pass a `region` option instead of an `endpoint` option for AWS S3.
+AWS S3 is the default. With AWS S3, you can pass a `region` option instead of an `endpoint` option.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { S3Client } from "bun";
@@ -389,7 +385,7 @@ const minio = new S3Client({
 
 ### Using Bun's S3Client with supabase
 
-To use Bun's S3 client with [supabase](https://supabase.com/), set `endpoint` to the supabase endpoint in the `S3Client` constructor. The supabase endpoint includes your account ID and /storage/v1/s3 path. Make sure to set Enable connection via S3 protocol on in the supabase dashboard in `https://supabase.com/dashboard/project/<account-id>/settings/storage` and to set the region informed in the same section.
+To use Bun's S3 client with [Supabase](https://supabase.com/), set `endpoint` to the Supabase endpoint in the `S3Client` constructor. The Supabase endpoint includes your account ID and the `/storage/v1/s3` path. In the Supabase dashboard at `https://supabase.com/dashboard/project/<account-id>/settings/storage`, turn on **Enable connection via S3 protocol** and use the region shown in that section.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={3-10}
 import { S3Client } from "bun";
@@ -405,12 +401,12 @@ const supabase = new S3Client({
 
 ### Using Bun's S3Client with S3 Virtual Hosted-Style endpoints
 
-When using a S3 Virtual Hosted-Style endpoint, you need to set the `virtualHostedStyle` option to `true`.
+When using a virtual hosted-style endpoint, set the `virtualHostedStyle` option to `true`.
 
 <Note>
-  - If you don’t specify an endpoint, Bun will automatically determine the AWS S3 endpoint using the provided region and
-  bucket. - If no region is specified, Bun defaults to us-east-1. - If you explicitly provide an endpoint, you don’t
-  need to specify a bucket name.
+  - If you don't specify an endpoint, Bun determines the AWS S3 endpoint from the provided region and bucket. - If no
+  region is specified, Bun defaults to `us-east-1`. - If you explicitly provide an endpoint, you don't need to specify a
+  bucket name.
 </Note>
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={17, 25}
@@ -447,7 +443,7 @@ const r2WithEndpoint = new S3Client({
 
 ## Credentials
 
-Credentials are one of the hardest parts of using S3. By default, Bun reads the following environment variables for credentials.
+By default, Bun reads the following environment variables for credentials.
 
 | Option name       | Environment variable   |
 | ----------------- | ---------------------- |
@@ -458,7 +454,7 @@ Credentials are one of the hardest parts of using S3. By default, Bun reads the 
 | `bucket`          | `S3_BUCKET`            |
 | `sessionToken`    | `S3_SESSION_TOKEN`     |
 
-If the `S3_*` environment variable is not set, Bun will also check for the `AWS_*` environment variable, for each of the above options.
+For each option, if the `S3_*` environment variable is not set, Bun falls back to the matching `AWS_*` environment variable.
 
 | Option name       | Fallback environment variable |
 | ----------------- | ----------------------------- |
@@ -469,13 +465,13 @@ If the `S3_*` environment variable is not set, Bun will also check for the `AWS_
 | `bucket`          | `AWS_BUCKET`                  |
 | `sessionToken`    | `AWS_SESSION_TOKEN`           |
 
-These environment variables are read from [`.env` files](/runtime/environment-variables) or from the process environment at initialization time (`process.env` is not used for this).
+Bun reads these environment variables from [`.env` files](/runtime/environment-variables) or from the process environment at initialization time (`process.env` is not used for this).
 
-These defaults are overridden by the options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials. So if, for example, you use the same credentials for different buckets, you can set the credentials once in your `.env` file and then pass `bucket: "my-bucket"` to the `s3.file()` function without having to specify all the credentials again.
+Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.
 
 ### `S3Client` objects
 
-When you're not using environment variables or using multiple buckets, you can create a `S3Client` object to explicitly set credentials.
+When you're not using environment variables, or you're using multiple buckets, create an `S3Client` object to set credentials explicitly.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={3-11}
 import { S3Client } from "bun";
@@ -556,7 +552,7 @@ const exists = await client.exists("my-file.txt");
 
 ## `S3File`
 
-`S3File` instances are created by calling the `S3Client` instance method or the `s3.file()` function. Like `Bun.file()`, `S3File` instances are lazy. They don't refer to something that necessarily exists at the time of creation. That's why all the methods that don't involve network requests are fully synchronous.
+Calling `file()` on an `S3Client` instance, or `s3.file()`, returns an `S3File`. Like `Bun.file()`, `S3File` instances are lazy: they don't refer to something that necessarily exists at the time of creation. That's why all the methods that don't involve network requests are fully synchronous.
 
 ```ts Type Reference icon="/icons/typescript.svg" expandable
 interface S3File extends Blob {
@@ -591,7 +587,7 @@ interface S3File extends Blob {
 }
 ```
 
-Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob), so all the methods that are available on `Blob` are also available on `S3File`. The same API for reading data from a local file is also available for reading data from S3.
+Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob), so all the methods available on `Blob` are also available on `S3File`. The same API that reads data from a local file also reads data from S3.
 
 | Method                       | Output           |
 | ---------------------------- | ---------------- |
@@ -601,11 +597,11 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 | `await s3File.stream()`      | `ReadableStream` |
 | `await s3File.arrayBuffer()` | `ArrayBuffer`    |
 
-That means using `S3File` instances with `fetch()`, `Response`, and other web APIs that accept `Blob` instances works out of the box.
+That means `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
 
 ### Partial reads with `slice`
 
-To read a partial range of a file, you can use the `slice` method.
+To read a partial range of a file, use the `slice` method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={1}
 const partial = s3file.slice(0, 1024);
@@ -617,11 +613,11 @@ const bytes = await partial.bytes();
 const text = await partial.text();
 ```
 
-Internally, this works by using the HTTP `Range` header to request only the bytes you want. This `slice` method is the same as [`Blob.prototype.slice`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice).
+Internally, Bun uses the HTTP `Range` header to request only the bytes you want. This `slice` method is the same as [`Blob.prototype.slice`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice).
 
 ### Deleting files from S3
 
-To delete a file from S3, you can use the `delete` method.
+To delete a file from S3, use the `delete` method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={1}
 await s3file.delete();
@@ -632,7 +628,7 @@ await s3file.delete();
 
 ## Error codes
 
-When Bun's S3 API throws an error, it will have a `code` property that matches one of the following values:
+When Bun's S3 API throws an error, the error has a `code` property with one of the following values:
 
 - `ERR_S3_MISSING_CREDENTIALS`
 - `ERR_S3_INVALID_METHOD`
@@ -641,7 +637,7 @@ When Bun's S3 API throws an error, it will have a `code` property that matches o
 - `ERR_S3_INVALID_SIGNATURE`
 - `ERR_S3_INVALID_SESSION_TOKEN`
 
-When the S3 Object Storage service returns an error (that is, not Bun), it will be an `S3Error` instance (an `Error` instance with the name `"S3Error"`).
+When the S3 service itself returns an error (that is, not Bun), it is an `S3Error` instance (an `Error` instance with the name `"S3Error"`).
 
 ## `S3Client` static methods
 
@@ -649,7 +645,7 @@ The `S3Client` class provides several static methods for interacting with S3.
 
 ### `S3Client.write` (static)
 
-To write data directly to a path in the bucket, you can use the `S3Client.write` static method.
+To write data directly to a path in the bucket, use the `S3Client.write` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-18, 22, 25-29}
 import { S3Client } from "bun";
@@ -687,7 +683,7 @@ This is equivalent to calling `new S3Client(credentials).write("my-file.txt", "H
 
 ### `S3Client.presign` (static)
 
-To generate a presigned URL for an S3 file, you can use the `S3Client.presign` static method.
+To generate a presigned URL for an S3 file, use the `S3Client.presign` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={11-14}
 import { S3Client } from "bun";
@@ -710,7 +706,7 @@ This is equivalent to calling `new S3Client(credentials).presign("my-file.txt", 
 
 ### `S3Client.list` (static)
 
-To list some or all (up to 1,000) objects in a bucket, you can use the `S3Client.list` static method.
+To list some or all (up to 1,000) objects in a bucket, use the `S3Client.list` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
 import { S3Client } from "bun";
@@ -749,7 +745,7 @@ This is equivalent to calling `new S3Client(credentials).list()`.
 
 ### `S3Client.exists` (static)
 
-To check if an S3 file exists, you can use the `S3Client.exists` static method.
+To check if an S3 file exists, use the `S3Client.exists` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={11}
 import { S3Client } from "bun";
@@ -779,7 +775,7 @@ const exists = await s3file.exists();
 
 ### `S3Client.size` (static)
 
-To check the size of an S3 file without downloading it, you can use the `S3Client.size` static method.
+To check the size of an S3 file without downloading it, use the `S3Client.size` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={11}
 import { S3Client } from "bun";
@@ -799,7 +795,7 @@ This is equivalent to calling `new S3Client(credentials).size("my-file.txt")`.
 
 ### `S3Client.stat` (static)
 
-To get the size, etag, and other metadata of an S3 file, you can use the `S3Client.stat` static method.
+To get the size, etag, and other metadata of an S3 file, use the `S3Client.stat` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { S3Client } from "bun";
@@ -826,7 +822,7 @@ const stat = await S3Client.stat("my-file.txt", credentials);
 
 ### `S3Client.delete` (static)
 
-To delete an S3 file, you can use the `S3Client.delete` static method.
+To delete an S3 file, use the `S3Client.delete` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={10, 15}
 import { S3Client } from "bun";
@@ -848,14 +844,14 @@ await S3Client.unlink("my-file.txt", credentials);
 
 ## `s3://` protocol
 
-To make it easier to use the same code for local files and S3 files, the `s3://` protocol is supported in `fetch` and `Bun.file()`.
+`fetch` and `Bun.file()` support the `s3://` protocol, so the same code works for local files and S3 files.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 const response = await fetch("s3://my-bucket/my-file.txt");
 const file = Bun.file("s3://my-bucket/my-file.txt");
 ```
 
-You can additionally pass `s3` options to the `fetch` and `Bun.file` functions.
+You can also pass `s3` options to `fetch` and `Bun.file`.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={2-6}
 const response = await fetch("s3://my-bucket/my-file.txt", {
@@ -874,8 +870,8 @@ const response = await fetch("s3://my-bucket/my-file.txt", {
 
 Like `Response` and `Blob`, `S3File` assumes UTF-8 encoding by default.
 
-When calling one of the `text()` or `json()` methods on an `S3File`:
+When calling `text()` or `json()` on an `S3File`:
 
-- When a UTF-16 byte order mark (BOM) is detected, it will be treated as UTF-16. JavaScriptCore natively supports UTF-16, so it skips the UTF-8 transcoding process (and strips the BOM). This is mostly good, but it does mean if you have invalid surrogate pairs characters in your UTF-16 string, they will be passed through to JavaScriptCore (same as source code).
-- When a UTF-8 BOM is detected, it gets stripped before the string is passed to JavaScriptCore and invalid UTF-8 codepoints are replaced with the Unicode replacement character (`\uFFFD`).
+- When Bun detects a UTF-16 byte order mark (BOM), it treats the data as UTF-16. JavaScriptCore natively supports UTF-16, so Bun skips the UTF-8 transcoding step (and strips the BOM). One consequence: invalid surrogate pairs in your UTF-16 string pass through to JavaScriptCore (same as source code).
+- When Bun detects a UTF-8 BOM, it strips the BOM and replaces invalid UTF-8 codepoints with the Unicode replacement character (`\uFFFD`) before passing the string to JavaScriptCore.
 - UTF-32 is not supported.

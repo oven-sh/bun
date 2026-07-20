@@ -14,7 +14,7 @@ source "azure-arm" "windows-arm64" {
 
   // Build VM — only used during image creation, not for CI runners.
   // CI runner VM sizes are set in ci.mjs (azureVmSizes).
-  vm_size         = "Standard_D4ps_v6"
+  vm_size         = "Standard_D4pds_v6"
 
   // Use existing resource group instead of creating a temp one
   build_resource_group_name = var.resource_group
@@ -37,13 +37,20 @@ source "azure-arm" "windows-arm64" {
   // CRITICAL: No managed_image_name — ARM64 doesn't support Managed Images.
   // Packer publishes directly from the VM to the gallery (PR #242 feature).
 
+  // SIG replication to 27 regions takes longer than the 60m default; the
+  // CreateOrUpdate poll was hitting "context deadline exceeded" at exactly 1h.
+  shared_image_gallery_timeout = "3h"
+
   shared_image_gallery_destination {
     subscription         = var.subscription_id
     resource_group       = var.gallery_resource_group
     gallery_name         = var.gallery_name
     image_name           = var.image_name != "" ? var.image_name : "windows-aarch64-11-build-${var.build_number}"
     image_version        = "1.0.0"
-    storage_account_type = "Standard_LRS"
+    // Premium_LRS: SSD-backed gallery storage — faster provisioning when
+    // robobun launches runners from this image, and faster cross-region
+    // replication during the publish step above.
+    storage_account_type = "Premium_LRS"
     target_region { name = var.location }
     target_region { name = "australiaeast" }
     target_region { name = "brazilsouth" }
@@ -87,7 +94,7 @@ build {
   provisioner "powershell" {
     script           = var.bootstrap_script
     valid_exit_codes = [0, 3010]
-    environment_vars = ["CI=true"]
+    environment_vars = ["CI=true", "BUN_BOOTSTRAP_REPO_REF=${var.repo_ref}"]
   }
 
   // Step 2: Upload agent.mjs

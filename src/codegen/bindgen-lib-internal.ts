@@ -23,7 +23,7 @@ export let structHashToSelf = new Map<string, Struct>();
 export const str = (v: any) => JSON.stringify(v);
 /** Capitalize */
 export const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-/** Escape a Zig Identifier */
+/** Escape an identifier */
 export const zid = (s: string) => (s.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) ? s : "@" + str(s));
 /** Snake Case */
 export const snake = (s: string) =>
@@ -39,7 +39,7 @@ export const camel = (s: string) =>
 /** Pascal Case */
 export const pascal = (s: string) => cap(camel(s));
 
-// Return symbol names of extern values (must be equivalent between C++ and Zig)
+// Return symbol names of extern values (must be equivalent on both sides of the FFI boundary)
 
 /** The JS Host function, aka fn (*JSC.JSGlobalObject, *JSC.CallFrame) JSValue.MaybeException */
 export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
@@ -779,7 +779,7 @@ export type ArgStrategyChildItem =
  * In addition to moving a payload over, an additional bit of information
  * crosses the ABI boundary indicating if the function threw an exception.
  *
- * For simplicity, the possibility of any Zig binding returning an error/calling
+ * For simplicity, the possibility of any native binding returning an error/calling
  * `throw` is assumed and there isnt a way to disable the exception check.
  */
 export type ReturnStrategy =

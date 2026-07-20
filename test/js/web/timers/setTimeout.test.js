@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
@@ -246,6 +247,54 @@ it("setTimeout -> unref doesn't keep event loop alive forever", () => {
   expect(stdout.toString()).toBe("");
 });
 
+it("setTimeout -> fire -> unref -> ref does not keep the event loop alive", async () => {
+  // After a one-shot timer has fired it is destroyed; calling .unref() then .ref()
+  // must not leak an event-loop ref. Previously this would hang forever.
+  const src = `
+    const t = setTimeout(() => {}, 1);
+    setTimeout(() => {
+      t.unref();
+      t.ref();
+      console.log("destroyed=" + t._destroyed);
+    }, 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 4_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("destroyed=true\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it("setImmediate -> fire -> unref -> ref does not keep the event loop alive", async () => {
+  const src = `
+    const im = setImmediate(() => {});
+    setTimeout(() => {
+      im.unref();
+      im.ref();
+      console.log("destroyed=" + im._destroyed);
+    }, 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 4_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("destroyed=true\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 it("setTimeout should refresh N times", done => {
   let count = 0;
   let timer = setTimeout(() => {
@@ -365,4 +414,131 @@ it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive
 
 it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
   expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
+});
+
+for (const mode of ["clear", "refresh", "repeat"]) {
+  it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
+    expect(stdout).toContain("delta:");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+}
+
+it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
+  // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
+  // If that read throws, the exception must not be left pending on the VM when setTimeout
+  // returns — otherwise debug builds hit releaseAssertNoException().
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.nextTick(() => {});
+        Object.defineProperty(process, "_exiting", {
+          get() { throw new TypeError("boom"); },
+          configurable: true,
+        });
+        const t = setTimeout(() => {}, 1e100);
+        clearTimeout(t);
+        console.log("survived");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("boom");
+  expect(stdout.trim()).toBe("survived");
+  expect(exitCode).toBe(0);
+});
+
+it("clearTimeout with a numeric id is a no-op after a timeout promoted to an interval is cleared and collected", async () => {
+  // A setTimeout whose numeric id has been observed via `+timer` registers itself in the
+  // setTimeout id map. Assigning `_repeat` promotes it to a setInterval after its first
+  // fire. Once the timer is cleared and its wrapper is collected, the id-map entry must be
+  // gone from whichever map it was inserted into, so that a later clearTimeout(id) with the
+  // raw number is a harmless no-op instead of resolving to the freed timer.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        async function main() {
+          let fires = 0;
+          let resolveSecondFire;
+          const secondFire = new Promise(resolve => {
+            resolveSecondFire = resolve;
+          });
+          let t = setTimeout(() => {
+            fires++;
+            if (fires === 2) resolveSecondFire();
+          }, 1);
+          const id = +t; // register the numeric id in the setTimeout id map
+          t._repeat = 1; // promoted to an interval after the first fire
+
+          // The second fire only happens because the timer became an interval.
+          await secondFire;
+          console.log("converted:", fires >= 2 ? "ok" : fires);
+
+          clearInterval(t);
+          t = null;
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+          Bun.gc(true);
+
+          // The numeric id must no longer resolve to the collected timer.
+          clearTimeout(id);
+          clearTimeout(id);
+          clearInterval(id);
+          console.log("survived");
+        }
+        main().then(
+          () => {},
+          err => {
+            console.error(err);
+            process.exit(1);
+          },
+        );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect(stdout).toBe("converted: ok\nsurvived\n");
+  expect(exitCode).toBe(0);
+});
+
+it("timer heap clock is monotonic, not wall-clock", () => {
+  // The clock that schedules setTimeout/setInterval deadlines must be monotonic
+  // (boot-relative) on every platform so NTP steps / user clock changes can't
+  // stall or mass-fire timers. A wall-clock reading here would be ~= Date.now().
+  const t0 = timerInternals.timerClockMs();
+  const t1 = timerInternals.timerClockMs();
+  const wallNow = Date.now();
+  expect(t0).toBeGreaterThan(0);
+  expect(t1).toBeGreaterThanOrEqual(t0);
+  expect(t1).toBeLessThan(wallNow / 2);
 });

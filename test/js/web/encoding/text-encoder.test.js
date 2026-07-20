@@ -22,6 +22,29 @@ it("not enough space for replacement character", () => {
   expect(Array.from(bytes)).toEqual([0x00, 0x00]);
 });
 
+describe("encodeInto astral characters and buffer sizing", () => {
+  // WHATWG Encoding spec: a code point that doesn't fit in the remaining
+  // destination space is left unwritten, and that destination space is left
+  // untouched. A previous implementation incorrectly wrote U+FFFD when a
+  // valid 4-byte astral character met an exactly-3-byte buffer.
+  it.each([
+    ["\u{1F600}", 3, { read: 0, written: 0 }, [0xaa, 0xaa, 0xaa]],
+    ["\u{1F600}", 4, { read: 2, written: 4 }, [0xf0, 0x9f, 0x98, 0x80]],
+    ["\u{1F600}", 2, { read: 0, written: 0 }, [0xaa, 0xaa]],
+    ["\uD800", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
+    ["\uDC00", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
+    ["\uD800", 2, { read: 0, written: 0 }, [0xaa, 0xaa]],
+    ["a\u{1F600}", 3, { read: 1, written: 1 }, [0x61, 0xaa, 0xaa]],
+    ["a\u{1F600}", 4, { read: 1, written: 1 }, [0x61, 0xaa, 0xaa, 0xaa]],
+    ["a\u{1F600}", 5, { read: 3, written: 5 }, [0x61, 0xf0, 0x9f, 0x98, 0x80]],
+  ])("%j into %i-byte buffer", (input, size, expectedResult, expectedBytes) => {
+    const bytes = new Uint8Array(size).fill(0xaa);
+    const result = new TextEncoder().encodeInto(input, bytes);
+    expect(Array.from(bytes)).toEqual(expectedBytes);
+    expect(result).toEqual(expectedResult);
+  });
+});
+
 describe("TextEncoder", () => {
   it("should handle undefined", () => {
     const encoder = new TextEncoder();
@@ -442,11 +465,12 @@ describe("TextEncoder", () => {
       expect(Array.from(buffer2)).toEqual([0xef, 0xbf, 0xbd]); // U+FFFD in UTF-8
 
       // Multiple unpaired surrogates with limited buffer
-      const str2 = String.fromCharCode(0xd800, 0xdc00);
+      const str2 = String.fromCharCode(0xd800, 0xd801);
       const buffer3 = new Uint8Array(3); // Only room for one replacement
       const result3 = encoder.encodeInto(str2, buffer3);
       expect(result3.read).toBe(1); // Should only read first surrogate
       expect(result3.written).toBe(3); // Should write one U+FFFD
+      expect(Array.from(buffer3)).toEqual([0xef, 0xbf, 0xbd]);
     });
 
     it("should handle boundary surrogates correctly", () => {
@@ -491,5 +515,171 @@ describe("TextEncoder", () => {
 
     var encoder = new TextEncoder();
     expect(new TextDecoder().decode(encoder.encode(text))).toBe(textReal);
+  });
+});
+
+function utf8Reference(str) {
+  const out = [];
+  for (let i = 0; i < str.length; i++) {
+    let cp = str.charCodeAt(i);
+    if (cp >= 0xd800 && cp <= 0xdbff) {
+      const next = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        cp = (cp - 0xd800) * 0x400 + (next - 0xdc00) + 0x10000;
+        i++;
+      } else {
+        cp = 0xfffd;
+      }
+    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
+      cp = 0xfffd;
+    }
+
+    if (cp < 0x80) {
+      out.push(cp);
+    } else if (cp < 0x800) {
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    } else if (cp < 0x10000) {
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    } else {
+      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+describe("TextEncoder latin1 ASCII fast path boundaries", () => {
+  const encoder = new TextEncoder();
+
+  const flatten = s => {
+    s.charCodeAt(0);
+    return s;
+  };
+
+  it("should encode all-ASCII strings of every length around the SIMD/SWAR thresholds", () => {
+    for (const len of [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 1024, 4096]) {
+      const text = flatten("abcdefgh".repeat(Math.ceil(len / 8) + 1).slice(0, len));
+      const encoded = encoder.encode(text);
+      expect({ len, bytes: Array.from(encoded) }).toEqual({ len, bytes: Array.from(utf8Reference(text)) });
+    }
+  });
+
+  it("should encode latin1 strings with a non-ASCII byte at every boundary position", () => {
+    for (const len of [1, 7, 8, 9, 16, 31, 32, 63, 64, 65, 100, 128, 200]) {
+      for (const pos of new Set([0, 1, 6, 7, 8, 9, 15, 16, 31, 32, 62, 63, 64, 65, len - 2, len - 1])) {
+        if (pos < 0 || pos >= len) continue;
+        const text = flatten("a".repeat(pos) + "©" + "b".repeat(len - pos - 1));
+        const encoded = encoder.encode(text);
+        const expected = utf8Reference(text);
+        expect({ len, pos, bytes: Array.from(encoded) }).toEqual({ len, pos, bytes: Array.from(expected) });
+
+        const dest = new Uint8Array(expected.length);
+        const result = encoder.encodeInto(text, dest);
+        expect({ len, pos, read: result.read, written: result.written, bytes: Array.from(dest) }).toEqual({
+          len,
+          pos,
+          read: text.length,
+          written: expected.length,
+          bytes: Array.from(expected),
+        });
+      }
+    }
+  });
+
+  it("should encode latin1 strings made entirely of non-ASCII characters", () => {
+    for (const len of [1, 8, 16, 64, 100, 1025]) {
+      const text = flatten("©ÿé".repeat(Math.ceil(len / 3)).slice(0, len));
+      const encoded = encoder.encode(text);
+      expect(Array.from(encoded)).toEqual(Array.from(utf8Reference(text)));
+      expect(encoded.length).toBe(2 * len);
+    }
+  });
+
+  it("encodeInto should not write past `written` when the destination is too small", () => {
+    const text = flatten("abcdefgh©xyz");
+    const dest = new Uint8Array(16).fill(0xaa);
+    const result = encoder.encodeInto(text, dest.subarray(0, 9));
+    expect(result.read).toBe(8);
+    expect(result.written).toBe(8);
+    expect(Array.from(dest.subarray(0, 8))).toEqual(Array.from(utf8Reference("abcdefgh")));
+    expect(Array.from(dest.subarray(8))).toEqual(new Array(8).fill(0xaa));
+  });
+
+  it("encodeInto should stop cleanly mid-ASCII-run when the destination is smaller than the input", () => {
+    const text = flatten("a".repeat(150));
+    const dest = new Uint8Array(200).fill(0xaa);
+    const result = encoder.encodeInto(text, dest.subarray(0, 70));
+    expect(result.read).toBe(70);
+    expect(result.written).toBe(70);
+    expect(Array.from(dest.subarray(0, 70))).toEqual(new Array(70).fill(0x61));
+    expect(Array.from(dest.subarray(70))).toEqual(new Array(130).fill(0xaa));
+  });
+});
+
+describe("TextEncoder rope fast path", () => {
+  const encoder = new TextEncoder();
+
+  it("should encode ropes built from large ASCII segments", () => {
+    let text = "";
+    let expected = "";
+    for (let i = 0; i < 16; i++) {
+      const segment = String.fromCharCode(0x41 + i).repeat(100 + i);
+      text += segment;
+      expected += segment;
+    }
+    const encoded = encoder.encode(text);
+    expect(encoded.length).toBe(expected.length);
+    expect(new TextDecoder().decode(encoded)).toBe(expected);
+  });
+
+  it("should encode ropes whose segments contain non-ASCII latin1 characters", () => {
+    for (const where of ["start", "middle", "end"]) {
+      let text = "";
+      const segments = ["x".repeat(80), "y".repeat(13), "z".repeat(200)];
+      if (where === "start") segments[0] = "©" + segments[0];
+      if (where === "middle") segments[1] = segments[1] + "é" + segments[1];
+      if (where === "end") segments[2] = segments[2] + "ÿ";
+      for (const segment of segments) {
+        text += segment;
+      }
+      const encoded = encoder.encode(text);
+      const expected = utf8Reference(segments.join(""));
+      expect({ where, bytes: Array.from(encoded) }).toEqual({ where, bytes: Array.from(expected) });
+    }
+  });
+
+  it("should encode a large repeated rope identically to its resolved copy", () => {
+    const rope = "Hello World!".repeat(1024);
+    const resolved = "Hello World!".repeat(1024);
+    resolved.charCodeAt(0);
+    const fromRope = encoder.encode(rope);
+    const fromResolved = encoder.encode(resolved);
+    expect(fromRope.length).toBe(12 * 1024);
+    expect(fromRope).toEqual(fromResolved);
+    expect(new TextDecoder().decode(fromRope)).toBe(resolved);
+  });
+});
+
+describe("TextEncoder UTF-16 exact-size path", () => {
+  const encoder = new TextEncoder();
+
+  it("should encode long valid UTF-16 strings of varying lengths", () => {
+    for (const repeat of [1, 32, 170, 171, 512, 600, 5000]) {
+      const text = "n💕ó".repeat(repeat);
+      const encoded = encoder.encode(text);
+      expect({ repeat, bytes: encoded.length }).toEqual({ repeat, bytes: 7 * repeat });
+      expect(new TextDecoder().decode(encoded)).toBe(text);
+    }
+  });
+
+  it("should encode long UTF-16 strings containing unpaired surrogates", () => {
+    for (const repeat of [1, 100, 1000]) {
+      for (const lone of ["\ud800", "\udc00"]) {
+        const text = ("ab💕" + lone + "cd").repeat(repeat);
+        const encoded = encoder.encode(text);
+        const expected = utf8Reference(text);
+        expect(encoded.length).toBe(expected.length);
+        expect(encoded).toEqual(expected);
+      }
+    }
   });
 });

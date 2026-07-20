@@ -1,5 +1,5 @@
 /**
- * Bun.js runtime APIs
+ * Bun runtime APIs
  *
  * @example
  *
@@ -50,15 +50,10 @@ declare module "bun" {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 
     /**
-     * Helper type for avoiding conflicts in types.
+     * Uses the lib.dom.d.ts definition of a global if it exists, otherwise falls back to `Otherwise`.
      *
-     * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
-     *
-     * This is to avoid type conflicts between lib.dom.d.ts and \@types/bun.
-     *
-     * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
-     * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
-     * to the type that lib.dom.d.ts provides.
+     * Some symbols can't be declared in a way that satisfies both \@types/bun and lib.dom.d.ts,
+     * so when lib.dom.d.ts is loaded, its definition wins.
      */
     type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
       // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
@@ -202,7 +197,7 @@ declare module "bun" {
     onerror: ((this: EventSource, ev: Event) => any) | null;
     onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
     onopen: ((this: EventSource, ev: Event) => any) | null;
-    /** Returns the state of this EventSource object's connection. It can have the values described below. */
+    /** Returns the state of this EventSource object's connection: `CONNECTING` (0), `OPEN` (1), or `CLOSED` (2). */
     readonly readyState: number;
     /** Returns the URL providing the event stream. */
     readonly url: string;
@@ -248,14 +243,14 @@ declare module "bun" {
     ): void;
 
     /**
-     * Keep the event loop alive while connection is open or reconnecting
+     * Keep the event loop alive while the connection is open or reconnecting
      *
      * Not available in browsers
      */
     ref(): void;
 
     /**
-     * Do not keep the event loop alive while connection is open or reconnecting
+     * Do not keep the event loop alive while the connection is open or reconnecting
      *
      * Not available in browsers
      */
@@ -307,7 +302,7 @@ declare module "bun" {
     pull?: UnderlyingSourcePullCallback<R>;
     start?: UnderlyingSourceStartCallback<R>;
     /**
-     * Mode "bytes" is not currently supported.
+     * Mode "bytes" is not supported.
      */
     type?: undefined;
   }
@@ -374,8 +369,8 @@ declare module "bun" {
    */
   interface WorkerOptions {
     /**
-     * A string specifying an identifying name for the DedicatedWorkerGlobalScope representing the scope of
-     * the worker, which is mainly useful for debugging purposes.
+     * An identifying name for the worker's `DedicatedWorkerGlobalScope`, mainly
+     * useful for debugging.
      */
     name?: string;
 
@@ -388,10 +383,10 @@ declare module "bun" {
     smol?: boolean;
 
     /**
-     * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
-     * When `false`, the worker will not keep the parent thread alive.
+     * When `true`, the worker keeps the parent thread alive until the worker is terminated or `unref`'d.
+     * When `false`, it does not.
      *
-     * By default, this is `false`.
+     * @default false
      */
     ref?: boolean;
 
@@ -401,10 +396,9 @@ declare module "bun" {
     type?: Bun.WorkerType | undefined;
 
     /**
-     * List of arguments which would be stringified and appended to
-     * `Bun.argv` / `process.argv` in the worker. This is mostly similar to the `data`
-     * but the values will be available on the global `Bun.argv` as if they
-     * were passed as CLI options to the script.
+     * List of arguments to stringify and append to `Bun.argv` / `process.argv`
+     * in the worker. The values are available on the global `Bun.argv` as if
+     * they were passed as CLI options to the script.
      */
     argv?: any[] | undefined;
 
@@ -412,7 +406,9 @@ declare module "bun" {
     // eval?: boolean | undefined;
 
     /**
-     * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
+     * If set, the initial value of `process.env` inside the Worker thread. Pass `worker.SHARE_ENV`
+     * from `node:worker_threads` to share environment variables between the parent and worker threads;
+     * changes to one thread's `process.env` then affect the other thread as well. Default: `process.env`.
      */
     env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
 
@@ -477,17 +473,16 @@ declare module "bun" {
     ): void;
 
     /**
-     * Opposite of `unref()`, calling `ref()` on a previously `unref()`ed worker does _not_ let the program exit if it's the only active handle left (the default
-     * behavior). If the worker is `ref()`ed, calling `ref()` again has
-     * no effect.
-     * @since v10.5.0
+     * Opposite of `unref()`: calling `ref()` on a previously `unref()`ed worker does _not_ let the
+     * program exit if it's the only active handle left (the default behavior).
+     * If the worker is already `ref()`ed, calling `ref()` again has no effect.
      */
     ref(): void;
 
     /**
      * Calling `unref()` on a worker allows the thread to exit if this is the only
-     * active handle in the event system. If the worker is already `unref()`ed calling`unref()` again has no effect.
-     * @since v10.5.0
+     * active handle in the event system. If the worker is already `unref()`ed,
+     * calling `unref()` again has no effect.
      */
     unref(): void;
 
@@ -495,7 +490,6 @@ declare module "bun" {
      * An integer identifier for the referenced thread. Inside the worker thread,
      * it is available as `require('node:worker_threads').threadId`.
      * This value is unique for each `Worker` instance inside a single process.
-     * @since v10.5.0
      */
     threadId: number;
   }
@@ -503,7 +497,7 @@ declare module "bun" {
   interface Env {
     NODE_ENV?: string;
     /**
-     * Can be used to change the default timezone at runtime
+     * Set to change the default timezone at runtime
      */
     TZ?: string;
   }
@@ -518,42 +512,45 @@ declare module "bun" {
   const env: Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
-   * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
+   * The raw arguments passed to the process, including flags passed to Bun.
+   * To read the flags passed to your script, use `process.argv` instead.
    */
   const argv: string[];
 
   interface WhichOptions {
     /**
-     * Overrides the PATH environment variable
+     * Overrides the `PATH` environment variable
      */
     PATH?: string;
 
     /**
-     * When given a relative path, use this path to join it.
+     * When `command` is a relative path, resolve it against this directory.
      */
     cwd?: string;
   }
 
   /**
-   * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
+   * Find the path to an executable, like the `which` command in your terminal.
+   * Reads the `PATH` environment variable unless overridden with `options.PATH`.
    *
    * @category Utilities
    *
    * @param command The name of the executable or script to find
    * @param options Options for the search
+   * @returns The path to the executable, or `null` if it isn't found
    */
   function which(command: string, options?: WhichOptions): string | null;
 
   interface StringWidthOptions {
     /**
-     * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
+     * If `true`, count ANSI escape codes as part of the string width. If `false`, ignore them.
      *
      * @default false
      */
     countAnsiEscapeCodes?: boolean;
 
     /**
-     * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+     * If `true`, count ambiguous-width characters as 1 character wide. If `false`, count them as 2 characters wide.
      *
      * @default true
      */
@@ -564,13 +561,10 @@ declare module "bun" {
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *
-   * This is useful for:
-   * - Aligning text in a terminal
-   * - Quickly checking if a string contains ANSI escape codes
-   * - Measuring the width of a string in a terminal
+   * This API is designed to match the `string-width` npm package, so existing
+   * code can be ported in either direction.
    *
-   * This API is designed to match the popular "string-width" package, so that
-   * existing code can be easily ported to Bun and vice versa.
+   * @category Utilities
    *
    * @returns The width of the string in columns
    *
@@ -651,7 +645,7 @@ declare module "bun" {
    * @param input The string to slice
    * @param start Starting column (default 0). Negative counts from end.
    * @param end Ending column, exclusive (default end of string). Negative counts from end.
-   * @param options Optional behavior flags (e.g. `ellipsis` for truncation)
+   * @param options Optional behavior flags (such as `ellipsis` for truncation)
    * @returns The sliced string with ANSI codes intact
    *
    * @example
@@ -698,7 +692,8 @@ declare module "bun" {
 
     /**
      * If `true`, wrap at word boundaries when possible.
-     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     * If `false`, break every line at exactly the column width (characters
+     * are split wherever the limit falls, ignoring word boundaries).
      *
      * @default true
      */
@@ -713,7 +708,7 @@ declare module "bun" {
     trim?: boolean;
 
     /**
-     * When it's ambiguous and `true`, count ambiguous width characters as 1 character wide.
+     * If `true`, count ambiguous-width characters as 1 character wide.
      * If `false`, count them as 2 characters wide.
      *
      * @default true
@@ -724,7 +719,7 @@ declare module "bun" {
   /**
    * Wrap a string to fit within the specified column width, preserving ANSI escape codes.
    *
-   * This function is designed to be compatible with the popular "wrap-ansi" NPM package.
+   * Designed to be compatible with the `wrap-ansi` npm package.
    *
    * Features:
    * - Preserves ANSI escape codes (colors, styles) across line breaks
@@ -783,14 +778,47 @@ declare module "bun" {
    */
   namespace TOML {
     /**
-     * Parse a TOML string into a JavaScript object.
+     * Parse a TOML (v1.1.0) document into a JavaScript object.
+     *
+     * Date/time values parse as strings of their source text. Integers
+     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
+     * represented losslessly as JavaScript numbers.
      *
      * @category Utilities
      *
-     * @param input The TOML string to parse
+     * @param input The TOML document to parse, as a string or UTF-8 bytes
      * @returns A JavaScript object
+     * @throws {SyntaxError} If the input is not valid TOML
      */
-    export function parse(input: string): object;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): object;
+
+    /**
+     * Serialize a JavaScript object to a TOML document.
+     *
+     * The top-level value must be an object (a TOML document is a table).
+     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
+     * circular structures throw, since TOML cannot represent them;
+     * `undefined`, function, and symbol properties are skipped (inside
+     * arrays they throw, since TOML arrays cannot have holes).
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript object to serialize.
+     * @param replacer Not supported; pass `undefined` or `null`.
+     * @param space Accepted for signature parity with `YAML.stringify` and
+     * `JSON5.stringify`, but ignored: TOML output is line-oriented.
+     * @returns A TOML document string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     *
+     * @example
+     * ```js
+     * import { TOML } from "bun";
+     * TOML.stringify({ name: "app", server: { port: 8080 } });
+     * // 'name = "app"\n\n[server]\nport = 8080\n'
+     * ```
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 
   /**
@@ -823,7 +851,7 @@ declare module "bun" {
   /**
    * JSONL (JSON Lines) related APIs.
    *
-   * Each line in the input is expected to be a valid JSON value separated by newlines.
+   * Each line of the input is a JSON value.
    */
   namespace JSONL {
     /**
@@ -832,7 +860,7 @@ declare module "bun" {
     interface ParseChunkResult {
       /** The successfully parsed JSON values. */
       values: unknown[];
-      /** How far into the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
+      /** How much of the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
       read: number;
       /** `true` if all input was consumed successfully. `false` if the input ends with an incomplete value or a parse error occurred. */
       done: boolean;
@@ -847,8 +875,8 @@ declare module "bun" {
      * a `SyntaxError`. If values were parsed before the error, returns the
      * successfully parsed values without throwing.
      *
-     * Incomplete trailing values (e.g. from a partial chunk) are silently
-     * ignored and not included in the result.
+     * Incomplete trailing values (for example, from a partial chunk) are
+     * silently ignored.
      *
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII.
@@ -875,7 +903,7 @@ declare module "bun" {
      * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
      * ```
      */
-    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): unknown[];
+    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike): unknown[];
 
     /**
      * Parse a JSONL chunk, designed for streaming use.
@@ -888,9 +916,9 @@ declare module "bun" {
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII. Optional `start` and `end` parameters
      * select a window of the input without copying. For typed arrays these
-     * are byte offsets and `read` will be a byte offset into the original
-     * typed array. For strings these are character offsets and `read` will
-     * be a character offset into the original string.
+     * are byte offsets and `read` is a byte offset into the original
+     * typed array. For strings these are character offsets and `read` is
+     * a character offset into the original string.
      *
      * @param input The JSONL string or typed array to parse
      * @param start Offset to start parsing from (bytes for typed arrays, characters for strings, default: 0)
@@ -910,7 +938,7 @@ declare module "bun" {
      * ```
      */
     export function parseChunk(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -949,7 +977,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Currently not supported.
+     * @param replacer Not supported.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
@@ -979,6 +1007,7 @@ declare module "bun" {
      * console.log(YAML.stringify(cycle, null, 2));
      * // &1
      * // obj: *1
+     * ```
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
@@ -986,8 +1015,9 @@ declare module "bun" {
   /**
    * Markdown related APIs.
    *
-   * Provides fast markdown parsing and rendering with three output modes:
+   * Parses and renders markdown with four output modes:
    * - `html()` — render to an HTML string
+   * - `ansi()` — render to an ANSI-colored string for terminals
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
    *
@@ -1167,13 +1197,6 @@ declare module "bun" {
       br?: Component<{}>;
     }
 
-    /**
-     * Callbacks for `render()`. Each callback receives the accumulated children
-     * as a string and optional metadata, and returns a string.
-     *
-     * Return `null` or `undefined` to omit the element from the output.
-     * If no callback is registered for an element, its children pass through unchanged.
-     */
     /** Meta passed to the `heading` callback. */
     interface HeadingMeta {
       /** Heading level (1–6). */
@@ -1234,6 +1257,13 @@ declare module "bun" {
       title?: string;
     }
 
+    /**
+     * Callbacks for `render()`. Each callback receives the accumulated children
+     * as a string and optional metadata, and returns a string.
+     *
+     * Return `null` or `undefined` to omit the element from the output.
+     * If no callback is registered for an element, its children pass through unchanged.
+     */
     interface RenderCallbacks {
       /** Heading (level 1–6). `id` is set when `headings: { ids: true }` is enabled. */
       heading?: (children: string, meta: HeadingMeta) => string | null | undefined;
@@ -1307,8 +1337,84 @@ declare module "bun" {
      * ```
      */
     export function html(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       options?: Options,
+    ): string;
+
+    /**
+     * Theme for ANSI terminal rendering.
+     */
+    export interface AnsiTheme {
+      /**
+       * Emit ANSI color + styling escape sequences. When `false`, the
+       * renderer falls back to plain ASCII chrome (no box drawing,
+       * no emoji, no escape codes).
+       * @default true
+       */
+      colors?: boolean;
+      /**
+       * Emit OSC 8 hyperlinks (clickable links in modern terminals).
+       * When `false`, links render as `text (url)`.
+       * @default false
+       */
+      hyperlinks?: boolean;
+      /**
+       * True when the terminal background is light. Affects the color
+       * palette chosen for inline code backgrounds. Defaults to
+       * detecting from the `COLORFGBG` environment variable.
+       */
+      light?: boolean;
+      /**
+       * Line width used for word-wrapping paragraphs and headings and
+       * for the horizontal rule. Pass `0` to disable wrapping.
+       * @default 80
+       */
+      columns?: number;
+      /**
+       * Inline images using the Kitty Graphics Protocol when the `src`
+       * resolves to a local file on disk. Falls through to the text alt
+       * for remote URLs. Supported by Kitty, WezTerm, and Ghostty.
+       * @default false
+       */
+      kittyGraphics?: boolean;
+    }
+
+    /**
+     * Render markdown to an ANSI-colored terminal string.
+     *
+     * Supports headings, lists, tables, inline styles, syntax-highlighted
+     * code blocks, links, images, and blockquotes. By default, enables all
+     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     *
+     * @param input The markdown string or buffer to render
+     * @param theme Optional theme overrides
+     * @returns An ANSI-colored string
+     *
+     * @example
+     * ```ts
+     * const out = Bun.markdown.ansi("# Hello\n\n**bold** and *italic*\n");
+     * process.stdout.write(out);
+     *
+     * // Plain text, no escape codes
+     * const plain = Bun.markdown.ansi("# Hello", { colors: false });
+     *
+     * // Enable clickable OSC 8 hyperlinks
+     * const linked = Bun.markdown.ansi("[docs](https://bun.com)", {
+     *   hyperlinks: true,
+     * });
+     *
+     * // Inline images via Kitty Graphics Protocol
+     * const withImg = Bun.markdown.ansi("![alt](./logo.png)", {
+     *   kittyGraphics: true,
+     * });
+     *
+     * // Custom width
+     * const wrapped = Bun.markdown.ansi(longText, { columns: 60 });
+     * ```
+     */
+    export function ansi(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+      theme?: AnsiTheme,
     ): string;
 
     /**
@@ -1349,7 +1455,7 @@ declare module "bun" {
      * ```
      */
     export function render(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       callbacks?: RenderCallbacks,
       options?: Options,
     ): string;
@@ -1398,7 +1504,7 @@ declare module "bun" {
      * ```
      */
     export function react(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
@@ -1413,7 +1519,7 @@ declare module "bun" {
      *
      * JSON5 is a superset of JSON based on ECMAScript 5.1 that supports
      * comments, trailing commas, unquoted keys, single-quoted strings,
-     * hex numbers, Infinity, NaN, and more.
+     * hex numbers, `Infinity`, `NaN`, and more.
      *
      * @category Utilities
      *
@@ -1445,7 +1551,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Currently not supported.
+     * @param replacer Not supported.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
      * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
@@ -1479,19 +1585,19 @@ declare module "bun" {
    *
    * On failure, throws a `ResolveMessage`
    *
-   * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
+   * Use {@link resolveSync} instead. This async version has no performance benefit; it exists for future-proofing.
    */
   function resolve(moduleId: string, parent: string): Promise<string>;
 
   /**
    * Use the fastest syscalls available to copy from `input` into `destination`.
    *
-   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
+   * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it is created by default.
    *
    * @category File System
    *
    * @param destination The file or file path to write to
-   * @param input The data to copy into `destination`.
+   * @param input The data to copy into `destination`
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
@@ -1505,9 +1611,9 @@ declare module "bun" {
        */
       mode?: number;
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1518,11 +1624,10 @@ declare module "bun" {
   /**
    * Persist a {@link Response} body to disk.
    *
-   * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input - `Response` object
+   * @param destination The file to write to. If the file doesn't exist, it is
+   * created; if it does, it is overwritten. If `input` is smaller than
+   * `destination`, `destination` is truncated.
+   * @param input The `Response` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
@@ -1532,9 +1637,9 @@ declare module "bun" {
     input: Response,
     options?: {
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1546,10 +1651,9 @@ declare module "bun" {
    * Persist a {@link Response} body to disk.
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input - `Response` object
+   * exist, it is created; if it does, it is overwritten. If `input` is
+   * smaller than the existing file, the file is truncated.
+   * @param input The `Response` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
@@ -1557,9 +1661,9 @@ declare module "bun" {
     input: Response,
     options?: {
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1576,13 +1680,12 @@ declare module "bun" {
    *
    * On macOS, when the destination doesn't already exist, this uses
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
-   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/).
    *
-   * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input The file to copy from.
+   * @param destination The file to write to. If the file doesn't exist, it is
+   * created; if it does, it is overwritten. If `input` is smaller than
+   * `destination`, `destination` is truncated.
+   * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
 
@@ -1605,9 +1708,9 @@ declare module "bun" {
        */
       mode?: number;
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1624,13 +1727,12 @@ declare module "bun" {
    *
    * On macOS, when the destination doesn't already exist, this uses
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
-   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/).
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input The file to copy from.
+   * exist, it is created; if it does, it is overwritten. If `input` is
+   * smaller than the existing file, the file is truncated.
+   * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
@@ -1652,9 +1754,9 @@ declare module "bun" {
        */
       mode?: number;
       /**
-       * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
+       * If `true`, create the parent directory if it doesn't exist.
        *
-       * If `false`, this will throw an error if the directory doesn't exist.
+       * If `false`, the write throws an error when the directory doesn't exist.
        *
        * @default true
        */
@@ -1662,6 +1764,10 @@ declare module "bun" {
     },
   ): Promise<number>;
 
+  /**
+   * An `Error` from a failed system call, with optional `errno`, `code`,
+   * `path`, and `syscall` properties.
+   */
   interface SystemError extends Error {
     errno?: number | undefined;
     code?: string | undefined;
@@ -1670,35 +1776,16 @@ declare module "bun" {
   }
 
   /**
-   * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
+   * Concatenate an array of typed arrays into a single `ArrayBuffer`.
    *
-   * You can do this manually if you'd like, but this function will generally
-   * be a little faster.
+   * About 30% faster than allocating an `ArrayBuffer` and copying each chunk
+   * into it yourself: the total length is known up front, so Bun can copy into
+   * uninitialized memory.
    *
    * If you want a `Uint8Array` instead, consider `Buffer.concat`.
    *
    * @param buffers An array of typed arrays to concatenate.
    * @returns An `ArrayBuffer` with the data from all the buffers.
-   *
-   * Here is similar code to do it manually, except about 30% slower:
-   * ```js
-   *   var chunks = [...];
-   *   var size = 0;
-   *   for (const chunk of chunks) {
-   *     size += chunk.byteLength;
-   *   }
-   *   var buffer = new ArrayBuffer(size);
-   *   var view = new Uint8Array(buffer);
-   *   var offset = 0;
-   *   for (const chunk of chunks) {
-   *     view.set(chunk, offset);
-   *     offset += chunk.byteLength;
-   *   }
-   *   return buffer;
-   * ```
-   *
-   * This function is faster because it uses uninitialized memory when copying. Since the entire
-   * length of the buffer is known, it is safe to use uninitialized memory.
    */
   function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength?: number): ArrayBuffer;
   function concatArrayBuffers(
@@ -1713,15 +1800,14 @@ declare module "bun" {
   ): Uint8Array<ArrayBuffer>;
 
   /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   * Consume all data from a {@link ReadableStream} until it closes or errors,
+   * concatenating the chunks into a single {@link ArrayBuffer}.
    *
    * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
-   * chunks of different types, consider {@link readableStreamToBlob}
+   * chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
+   * @returns The concatenated chunks as an `ArrayBuffer`, or a promise that resolves with one.
    */
   function readableStreamToArrayBuffer(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
@@ -1730,10 +1816,10 @@ declare module "bun" {
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Reads the multi-part or URL-encoded form data into a {@link FormData} object
+   * Reads the multipart or URL-encoded form data into a {@link FormData} object.
    *
    * @param stream The stream to consume.
-   * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
+   * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URL-encoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
    *
    * @example
@@ -1742,7 +1828,7 @@ declare module "bun" {
    * // without dashes
    * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
    *
-   * const myStream = getStreamFromSomewhere() // ...
+   * const stream = getStreamFromSomewhere() // ...
    * const formData = await Bun.readableStreamToFormData(stream, boundary);
    * formData.get("foo"); // "bar"
    * ```
@@ -1763,14 +1849,12 @@ declare module "bun" {
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
    * @param stream The stream to consume
-   * @returns A promise that resolves with the chunks as an array
+   * @returns The chunks as an array, or a promise that resolves with one
    */
   function readableStreamToArray<T>(stream: ReadableStream<T>): Promise<T[]> | T[];
 
   /**
    * Escape the following characters in a string:
-   *
-   * @category Security
    *
    * - `"` becomes `"&quot;"`
    * - `&` becomes `"&amp;"`
@@ -1779,10 +1863,12 @@ declare module "bun" {
    * - `>` becomes `"&gt;"`
    *
    * This function is optimized for large input. On an M1X, it processes 480 MB/s -
-   * 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
+   * 20 GB/s, depending on how much data is being escaped and whether there is non-ASCII
    * text.
    *
-   * Non-string types will be converted to a string before escaping.
+   * Non-string types are converted to a string before escaping.
+   *
+   * @category Security
    */
   function escapeHTML(input: string | object | number | boolean): string;
 
@@ -1810,6 +1896,9 @@ declare module "bun" {
    */
   function peek<T = undefined>(promise: T | Promise<T>): Promise<T> | T;
   namespace peek {
+    /**
+     * Read a promise's state without awaiting it: `"pending"`, `"fulfilled"`, or `"rejected"`.
+     */
     function status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
   }
 
@@ -1818,7 +1907,7 @@ declare module "bun" {
    *
    * @param url The URL to convert.
    * @returns A filesystem path.
-   * @throws If the URL is not a URL.
+   * @throws If `url` is not a valid URL.
    *
    * @category File System
    *
@@ -1837,35 +1926,35 @@ declare module "bun" {
     start(options?: {
       asUint8Array?: boolean;
       /**
-       * Preallocate an internal buffer of this size
-       * This can significantly improve performance when the chunk size is small
+       * Preallocate an internal buffer of this size.
+       * This can significantly improve performance when the chunk size is small.
        */
       highWaterMark?: number;
       /**
        * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
-       * Writes will restart from the beginning of the buffer.
+       * Writes restart from the beginning of the buffer.
        */
       stream?: boolean;
     }): void;
 
     write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
     /**
-     * Flush the internal buffer
+     * Flush the internal buffer.
      *
-     * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
-     * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
-     * Otherwise, this will return the number of bytes written since the last flush
+     * - If {@link ArrayBufferSink.start} was passed a `stream` option, this returns an `ArrayBuffer`.
+     * - If it was passed a `stream` option and `asUint8Array`, this returns a `Uint8Array`.
+     * - Otherwise, this returns the number of bytes written since the last flush.
      *
-     * This API might change later to separate Uint8ArraySink and ArrayBufferSink
+     * This API might change later to separate Uint8ArraySink and ArrayBufferSink.
      */
     flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
     end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
   }
 
-  /** DNS Related APIs */
+  /** DNS-related APIs */
   namespace dns {
     /**
-     * Lookup the IP address for a hostname
+     * Look up the IP address for a hostname
      *
      * Uses non-blocking APIs by default
      *
@@ -1897,7 +1986,7 @@ declare module "bun" {
      * Bun supports three DNS resolvers:
      * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
      * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
-     * - `getaddrinfo` - Uses the posix standard `getaddrinfo` function. Will cause performance issues under concurrent loads.
+     * - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function. Causes performance issues under concurrent loads.
      *
      * To customize the DNS resolver, pass a `backend` option to `dns.lookup`:
      * ```js
@@ -1934,36 +2023,34 @@ declare module "bun" {
          * On Linux, `system` is the same as `getaddrinfo`.
          *
          * `c-ares` is more performant on Linux in some high concurrency
-         * situations, but it lacks support support for mDNS (`*.local`,
+         * situations, but it lacks support for mDNS (`*.local`,
          * `*.localhost` domains) along with some other advanced features. If
-         * you run into issues using `c-ares`, you should try `system`. If the
-         * hostname ends with `.local` or `.localhost`, Bun will automatically
-         * use `system` instead of `c-ares`.
+         * you run into issues using `c-ares`, try `system`. If the
+         * hostname ends with `.local` or `.localhost`, Bun automatically
+         * uses `system` instead of `c-ares`.
          *
          * [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
          * is the POSIX standard function for blocking DNS resolution. Bun runs
-         * it in Bun's thread pool, which is limited to `cpus / 2`. That means
-         * if you run a lot of concurrent DNS lookups, concurrent IO will
-         * potentially pause until the DNS lookups are done.
+         * it in Bun's thread pool, which is limited to `cpus / 2`, so many
+         * concurrent DNS lookups can pause other concurrent IO until the
+         * lookups finish.
          *
-         * On macOS, it shouldn't be necessary to use "`getaddrinfo`" because
+         * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
          *
          * On Windows, libuv's non-blocking DNS resolver is used by default, and
          * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
-         * backend isn't currently supported on Windows.
+         * backend isn't supported on Windows.
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
 
     /**
-     *
      * **Experimental API**
      *
-     * Prefetch a hostname.
-     *
-     * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
+     * Prefetch a hostname so that later `fetch()` and `Bun.connect()` calls
+     * can skip the DNS lookup.
      *
      * @param hostname The hostname to prefetch
      * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
@@ -2022,9 +2109,9 @@ declare module "bun" {
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
-   * This Blob is lazy. That means it won't do any work until you read from it.
+   * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` will not be valid until the contents of the file are read at least once.
+   * - `size` is not valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
    *
    * @category File System
@@ -2050,7 +2137,7 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     * If `begin` > 0, {@link Bun.write()} is slower on macOS
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
@@ -2063,7 +2150,7 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write}() will be slower on macOS
+     * If `begin` > 0, {@link Bun.write}() is slower on macOS
      *
      * @param begin - start offset in bytes
      * @param contentType - MIME type for the new BunFile
@@ -2099,8 +2186,8 @@ declare module "bun" {
      * Does the file exist?
      *
      * This returns true for regular files and FIFOs. It returns false for
-     * directories. Note that a race condition can occur where the file is
-     * deleted or renamed after this is called but before you open it.
+     * directories. A race condition can occur where the file is deleted or
+     * renamed after this is called but before you open it.
      *
      * This does a system call to check if the file exists, which can be
      * slow.
@@ -2163,11 +2250,19 @@ declare module "bun" {
      * @default "sha256"
      */
     algorithm?: CSRFAlgorithm;
+
+    /**
+     * Binds the token to the requesting principal (session ID, user ID, or
+     * equivalent). A token generated with a `sessionId` only verifies when the
+     * same `sessionId` is supplied to `verify()`. Without it, any token issued
+     * under the same secret validates for every user.
+     */
+    sessionId?: string;
   }
 
   interface CSRFVerifyOptions {
     /**
-     * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * The secret to use for the token. If not provided, Bun generates a random default secret in memory and uses it.
      */
     secret?: string;
 
@@ -2188,6 +2283,14 @@ declare module "bun" {
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     maxAge?: number;
+
+    /**
+     * The principal (session ID, user ID, or equivalent) the token must be
+     * bound to. A token generated with a `sessionId` only verifies when the
+     * same `sessionId` is supplied here; a token generated without one only
+     * verifies when this option is omitted.
+     */
+    sessionId?: string;
   }
 
   /**
@@ -2198,7 +2301,7 @@ declare module "bun" {
   namespace CSRF {
     /**
      * Generate a CSRF token.
-     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param secret The secret to use for the token. If not provided, Bun generates a random default secret in memory and uses it.
      * @param options The options for the token.
      * @returns The generated token.
      */
@@ -2214,7 +2317,7 @@ declare module "bun" {
   }
 
   /**
-   *   This lets you use macros as regular imports
+   *   Use macros as regular imports.
    *   @example
    *   ```
    *   {
@@ -2323,8 +2426,8 @@ declare module "bun" {
     /**
      *    Replace an import statement with a macro.
      *
-     *    This will remove the import statement from the final output
-     *    and replace any function calls or template strings with the result returned by the macro
+     *    This removes the import statement from the final output
+     *    and replaces any function calls or template strings with the result returned by the macro
      *
      *    @example
      *    ```json
@@ -2335,7 +2438,7 @@ declare module "bun" {
      *    }
      *    ```
      *
-     *    Code that calls `graphql` will be replaced with the result of the macro.
+     *    Code that calls `graphql` is replaced with the result of the macro.
      *
      *    ```js
      *    import {graphql} from "react-relay";
@@ -2385,16 +2488,16 @@ declare module "bun" {
     deadCodeElimination?: boolean;
 
     /**
-     * This does two things (and possibly more in the future):
-     * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations will be inlined into their usages.
+     * This does two things:
+     * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations are inlined into their usages.
      * 2. `let` and `const` declarations only used once are inlined into their usages.
      *
      * JavaScript engines typically do these optimizations internally, however
      * it might only happen much later in the compilation pipeline, after code
      * has been executed many many times.
      *
-     * This will typically shrink the output size of code, but it might increase
-     * it in some cases. Do your own benchmarks!
+     * This typically shrinks the output size of code, but it might increase
+     * it in some cases. Do your own benchmarks.
      */
     inline?: boolean;
 
@@ -2641,7 +2744,7 @@ declare module "bun" {
      *   references to string literals containing the actual environment variable values
      * - `"disable"`: Disables environment variable injection entirely
      * - A string ending in `*`: Inlines environment variables that match the given prefix.
-     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *   For example, `"MY_PUBLIC_*"` only includes env vars starting with "MY_PUBLIC_"
      *
      * @example
      * ```ts
@@ -2682,7 +2785,12 @@ declare module "bun" {
      */
     emitDCEAnnotations?: boolean;
 
-    // treeshaking?: boolean;
+    /**
+     * Whether to enable tree-shaking (removal of unreferenced top-level
+     * declarations and unused exports). Defaults to `true`. Set to `false` to
+     * keep dead code in the output for debugging or test fixtures.
+     */
+    treeShaking?: boolean;
 
     // jsx?:
     //   | "automatic"
@@ -2699,7 +2807,7 @@ declare module "bun" {
 
     /**
      * Generate bytecode for the output. This can dramatically improve cold
-     * start times, but will make the final output larger and slightly increase
+     * start times, but makes the final output larger and slightly increases
      * memory usage.
      *
      * - CommonJS: works with or without `compile: true`
@@ -2810,9 +2918,30 @@ declare module "bun" {
     reactFastRefresh?: boolean;
 
     /**
+     * Run the React Compiler over `.jsx`/`.tsx` source files, automatically
+     * memoizing components and hooks.
+     *
+     * @default false
+     * @experimental
+     */
+    reactCompiler?: boolean;
+
+    /**
+     * Output mode for the React Compiler. `"ssr"` skips memoization (the
+     * `useMemoCache` runtime) for server-rendered output.
+     *
+     * Only applies when {@link reactCompiler} is `true`.
+     *
+     * @default `"client"` when {@link target} is `"browser"`; `"ssr"` when
+     * {@link target} is `"bun"` or `"node"`.
+     * @experimental
+     */
+    reactCompilerOutputMode?: "client" | "ssr";
+
+    /**
      * A map of file paths to their contents for in-memory bundling.
      *
-     * This allows you to bundle virtual files that don't exist on disk, or override
+     * Use this to bundle virtual files that don't exist on disk, or override
      * the contents of files that do exist on disk. The keys are file paths (which should
      * match how they're imported) and the values are the file contents.
      *
@@ -2949,9 +3078,7 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
-     * Whether to autoload .env files when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
      *
@@ -2959,9 +3086,7 @@ declare module "bun" {
      */
     autoloadDotenv?: boolean;
     /**
-     * Whether to autoload bunfig.toml when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads bunfig.toml when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
@@ -2969,9 +3094,7 @@ declare module "bun" {
      */
     autoloadBunfig?: boolean;
     /**
-     * Whether to autoload tsconfig.json when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads tsconfig.json when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
      *
@@ -2979,9 +3102,7 @@ declare module "bun" {
      */
     autoloadTsconfig?: boolean;
     /**
-     * Whether to autoload package.json when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads package.json when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
      *
@@ -3002,7 +3123,7 @@ declare module "bun" {
   /**
    * Hash and verify passwords using argon2 or bcrypt
    *
-   * These are fast APIs that can run in a worker thread if used asynchronously.
+   * The asynchronous functions run in a worker thread.
    *
    * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
@@ -3013,12 +3134,12 @@ declare module "bun" {
       algorithm: "argon2id" | "argon2d" | "argon2i";
 
       /**
-       * Memory cost, which defines the memory usage, given in kibibytes.
+       * Memory usage, in kibibytes. Minimum 8.
        */
       memoryCost?: number;
       /**
-       * Defines the amount of computation realized and therefore the execution
-       * time, given in number of iterations.
+       * Number of iterations. More iterations means more computation and a
+       * longer hash time.
        */
       timeCost?: number;
     }
@@ -3027,7 +3148,9 @@ declare module "bun" {
       algorithm: "bcrypt";
 
       /**
-       * A number between 4 and 31. The default is 10.
+       * A number between 4 and 31.
+       *
+       * @default 10
        */
       cost?: number;
     }
@@ -3037,14 +3160,13 @@ declare module "bun" {
 
   /**
    * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
-   * Password hashing functions are necessarily slow, and this object will
-   * automatically run in a worker thread.
+   * Password hashing functions are necessarily slow, so the asynchronous
+   * functions run in a worker thread.
+   *
+   * The underlying implementation of these functions is provided by the
+   * `rust-argon2` and `bcrypt` Rust crates.
    *
    * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
-   *
-   * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-   * work on this.
    *
    * @example
    * **Example with argon2**
@@ -3084,7 +3206,7 @@ declare module "bun" {
      *
      * @throws If the algorithm is specified and does not match the hash
      * @throws If the algorithm is invalid
-     * @throws if the hash is invalid
+     * @throws If the hash is invalid
      */
     verify(
       /**
@@ -3099,7 +3221,7 @@ declare module "bun" {
        */
       hash: Bun.StringOrBuffer,
       /**
-       * If not specified, the algorithm will be inferred from the hash.
+       * If not specified, the algorithm is inferred from the hash.
        *
        * If specified and the algorithm does not match the hash, this function
        * throws an error.
@@ -3137,7 +3259,8 @@ declare module "bun" {
        */
       password: Bun.StringOrBuffer,
       /**
-       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       * When using bcrypt, passwords longer than 72 bytes are hashed with
+       * SHA-512 before being passed to bcrypt
        *
        * @default "argon2id"
        */
@@ -3145,13 +3268,14 @@ declare module "bun" {
     ): Promise<string>;
 
     /**
-     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
-     * instead which runs in a worker thread.
+     * Synchronously verify a password against a previously hashed password using
+     * argon2 or bcrypt. The default is argon2.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-     * work on this.
+     * Warning: password hashing is slow. Prefer {@link Bun.password.verify},
+     * which runs in a worker thread.
+     *
+     * The underlying implementation of these functions is provided by the
+     * `rust-argon2` and `bcrypt` Rust crates.
      *
      * @example
      * **Example with argon2**
@@ -3184,19 +3308,19 @@ declare module "bun" {
        */
       hash: Bun.StringOrBuffer,
       /**
-       * If not specified, the algorithm will be inferred from the hash.
+       * If not specified, the algorithm is inferred from the hash.
        */
       algorithm?: Password.AlgorithmLabel,
     ): boolean;
 
     /**
-     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
-     * instead which runs in a worker thread.
+     * Synchronously hash a password using argon2 or bcrypt. The default is argon2.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-     * work on this.
+     * Warning: password hashing is slow. Prefer {@link Bun.password.hash},
+     * which runs in a worker thread.
+     *
+     * The underlying implementation of these functions is provided by the
+     * `rust-argon2` and `bcrypt` Rust crates.
      *
      * @example
      * **Example with argon2**
@@ -3229,7 +3353,8 @@ declare module "bun" {
       password: Bun.StringOrBuffer,
 
       /**
-       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       * When using bcrypt, passwords longer than 72 bytes are hashed with
+       * SHA-512 before being passed to bcrypt
        *
        * @default "argon2id"
        */
@@ -3242,7 +3367,7 @@ declare module "bun" {
    *
    * Uses platform-specific secure storage:
    * - **macOS**: Keychain Services
-   * - **Linux**: libsecret (GNOME Keyring, KWallet, etc.)
+   * - **Linux**: libsecret (GNOME Keyring, KWallet, and others)
    * - **Windows**: Windows Credential Manager
    *
    * @category Security
@@ -3308,7 +3433,7 @@ declare module "bun" {
     /**
      * Retrieve a stored credential from the operating system's secure storage.
      *
-     * @param options - The service and name identifying the credential
+     * @param options The service and name identifying the credential
      * @returns The stored credential value, or null if not found
      *
      * @example
@@ -3337,15 +3462,14 @@ declare module "bun" {
        * The service or application name.
        *
        * Use a unique identifier for your application to avoid conflicts.
-       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       * Consider reverse domain notation for production apps, for example
+       * "com.example.myapp".
        */
       service: string;
 
       /**
-       * The account name, username, or resource identifier.
-       *
-       * This identifies the specific credential within the service.
-       * Common patterns include usernames, email addresses, or resource URLs.
+       * The account name, username, or resource identifier (such as an email
+       * address or URL) that identifies the credential within the service.
        */
       name: string;
     }): Promise<string | null>;
@@ -3353,11 +3477,11 @@ declare module "bun" {
     /**
      * Store or update a credential in the operating system's secure storage.
      *
-     * If a credential already exists for the given service/name combination, it will be replaced.
+     * If a credential already exists for the given service/name combination, it is replaced.
      * The credential is encrypted by the operating system and only accessible to the current user.
      *
-     * @param options - The service and name identifying the credential
-     * @param value - The secret value to store (e.g., password, API key, token)
+     * @param options The service and name identifying the credential, and the value to store
+     * @param value The secret value to store, such as a password, API key, or token
      *
      * @example
      * ```ts
@@ -3419,26 +3543,23 @@ declare module "bun" {
        * The service or application name.
        *
        * Use a unique identifier for your application to avoid conflicts.
-       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       * Consider reverse domain notation for production apps, for example
+       * "com.example.myapp".
        */
       service: string;
 
       /**
-       * The account name, username, or resource identifier.
-       *
-       * This identifies the specific credential within the service.
-       * Common patterns include usernames, email addresses, or resource URLs.
+       * The account name, username, or resource identifier (such as an email
+       * address or URL) that identifies the credential within the service.
        */
       name: string;
 
       /**
-       * The secret value to store.
+       * The secret value to store, such as a password, API key, or token.
+       * The operating system encrypts the value before storing it.
        *
-       * This should be a sensitive credential like a password, API key, or token.
-       * The value is encrypted by the operating system before storage.
-       *
-       * Note: To delete a credential, use the delete() method or pass an empty string.
-       * An empty string value will delete the credential if it exists.
+       * An empty string deletes the credential if it exists, the same as
+       * calling `delete()`.
        */
       value: string;
 
@@ -3457,7 +3578,7 @@ declare module "bun" {
     /**
      * Delete a stored credential from the operating system's secure storage.
      *
-     * @param options - The service and name identifying the credential
+     * @param options The service and name identifying the credential
      * @returns true if a credential was deleted, false if not found
      *
      * @example
@@ -3504,22 +3625,23 @@ declare module "bun" {
        * The service or application name.
        *
        * Use a unique identifier for your application to avoid conflicts.
-       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       * Consider reverse domain notation for production apps, for example
+       * "com.example.myapp".
        */
       service: string;
 
       /**
-       * The account name, username, or resource identifier.
-       *
-       * This identifies the specific credential within the service.
-       * Common patterns include usernames, email addresses, or resource URLs.
+       * The account name, username, or resource identifier (such as an email
+       * address or URL) that identifies the credential within the service.
        */
       name: string;
     }): Promise<boolean>;
   };
 
   /**
-   * A build artifact represents a file that was generated by the bundler @see {@link Bun.build}
+   * A file generated by the bundler.
+   *
+   * @see {@link Bun.build}
    *
    * @category Bundler
    */
@@ -3541,19 +3663,15 @@ declare module "bun" {
     success: boolean;
     logs: Array<BuildMessage | ResolveMessage>;
     /**
-     * Metadata about the build including inputs, outputs, and their relationships.
+     * Metadata about the build:
+     * - **inputs**: every bundled source file with its byte size, imports, and format
+     * - **outputs**: every generated file with its byte size, the inputs that
+     *   contributed to it, imports between chunks, and exports
      *
      * Only present when {@link BuildConfig.metafile} is `true`.
      *
-     * The metafile contains detailed information about:
-     * - **inputs**: All source files that were bundled, their byte sizes, imports, and format
-     * - **outputs**: All generated output files, their byte sizes, which inputs contributed to each output, imports between chunks, and exports
-     *
-     * This can be used for:
-     * - Bundle size analysis and visualization
-     * - Detecting unused code or dependencies
-     * - Understanding the dependency graph
-     * - Integration with bundle analyzer tools
+     * Use it for bundle size analysis, inspecting the dependency graph, or as
+     * input to bundle analyzer tools.
      *
      * @example
      * ```ts
@@ -3586,12 +3704,15 @@ declare module "bun" {
   }
 
   /**
-   * Metafile structure containing build metadata for analysis.
+   * Build metadata: every input and output file, its size, and the imports
+   * between them.
+   *
+   * @see {@link BuildOutput.metafile}
    *
    * @category Bundler
    */
   interface BuildMetafile {
-    /** Information about all input source files */
+    /** Input source files, keyed by path */
     inputs: {
       [path: string]: {
         /** Size of the input file in bytes */
@@ -3606,14 +3727,14 @@ declare module "bun" {
           original?: string;
           /** Whether this import is external to the bundle */
           external?: boolean;
-          /** Import attributes (e.g., `{ type: "json" }`) */
+          /** Import attributes, for example `{ type: "json" }` */
           with?: Record<string, string>;
         }>;
         /** Module format of the input file */
         format?: "esm" | "cjs" | "json" | "css";
       };
     };
-    /** Information about all output files */
+    /** Output files, keyed by path */
     outputs: {
       [path: string]: {
         /** Size of the output file in bytes */
@@ -3634,9 +3755,9 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
-        /** Entry point path if this output is an entry point */
+        /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
-        /** Path to the associated CSS bundle (for JS entry points with CSS) */
+        /** Path to the associated CSS bundle (for JS entrypoints with CSS) */
         cssBundle?: string;
       };
     };
@@ -3645,7 +3766,7 @@ declare module "bun" {
   /**
    * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
    *
-   * @param config - Build configuration options
+   * @param config Build configuration options
    * @returns Promise that resolves to build output containing generated artifacts and build status
    * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
    *
@@ -3755,7 +3876,7 @@ declare module "bun" {
    *```
    *
    * @example
-   * Implement comprehensive error handling with position info
+   * Handle build errors with position info
    *```ts
    * try {
    *   const result = await Bun.build({
@@ -3906,7 +4027,7 @@ declare module "bun" {
     passphrase?: string;
 
     /**
-     * File path to a .pem file custom Diffie Helman parameters
+     * File path to a `.pem` file containing custom Diffie-Hellman parameters
      */
     dhParamsFile?: string;
 
@@ -3916,8 +4037,8 @@ declare module "bun" {
     serverName?: string;
 
     /**
-     * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
-     * It reduces overall performance but saves some memory.
+     * Sets `OPENSSL_RELEASE_BUFFERS` to 1.
+     * Reduces overall performance but saves some memory.
      * @default false
      */
     lowMemoryMode?: boolean;
@@ -3929,7 +4050,7 @@ declare module "bun" {
     rejectUnauthorized?: boolean;
 
     /**
-     * If set to `true`, the server will request a client certificate.
+     * If set to `true`, the server requests a client certificate.
      *
      * Default is `false`.
      */
@@ -3949,25 +4070,25 @@ declare module "bun" {
      *  including the root CA (the root CA must be pre-known to the peer,
      *  see ca). When providing multiple cert chains, they do not have to
      *  be in the same order as their private keys in key. If the
-     *  intermediate certificates are not provided, the peer will not be
-     *  able to validate the certificate, and the handshake will fail.
+     *  intermediate certificates are not provided, the peer cannot
+     *  validate the certificate, and the handshake fails.
      */
     cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
-     * being encrypted. Encrypted keys will be decrypted with
+     * being encrypted. Encrypted keys are decrypted with
      * options.passphrase. Multiple keys using different algorithms can be
      * provided either as an array of unencrypted key strings or buffers,
      * or an array of objects in the form {pem: <string|buffer>[,
      * passphrase: <string>]}. The object form can only occur in an array.
-     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase is optional. Encrypted keys are decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
     key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
-     * usually necessary. This should be used carefully if at all! Value is
-     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     * usually necessary. Use it carefully, if at all. Value is a numeric
+     * bitmask of the SSL_OP_* options from OpenSSL Options
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
@@ -4000,9 +4121,9 @@ declare module "bun" {
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
-   * This Blob is lazy. That means it won't do any work until you read from it.
+   * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` will not be valid until the contents of the file are read at least once.
+   * - `size` is not valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
    *
    * @example
@@ -4019,55 +4140,71 @@ declare module "bun" {
    *   "Hello, world!"
    * );
    * ```
-   * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
+   * @param path The path to the file (lazily loaded). If the path starts with `s3://`, the file behaves like {@link S3File}
    */
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
-   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   * A list of files embedded into the standalone executable, lexicographically sorted by name.
    *
-   * If the process is not a standalone executable, this returns an empty array.
+   * If the process is not a standalone executable, this array is empty.
    */
   const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
-   * `Blob` that leverages the fastest system calls available to operate on files.
+   * `true` when the current process is a standalone executable produced by
+   * `bun build --compile`, `false` otherwise.
    *
-   * This Blob is lazy. It won't do any work until you read from it. Errors propagate as promise rejections.
+   * Unlike checking `Bun.embeddedFiles.length > 0`, reading this property does
+   * not materialize embedded files as `Blob` objects.
    *
-   * `Blob.size` will not be valid until the contents of the file are read at least once.
-   * `Blob.type` will have a default set based on the file extension
+   * @example
+   * ```ts
+   * if (Bun.isStandaloneExecutable) {
+   *   console.log("Running from a compiled binary");
+   * }
+   * ```
+   */
+  const isStandaloneExecutable: boolean;
+
+  /**
+   * `Blob` that uses the fastest system calls available to operate on files.
+   *
+   * This Blob is lazy: it does no work until you read from it. Errors propagate as promise rejections.
+   *
+   * `Blob.size` is not valid until the contents of the file are read at least once.
+   * `Blob.type` is set based on the file extension when possible
    *
    * @example
    * ```js
-   * const file = Bun.file(new TextEncoder.encode("./hello.json"));
+   * const file = Bun.file(new TextEncoder().encode("./hello.json"));
    * console.log(file.type); // "application/json"
    * ```
    *
-   * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
+   * @param path The path to the file as a byte buffer (the buffer is copied). If the path starts with `s3://`, the file behaves like {@link S3File}
    */
   function file(path: ArrayBufferLike | Uint8Array<ArrayBuffer>, options?: BlobPropertyBag): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
-   * This Blob is lazy. That means it won't do any work until you read from it.
+   * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` will not be valid until the contents of the file are read at least once.
+   * - `size` is not valid until the contents of the file are read at least once.
    *
    * @example
    * ```js
    * const file = Bun.file(fd);
    * ```
    *
-   * @param fileDescriptor The file descriptor of the file
+   * @param fileDescriptor An open file descriptor
    */
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
    *
-   * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
+   * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can leak anything recently in memory.
    */
   function allocUnsafe(size: number): Uint8Array<ArrayBuffer>;
 
@@ -4145,7 +4282,8 @@ declare module "bun" {
     /**
      * HTTP proxy to use for the WebSocket connection.
      *
-     * Can be a string URL or an object with `url` and optional `headers`.
+     * Can be a string URL, a URL instance, or an object with `url` and
+     * optional `headers`.
      *
      * @example
      * ```ts
@@ -4172,11 +4310,12 @@ declare module "bun" {
      */
     proxy?:
       | string
+      | URL
       | {
           /**
-           * The proxy URL (http:// or https://)
+           * The proxy URL (http:// or https://), as a string or a `URL`.
            */
-          url: string;
+          url: string | URL;
           /**
            * Custom headers to send to the proxy server.
            * Supports plain objects or Headers class instances.
@@ -4185,13 +4324,30 @@ declare module "bun" {
         };
   };
 
+  type WebSocketOptionsCompression = {
+    /**
+     * Whether to offer the `permessage-deflate` extension in the WebSocket
+     * upgrade request. Pass `false` to suppress the `Sec-WebSocket-Extensions`
+     * header entirely — matching the `ws` package's `perMessageDeflate: false`
+     * option.
+     *
+     * Defaults to `true` (the upgrade request advertises
+     * `permessage-deflate; client_max_window_bits`). Any falsy value
+     * (`false`, `null`, `0`, `""`, explicit `undefined`) disables the offer.
+     *
+     * @default true
+     */
+    perMessageDeflate?: boolean;
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
   type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol &
     WebSocketOptionsTLS &
     WebSocketOptionsHeaders &
-    WebSocketOptionsProxy;
+    WebSocketOptionsProxy &
+    WebSocketOptionsCompression;
 
   interface WebSocketEventMap {
     close: CloseEvent;
@@ -4292,8 +4448,10 @@ declare module "bun" {
 
     /**
      * Closes the WebSocket connection
-     * @param code A numeric value indicating the status code
-     * @param reason A human-readable string explaining why the connection is closing
+     * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
+     * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * @param reason A human-readable string explaining why the connection is closing. Throws a
+     * `SyntaxError` if longer than 123 bytes of UTF-8
      */
     close(code?: number, reason?: string): void;
 
@@ -4359,7 +4517,7 @@ declare module "bun" {
   }
 
   /**
-   * Pretty-print an object the same as {@link console.log} to a `string`
+   * Pretty-prints an object to a `string`, the same as {@link console.log}
    *
    * Supports JSX
    *
@@ -4369,7 +4527,7 @@ declare module "bun" {
   function inspect(arg: any, options?: BunInspectOptions): string;
   namespace inspect {
     /**
-     * That can be used to declare custom inspect functions.
+     * Symbol for declaring a custom inspect function on an object. Same as `util.inspect.custom` in Node.js.
      */
     const custom: typeof import("util").inspect.custom;
 
@@ -4388,29 +4546,39 @@ declare module "bun" {
      */
     sync?: boolean;
     /**
-     * Allow other processes to see results instantly?
-     * This enables MAP_SHARED. If false, it enables MAP_PRIVATE.
+     * Whether other processes see writes immediately.
+     * `true` maps with MAP_SHARED; `false` maps with MAP_PRIVATE.
      * @default true
      */
     shared?: boolean;
+    /**
+     * Byte offset into the file where the mapping starts.
+     * @default 0
+     */
+    offset?: number;
+    /**
+     * Maximum number of bytes to map. Clamped to the file size
+     * (minus `offset`). Defaults to mapping the rest of the file.
+     */
+    size?: number;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
    * - Writing to the array writes to the file.
    * - Reading from the array reads from the file.
    *
-   * This uses the [`mmap()`](https://man7.org/linux/man-pages/man2/mmap.2.html) syscall under the hood.
+   * This uses the [`mmap()`](https://man7.org/linux/man-pages/man2/mmap.2.html) syscall.
    *
    * ---
    *
    * This API inherently has some rough edges:
-   * - It does not support empty files. It will throw a `SystemError` with `EINVAL`
-   * - Usage on shared/networked filesystems is discouraged. It will be very slow.
-   * - If you delete or truncate the file, that will crash bun. This is called a segmentation fault.
+   * - It does not support empty files. It throws a `SystemError` with `EINVAL`
+   * - Usage on shared/networked filesystems is discouraged. It is very slow.
+   * - Deleting or truncating the file crashes Bun with a segmentation fault.
    *
    * ---
    *
-   * To close the file, set the array to `null` and it will be garbage collected eventually.
+   * To close the file, set the array to `null`; it is garbage collected eventually.
    */
   function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
@@ -4451,7 +4619,7 @@ declare module "bun" {
     | { toString(): string };
 
   /**
-   * Converts formats of colors
+   * Converts a color to a different format
    *
    * @category Utilities
    *
@@ -4488,11 +4656,11 @@ declare module "bun" {
        */
       | "HEX"
       /**
-       * @example hsl(35.764706, 1, 0.5)
+       * @example hsl(35.764706, 100%, 50%)
        */
       | "hsl"
       /**
-       * @example lab(0.72732764, 33.938198, -25.311619)
+       * @example lab(72.732764% 33.938198 -25.311619)
        */
       | "lab"
       /**
@@ -4514,17 +4682,17 @@ declare module "bun" {
   /**
    * Convert any color input to rgb
    * @param input Any color input
-   * @param outputFormat Specify `[rgb]` to output as an array with `r`, `g`, and `b` properties
+   * @param outputFormat Specify `[rgb]` to output as a `[r, g, b]` array
    */
   function color(input: ColorInput, outputFormat: "[rgb]"): [number, number, number] | null;
   /**
    * Convert any color input to rgba
    * @param input Any color input
-   * @param outputFormat Specify `[rgba]` to output as an array with `r`, `g`, `b`, and `a` properties
+   * @param outputFormat Specify `[rgba]` to output as a `[r, g, b, a]` array
    */
   function color(input: ColorInput, outputFormat: "[rgba]"): [number, number, number, number] | null;
   /**
-   * Convert any color input to a number
+   * Convert any color input to rgb
    * @param input Any color input
    * @param outputFormat Specify `{rgb}` to output as an object with `r`, `g`, and `b` properties
    */
@@ -4532,7 +4700,7 @@ declare module "bun" {
   /**
    * Convert any color input to rgba
    * @param input Any color input
-   * @param outputFormat Specify {rgba} to output as an object with `r`, `g`, `b`, and `a` properties
+   * @param outputFormat Specify `{rgba}` to output as an object with `r`, `g`, `b`, and `a` properties
    */
   function color(input: ColorInput, outputFormat: "{rgba}"): { r: number; g: number; b: number; a: number } | null;
   /**
@@ -4543,11 +4711,11 @@ declare module "bun" {
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
   /**
-   * Bun.semver provides a fast way to parse and compare version numbers.
+   * Bun.semver parses and compares version numbers.
    */
   namespace semver {
     /**
-     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     * Tests whether `version` satisfies `range`. Both arguments are stringified first.
      */
     function satisfies(version: StringLike, range: StringLike): boolean;
 
@@ -4562,9 +4730,9 @@ declare module "bun" {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
      *
-     * **Only use this for ASCII strings**. If there are non-ascii characters, your application may crash and/or very confusing bugs will happen such as `"foo" !== "foo"`.
+     * **Only use this for ASCII strings**. If there are non-ASCII characters, your application may crash or hit confusing bugs such as `"foo" !== "foo"`.
      *
-     * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
+     * **The input buffer must not be garbage collected**. Hold a reference to it for the lifetime of the string.
      */
     function arrayBufferToString(buffer: Uint8Array<ArrayBuffer> | ArrayBufferLike): string;
 
@@ -4573,7 +4741,7 @@ declare module "bun" {
      *
      * **The input must be a UTF-16 encoded string**. This API does no validation whatsoever.
      *
-     * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
+     * **The input buffer must not be garbage collected**. Hold a reference to it for the lifetime of the string.
      */
 
     function arrayBufferToString(buffer: Uint16Array): string;
@@ -4590,7 +4758,7 @@ declare module "bun" {
      *
      * `BUN_GARBAGE_COLLECTOR_LEVEL` environment variable is also supported.
      *
-     * @param level
+     * @param level The level to set: `0`, `1`, or `2`
      * @returns The previous level
      */
     function gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
@@ -4599,21 +4767,33 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * Accurate per-process memory footprint in bytes.
+     *
+     * Unlike `process.memoryUsage.rss()`, this excludes pages already
+     * returned to the OS that the kernel keeps mapped lazily (Darwin's
+     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
+     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
+     * Returns `undefined` on platforms with no accurate accessor; callers
+     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     */
+    function memoryFootprint(): number | undefined;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
-   * Are ANSI colors enabled for stdin and stdout?
+   * Whether ANSI colors are enabled for stdin and stdout
    *
    * Used for {@link console.log}
    */
   const enableANSIColors: boolean;
 
   /**
-   * What script launched Bun?
-   *
-   * Absolute file path
+   * Absolute path of the script that launched Bun
    *
    * @example "/never-gonna-give-you-up.js"
    */
@@ -4631,11 +4811,9 @@ declare module "bun" {
   function gc(force?: boolean): void;
 
   /**
-   * JavaScriptCore engine's internal heap snapshot
+   * JavaScriptCore engine's internal heap snapshot format
    *
-   * I don't know how to make this something Chrome or Safari can read.
-   *
-   * If you have any ideas, please file an issue https://github.com/oven-sh/bun
+   * For a snapshot Chrome DevTools can read, use {@link generateHeapSnapshot} with the `"v8"` format.
    */
   interface HeapSnapshot {
     /** 2 */
@@ -4653,35 +4831,29 @@ declare module "bun" {
   }
 
   /**
-   * Returns the number of nanoseconds since the process was started.
+   * Returns the number of nanoseconds since the process was started, measured with a
+   * high-resolution monotonic system timer.
    *
-   * This function uses a high-resolution monotonic system timer to provide precise time measurements.
-   * In JavaScript, numbers are represented as double-precision floating-point values (IEEE 754),
-   * which can safely represent integers up to 2^53 - 1 (Number.MAX_SAFE_INTEGER).
+   * JavaScript numbers are IEEE 754 doubles, which represent integers exactly only up to
+   * 2^53 - 1 (`Number.MAX_SAFE_INTEGER`). After about 14.8 weeks of uptime the nanosecond
+   * count exceeds that, so the returned value keeps counting but loses precision.
    *
-   * Due to this limitation, while the internal counter may continue beyond this point,
-   * the precision of the returned value will degrade after 14.8 weeks of uptime (when the nanosecond
-   * count exceeds Number.MAX_SAFE_INTEGER). Beyond this point, the function will continue to count but
-   * with reduced precision, which might affect time calculations and comparisons in long-running applications.
-   *
-   * @returns {number} The number of nanoseconds since the process was started, with precise values up to
-   * Number.MAX_SAFE_INTEGER.
+   * @returns Nanoseconds since the process started
    */
   function nanoseconds(): number;
 
   /**
-   * Show precise statistics about memory usage of your application
-   *
-   * Generate a heap snapshot in JavaScriptCore's format that can be viewed with `bun --inspect` or Safari's Web Inspector
+   * Generates a heap snapshot in JavaScriptCore's format. View it with `bun --inspect` or
+   * Safari's Web Inspector
    */
   function generateHeapSnapshot(format?: "jsc"): HeapSnapshot;
 
   /**
-   * Show precise statistics about memory usage of your application
+   * Generates a V8 heap snapshot for use with Chrome DevTools or Visual Studio Code
    *
-   * Generate a V8 Heap Snapshot that can be used with Chrome DevTools & Visual Studio Code
+   * Returns a JSON string you can save to a file.
    *
-   * This is a JSON string that can be saved to a file.
+   * @example
    * ```ts
    * const snapshot = Bun.generateHeapSnapshot("v8");
    * await Bun.write("heap.heapsnapshot", snapshot);
@@ -4690,12 +4862,11 @@ declare module "bun" {
   function generateHeapSnapshot(format: "v8"): string;
 
   /**
-   * Show precise statistics about memory usage of your application
-   *
-   * Generate a V8 Heap Snapshot as an ArrayBuffer.
+   * Generates a V8 heap snapshot as an `ArrayBuffer` containing the UTF-8 encoded JSON.
    *
    * This avoids the overhead of creating a JavaScript string for large heap snapshots.
-   * The ArrayBuffer contains the UTF-8 encoded JSON.
+   *
+   * @example
    * ```ts
    * const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
    * await Bun.write("heap.heapsnapshot", snapshot);
@@ -4711,9 +4882,10 @@ declare module "bun" {
   function shrink(): void;
 
   /**
-   * Open a file in your local editor. Auto-detects via `$VISUAL` || `$EDITOR`
+   * Open a file in your local editor. The editor is detected from `$VISUAL` or `$EDITOR`
    *
-   * @param path path to open
+   * @param path Path of the file to open
+   * @param options Editor, line, and column overrides
    */
   function openInEditor(path: string, options?: EditorOptions): void;
 
@@ -4732,14 +4904,14 @@ declare module "bun" {
     /**
      * Update the hash with data
      *
-     * @param data
+     * @param data Data to add to the hash
      */
     update(data: Bun.BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
      *
-     * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
+     * @param encoding `DigestEncoding` to return the hash in. If none is provided, the hash is returned as a `Uint8Array`
      */
     digest(encoding: DigestEncoding): string;
 
@@ -4810,14 +4982,14 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
-     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
+     * @param hmacKey Optional key for HMAC. If not provided, the hasher is a regular (non-HMAC) hasher.
      */
     constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
      *
-     * @param input
+     * @param input Data to add to the hash. `Uint8Array` or `ArrayBuffer` is faster than a string
      */
     update(input: Bun.BlobOrStringOrBuffer, inputEncoding?: import("crypto").Encoding): CryptoHasher;
 
@@ -4829,7 +5001,7 @@ declare module "bun" {
     /**
      * Finalize the hash. Resets the CryptoHasher so it can be reused.
      *
-     * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
+     * @param encoding `DigestEncoding` to return the hash in
      */
     digest(encoding: DigestEncoding): string;
 
@@ -4887,14 +5059,15 @@ declare module "bun" {
   }
 
   /**
-   * Resolve a `Promise` after milliseconds. This is like
-   * {@link setTimeout} except it returns a `Promise`.
+   * Returns a `Promise` that resolves after the given number of milliseconds,
+   * or at the given {@link Date}. Like {@link setTimeout}, except it returns a
+   * `Promise`.
    *
    * @category Utilities
    *
-   * @param ms milliseconds to delay resolving the promise. This is a minimum
-   * number. It may take longer. If a {@link Date} is passed, it will sleep until the
-   * {@link Date} is reached.
+   * @param ms milliseconds to wait before resolving the promise. This is a
+   * minimum; it may take longer. Pass a {@link Date} to sleep until that time
+   * is reached.
    *
    * @example
    * ## Sleep for 1 second
@@ -4918,14 +5091,12 @@ declare module "bun" {
    * ```ts
    * await new Promise((resolve) => setTimeout(resolve, ms));
    * ```
-   * As always, you can use `Bun.sleep` or the imported `sleep` function interchangeably.
+   * `Bun.sleep` and the imported `sleep` function are interchangeable.
    */
   function sleep(ms: number | Date): Promise<void>;
 
   /**
-   * Sleep the thread for a given number of milliseconds
-   *
-   * This is a blocking function.
+   * Block the thread for a given number of milliseconds.
    *
    * Internally, it calls [nanosleep(2)](https://man7.org/linux/man-pages/man2/nanosleep.2.html)
    */
@@ -4934,12 +5105,7 @@ declare module "bun" {
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
-   * @category Utilities
-   *
-   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
-   * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
-   *
-   * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
+   * This hashing function balances speed with cryptographic strength. It does not encrypt or decrypt data.
    *
    * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
@@ -4949,18 +5115,18 @@ declare module "bun" {
    * # You will need OpenSSL 3 or later
    * openssl sha512-256 /path/to/file
    * ```
+   *
+   * @category Utilities
+   *
+   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster
+   * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
    */
   function sha(input: Bun.StringOrBuffer, hashInto?: NodeJS.TypedArray): NodeJS.TypedArray;
 
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
-   * @category Utilities
-   *
-   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
-   * @param encoding `DigestEncoding` to return the hash in
-   *
-   * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
+   * This hashing function balances speed with cryptographic strength. It does not encrypt or decrypt data.
    *
    * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
@@ -4970,19 +5136,24 @@ declare module "bun" {
    * # You will need OpenSSL 3 or later
    * openssl sha512-256 /path/to/file
    * ```
+   *
+   * @category Utilities
+   *
+   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster
+   * @param encoding `DigestEncoding` to return the hash in
    */
   function sha(input: Bun.StringOrBuffer, encoding: DigestEncoding): string;
 
   /**
    * This is not the default because it's not cryptographically secure and it's slower than {@link SHA512}
    *
-   * Consider using the ugly-named {@link SHA512_256} instead
+   * Consider {@link SHA512_256} instead
    */
   class SHA1 extends CryptoHashInterface<SHA1> {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 20;
   }
@@ -4990,7 +5161,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 16;
   }
@@ -4998,7 +5169,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 16;
   }
@@ -5006,7 +5177,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 28;
   }
@@ -5014,7 +5185,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 64;
   }
@@ -5022,7 +5193,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 48;
   }
@@ -5030,7 +5201,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 32;
   }
@@ -5041,7 +5212,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 32;
   }
@@ -5053,14 +5224,14 @@ declare module "bun" {
   interface ZlibCompressionOptions {
     /**
      * The compression level to use. Must be between `-1` and `9`.
-     * - A value of `-1` uses the default compression level (Currently `6`)
-     * - A value of `0` gives no compression
-     * - A value of `1` gives least compression, fastest speed
-     * - A value of `9` gives best compression, slowest speed
+     * - `-1` uses the default compression level (`6`)
+     * - `0` gives no compression
+     * - `1` gives least compression, fastest speed
+     * - `9` gives best compression, slowest speed
      */
     level?: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     /**
-     * How much memory should be allocated for the internal compression state.
+     * How much memory to allocate for the internal compression state.
      *
      * A value of `1` uses minimum memory but is slow and reduces compression ratio.
      *
@@ -5073,11 +5244,11 @@ declare module "bun" {
      * Larger values of this parameter result in better compression at the expense of memory usage.
      *
      * The following value ranges are supported:
-     * - `9..15`: The output will have a zlib header and footer (Deflate)
-     * - `-9..-15`: The output will **not** have a zlib header or footer (Raw Deflate)
-     * - `25..31` (16+`9..15`): The output will have a gzip header and footer (gzip)
+     * - `9..15`: The output has a zlib header and footer (Deflate)
+     * - `-9..-15`: The output does **not** have a zlib header or footer (Raw Deflate)
+     * - `25..31` (16+`9..15`): The output has a gzip header and footer (gzip)
      *
-     * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
+     * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
       | -9
@@ -5112,7 +5283,7 @@ declare module "bun" {
      *
      * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
      *
-     * `Z_FILTERED` forces more Huffman coding and less string matching, it is
+     * `Z_FILTERED` forces more Huffman coding and less string matching; it is
      * somewhat intermediate between `Z_DEFAULT_STRATEGY` and `Z_HUFFMAN_ONLY`.
      * Filtered data consists mostly of small values with a somewhat random distribution.
      */
@@ -5127,7 +5298,7 @@ declare module "bun" {
   }
 
   /**
-   * Compresses a chunk of data with `zlib` DEFLATE algorithm.
+   * Compresses a chunk of data with the `zlib` DEFLATE algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
@@ -5137,7 +5308,7 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array<ArrayBuffer>;
   /**
-   * Compresses a chunk of data with `zlib` GZIP algorithm.
+   * Compresses a chunk of data with the `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
@@ -5147,7 +5318,7 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array<ArrayBuffer>;
   /**
-   * Decompresses a chunk of data with `zlib` INFLATE algorithm.
+   * Decompresses a chunk of data with the `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
@@ -5156,7 +5327,7 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array<ArrayBuffer>;
   /**
-   * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
+   * Decompresses a chunk of data with the `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
@@ -5203,21 +5374,20 @@ declare module "bun" {
 
   type Target =
     /**
-     * For generating bundles that are intended to be run by the Bun runtime. In many cases,
-     * it isn't necessary to bundle server-side code; you can directly execute the source code
-     * without modification. However, bundling your server code can reduce startup times and
-     * improve running performance.
+     * For bundles that run in the Bun runtime. Bundling server-side code is
+     * often unnecessary, since Bun can run the source directly, but it can
+     * reduce startup time and improve performance.
      *
      * All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which
-     * indicates to the Bun runtime that there's no need to re-transpile the file before execution.
+     * tells the Bun runtime that there's no need to re-transpile the file before execution.
      */
     | "bun"
     /**
-     * The plugin will be applied to Node.js builds
+     * The plugin is applied to Node.js builds
      */
     | "node"
     /**
-     * The plugin will be applied to browser builds
+     * The plugin is applied to browser builds
      */
     | "browser";
 
@@ -5276,8 +5446,6 @@ declare module "bun" {
     contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     /**
      * The loader to use for this file
-     *
-     * "css" will be added in a future version of Bun.
      */
     loader?: Loader;
   }
@@ -5327,7 +5495,7 @@ declare module "bun" {
     /**
      * Defer the execution of this callback until all other modules have been parsed.
      *
-     * @returns Promise which will be resolved when all modules have been parsed
+     * @returns Promise that resolves when all modules have been parsed
      */
     defer: () => Promise<void>;
   }
@@ -5374,7 +5542,7 @@ declare module "bun" {
     path: string;
     /**
      * The namespace of the destination
-     * It will be concatenated with `path` to form the final import specifier
+     * It is concatenated with `path` to form the final import specifier
      * @example
      * ```ts
      * "foo" // "foo:bar"
@@ -5400,9 +5568,8 @@ declare module "bun" {
    */
   interface PluginBuilder {
     /**
-     * Register a callback which will be invoked when bundling starts. When
-     * using hot module reloading, this is called at the start of each
-     * incremental rebuild.
+     * Register a callback that runs when bundling starts. With hot module
+     * reloading, it runs at the start of each incremental rebuild.
      *
      * @example
      * ```ts
@@ -5419,8 +5586,8 @@ declare module "bun" {
      */
     onStart(callback: OnStartCallback): this;
     /**
-     * Register a callback which will be invoked when bundling ends. This is
-     * called after all modules have been bundled and the build is complete.
+     * Register a callback that runs when bundling ends, after all modules
+     * have been bundled and the build is complete.
      *
      * @example
      * ```ts
@@ -5525,25 +5692,25 @@ declare module "bun" {
     /**
      * The target JavaScript environment the plugin should be applied to.
      * - `bun`: The default environment when using `bun run` or `bun` to load a script
-     * - `browser`: The plugin will be applied to browser builds
-     * - `node`: The plugin will be applied to Node.js builds
+     * - `browser`: The plugin is applied to browser builds
+     * - `node`: The plugin is applied to Node.js builds
      *
-     * If unspecified, it is assumed that the plugin is compatible with all targets.
+     * If unspecified, the plugin is assumed to be compatible with all targets.
      *
      * This field is not read by {@link Bun.plugin}, only {@link Bun.build} and `bun build`
      */
     target?: Target;
 
     /**
-     * A function that will be called when the plugin is loaded.
+     * Called when the plugin is loaded.
      *
      * This function may be called in the same tick that it is registered, or it
-     * may be called later. It could potentially be called multiple times for
-     * different targets.
+     * may be called later. It may be called multiple times for different
+     * targets.
      */
     setup(
       /**
-       * A builder object that can be used to register plugin hooks
+       * The builder object for registering plugin hooks
        * @example
        * ```ts
        * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
@@ -5561,18 +5728,18 @@ declare module "bun" {
    *
    * Plugins are applied in the order they are defined.
    *
-   * Today, there are two kinds of hooks:
-   * - `onLoad` lets you return source code or an object that will become the module's exports
-   * - `onResolve` lets you redirect a module specifier to another module specifier. It does not chain.
+   * There are two kinds of hooks:
+   * - `onLoad` returns source code or an object that becomes the module's exports
+   * - `onResolve` redirects a module specifier to another module specifier. It does not chain.
    *
-   * Plugin hooks must define a `filter` RegExp and will only be matched if the
+   * Plugin hooks must define a `filter` RegExp and only match when the
    * import specifier contains a "." or a ":".
    *
    * ES Module resolution semantics mean that plugins may be initialized _after_
    * a module is resolved. You might need to load plugins at the very beginning
    * of the application and then use a dynamic import to load the rest of the
    * application. A future version of Bun may also support specifying plugins
-   * via `bunfig.toml`.
+   * in `bunfig.toml`.
    *
    * @example
    * A YAML loader plugin
@@ -5584,6 +5751,7 @@ declare module "bun" {
    *     loader: "object",
    *     exports: require("js-yaml").load(fs.readFileSync(path, "utf8"))
    *   }));
+   *  }
    * });
    *
    * // You can use require()
@@ -5608,12 +5776,12 @@ declare module "bun" {
   const plugin: BunRegisterPlugin;
 
   /**
-   * Is the current global scope the main thread?
+   * Whether the current global scope is the main thread
    */
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime or at build time.
+   * The result of importing an HTML file, at runtime or at build time.
    *
    * @example
    *
@@ -5632,7 +5800,7 @@ declare module "bun" {
       input?: string;
       /** Generated output file path (with content hash, if included in naming) */
       path: string;
-      /** File type/loader used (js, css, html, file, etc.) */
+      /** The loader used for this file, such as `js`, `css`, or `html` */
       loader: Loader;
       /** Whether this file is an entry point */
       isEntry: boolean;
@@ -5652,20 +5820,18 @@ declare module "bun" {
   }
 
   /**
-   * Represents a TCP or TLS socket connection used for network communication.
-   * This interface provides methods for reading, writing, managing the connection state,
-   * and handling TLS-specific features if applicable.
+   * A TCP or TLS socket connection.
    *
-   * Sockets are created using `Bun.connect()` or accepted by a `Bun.listen()` server.
+   * Sockets are created with `Bun.connect()` or accepted by a `Bun.listen()` server.
    *
    * @category HTTP & Networking
    */
   interface Socket<Data = undefined> extends Disposable {
     /**
-     * Writes `data` to the socket. This method is unbuffered and non-blocking. This uses the `sendto(2)` syscall internally.
+     * Writes `data` to the socket. This method is unbuffered and non-blocking. It uses the `sendto(2)` syscall internally.
      *
-     * For optimal performance with multiple small writes, consider batching multiple
-     * writes together into a single `socket.write()` call.
+     * For best performance with many small writes, batch them into a single
+     * `socket.write()` call.
      *
      * @param data The data to write. Can be a string (encoded as UTF-8), `ArrayBuffer`, `TypedArray`, or `DataView`.
      * @param byteOffset The offset in bytes within the buffer to start writing from. Defaults to 0. Ignored for strings.
@@ -5690,7 +5856,7 @@ declare module "bun" {
 
     /**
      * The user-defined data associated with this socket instance.
-     * This can be set when the socket is created via `Bun.connect({ data: ... })`.
+     * Set it when the socket is created with `Bun.connect({ data: ... })`.
      * It can be read or updated at any time.
      *
      * @example
@@ -5763,7 +5929,7 @@ declare module "bun" {
      * This allows the socket to enter a half-closed state where it can still receive data
      * but can no longer send data (`halfClose = true`), or close both read and write
      * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
-     * Calls `shutdown(2)` syscall internally.
+     * Calls the `shutdown(2)` syscall internally.
      *
      * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
      * @example
@@ -5780,7 +5946,7 @@ declare module "bun" {
     /**
      * The ready state of the socket.
      *
-     * You can assume that a positive value means the socket is open and usable
+     * A positive value means the socket is open and usable
      *
      * - `-2` = Shutdown
      * - `-1` = Detached
@@ -5799,28 +5965,33 @@ declare module "bun" {
 
     /**
      * Flush any buffered data to the socket
+     *
      * This attempts to send the data immediately, but success depends on the network conditions
      * and the receiving end.
      * It might be necessary after several `write` calls if immediate sending is critical,
-     * though often the OS handles flushing efficiently. Note that `write` calls outside
+     * though the OS often handles flushing efficiently. `write` calls outside
      * `open`/`data`/`drain` might benefit from manual `cork`/`flush`.
      */
     flush(): void;
 
     /**
-     * Reset the socket's callbacks. This is useful with `bun --hot` to facilitate hot reloading.
+     * Reset the socket's callbacks. This is useful with `bun --hot` for hot reloading.
      *
-     * This will apply to all sockets from the same {@link Listener}. it is per socket only for {@link Bun.connect}.
+     * This applies to all sockets from the same {@link Listener}. It is per socket only for {@link Bun.connect}.
      */
     reload(options: Pick<SocketOptions<Data>, "socket">): void;
 
     /**
-     * Get the server that created this socket
+     * The server that created this socket
      *
-     * This will return undefined if the socket was created by {@link Bun.connect} or if the listener has already closed.
+     * This is `undefined` if the socket was created by {@link Bun.connect} or if the listener has already closed.
      */
     readonly listener?: SocketListener;
 
+    /**
+     * IP protocol family used for the remote endpoint of the socket
+     * @example "IPv4" | "IPv6"
+     */
     readonly remoteFamily: "IPv4" | "IPv6";
 
     /**
@@ -5848,21 +6019,22 @@ declare module "bun" {
     readonly localAddress: string;
 
     /**
-     * local port connected to the socket
+     * Local port connected to the socket
      * @example 8080
      */
     readonly localPort: number;
 
     /**
-     * This property is `true` if the peer certificate was signed by one of the CAs
-     * specified when creating the `Socket` instance, otherwise `false`.
+     * `true` if the peer certificate was signed by one of the CAs
+     * specified when creating the `Socket` instance, otherwise `false`
      */
     readonly authorized: boolean;
 
     /**
-     * String containing the selected ALPN protocol.
-     * Before a handshake has completed, this value is always null.
-     * When a handshake is completed but not ALPN protocol was selected, socket.alpnProtocol equals false.
+     * The selected ALPN protocol.
+     *
+     * Before a handshake has completed, this value is always `null`.
+     * When a handshake has completed but no ALPN protocol was selected, this is `false`.
      */
     readonly alpnProtocol: string | false | null;
 
@@ -5870,27 +6042,24 @@ declare module "bun" {
      * Disables TLS renegotiation for this `Socket` instance. Once called, attempts
      * to renegotiate will trigger an `error` handler on the `Socket`.
      *
-     * There is no support for renegotiation as a server. (Attempts by clients will result in a fatal alert so that ClientHello messages cannot be used to flood a server and escape higher-level limits.)
+     * Bun does not support renegotiation as a server. (Attempts by clients result in a fatal alert so that ClientHello messages cannot be used to flood a server and escape higher-level limits.)
      */
     disableRenegotiation(): void;
 
     /**
-     * Keying material is used for validations to prevent different kind of attacks in
+     * Keying material is used for validations to prevent different kinds of attacks in
      * network protocols, for example in the specifications of IEEE 802.1X.
      *
-     * Example
-     *
+     * @example
      * ```js
      * const keyingMaterial = socket.exportKeyingMaterial(
      *   128,
      *   'client finished');
      *
-     * /*
-     *  Example return value of keyingMaterial:
-     *  <Buffer 76 26 af 99 c5 56 8e 42 09 91 ef 9f 93 cb ad 6c 7b 65 f8 53 f1 d8 d9
-     *     12 5a 33 b8 b5 25 df 7b 37 9f e0 e2 4f b8 67 83 a3 2f cd 5d 41 42 4c 91
-     *     74 ef 2c ... 78 more bytes>
-     *
+     * // Example return value of keyingMaterial:
+     * // <Buffer 76 26 af 99 c5 56 8e 42 09 91 ef 9f 93 cb ad 6c 7b 65 f8 53 f1 d8 d9
+     * //    12 5a 33 b8 b5 25 df 7b 37 9f e0 e2 4f b8 67 83 a3 2f cd 5d 41 42 4c 91
+     * //    74 ef 2c ... 78 more bytes>
      * ```
      *
      * @param length number of bytes to retrieve from keying material
@@ -5902,8 +6071,8 @@ declare module "bun" {
     exportKeyingMaterial(length: number, label: string, context: Buffer): Buffer;
 
     /**
-     * Returns the reason why the peer's certificate was not been verified. This
-     * property is set only when `socket.authorized === false`.
+     * Returns the reason why the peer's certificate was not verified. This is
+     * only set when `socket.authorized === false`.
      */
     getAuthorizationError(): Error | null;
 
@@ -5911,8 +6080,8 @@ declare module "bun" {
      * Returns an object representing the local certificate. The returned object has
      * some properties corresponding to the fields of the certificate.
      *
-     * If there is no local certificate, an empty object will be returned. If the
-     * socket has been destroyed, `null` will be returned.
+     * If there is no local certificate, an empty object is returned. If the
+     * socket has been destroyed, `null` is returned.
      */
     getCertificate(): import("tls").PeerCertificate | object | null;
     getX509Certificate(): import("node:crypto").X509Certificate | undefined;
@@ -5937,8 +6106,8 @@ declare module "bun" {
      * Returns an object representing the type, name, and size of parameter of
      * an ephemeral key exchange in `perfect forward secrecy` on a client
      * connection. It returns an empty object when the key exchange is not
-     * ephemeral. As this is only supported on a client socket; `null` is returned
-     * if called on a server socket. The supported types are `'DH'` and `'ECDH'`. The`name` property is available only when type is `'ECDH'`.
+     * ephemeral. This is only supported on a client socket; `null` is returned
+     * if called on a server socket. The supported types are `'DH'` and `'ECDH'`. The `name` property is available only when type is `'ECDH'`.
      *
      * For example: `{ type: 'ECDH', name: 'prime256v1', size: 256 }`.
      */
@@ -5946,10 +6115,10 @@ declare module "bun" {
 
     /**
      * Returns an object representing the peer's certificate. If the peer does not
-     * provide a certificate, an empty object will be returned. If the socket has been
-     * destroyed, `null` will be returned.
+     * provide a certificate, an empty object is returned. If the socket has been
+     * destroyed, `null` is returned.
      *
-     * If the full certificate chain was requested, each certificate will include an`issuerCertificate` property containing an object representing its issuer's
+     * If the full certificate chain was requested, each certificate includes an `issuerCertificate` property containing an object representing its issuer's
      * certificate.
      * @return A certificate object.
      */
@@ -5958,7 +6127,6 @@ declare module "bun" {
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
-     * @since v12.11.0
      * @return List of signature algorithms shared between the server and the client in the order of decreasing preference.
      */
     getSharedSigalgs(): string[];
@@ -5985,7 +6153,7 @@ declare module "bun" {
     getTLSPeerFinishedMessage(): Buffer | undefined;
 
     /**
-     * For a client, returns the TLS session ticket if one is available, or`undefined`. For a server, always returns `undefined`.
+     * For a client, returns the TLS session ticket if one is available, or `undefined`. For a server, always returns `undefined`.
      *
      * It may be useful for debugging.
      *
@@ -5995,9 +6163,9 @@ declare module "bun" {
 
     /**
      * Returns a string containing the negotiated SSL/TLS protocol version of the
-     * current connection. The value `'unknown'` will be returned for connected
-     * sockets that have not completed the handshaking process. The value `null` will
-     * be returned for server sockets or disconnected client sockets.
+     * current connection. The value `'unknown'` is returned for connected
+     * sockets that have not completed the handshaking process. The value `null` is
+     * returned for server sockets or disconnected client sockets.
      *
      * Protocol versions are:
      *
@@ -6011,15 +6179,15 @@ declare module "bun" {
     getTLSVersion(): string;
 
     /**
+     * **TLS only:** Checks if the current TLS session was resumed from a previous session.
+     *
      * See `Session Resumption` for more information.
-     * @return `true` if the session was reused, `false` otherwise.
-     * **TLS Only:** Checks if the current TLS session was resumed from a previous session.
-     * Returns `true` if the session was resumed, `false` otherwise.
+     * @return `true` if the session was reused, `false` otherwise
      */
     isSessionReused(): boolean;
 
     /**
-     * The `socket.setMaxSendFragment()` method sets the maximum TLS fragment size.
+     * Sets the maximum TLS fragment size.
      * Returns `true` if setting the limit succeeded; `false` otherwise.
      *
      * Smaller fragment sizes decrease the buffering latency on the client: larger
@@ -6034,25 +6202,26 @@ declare module "bun" {
 
     /**
      * Enable/disable the use of Nagle's algorithm.
-     * Only available for already connected sockets, will return false otherwise
+     * Only available for already connected sockets; returns `false` otherwise
      * @param noDelay Default: `true`
-     * @returns true if is able to setNoDelay and false if it fails.
+     * @returns `true` if it succeeds, `false` if it fails
      */
     setNoDelay(noDelay?: boolean): boolean;
 
     /**
      * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
      * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
-     * Only available for already connected sockets, will return false otherwise.
+     * Setting `0` for `initialDelay` (the default) will leave the value unchanged from the default (or previous) setting.
+     * Only available for already connected sockets; returns `false` otherwise.
      *
-     * Enabling the keep-alive functionality will set the following socket options:
+     * Enabling the keep-alive functionality sets the following socket options:
      * SO_KEEPALIVE=1
-     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPIDLE=initialDelay/1000
      * TCP_KEEPCNT=10
      * TCP_KEEPINTVL=1
      * @param enable Default: `false`
      * @param initialDelay Default: `0`
-     * @returns true if is able to setNoDelay and false if it fails.
+     * @returns `true` if it succeeds, `false` if it fails
      */
     setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
 
@@ -6180,9 +6349,8 @@ declare module "bun" {
 
   interface SocketHandler<Data = unknown, DataBinaryType extends BinaryType = "buffer"> {
     /**
-     * Is called when the socket connects, or in case of TLS if no handshake is provided
-     * this will be called only after handshake
-     * @param socket
+     * Called when the socket connects. For TLS sockets with no `handshake`
+     * handler, this is called only after the handshake completes.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -6191,31 +6359,30 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
-     * When handshake is completed, this functions is called.
-     * @param socket
-     * @param success Indicates if the server authorized despite the authorizationError.
-     * @param authorizationError Certificate Authorization Error or null.
+     * Called when the TLS handshake completes.
+     * @param success Whether the server authorized the connection despite `authorizationError`
+     * @param authorizationError The certificate authorization error, or `null` if there was none
      */
     handshake?(socket: Socket<Data>, success: boolean, authorizationError: Error | null): void;
 
     /**
-     * When the socket has been shutdown from the other end, this function is
-     * called. This is a TCP FIN packet.
+     * Called when the other end shuts down its side of the socket by sending
+     * a TCP FIN packet.
      */
     end?(socket: Socket<Data>): void | Promise<void>;
 
     /**
-     * When the socket fails to be created, this function is called.
+     * Called when the socket fails to be created.
      *
      * The promise returned by `Bun.connect` rejects **after** this function is
      * called.
      *
-     * When `connectError` is specified, the rejected promise will not be
-     * added to the promise rejection queue (so it won't be reported as an
-     * unhandled promise rejection, since connectError handles it).
+     * When `connectError` is specified, the rejected promise is not added to
+     * the promise rejection queue (so it isn't reported as an unhandled
+     * promise rejection, since `connectError` handles it).
      *
-     * When `connectError` is not specified, the rejected promise will be added
-     * to the promise rejection queue.
+     * When `connectError` is not specified, the rejected promise is added to
+     * the promise rejection queue.
      */
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
@@ -6224,18 +6391,13 @@ declare module "bun" {
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**
-     * Choose what `ArrayBufferView` is returned in the {@link SocketHandler.data} callback.
+     * Choose what `ArrayBufferView` is passed to the {@link SocketHandler.data} callback.
      *
      * @default "buffer"
      *
      * @remarks
-     * This lets you select the desired binary type for the `data` callback.
-     * It's a small performance optimization to let you avoid creating extra
-     * ArrayBufferView objects when possible.
-     *
-     * Bun originally defaulted to `Uint8Array` but when dealing with network
-     * data, it's more useful to be able to directly read from the bytes which
-     * `Buffer` allows.
+     * A small performance optimization: picking the type you need avoids
+     * creating extra `ArrayBufferView` objects when possible.
      */
     binaryType?: BinaryType;
   }
@@ -6289,9 +6451,6 @@ declare module "bun" {
      * When `false` (default), other sockets may be able to bind to the same port
      * depending on the operating system's socket sharing capabilities and settings.
      *
-     * Exclusive mode is useful in scenarios where you want to ensure only one
-     * instance of your server can bind to a specific port at a time.
-     *
      * @default false
      */
     exclusive?: boolean;
@@ -6323,7 +6482,7 @@ declare module "bun" {
      */
     port: number;
     /**
-     * TLS Configuration with which to create the socket
+     * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
     /**
@@ -6334,9 +6493,6 @@ declare module "bun" {
      *
      * When `false` (default), other sockets may be able to bind to the same port
      * depending on the operating system's socket sharing capabilities and settings.
-     *
-     * Exclusive mode is useful in scenarios where you want to ensure only one
-     * instance of your server can bind to a specific port at a time.
      *
      * @default false
      */
@@ -6352,14 +6508,14 @@ declare module "bun" {
     unix: string;
 
     /**
-     * TLS Configuration with which to create the socket
+     * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
-     * TLS Configuration with which to create the socket
+     * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
     /**
@@ -6369,13 +6525,13 @@ declare module "bun" {
   }
 
   /**
-   * Create a TCP client that connects to a server via a TCP socket
+   * Create a TCP client that connects to a server
    *
    * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
   /**
-   * Create a TCP client that connects to a server via a unix socket
+   * Create a client that connects to a server over a Unix socket
    *
    * @category HTTP & Networking
    */
@@ -6388,7 +6544,7 @@ declare module "bun" {
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   /**
-   * Create a TCP server that listens on a unix socket
+   * Create a server that listens on a Unix socket
    *
    * @category HTTP & Networking
    */
@@ -6410,6 +6566,12 @@ declare module "bun" {
        * callback contains only the portion that fit in the buffer.
        */
       truncated: boolean;
+      /**
+       * `true` if the datagram's source address was IPv6, `false` for IPv4.
+       * Reflects the packet's own `sockaddr` — a socket adopting an existing
+       * fd may receive packets of the other family than it was created with.
+       */
+      ipv6: boolean;
     }
 
     export interface SocketHandler<DataBinaryType extends BinaryType> {
@@ -6464,7 +6626,7 @@ declare module "bun" {
       unref(): void;
       close(): void;
       /**
-       * Enable or disable SO_BROADCAST socket option.
+       * Enable or disable the SO_BROADCAST socket option.
        * @param enabled Whether to enable broadcast
        * @returns The enabled value
        */
@@ -6482,7 +6644,7 @@ declare module "bun" {
        */
       setMulticastTTL(ttl: number): number;
       /**
-       * Enable or disable IP_MULTICAST_LOOP socket option.
+       * Enable or disable the IP_MULTICAST_LOOP socket option.
        * @param enabled Whether to enable multicast loopback
        * @returns The enabled value
        */
@@ -6543,7 +6705,7 @@ declare module "bun" {
   /**
    * Create a UDP socket
    *
-   * @param options The options to use when creating the server
+   * @param options The options to use when creating the socket
    * @param options.socket The socket handler to use
    * @param options.hostname The hostname to listen on
    * @param options.port The port to listen on
@@ -6625,6 +6787,20 @@ declare module "bun" {
       detached?: boolean;
 
       /**
+       * Sets the user identity of the child process (see setuid(2)).
+       *
+       * POSIX only. On Windows the spawn fails with `ENOTSUP`.
+       */
+      uid?: number;
+
+      /**
+       * Sets the group identity of the child process (see setgid(2)).
+       *
+       * POSIX only. On Windows the spawn fails with `ENOTSUP`.
+       */
+      gid?: number;
+
+      /**
        * The environment variables of the process
        *
        * Defaults to `process.env` as it was when the current Bun process launched.
@@ -6639,33 +6815,40 @@ declare module "bun" {
        *
        * For stdin you may pass:
        *
-       * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
-       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
-       * - `"inherit"`: The process will inherit the standard input of the current process
-       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
-       * - `number`: The process will read from the file descriptor
+       * - `"ignore"`, `null`, `undefined`: The process has no standard input (default)
+       * - `"pipe"`: The process has a new {@link FileSink} for standard input
+       * - `"inherit"`: The process inherits the standard input of the current process
+       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process reads from buffer/stream.
+       * - `number`: The process reads from the file descriptor
        *
-       * For stdout and stdin you may pass:
+       * For stdout and stderr you may pass:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
-       * - `"ignore"`, `null`: The process will have no standard output/error
-       * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
-       * - `number`: The process will write to the file descriptor
+       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process has no standard output/error
+       * - `"inherit"`: The process inherits the standard output/error of the current process
+       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `number`: The process writes to the file descriptor
+       *
+       * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
+       * creates a socketpair like `"pipe"`, but the parent-end fd exposed
+       * via {@link Subprocess.stdio} is owned by the caller and is never
+       * closed by the subprocess. Use this when you wrap the fd in
+       * something that will close it itself (e.g. `net.connect({fd})`).
+       * On Windows it behaves the same as `"pipe"`.
        *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err, ...Readable[]];
+      stdio?: [In, Out, Err, ...(Readable | "socket-fd")[]];
 
       /**
        * The file descriptor for the standard input. It may be:
        *
-       * - `"ignore"`, `null`, `undefined`: The process will have no standard input
-       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
-       * - `"inherit"`: The process will inherit the standard input of the current process
-       * - `ArrayBufferView`, `Blob`: The process will read from the buffer
-       * - `number`: The process will read from the file descriptor
+       * - `"ignore"`, `null`, `undefined`: The process has no standard input
+       * - `"pipe"`: The process has a new {@link FileSink} for standard input
+       * - `"inherit"`: The process inherits the standard input of the current process
+       * - `ArrayBufferView`, `Blob`: The process reads from the buffer
+       * - `number`: The process reads from the file descriptor
        *
        * @default "ignore"
        */
@@ -6673,11 +6856,11 @@ declare module "bun" {
       /**
        * The file descriptor for the standard output. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
-       * - `"ignore"`, `null`: The process will have no standard output/error
-       * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
-       * - `number`: The process will write to the file descriptor
+       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process has no standard output/error
+       * - `"inherit"`: The process inherits the standard output/error of the current process
+       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `number`: The process writes to the file descriptor
        *
        * @default "pipe"
        */
@@ -6685,11 +6868,11 @@ declare module "bun" {
       /**
        * The file descriptor for the standard error. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
-       * - `"ignore"`, `null`: The process will have no standard output/error
-       * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
-       * - `number`: The process will write to the file descriptor
+       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process has no standard output/error
+       * - `"inherit"`: The process inherits the standard output/error of the current process
+       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `number`: The process writes to the file descriptor
        *
        * @default "inherit" for `spawn`
        * "pipe" for `spawnSync`
@@ -6703,7 +6886,7 @@ declare module "bun" {
        *
        * Warning: this may run before the `Bun.spawn` function returns.
        *
-       * A simple alternative is `await subprocess.exited`.
+       * An alternative is `await subprocess.exited`.
        *
        * @example
        *
@@ -6721,7 +6904,7 @@ declare module "bun" {
         exitCode: number | null,
         signalCode: number | null,
         /**
-         * If an error occurred in the call to waitpid2, this will be the error.
+         * If an error occurred in the call to waitpid2, this is the error.
          */
         error?: ErrorLike,
       ): void | Promise<void>;
@@ -6769,14 +6952,14 @@ declare module "bun" {
       onDisconnect?(): void | Promise<void>;
 
       /**
-       * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
+       * When specified, Bun opens an IPC channel to the subprocess. The passed callback is called for
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
-       * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+       * using the JSC serialize API, which allows the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
-       * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
+       * The subprocess can send and receive messages with `process.send` and `process.on("message")`,
+       * respectively. This is the same API that Node.js exposes when `child_process.fork()` is used.
        *
-       * Currently, this is only compatible with processes that are other `bun` instances.
+       * This is only compatible with processes that are other `bun` instances.
        */
       ipc?(
         message: any,
@@ -6797,7 +6980,7 @@ declare module "bun" {
       serialization?: "json" | "advanced";
 
       /**
-       * If true, the subprocess will have a hidden window.
+       * If true, the subprocess has a hidden window.
        */
       windowsHide?: boolean;
 
@@ -6807,21 +6990,21 @@ declare module "bun" {
       windowsVerbatimArguments?: boolean;
 
       /**
-       * Path to the executable to run in the subprocess. This defaults to `cmds[0]`.
+       * Path to the executable to run in the subprocess.
        *
-       * One use-case for this is for applications which wrap other applications or to simulate a symlink.
+       * Use this to wrap another application or to simulate a symlink.
        *
        * @default cmds[0]
        */
       argv0?: string;
 
       /**
-       * An {@link AbortSignal} that can be used to abort the subprocess.
+       * An {@link AbortSignal} that kills the subprocess when aborted.
        *
-       * This is useful for aborting a subprocess when some other part of the
-       * program is aborted, such as a `fetch` response.
+       * Use this to abort the subprocess when another part of the program is
+       * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process will be killed with the signal
+       * If the signal is aborted, the process is killed with the signal
        * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
@@ -6845,7 +7028,7 @@ declare module "bun" {
       /**
        * The maximum amount of time the process is allowed to run in milliseconds.
        *
-       * If the timeout is reached, the process will be killed with the signal
+       * If the timeout is reached, the process is killed with the signal
        * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
@@ -6893,8 +7076,8 @@ declare module "bun" {
     interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
       extends BaseOptions<In, Out, Err> {
       /**
-       * If true, stdout and stderr pipes will not automatically start reading
-       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * If true, the stdout and stderr pipes don't automatically start reading
+       * data. Reading begins only when you access the `stdout` or `stderr`
        * properties.
        *
        * This can improve performance when you don't need to read output
@@ -7003,7 +7186,7 @@ declare module "bun" {
       total: number;
     };
     /**
-     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     * The maximum resident set size (in bytes) used by the process during its lifetime.
      */
     maxRSS: number;
 
@@ -7042,7 +7225,7 @@ declare module "bun" {
      */
     signalCount: number;
     /**
-     *  The number of times the process was swapped out of main memory.
+     * The number of times the process was swapped out of main memory.
      */
     swapCount: number;
   }
@@ -7050,7 +7233,7 @@ declare module "bun" {
   /**
    * A process created by {@link Bun.spawn}.
    *
-   * This type accepts 3 optional type parameters which correspond to the `stdio` array from the options object. Instead of specifying these, you should use one of the following utility types instead:
+   * The 3 optional type parameters correspond to the `stdio` array from the options object. Instead of specifying them, use one of these utility types:
    * - {@link ReadableSubprocess} (any, pipe, pipe)
    * - {@link WritableSubprocess} (pipe, any, any)
    * - {@link PipedSubprocess} (pipe, pipe, pipe)
@@ -7067,7 +7250,7 @@ declare module "bun" {
 
     /**
      * The terminal attached to this subprocess, if spawned with the `terminal` option.
-     * Returns `undefined` if no terminal was attached.
+     * `undefined` if no terminal was attached.
      *
      * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
      * Use `terminal.write()` and the `data` callback instead.
@@ -7084,14 +7267,21 @@ declare module "bun" {
     readonly terminal: Terminal | undefined;
 
     /**
-     * Access extra file descriptors passed to the `stdio` option in the options object.
+     * Extra file descriptors passed to the `stdio` option.
+     *
+     * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
+     * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
+     * returned). On POSIX, reading this property transfers ownership of any
+     * `"pipe"` fds to the caller, who is then responsible for closing them; the
+     * subprocess will not close them. `"socket-fd"` and raw-fd slots are likewise
+     * caller-owned. Other slots — including raw fds on Windows — are `null`.
      */
-    readonly stdio: [null, null, null, ...number[]];
+    readonly stdio: [null, null, null, ...(number | null)[]];
 
     /**
-     * This returns the same value as {@link Subprocess.stdout}
+     * The same value as {@link Subprocess.stdout}
      *
-     * It exists for compatibility with {@link ReadableStream.pipeThrough}
+     * Exists for compatibility with {@link ReadableStream.pipeThrough}
      */
     readonly readable: SpawnOptions.ReadableToIO<Out>;
 
@@ -7108,52 +7298,52 @@ declare module "bun" {
     /**
      * The exit code of the process
      *
-     * The promise will resolve when the process exits
+     * The promise resolves when the process exits
      */
     readonly exited: Promise<number>;
 
     /**
      * Synchronously get the exit code of the process
      *
-     * If the process hasn't exited yet, this will return `null`
+     * `null` if the process hasn't exited yet
      */
     readonly exitCode: number | null;
 
     /**
      * Synchronously get the signal code of the process
      *
-     * If the process never sent a signal code, this will return `null`
+     * `null` if the process never sent a signal code
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, it will return the original signal code
-     * number, but that case should essentially never happen.
+     * If the signal code is unknown, this is the original signal code
+     * number, but that case should never happen in practice.
      */
     readonly signalCode: NodeJS.Signals | null;
 
     /**
-     * Has the process exited?
+     * Whether the process has exited
      */
     readonly killed: boolean;
 
     /**
      * Kill the process
-     * @param exitCode The exitCode to send to the process
+     * @param exitCode Exit code or signal to send to the process
      */
     kill(exitCode?: number | NodeJS.Signals): void;
 
     /**
-     * This method will tell Bun to wait for this process to exit after you already
+     * Tell Bun to wait for this process to exit after you already
      * called `unref()`.
      *
-     * Before shutting down, Bun will wait for all subprocesses to exit by default
+     * By default, Bun waits for all subprocesses to exit before shutting down
      */
     ref(): void;
 
     /**
-     * Before shutting down, Bun will wait for all subprocesses to exit by default
+     * Tell Bun not to wait for this process to exit before shutting down.
      *
-     * This method will tell Bun to not wait for this process to exit before shutting down.
+     * By default, Bun waits for all subprocesses to exit before shutting down.
      */
     unref(): void;
 
@@ -7172,11 +7362,9 @@ declare module "bun" {
     disconnect(): void;
 
     /**
-     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     * Get the resource usage of the process, such as max RSS and CPU time
      *
-     * Only available after the process has exited
-     *
-     * If the process hasn't exited yet, this will return `undefined`
+     * Returns `undefined` until the process has exited
      */
     resourceUsage(): ResourceUsage | undefined;
   }
@@ -7184,7 +7372,7 @@ declare module "bun" {
   /**
    * A process created by {@link Bun.spawnSync}.
    *
-   * This type accepts 2 optional type parameters which correspond to the `stdout` and `stderr` options. Instead of specifying these, you should use one of the following utility types instead:
+   * The 2 optional type parameters correspond to the `stdout` and `stderr` options. Instead of specifying them, use one of these utility types:
    * - {@link ReadableSyncSubprocess} (pipe, pipe)
    * - {@link NullSyncSubprocess} (ignore, ignore)
    */
@@ -7197,7 +7385,7 @@ declare module "bun" {
     exitCode: number;
     success: boolean;
     /**
-     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     * Resource usage of the process, such as max RSS and CPU time
      */
     resourceUsage: ResourceUsage;
 
@@ -7232,9 +7420,9 @@ declare module "bun" {
       /**
        * The command to run
        *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
        *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
        *
        * To check if the command exists before running it, use `Bun.which(bin)`.
        *
@@ -7266,9 +7454,9 @@ declare module "bun" {
     /**
      * The command to run
      *
-     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
      *
-     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
      *
      * To check if the command exists before running it, use `Bun.which(bin)`.
      *
@@ -7282,7 +7470,7 @@ declare module "bun" {
   ): Subprocess<In, Out, Err>;
 
   /**
-   * Spawn a new process
+   * Synchronously spawn a new process
    *
    * @category Process Management
    *
@@ -7304,9 +7492,9 @@ declare module "bun" {
       /**
        * The command to run
        *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
        *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
        *
        * To check if the command exists before running it, use `Bun.which(bin)`.
        *
@@ -7339,9 +7527,9 @@ declare module "bun" {
     /**
      * The command to run
      *
-     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
      *
-     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
      *
      * To check if the command exists before running it, use `Bun.which(bin)`.
      *
@@ -7408,7 +7596,7 @@ declare module "bun" {
    * ```
    */
   interface CronJob extends Disposable {
-    /** The cron expression string. */
+    /** The schedule expression this job was created with. */
     readonly cron: string;
     /** Cancel this cron job. The callback will not fire again. */
     stop(): CronJob;
@@ -7418,6 +7606,13 @@ declare module "bun" {
     unref(): CronJob;
   }
 
+  /**
+   * Schedule cron jobs.
+   *
+   * Call with a callback to run an in-process job, or with a module path and
+   * title to register an OS-level job. {@link Bun.cron.parse} previews the next
+   * fire time; {@link Bun.cron.remove} unregisters an OS-level job.
+   */
   const cron: {
     /**
      * Schedule an **in-process** cron job that calls a function on a schedule.
@@ -7682,11 +7877,11 @@ declare module "bun" {
     data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
     /**
      * Callback invoked when the PTY stream closes (EOF or read error).
-     * Note: exitCode is a PTY lifecycle status (0=clean EOF, 1=error), NOT the subprocess exit code.
-     * Use Subprocess.exited or onExit callback for actual process exit information.
+     * `exitCode` is a PTY lifecycle status (0 = clean EOF, 1 = error), NOT the subprocess exit code.
+     * Use {@link Subprocess.exited} or the `onExit` callback for the process exit information.
      * @param terminal The terminal instance
      * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
-     * @param signal Reserved for future signal reporting, currently null
+     * @param signal Always `null`; reserved for future signal reporting
      */
     exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
     /**
@@ -7697,7 +7892,7 @@ declare module "bun" {
   }
 
   /**
-   * A pseudo-terminal (PTY) that can be used to spawn interactive terminal programs.
+   * A pseudo-terminal (PTY) for spawning interactive terminal programs.
    *
    * @example
    * ```ts
@@ -7731,8 +7926,14 @@ declare module "bun" {
 
     /**
      * Write data to the terminal.
+     *
+     * All bytes are accepted; any portion that cannot be flushed to the PTY
+     * immediately is buffered and delivered later. The `drain` callback fires
+     * once buffered data has been flushed. Do not re-send any part of `data`
+     * based on the return value.
+     *
      * @param data The data to write (string or BufferSource)
-     * @returns The number of bytes written
+     * @returns The number of bytes accepted (the byte length of `data`)
      */
     write(data: string | BufferSource): number;
 
@@ -7773,7 +7974,7 @@ declare module "bun" {
     /**
      * Terminal input flags (c_iflag from termios).
      * Controls input processing behavior like ICRNL, IXON, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     inputFlags: number;
@@ -7781,7 +7982,7 @@ declare module "bun" {
     /**
      * Terminal output flags (c_oflag from termios).
      * Controls output processing behavior like OPOST, ONLCR, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     outputFlags: number;
@@ -7789,7 +7990,7 @@ declare module "bun" {
     /**
      * Terminal local flags (c_lflag from termios).
      * Controls local processing like ICANON, ECHO, ISIG, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     localFlags: number;
@@ -7797,7 +7998,7 @@ declare module "bun" {
     /**
      * Terminal control flags (c_cflag from termios).
      * Controls hardware characteristics like CSIZE, PARENB, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     controlFlags: number;
@@ -7828,6 +8029,10 @@ declare module "bun" {
   //   },
   // ): number;
 
+  /**
+   * Resolve routes against a directory of files using Next.js-style (`pages`
+   * directory) conventions.
+   */
   class FileSystemRouter {
     /**
      * Create a new {@link FileSystemRouter}.
@@ -7844,19 +8049,11 @@ declare module "bun" {
      * ```
      * @param options The options to use when creating the router
      * @param options.dir The root directory containing the files to route
-     * @param options.style The style of router to use (only "nextjs" supported
-     * for now)
+     * @param options.style The style of router to use (only "nextjs" is supported)
      */
     constructor(options: {
       /**
        * The root directory containing the files to route
-       *
-       * There is no default value for this option.
-       *
-       * @example
-       *   ```ts
-       *   const router = new FileSystemRouter({
-       *   dir:
        */
       dir: string;
       style: "nextjs";
@@ -7928,7 +8125,7 @@ declare module "bun" {
   /**
    * Find the index of a newline character in potentially ill-formed UTF-8 text.
    *
-   * This is sort of like readline() except without the IO.
+   * Like `readline()`, but without the IO.
    */
   function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
 
@@ -7953,14 +8150,14 @@ declare module "bun" {
     absolute?: boolean;
 
     /**
-     * Indicates whether to traverse descendants of symbolic link directories.
+     * Whether to traverse descendants of symbolic link directories.
      *
      * @default false
      */
     followSymlinks?: boolean;
 
     /**
-     * Throw an error when symbolic link is broken
+     * Throw an error when a symbolic link is broken
      *
      * @default false
      */
@@ -7977,7 +8174,7 @@ declare module "bun" {
   /**
    * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
    *
-   * The supported pattern syntax for is:
+   * The supported pattern syntax is:
    *
    * - `?`
    *     Matches any single character.
@@ -7985,22 +8182,22 @@ declare module "bun" {
    *     Matches zero or more characters, except for path separators ('/' or '\').
    * - `**`
    *     Matches zero or more characters, including path separators.
-   *     Must match a complete path segment, i.e. followed by a path separator or
-   *     at the end of the pattern.
+   *     Must match a complete path segment (followed by a path separator or
+   *     at the end of the pattern).
    * - `[ab]`
    *     Matches one of the characters contained in the brackets.
-   *     Character ranges (e.g. "[a-z]") are also supported.
+   *     Character ranges like "[a-z]" are also supported.
    *     Use "[!ab]" or "[^ab]" to match any character *except* those contained
    *     in the brackets.
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
-   *     Any of the wildcards listed above can be used in the sub patterns.
+   *     The sub-patterns can use any of the other wildcards.
    *     Braces may be nested up to 10 levels deep.
    * - `!`
    *     Negates the result when at the start of the pattern.
    *     Multiple "!" characters negate the pattern multiple times.
    * - `\`
-   *     Used to escape any of the special characters above.
+   *     Escapes any of the special characters listed here.
    *
    * @example
    * ```js
@@ -8063,6 +8260,251 @@ declare module "bun" {
      * ```
      */
     match(str: string): boolean;
+  }
+
+  namespace Image {
+    /**
+     * Stable `error.code` values set on rejections from `Bun.Image` terminals.
+     * Branch on these instead of parsing the message.
+     *
+     * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
+     *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
+     *   Catch this to fall back to a portable format.
+     * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
+     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
+     *   construction and the terminal call.
+     * - File-backed inputs surface the underlying syscall code (`ENOENT`,
+     *   `EACCES`, …) directly.
+     */
+    type ErrorCode =
+      | "ERR_IMAGE_FORMAT_UNSUPPORTED"
+      | "ERR_IMAGE_TOO_MANY_PIXELS"
+      | "ERR_IMAGE_DECODE_FAILED"
+      | "ERR_IMAGE_ENCODE_FAILED"
+      | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_INVALID_STATE";
+
+    /**
+     * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
+     * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
+     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
+     * frame everywhere.
+     */
+    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
+    type Filter =
+      | "nearest"
+      | "box"
+      | "bilinear"
+      | "linear" // alias for bilinear (Sharp)
+      | "cubic"
+      | "mitchell"
+      | "lanczos2"
+      | "lanczos3"
+      | "mks2013"
+      | "mks2021";
+
+    interface ConstructorOptions {
+      /**
+       * Reject inputs whose `width × height` exceeds this many pixels. The
+       * check runs after the header is read but before any pixel buffer is
+       * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
+       */
+      maxPixels?: number;
+      /**
+       * Apply EXIF Orientation (JPEG) before any other operation.
+       * @default true
+       */
+      autoOrient?: boolean;
+    }
+
+    interface ResizeOptions {
+      /** Resampling kernel. @default "lanczos3" */
+      filter?: Filter;
+      /**
+       * `"fill"` stretches to exactly width×height. `"inside"` preserves
+       * aspect ratio so the result fits *within* width×height.
+       * @default "fill"
+       */
+      fit?: "fill" | "inside";
+      /** Never upscale — if the source is already smaller, leave it. */
+      withoutEnlargement?: boolean;
+    }
+
+    interface ModulateOptions {
+      /** Multiplier; `1` leaves brightness unchanged. */
+      brightness?: number;
+      /** `0` = greyscale, `1` = unchanged, `>1` = more saturated. */
+      saturation?: number;
+    }
+
+    interface Metadata {
+      width: number;
+      height: number;
+      format: Format;
+    }
+  }
+
+  /**
+   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
+   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
+   * are SIMD kernels — no native module install, no `sharp`.
+   *
+   * The constructor and every chainable method only *record* settings; the
+   * decode → transform → encode pipeline runs on a worker thread when a
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   *
+   * Chainables overwrite (calling `.resize()` twice keeps the second). Order
+   * of execution is fixed regardless of call order:
+   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   *
+   * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
+   * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
+   * images don't shift colour.
+   *
+   * @example
+   * ```ts
+   * const thumb = await new Bun.Image("photo.jpg")
+   *   .resize(400, 400, { fit: "inside", withoutEnlargement: true })
+   *   .webp({ quality: 80 })
+   *   .bytes();
+   * ```
+   */
+  export class Image {
+    /**
+     * Process-global pipeline backend.
+     *
+     * - `"system"` (default on macOS/Windows) — static codecs for
+     *   JPEG/PNG/WebP (same bytes as Linux), Accelerate/vImage for `lanczos3`
+     *   resize · rotate · flip on macOS, and ImageIO/WIC for HEIC/AVIF.
+     * - `"bun"` — static codecs + Highway geometry only. Byte-identical to a
+     *   Linux build; HEIC/AVIF reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`.
+     *
+     * Set before awaiting a pipeline; in-flight tasks read the value as of
+     * when they were scheduled.
+     */
+    static backend: "system" | "bun";
+
+    /**
+     * Read an image from the system clipboard.
+     *
+     * Returns a `Bun.Image` wrapping whatever container the clipboard holds
+     * (PNG, TIFF, HEIC, JPEG, BMP, …); call {@link metadata}, {@link resize},
+     * etc. as usual. `null` if no image is present.
+     *
+     * - **macOS**: NSPasteboard
+     * - **Windows**: registered `"PNG"` / `CF_DIBV5` / `CF_DIB`
+     * - **Linux**: always `null` (use `wl-paste`/`xclip` and pass the bytes
+     *   to `new Bun.Image(...)`)
+     */
+    static fromClipboard(): Image | null;
+    /** Cheap probe — true if {@link fromClipboard} would return non-null. */
+    static hasClipboardImage(): boolean;
+    /**
+     * Monotone counter that increments on every system-wide clipboard write.
+     * Poll this and only call {@link hasClipboardImage} when it moves. `-1`
+     * on Linux.
+     */
+    static clipboardChangeCount(): number;
+
+    constructor(input: string | ArrayBuffer | NodeJS.TypedArray | Blob, options?: Image.ConstructorOptions);
+
+    /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
+    resize(width: number, height?: number, options?: Image.ResizeOptions): this;
+    /** Rotate by a multiple of 90°. */
+    rotate(degrees: number): this;
+    /** Mirror about the x-axis (vertical). */
+    flip(): this;
+    /** Mirror about the y-axis (horizontal). */
+    flop(): this;
+    /** Adjust brightness/saturation. */
+    modulate(options: Image.ModulateOptions): this;
+
+    /** Set output format to JPEG. */
+    jpeg(options?: {
+      /** 1–100, default 80. */
+      quality?: number;
+      /** Emit a progressive (multi-scan) JPEG. Default `false`. */
+      progressive?: boolean;
+    }): this;
+    /** Set output format to PNG. */
+    png(options?: {
+      /** zlib level 0–9. */
+      compressionLevel?: number;
+      /** Quantize to a palette and emit indexed (colour-type 3) PNG. */
+      palette?: boolean;
+      /** Max palette size when `palette: true`. 2–256. @default 256 */
+      colors?: number;
+      /** Floyd–Steinberg error-diffusion dither (only with `palette: true`). */
+      dither?: boolean;
+    }): this;
+    /** Set output format to WebP. */
+    webp(options?: { quality?: number; lossless?: boolean }): this;
+    /**
+     * Set output format to HEIC. macOS / Windows-with-HEIF-Extension only —
+     * the terminal rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"`
+     * elsewhere.
+     */
+    heic(options?: { quality?: number }): this;
+    /**
+     * Set output format to AVIF. Requires an OS AV1 encoder (macOS on Apple
+     * Silicon M3+, or Windows with the AV1 Video Extension) — the terminal
+     * rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` elsewhere.
+     */
+    avif(options?: { quality?: number }): this;
+
+    /**
+     * Run the pipeline and return the encoded bytes. If no format setter was
+     * called, re-encodes in the source format.
+     */
+    bytes(): Promise<Uint8Array>;
+    /** Like {@link bytes} but as a Node `Buffer`. */
+    buffer(): Promise<Buffer>;
+    /** Sharp-compatible alias for {@link buffer}. */
+    toBuffer(): Promise<Buffer>;
+    /**
+     * Run the pipeline and write the encoded result via {@link Bun.write} —
+     * `dest` may be a path string, {@link BunFile}, {@link S3File}, or fd.
+     * Resolves to the number of bytes written.
+     *
+     * If no format method was chained and `dest` is a path string, the format
+     * is inferred from its extension when it's one Bun can encode
+     * (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`); otherwise the source format is
+     * reused.
+     */
+    write(dest: BunFile | S3File | Bun.PathLike | number): Promise<number>;
+    /**
+     * Like {@link toBase64} with a `data:image/{format};base64,` prefix.
+     * Drops straight into `<img src>`.
+     */
+    dataurl(): Promise<string>;
+    /**
+     * A [ThumbHash](https://github.com/evanw/thumbhash)-rendered low-quality
+     * placeholder of the *source* image as a `data:image/png;base64,…` URL —
+     * a ≤32px blur with the right average colour, aspect ratio and rough
+     * structure, ~400–700 bytes. Ready for `<img src>` or Next's
+     * `blurDataURL`; no client-side decoder needed.
+     *
+     * ```ts
+     * const lqip = await Bun.file("hero.jpg").image().placeholder();
+     * // "data:image/png;base64,iVBORw0KGgoAAAANSUhE…"
+     * ```
+     */
+    placeholder(as?: "dataurl"): Promise<string>;
+    /** Run the pipeline and return a `Blob` with the matching `type`. */
+    blob(): Promise<Blob>;
+    /** Run the pipeline and return base64-encoded output. */
+    toBase64(): Promise<string>;
+    /** Decode just enough to read width/height/format. */
+    metadata(): Promise<Image.Metadata>;
+
+    /** Populated after the first awaited terminal; `-1` before. */
+    readonly width: number;
+    /** Populated after the first awaited terminal; `-1` before. */
+    readonly height: number;
   }
 
   namespace WebView {
@@ -8132,7 +8574,7 @@ declare module "bun" {
      *   Auto-detects the binary in standard locations; override with
      *   `backend.path` or the `BUN_CHROME_PATH` environment variable.
      *
-     * The object form lets you pass extra launch flags. Chrome switches are
+     * The object form accepts extra launch flags. Chrome switches are
      * last-wins for duplicates, so `argv` can override the defaults.
      *
      * **Chrome is spawned once per process** — the first `new Bun.WebView()`
@@ -8260,7 +8702,7 @@ declare module "bun" {
       /**
        * Initial URL to navigate to. The navigation starts before the
        * constructor returns; `await view.navigate(otherUrl)` or any other
-       * operation will wait for it to complete first.
+       * operation waits for it to complete first.
        *
        * Equivalent to calling `view.navigate(url)` immediately after
        * construction.
@@ -8324,7 +8766,7 @@ declare module "bun" {
      * Pending promises on all views reject on the next event loop tick.
      *
      * Called automatically at process exit. Call manually to reclaim browser
-     * resources early — subsequent `new Bun.WebView()` calls will respawn.
+     * resources early — subsequent `new Bun.WebView()` calls respawn them.
      * Idempotent: calling when no subprocesses are alive is a no-op.
      */
     static closeAll(): void;
@@ -8603,7 +9045,7 @@ declare module "bun" {
 
   /**
    * Compression format for archive output.
-   * Currently only `"gzip"` is supported.
+   * Only `"gzip"` is supported.
    */
   type ArchiveCompression = "gzip";
 
@@ -8627,7 +9069,7 @@ declare module "bun" {
   interface ArchiveOptions {
     /**
      * Compression algorithm to use.
-     * Currently only "gzip" is supported.
+     * Only `"gzip"` is supported.
      * If not specified, no compression is applied.
      */
     compress?: ArchiveCompression;
@@ -8654,8 +9096,8 @@ declare module "bun" {
      * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
      * regardless of the host operating system. Always write patterns using `/` as the separator.
      *
-     * - Positive patterns: Only entries matching at least one pattern will be extracted.
-     * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.
+     * - Positive patterns: Only entries matching at least one pattern are extracted.
+     * - Negative patterns (prefixed with `!`): Entries matching these patterns are excluded.
      *   Negative patterns are applied after positive patterns.
      *
      * If not specified, all entries are extracted.
@@ -8679,11 +9121,10 @@ declare module "bun" {
   }
 
   /**
-   * A class for creating and extracting tar archives with optional gzip compression.
+   * Create and extract tar archives, with optional gzip compression.
    *
-   * `Bun.Archive` provides a fast, native implementation for working with tar archives.
-   * It supports creating archives from in-memory data or extracting existing archives
-   * to disk or memory.
+   * `Bun.Archive` builds an archive from in-memory data, or wraps an existing
+   * archive so you can extract it to disk or memory.
    *
    * @example
    * **Create an archive from an object:**
@@ -8742,8 +9183,7 @@ declare module "bun" {
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
      *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
-     * @param options - Optional archive options including compression settings.
-     *   Defaults to no compression if omitted.
+     * @param options - Archive options, including compression settings
      *
      * @example
      * **From an object (creates uncompressed tarball):**
@@ -8776,10 +9216,10 @@ declare module "bun" {
     constructor(data: ArchiveInput, options?: ArchiveOptions);
 
     /**
-     * Create and write an archive directly to disk in one operation.
+     * Create an archive and write it to disk in one operation.
      *
-     * This is more efficient than creating an archive and then writing it separately,
-     * as it streams the data directly to disk.
+     * The data streams directly to disk, which is more efficient than creating an
+     * archive and then writing it separately.
      *
      * @param path - The file path to write the archive to
      * @param data - The input data for the archive (same as `new Archive()`)
@@ -8808,7 +9248,7 @@ declare module "bun" {
      * Extract the archive contents to a directory on disk.
      *
      * Creates the target directory and any necessary parent directories if they don't exist.
-     * Existing files will be overwritten.
+     * Existing files are overwritten.
      *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
@@ -8944,14 +9384,14 @@ declare module "bun" {
   }
 
   /**
-   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   * Generate a UUIDv7, a sequential ID based on the current timestamp with a random component.
    *
    * When the same timestamp is used multiple times, a monotonically increasing
    * counter is appended to allow sorting. The final 8 bytes are
    * cryptographically random. When the timestamp changes, the counter resets to
-   * a psuedo-random integer.
+   * a pseudo-random integer.
    *
-   * @param encoding "hex" | "base64" | "base64url"
+   * @param encoding Output encoding for the UUID
    * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
    *
    * @example
@@ -8961,12 +9401,12 @@ declare module "bun" {
    *   randomUUIDv7(),
    *   randomUUIDv7(),
    *   randomUUIDv7(),
-   * ]
-   * [
-   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
-   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
-   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
-   * ]
+   * ];
+   * // [
+   * //   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   * //   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   * //   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * // ]
    * ```
    */
   function randomUUIDv7(
@@ -8981,9 +9421,9 @@ declare module "bun" {
   ): string;
 
   /**
-   * Generate a UUIDv7 as a Buffer
+   * Generate a UUIDv7 as a `Buffer`.
    *
-   * @param encoding "buffer"
+   * @param encoding Pass `"buffer"` to get the UUID as bytes instead of a string
    * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
    */
   function randomUUIDv7(
@@ -8995,24 +9435,23 @@ declare module "bun" {
   ): Buffer;
 
   /**
-   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   * Generate a UUIDv5, a name-based UUID derived from the SHA-1 hash of a namespace UUID and a name.
    *
-   * @param name The name to use for the UUID
-   * @param namespace The namespace to use for the UUID
-   * @param encoding The encoding to use for the UUID
-   *
+   * @param name The name to hash
+   * @param namespace A namespace UUID, or one of the predefined namespaces `"dns"`, `"url"`, `"oid"`, or `"x500"`
+   * @param encoding Output encoding for the UUID
    *
    * @example
    * ```js
    * import { randomUUIDv5 } from "bun";
    * const uuid = randomUUIDv5("www.example.com", "dns");
-   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * console.log(uuid); // "2ed6657d-e927-568b-95e1-2665a8aea6a2"
    * ```
    *
    * ```js
    * import { randomUUIDv5 } from "bun";
    * const uuid = randomUUIDv5("www.example.com", "url");
-   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * console.log(uuid); // "b63cdfa4-3df9-568e-97ae-006c5b8fd652"
    * ```
    */
   function randomUUIDv5(
@@ -9025,17 +9464,17 @@ declare module "bun" {
   ): string;
 
   /**
-   * Generate a UUIDv5 as a Buffer
+   * Generate a UUIDv5 as a `Buffer`.
    *
-   * @param name The name to use for the UUID
-   * @param namespace The namespace to use for the UUID
-   * @param encoding The encoding to use for the UUID
+   * @param name The name to hash
+   * @param namespace A namespace UUID, or one of the predefined namespaces `"dns"`, `"url"`, `"oid"`, or `"x500"`
+   * @param encoding Pass `"buffer"` to get the UUID as bytes instead of a string
    *
    * @example
    * ```js
    * import { randomUUIDv5 } from "bun";
    * const uuid = randomUUIDv5("www.example.com", "url", "buffer");
-   * console.log(uuid); // <Buffer 6b a7 b8 11 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8>
+   * console.log(uuid); // <Buffer b6 3c df a4 3d f9 56 8e 97 ae 00 6c 5b 8f d6 52>
    * ```
    */
   function randomUUIDv5(
@@ -9045,10 +9484,10 @@ declare module "bun" {
   ): Buffer;
 
   /**
-   * Types for `bun.lock`
+   * The structure of Bun's lockfile, `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1;
+    lockfileVersion: 0 | 1 | 2;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
@@ -9067,7 +9506,7 @@ declare module "bun" {
      * `0` / `undefined` for projects created before v1.3.2, `1` for projects created after.
      *
      * ---
-     * Right now this only changes the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
+     * This only affects the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
      * - With `0`, the linker is hoisted.
      * - With `1`, the linker is isolated for workspaces and hoisted for single-package projects.
      */
@@ -9087,7 +9526,7 @@ declare module "bun" {
      * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
      * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
      * ```
-     * */
+     */
     packages: {
       [pkg: string]: BunLockFilePackageArray;
     };
@@ -9114,7 +9553,7 @@ declare module "bun" {
     bundled?: true;
   };
 
-  /** @see {@link BunLockFile.packages} for more info */
+  /** @see {@link BunLockFile.packages} */
   type BunLockFilePackageArray =
     /** npm */
     | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
@@ -9156,7 +9595,7 @@ declare module "bun" {
   type CookieSameSite = "strict" | "lax" | "none";
 
   /**
-   * A class for working with a single cookie
+   * A single HTTP cookie: its name, value, and attributes.
    *
    * @example
    * ```js
@@ -9166,7 +9605,7 @@ declare module "bun" {
    */
   class Cookie {
     /**
-     * Create a new cookie
+     * Creates a cookie from a name, value, and optional attributes
      * @param name - The name of the cookie
      * @param value - The value of the cookie
      * @param options - Optional cookie attributes
@@ -9174,14 +9613,14 @@ declare module "bun" {
     constructor(name: string, value: string, options?: CookieInit);
 
     /**
-     * Create a new cookie from a cookie string
-     * @param cookieString - The cookie string
+     * Creates a cookie by parsing a serialized cookie string
+     * @param cookieString - A serialized cookie string, like `"name=value; Path=/"`
      */
     constructor(cookieString: string);
 
     /**
-     * Create a new cookie from a cookie object
-     * @param cookieObject - The cookie object
+     * Creates a cookie from an attributes object
+     * @param cookieObject - The cookie's name, value, and attributes
      */
     constructor(cookieObject?: CookieInit);
 
@@ -9196,52 +9635,52 @@ declare module "bun" {
     value: string;
 
     /**
-     * The domain of the cookie
+     * The cookie's `Domain` attribute, or `undefined` if not set
      */
     domain?: string;
 
     /**
-     * The path of the cookie
+     * The cookie's `Path` attribute. Defaults to `/`.
      */
     path: string;
 
     /**
-     * The expiration date of the cookie
+     * The cookie's expiration date, or `undefined` if not set
      */
     expires?: Date;
 
     /**
-     * Whether the cookie is secure
+     * Whether the cookie has the `Secure` attribute
      */
     secure: boolean;
 
     /**
-     * The same-site attribute of the cookie
+     * The cookie's `SameSite` attribute. Defaults to `lax`.
      */
     sameSite: CookieSameSite;
 
     /**
-     * Whether the cookie is partitioned
+     * Whether the cookie has the `Partitioned` attribute
      */
     partitioned: boolean;
 
     /**
-     * The maximum age of the cookie in seconds
+     * The cookie's maximum age in seconds, or `undefined` if not set
      */
     maxAge?: number;
 
     /**
-     * Whether the cookie is HTTP-only
+     * Whether the cookie has the `HttpOnly` attribute
      */
     httpOnly: boolean;
 
     /**
-     * Whether the cookie is expired
+     * Returns `true` if the cookie has expired
      */
     isExpired(): boolean;
 
     /**
-     * Serialize the cookie to a string
+     * Serializes the cookie to a string
      *
      * @example
      * ```ts
@@ -9256,33 +9695,31 @@ declare module "bun" {
     serialize(): string;
 
     /**
-     * Serialize the cookie to a string
-     *
-     * Alias of {@link Cookie.serialize}
+     * Serializes the cookie to a string. Alias of {@link Cookie.serialize}.
      */
     toString(): string;
 
     /**
-     * Serialize the cookie to a JSON object
+     * Returns the cookie's name, value, and attributes as a plain object
      */
     toJSON(): CookieInit;
 
     /**
-     * Parse a cookie string into a Cookie object
-     * @param cookieString - The cookie string
+     * Parses a serialized cookie string into a `Cookie`
+     * @param cookieString - A serialized cookie string, like `"name=value; Path=/"`
      */
     static parse(cookieString: string): Cookie;
 
     /**
-     * Create a new cookie from a name and value and optional options
+     * Creates a cookie from a name, value, and optional attributes
      */
     static from(name: string, value: string, options?: CookieInit): Cookie;
   }
 
   /**
-   * A Map-like interface for working with collections of cookies.
+   * A Map-like collection of cookies.
    *
-   * Implements the `Iterable` interface, allowing use with `for...of` loops.
+   * Iterable, so it works with `for...of` loops.
    */
   class CookieMap implements Iterable<[string, string]> {
     /**
@@ -9304,9 +9741,9 @@ declare module "bun" {
     get(name: string): string | null;
 
     /**
-     * Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
+     * Returns the `Set-Cookie` header values that apply the changes made to this map.
      *
-     * @returns An array of values for Set-Cookie headers
+     * @returns An array of `Set-Cookie` header values
      */
     toSetCookieHeaders(): string[];
 
@@ -9359,7 +9796,7 @@ declare module "bun" {
     /**
      * Converts the cookie map to a serializable format.
      *
-     * @returns An array of name/value pairs
+     * @returns An object mapping cookie names to values
      */
     toJSON(): Record<string, string>;
 

@@ -23,7 +23,9 @@ async function findRandomPort() {
   });
 }
 async function waitForPostgres(port) {
-  for (let i = 0; i < 3; i++) {
+  // Cold initdb on a fresh container takes ~10–15s; 3×1s was a flaky lower
+  // bound that only held when the agent was otherwise idle.
+  for (let i = 0; i < 30; i++) {
     try {
       const sql = new SQL(`postgres://bun_sql_test@localhost:${port}/bun_sql_test`, {
         idleTimeout: 1,
@@ -39,7 +41,7 @@ async function waitForPostgres(port) {
       console.log("PostgreSQL is ready!");
       return true;
     } catch (error) {
-      console.log(`Waiting for PostgreSQL... (${i + 1}/3)`);
+      console.log(`Waiting for PostgreSQL... (${i + 1}/30)`);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }

@@ -74,7 +74,7 @@ it("importing empty jsonc/toml file returns module with empty object as default 
 it("importing empty file returns module with path as default export", async () => {
   const other_types = [
     "wasm",
-    // "napi", // marked unreachable in src/bun.js/module_loader.zig:1956:22
+    // "napi", // marked unreachable in src/jsc/ModuleLoader.zig:1956:22
     "base64",
     "dataurl",
   ];

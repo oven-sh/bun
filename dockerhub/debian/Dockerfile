@@ -47,7 +47,7 @@ RUN apt-get update -qq \
       -fsSLO \
       --compressed \
       --retry 5 \
-    && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
+    && gpg --batch --verify --output SHASUMS256.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
       || (echo "error: failed to verify: $tag" && exit 1) \
@@ -57,6 +57,13 @@ RUN apt-get update -qq \
     && chmod +x /usr/local/bin/bun
 
 FROM debian:trixie
+
+# Install CA certificates so tools that verify TLS (e.g. apt over HTTPS on
+# Debian 13) have a trust store. The base image ships none.
+RUN apt-get update -qq \
+    && apt-get install -qq --no-install-recommends ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun

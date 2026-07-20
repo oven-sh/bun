@@ -43,8 +43,9 @@ class SocketFramer {
 
     while (this.bufferedData.length > 0) {
       if (this.state === FramerState.WaitingForLength) {
-        if (this.sizeBufferIndex + this.bufferedData.length < 4) {
-          const remainingBytes = Math.min(4 - this.sizeBufferIndex, this.bufferedData.length);
+        const bufferedLength = this.bufferedData.length;
+        if (this.sizeBufferIndex + bufferedLength < 4) {
+          const remainingBytes = Math.min(4 - this.sizeBufferIndex, bufferedLength);
           this.bufferedData.copy(this.sizeBuffer, this.sizeBufferIndex, 0, remainingBytes);
           this.sizeBufferIndex += remainingBytes;
           this.bufferedData = this.bufferedData.slice(remainingBytes);
@@ -119,8 +120,9 @@ export default function (
   // If the user types --inspect, we print the URL to the console.
   // If the user is using an editor extension, don't print anything.
   if (!isAutomatic) {
-    if (debug.url) {
-      const { protocol, href, host, pathname } = debug.url;
+    const debugUrl = debug.url;
+    if (debugUrl) {
+      const { protocol, href, host, pathname } = debugUrl;
       if (!protocol.includes("unix")) {
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
         Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
@@ -235,7 +237,8 @@ class Debugger {
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
         hostname,
-        port,
+        // empty port from new URL("ws://host/") -> let the OS pick a free port instead of falling back to Bun.serve's default 3000
+        port: port || 0,
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
@@ -289,8 +292,9 @@ class Debugger {
         },
         drain: _socket => {},
         close: socket => {
-          if (socket.data) {
-            const { backend, framer } = socket.data;
+          const socketData = socket.data;
+          if (socketData) {
+            const { backend, framer } = socketData;
             backend.close();
             framer.reset();
           }
@@ -334,6 +338,19 @@ class Debugger {
       });
     }
 
+    const isUnix = this.#url!.protocol.includes("unix");
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+      return new Response(null, {
+        status: 400, // Bad Request
+      });
+    }
+
+    if (!isOriginAllowed(headers.get("Origin"))) {
+      return new Response(null, {
+        status: 403, // Forbidden
+      });
+    }
+
     switch (pathname) {
       case "/json/version":
         return Response.json(versionInfo());
@@ -342,7 +359,7 @@ class Debugger {
       // TODO?
     }
 
-    if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
+    if (!isUnix && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
       });
@@ -489,8 +506,9 @@ async function connectToUnixServer(
       drain: _socket => {},
 
       close: socket => {
-        if (socket.data) {
-          const { backend, framer } = socket.data;
+        const socketData = socket.data;
+        if (socketData) {
+          const { backend, framer } = socketData;
           backend.close();
           framer.reset();
         }
@@ -590,8 +608,55 @@ function parseUrl(input: string): URL {
   return url;
 }
 
+// Browsers always send an `Origin` header on WebSocket handshakes, so rejecting
+// unexpected web origins prevents a malicious website from connecting to the
+// inspector and evaluating code. This matters most when the user passes an
+// explicit pathname to --inspect, which replaces the random UUID pathname that
+// otherwise acts as a bearer token. Non-browser clients (IDEs, CLI tools) do
+// not send an `Origin` header and are unaffected.
+function isOriginAllowed(origin: string | null): boolean {
+  if (!origin) {
+    return true;
+  }
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    // Includes the opaque "null" origin sent by sandboxed iframes and file://.
+    return false;
+  }
+  const { protocol, hostname } = url;
+  if (protocol !== "http:" && protocol !== "https:") {
+    // Privileged schemes (e.g. devtools://) cannot be claimed by a web page.
+    return true;
+  }
+  if (url.origin === "https://debug.bun.sh") {
+    return true;
+  }
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
+
+function isHostAllowed(host: string | null, expectedHostname: string): boolean {
+  if (!host) {
+    return true;
+  }
+  let hostname: string;
+  try {
+    ({ hostname } = new URL(`ws://${host}`));
+  } catch {
+    return false;
+  }
+  if (hostname === expectedHostname || hostname === "localhost" || hostname === "localhost6") {
+    return true;
+  }
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return true;
+  }
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+}
+
 function randomId() {
-  return Math.random().toString(36).slice(2);
+  return crypto.randomUUID();
 }
 
 const { enableANSIColors } = Bun;

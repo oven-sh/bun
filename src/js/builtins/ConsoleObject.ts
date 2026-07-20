@@ -116,6 +116,8 @@ export function asyncIterator(this: Console) {
 }
 
 export function write(this: Console, input) {
+  if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
+
   var writer = $getByIdDirectPrivate(this, "writer");
   if (!writer) {
     var length = $toLength(input?.length ?? 0);
@@ -142,6 +144,7 @@ export function write(this: Console, input) {
 export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions } = require("node:util");
   const { isBuffer } = require("node:buffer");
+  const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -165,7 +168,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kMinute = 60 * kSecond;
   const kHour = 60 * kMinute;
 
-  const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+  const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
   /**
    * Returns the number of columns required to display the given string.
@@ -660,7 +663,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       };
       const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
 
-      const mapIter = $isMapIterator(tabularData);
+      const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
       // if (mapIter) {
@@ -689,7 +692,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         return final([iterKey, keyKey, valuesKey], [getIndexArray(length), keys, values]);
       }
 
-      const setIter = $isSetIterator(tabularData);
+      const setIter = isSetIterator(tabularData);
       // if (setIter) tabularData = previewEntries(tabularData);
 
       const setlike = setIter || mapIter || $isSet(tabularData);

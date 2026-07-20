@@ -1,0 +1,18 @@
+--- a/src/liblsquic/lsquic_enc_sess_ietf.c
++++ b/src/liblsquic/lsquic_enc_sess_ietf.c
+@@ -1331,14 +1331,7 @@
+ #endif
+     if (!server_name)
+     {
+-        if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+-        {
+-            LSQ_DEBUG("SNI is not set, but is required in HTTP/3: "
+-                                                "fail certificate lookup");
+-            return 0;
+-        }
+-        else
+-            LSQ_DEBUG("cert lookup: server name is not set");
++        LSQ_DEBUG("cert lookup: server name is not set");
+     }
+ 
+     path = enc_sess->esi_conn->cn_if->ci_get_path(enc_sess->esi_conn, NULL);

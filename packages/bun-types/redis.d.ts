@@ -32,7 +32,6 @@ declare module "bun" {
 
     /**
      * TLS options
-     * Can be a boolean or an object with TLS options
      */
     tls?: boolean | Bun.TLSOptions;
 
@@ -225,7 +224,7 @@ declare module "bun" {
     set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...options: string[]): Promise<"OK" | string | null>;
 
     /**
-     * Delete a key(s)
+     * Delete one or more keys
      * @param keys The keys to delete
      * @returns Promise that resolves with the number of keys removed
      */
@@ -659,14 +658,14 @@ declare module "bun" {
     hexists(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<boolean>;
 
     /**
-     * Get one or multiple random fields from a hash
+     * Get a random field from a hash
      * @param key The hash key
      * @returns Promise that resolves with a random field name, or null if the hash doesn't exist
      */
     hrandfield(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Get one or multiple random fields from a hash
+     * Get count random fields from a hash
      * @param key The hash key
      * @param count The number of fields to return (positive for unique fields, negative for potentially duplicate fields)
      * @returns Promise that resolves with an array of random field names
@@ -674,7 +673,7 @@ declare module "bun" {
     hrandfield(key: RedisClient.KeyLike, count: number): Promise<string[]>;
 
     /**
-     * Get one or multiple random fields with values from a hash
+     * Get count random fields with their values from a hash
      * @param key The hash key
      * @param count The number of fields to return
      * @param withValues Literal "WITHVALUES" to include values
@@ -968,7 +967,7 @@ declare module "bun" {
      * Blocking move from one list to another
      *
      * Atomically moves an element from source to destination list, blocking until an element is available
-     * or the timeout expires. Allows specifying which end to pop from (LEFT/RIGHT) and which end to push to (LEFT/RIGHT).
+     * or the timeout expires.
      *
      * @param source Source list key
      * @param destination Destination list key
@@ -1245,9 +1244,7 @@ declare module "bun" {
     pttl(key: RedisClient.KeyLike): Promise<number>;
 
     /**
-     * Return a random key from the keyspace
-     *
-     * Returns a random key from the currently selected database.
+     * Return a random key from the currently selected database
      *
      * @returns Promise that resolves with a random key name, or null if the
      * database is empty
@@ -1271,17 +1268,17 @@ declare module "bun" {
     rpop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Remove and get the last element in a list
+     * Remove and get the last count elements in a list
      * @param key The list key
-     * @returns Promise that resolves with the last element, or null if the list is empty
+     * @param count The number of elements to pop
+     * @returns Promise that resolves with the removed elements
      */
     rpop(key: RedisClient.KeyLike, count: number): Promise<string[]>;
 
     /**
      * Atomically pop the last element from a source list and push it to the head of a destination list
      *
-     * This is equivalent to LMOVE with "RIGHT" "LEFT". It's an atomic operation that removes
-     * the last element (tail) from the source list and pushes it to the head of the destination list.
+     * Equivalent to LMOVE with "RIGHT" "LEFT".
      *
      * @param source The source list key
      * @param destination The destination list key
@@ -1303,13 +1300,9 @@ declare module "bun" {
     /**
      * Incrementally iterate the keyspace
      *
-     * The SCAN command is used to incrementally iterate over a collection of
-     * elements. SCAN iterates the set of keys in the currently selected Redis
-     * database.
-     *
-     * SCAN is a cursor based iterator. This means that at every call of the
-     * command, the server returns an updated cursor that the user needs to use
-     * as the cursor argument in the next call.
+     * SCAN iterates the set of keys in the currently selected Redis database.
+     * It is a cursor-based iterator: each call returns an updated cursor to
+     * pass as the cursor argument in the next call.
      *
      * An iteration starts when the cursor is set to "0", and terminates when
      * the cursor returned by the server is "0".
@@ -1474,10 +1467,6 @@ declare module "bun" {
     /**
      * Determine the type of value stored at key
      *
-     * The TYPE command returns the string representation of the type of the
-     * value stored at key. The different types that can be returned are:
-     * string, list, set, zset, hash and stream.
-     *
      * @param key The key to check
      * @returns Promise that resolves with the type of value stored at key, or
      * "none" if the key doesn't exist
@@ -1592,7 +1581,7 @@ declare module "bun" {
     bzpopmax(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
 
     /**
-     * Get one or multiple random members from a sorted set
+     * Get a random member from a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with a random member, or null if the set
      * is empty
@@ -1600,18 +1589,18 @@ declare module "bun" {
     zrandmember(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Get one or multiple random members from a sorted set
+     * Get count random members from a sorted set
      * @param key The sorted set key
-     * @returns Promise that resolves with a random member, or null if the set
-     * is empty
+     * @returns Promise that resolves with an array of random members, or null
+     * if the set is empty
      */
     zrandmember(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
 
     /**
-     * Get one or multiple random members from a sorted set, with scores
+     * Get count random members from a sorted set, with their scores
      * @param key The sorted set key
-     * @returns Promise that resolves with a random member, or null if the set
-     * is empty
+     * @returns Promise that resolves with the members and their scores, or
+     * null if the set is empty
      */
     zrandmember(key: RedisClient.KeyLike, count: number, withscores: "WITHSCORES"): Promise<[string, number][] | null>;
 
@@ -1875,7 +1864,7 @@ declare module "bun" {
     ltrim(key: RedisClient.KeyLike, start: number, stop: number): Promise<string>;
 
     /**
-     * Add one or more members to a HyperLogLog
+     * Add an element to a HyperLogLog
      * @param key The HyperLogLog key
      * @param element The element to add
      * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0
@@ -1975,7 +1964,7 @@ declare module "bun" {
      * Add one or more members to a sorted set, or update scores if they already exist
      *
      * ZADD adds all the specified members with the specified scores to the sorted set stored at key.
-     * It is possible to specify multiple score / member pairs. If a specified member is already a
+     * You can pass multiple score/member pairs. If a specified member is already a
      * member of the sorted set, the score is updated and the element reinserted at the right position
      * to ensure the correct ordering.
      *
@@ -1983,7 +1972,7 @@ declare module "bun" {
      * If the key exists but does not hold a sorted set, an error is returned.
      *
      * The score values should be the string representation of a double precision floating point number.
-     * +inf and -inf values are valid values as well.
+     * +inf and -inf are also valid.
      *
      * Options:
      * - NX: Only add new elements. Don't update already existing elements.
@@ -1993,7 +1982,7 @@ declare module "bun" {
      * - CH: Modify the return value from the number of new elements added, to the total number of elements changed (CH is an abbreviation of changed).
      * - INCR: When this option is specified ZADD acts like ZINCRBY. Only one score-member pair can be specified in this mode.
      *
-     * Note: The GT, LT and NX options are mutually exclusive.
+     * The GT, LT and NX options are mutually exclusive.
      *
      * @param key The sorted set key
      * @param args Score-member pairs and optional flags (NX, XX, GT, LT, CH, INCR)
@@ -2022,21 +2011,17 @@ declare module "bun" {
     /**
      * Incrementally iterate sorted set elements and their scores
      *
-     * The ZSCAN command is used in order to incrementally iterate over sorted set elements and their scores.
-     * ZSCAN is a cursor based iterator. This means that at every call of the command, the server returns an
-     * updated cursor that the user needs to use as the cursor argument in the next call.
+     * ZSCAN is a cursor-based iterator: each call returns an updated cursor to
+     * pass as the cursor argument in the next call.
      *
      * An iteration starts when the cursor is set to 0, and terminates when the cursor returned by the server is 0.
      *
-     * ZSCAN and the other SCAN family commands are able to provide to the user a set of guarantees associated
-     * to full iterations:
-     * - A full iteration always retrieves all the elements that were present in the collection from the start
-     *   to the end of a full iteration. This means that if a given element is inside the collection when an
-     *   iteration is started, and is still there when an iteration terminates, then at some point ZSCAN returned it.
-     * - A full iteration never returns any element that was NOT present in the collection from the start to the
-     *   end of a full iteration. So if an element was removed before the start of an iteration, and is never
-     *   added back to the collection for all the time an iteration lasts, ZSCAN ensures that this element will
-     *   never be returned.
+     * ZSCAN and the other SCAN family commands guarantee the following for a
+     * full iteration:
+     * - An element present in the collection from the start to the end of the
+     *   iteration is returned at some point.
+     * - An element absent from the collection from the start to the end of the
+     *   iteration is never returned.
      *
      * Options:
      * - MATCH pattern: Only return elements matching the pattern (glob-style)
@@ -2499,13 +2484,11 @@ declare module "bun" {
     /**
      * Set multiple keys to multiple values atomically
      *
-     * Sets the given keys to their respective values. MSET replaces existing
-     * values with new values, just as regular SET. Use MSETNX if you don't want
-     * to overwrite existing values.
+     * MSET replaces existing values, just as regular SET does. Use MSETNX if
+     * you don't want to overwrite existing values.
      *
-     * MSET is atomic, so all given keys are set at once. It is not possible for
-     * clients to see that some of the keys were updated while others are
-     * unchanged.
+     * MSET is atomic: all given keys are set at once, so clients never see
+     * some of the keys updated while others are unchanged.
      *
      * @param keyValuePairs Alternating keys and values (key1, value1, key2, value2, ...)
      * @returns Promise that resolves with "OK" on success
@@ -2520,16 +2503,13 @@ declare module "bun" {
     /**
      * Set multiple keys to multiple values, only if none of the keys exist
      *
-     * Sets the given keys to their respective values. MSETNX will not perform
-     * any operation at all even if just a single key already exists.
+     * MSETNX performs no operation at all if even a single key already exists.
      *
-     * Because of this semantic, MSETNX can be used in order to set different
-     * keys representing different fields of a unique logic object in a way that
-     * ensures that either all the fields or none at all are set.
+     * This lets you set several keys representing fields of a single logical
+     * object and guarantee that either all of them or none are set.
      *
-     * MSETNX is atomic, so all given keys are set at once. It is not possible
-     * for clients to see that some of the keys were updated while others are
-     * unchanged.
+     * MSETNX is atomic: all given keys are set at once, so clients never see
+     * some of the keys updated while others are unchanged.
      *
      * @param keyValuePairs Alternating keys and values (key1, value1, key2, value2, ...)
      * @returns Promise that resolves with 1 if all keys were set, 0 if no key was set
@@ -2702,27 +2682,26 @@ declare module "bun" {
      * @param channel The channel to publish to.
      * @param message The message to publish.
      *
-     * @returns The number of clients that received the message. Note that in a
-     * cluster this returns the total number of clients in the same node.
+     * @returns The number of clients that received the message. In a cluster,
+     * this is the total number of clients in the same node.
      */
     publish(channel: string, message: string): Promise<number>;
 
     /**
      * Subscribe to a Redis channel.
      *
-     * Subscribing disables automatic pipelining, so all commands will be
-     * received immediately.
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
      *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
      * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
-     * {@link unsubscribe `.unsubscribe()`} are legal to invoke in a subscribed
-     * upon channel.
+     * {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
      *
      * @param channel The channel to subscribe to.
      * @param listener The listener to call when a message is received on the
-     * channel. The listener will receive the message as the first argument and
-     * the channel as the second argument.
+     * channel. The listener receives the message as the first argument and
+     * the channel as the second.
      *
      * @example
      * ```ts
@@ -2736,31 +2715,30 @@ declare module "bun" {
     /**
      * Subscribe to multiple Redis channels.
      *
-     * Subscribing disables automatic pipelining, so all commands will be
-     * received immediately.
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
      *
      * Subscribing moves the channels to a dedicated subscription state in which
      * only a limited set of commands can be executed.
      *
      * @param channels An array of channels to subscribe to.
      * @param listener The listener to call when a message is received on any of
-     * the subscribed channels. The listener will receive the message as the
-     * first argument and the channel as the second argument.
+     * the subscribed channels. The listener receives the message as the
+     * first argument and the channel as the second.
      */
     subscribe(channels: string[], listener: RedisClient.StringPubSubListener): Promise<number>;
 
     /**
-     * Unsubscribe from a singular Redis channel.
-     *
-     * @param channel The channel to unsubscribe from.
+     * Unsubscribe from a single Redis channel.
      *
      * If there are no more channels subscribed to, the client automatically
      * re-enables pipelining if it was previously enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
+     *
+     * @param channel The channel to unsubscribe from.
      */
     unsubscribe(channel: string): Promise<void>;
 
@@ -2770,9 +2748,8 @@ declare module "bun" {
      * If there are no more channels subscribed to, the client automatically
      * re-enables pipelining if it was previously enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
      *
      * @param channel The channel to unsubscribe from.
@@ -2785,12 +2762,11 @@ declare module "bun" {
     /**
      * Unsubscribe from all registered Redis channels.
      *
-     * The client will automatically re-enable pipelining if it was previously
+     * The client automatically re-enables pipelining if it was previously
      * enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
      */
     unsubscribe(): Promise<void>;
@@ -2798,23 +2774,22 @@ declare module "bun" {
     /**
      * Unsubscribe from multiple Redis channels.
      *
-     * @param channels An array of channels to unsubscribe from.
-     *
      * If there are no more channels subscribed to, the client automatically
      * re-enables pipelining if it was previously enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
+     *
+     * @param channels An array of channels to unsubscribe from.
      */
     unsubscribe(channels: string[]): Promise<void>;
 
     /**
-     * @brief Create a new RedisClient instance with the same configuration as
-     *        the current instance.
+     * Create a new RedisClient instance with the same configuration as the
+     * current instance.
      *
-     * This will open up a new connection to the Redis server.
+     * Opens a new connection to the Redis server.
      */
     duplicate(): Promise<RedisClient>;
 
@@ -2861,11 +2836,9 @@ declare module "bun" {
     /**
      * Asynchronously delete one or more keys
      *
-     * This command is very similar to DEL: it removes the specified keys.
-     * Just like DEL a key is ignored if it does not exist. However, the
-     * command performs the actual memory reclaiming in a different thread, so
-     * it is not blocking, while DEL is. This is particularly useful when
-     * deleting large values or large numbers of keys.
+     * Like DEL, UNLINK removes the specified keys and ignores keys that don't
+     * exist. Unlike DEL, it reclaims the memory in a different thread, so it
+     * does not block. Use it when deleting large values or many keys.
      *
      * @param keys The keys to delete
      * @returns Promise that resolves with the number of keys that were unlinked
@@ -2883,8 +2856,7 @@ declare module "bun" {
     /**
      * Alters the last access time of one or more keys
      *
-     * A key is ignored if it does not exist. The command returns the number
-     * of keys that were touched.
+     * A key is ignored if it does not exist.
      *
      * This command is useful in conjunction with maxmemory-policy
      * allkeys-lru / volatile-lru to change the last access time of keys for
@@ -2906,8 +2878,8 @@ declare module "bun" {
     /**
      * Rename a key to a new key
      *
-     * Renames key to newkey. If newkey already exists, it is overwritten. If
-     * key does not exist, an error is returned.
+     * If newkey already exists, it is overwritten. If key does not exist, an
+     * error is returned.
      *
      * @param key The key to rename
      * @param newkey The new key name
@@ -2926,8 +2898,7 @@ declare module "bun" {
     /**
      * Rename a key to a new key only if the new key does not exist
      *
-     * Renames key to newkey only if newkey does not yet exist. If key does not
-     * exist, an error is returned.
+     * If key does not exist, an error is returned.
      *
      * @param key The key to rename
      * @param newkey The new key name
@@ -3173,8 +3144,7 @@ declare module "bun" {
     /**
      * Compute the union of multiple sorted sets
      *
-     * Returns the union of the sorted sets given by the specified keys.
-     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     * For every element that appears in at least one of the input sorted sets, the output contains that element.
      *
      * Options:
      * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
@@ -3216,8 +3186,7 @@ declare module "bun" {
     /**
      * Compute the union of multiple sorted sets
      *
-     * Returns the union of the sorted sets given by the specified keys.
-     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     * For every element that appears in at least one of the input sorted sets, the output contains that element.
      *
      * Options:
      * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
@@ -3342,11 +3311,10 @@ declare module "bun" {
   /**
    * Default Redis client
    *
-   * Connection information populated from one of, in order of preference:
+   * Connection information comes from the first of these that is set:
    * - `process.env.VALKEY_URL`
    * - `process.env.REDIS_URL`
    * - `"valkey://localhost:6379"`
-   *
    */
   export const redis: RedisClient;
 }

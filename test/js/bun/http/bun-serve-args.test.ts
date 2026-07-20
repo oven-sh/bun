@@ -243,6 +243,24 @@ describe("Bun.serve development options", () => {
     expect(server.id).toBe("test-server");
     server.stop();
   });
+
+  // The `inspector` option was removed from Bun.serve(). It used to register a
+  // `/bun:inspect` WebSocket route and throw when combined with
+  // `development: false`. It is now ignored like any other unknown option.
+  test("inspector option is ignored", () => {
+    using server = serve({
+      port: 0,
+      development: false,
+      // @ts-expect-error removed option
+      inspector: true,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    expect(server.port).toBeGreaterThan(0);
+    expect(server.development).toBe(false);
+    server.stop();
+  });
 });
 
 describe("Bun.serve static routes", () => {
@@ -416,44 +434,62 @@ describe("Bun.serve hostname coercion", () => {
   });
 
   test("invalid toString() results should throw", () => {
-    const invalidHostnames = [
+    // The `null`/`undefined` toString() results coerce to the legal hostname strings
+    // "null"/"undefined". Pair those with `unix` so serve() still coerces the hostname but
+    // throws from the hostname+unix validation instead of a blocking DNS lookup of that name.
+    const invalidHostnames: Array<{ hostname: unknown; unix?: string }> = [
       {
-        toString() {
-          return {};
+        hostname: {
+          toString() {
+            return {};
+          },
         },
       },
       {
-        toString() {
-          return [];
+        hostname: {
+          toString() {
+            return [];
+          },
         },
       },
       {
-        toString() {
-          return null;
+        hostname: {
+          toString() {
+            return null;
+          },
+        },
+        unix: "bun-serve-args-invalid-hostname.sock",
+      },
+      {
+        hostname: {
+          toString() {
+            return undefined;
+          },
+        },
+        unix: "bun-serve-args-invalid-hostname.sock",
+      },
+      {
+        hostname: {
+          toString() {
+            throw new Error("invalid toString");
+          },
         },
       },
       {
-        toString() {
-          return undefined;
-        },
-      },
-      {
-        toString() {
-          throw new Error("invalid toString");
-        },
-      },
-      {
-        toString() {
-          return Symbol("test");
+        hostname: {
+          toString() {
+            return Symbol("test");
+          },
         },
       },
     ];
 
-    for (const hostname of invalidHostnames) {
+    for (const { hostname, unix } of invalidHostnames) {
       expect(() =>
         serve({
           // @ts-expect-error - Testing runtime coercion
           hostname,
+          ...(unix ? { unix } : {}),
           port: 0,
           fetch() {
             return new Response("ok");

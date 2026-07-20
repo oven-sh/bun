@@ -1169,6 +1169,8 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
+  // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
+  // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
     const arr1 = [];
     const arr2 = [];
@@ -1193,7 +1195,7 @@ describe("expect()", () => {
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);
     }
-  });
+  }, 480_000);
 
   test("deepEquals - Date", () => {
     let d = new Date();
@@ -1710,6 +1712,18 @@ describe("expect()", () => {
     const ab1 = new SharedArrayBuffer(1);
     expect(ab1).toEqual(new SharedArrayBuffer(1));
     expect(ab1).not.toEqual(new ArrayBuffer(1));
+  });
+
+  test("toEqual detached ArrayBuffer is not equal to a zero-length ArrayBuffer", () => {
+    function detached() {
+      const buf = new ArrayBuffer(4);
+      buf.transfer();
+      return buf;
+    }
+    expect(detached()).not.toEqual(new ArrayBuffer(0));
+    expect(detached()).not.toEqual(detached());
+    expect(detached()).not.toStrictEqual(new ArrayBuffer(0));
+    expect({ x: detached() }).not.toEqual({ x: new ArrayBuffer(0) });
   });
 
   test("symbol based keys in arrays are processed correctly", () => {
@@ -2387,6 +2401,18 @@ describe("expect()", () => {
     ["😄", "😄"],
     ["", ""],
     [[1, 2, 3], 1],
+    // toContain uses === like Jest (Array.prototype.indexOf), so -0 and +0 match.
+    [[-0], 0],
+    [[0], -0],
+    [new Float64Array([-0]), 0],
+    [
+      {
+        *[Symbol.iterator]() {
+          yield -0;
+        },
+      },
+      0,
+    ],
     [["a", "b", "c"], "c"],
     [[null, undefined], undefined],
     [[1n, "abc", null, -1n, undefined], -1n],
@@ -2419,6 +2445,10 @@ describe("expect()", () => {
     [new String("hello"), ""],
     ["emoji: 😃", "😄"],
     [[1, 2, 3], -1],
+    // toContain uses === like Jest (Array.prototype.indexOf), so NaN never matches.
+    [[NaN], NaN],
+    [new Float64Array([NaN]), NaN],
+    [new Set([NaN]), NaN],
     [[1, 2, 3], 1n],
     [["a", "b", "c"], "d"],
     [[Symbol.for("a")], Symbol("a")],
@@ -4031,9 +4061,48 @@ describe("expect()", () => {
       expect(expect.any(BigInt)).toEqual(1n);
       expect(expect.any(Symbol)).toEqual(Symbol());
       expect(expect.any(Object)).toEqual({});
-      //expect(expect.any(Object)).toEqual(null); // TODO: succeeds on jest, fails on bun
       expect(expect.any(Array)).toEqual([]);
       expect(expect.any(Thing)).toEqual(new Thing());
+    });
+
+    test("expect.any(Object) matches typeof === 'object'", () => {
+      // https://github.com/jestjs/jest/blob/main/packages/expect/src/asymmetricMatchers.ts
+      // Jest: `if (this.sample == Object) return typeof other == 'object';`
+      class Thing {}
+
+      // typeof x === 'object'
+      expect(null).toEqual(expect.any(Object));
+      expect({}).toEqual(expect.any(Object));
+      expect([]).toEqual(expect.any(Object));
+      expect(new Thing()).toEqual(expect.any(Object));
+      expect(new Date()).toEqual(expect.any(Object));
+      expect(new Map()).toEqual(expect.any(Object));
+      expect(/re/).toEqual(expect.any(Object));
+
+      // typeof x !== 'object'
+      expect(undefined).not.toEqual(expect.any(Object));
+      expect(1).not.toEqual(expect.any(Object));
+      expect("s").not.toEqual(expect.any(Object));
+      expect(true).not.toEqual(expect.any(Object));
+      expect(1n).not.toEqual(expect.any(Object));
+      expect(Symbol()).not.toEqual(expect.any(Object));
+      expect(() => {}).not.toEqual(expect.any(Object));
+      expect(function f() {}).not.toEqual(expect.any(Object));
+      expect(async () => {}).not.toEqual(expect.any(Object));
+      expect(Thing).not.toEqual(expect.any(Object));
+
+      // nested in toEqual / objectContaining
+      expect({ a: null }).toEqual({ a: expect.any(Object) });
+      expect({ a: () => {} }).not.toEqual({ a: expect.any(Object) });
+      expect({ a: () => {} }).not.toEqual(expect.objectContaining({ a: expect.any(Object) }));
+
+      // toHaveBeenCalledWith
+      const fn = jest.fn();
+      fn(null);
+      expect(fn).toHaveBeenCalledWith(expect.any(Object));
+      const fn2 = jest.fn();
+      fn2(() => {});
+      expect(fn2).not.toHaveBeenCalledWith(expect.any(Object));
     });
 
     test("expect.any on primitive wrapper classes", () => {

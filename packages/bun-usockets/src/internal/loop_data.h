@@ -23,7 +23,7 @@
 #if defined(__APPLE__)
 #include <os/lock.h>
 typedef os_unfair_lock zig_mutex_t;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
 typedef uint32_t zig_mutex_t;
 #elif defined(_WIN32)
 // SRWLOCK
@@ -32,14 +32,46 @@ typedef void* zig_mutex_t;
 #error "Unsupported platform"
 #endif
 
-// IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
+// IMPORTANT: When changing this, don't forget to update the Rust mirror in src/uws_sys/InternalLoopData.rs as well!
+struct us_quic_socket_context_s;
+
 struct us_internal_loop_data_t {
+#ifdef LIBUS_USE_LIBUV
     struct us_timer_t *sweep_timer;
+#else
+    /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
+     * timeout — no timerfd, no EVFILT_TIMER. */
+    long long sweep_next_tick_ns;
+#endif
     int sweep_timer_count;
+#ifdef LIBUS_USE_LIBUV
+    /* Sockets whose peer FIN was deferred behind buffered data while paused
+     * (poll_cb's MSG_PEEK probe): the sweep escalates them via SO_ERROR when
+     * the peer later resets, since the one-shot DISCONNECT report was already
+     * consumed by the FIN. Zero cost while no socket is in that state. */
+    int fin_deferred_count;
+#endif
     struct us_internal_async *wakeup_async;
-    struct us_socket_context_t *head;
-    struct us_socket_context_t *iterator;
-    struct us_socket_context_t *closed_context_head;
+    struct us_socket_group_t *head;
+    /* QUIC engines on this loop. us_quic_loop_process walks the list from
+     * loop_post / drainMicrotasks; the lazy fallthrough timer only wakes the
+     * loop for lsquic's time-driven state (RTO, ACK delay) — its callback
+     * just calls us_quic_loop_process. */
+    struct us_quic_socket_context_s *quic_head;
+    /* µs until lsquic next wants process_conns (min earliest_adv_tick
+     * across engines), or -1 for "no deadline". Written by
+     * us_quic_loop_process from loop_post; read by Bun's getTimeout() to
+     * bound the epoll_pwait2 timeout. No timerfd, no scheduling syscall —
+     * the gap between loop_post and getTimeout is sub-µs so storing the
+     * relative diff is precise enough. */
+    long long quic_next_tick_us;
+#ifdef LIBUS_USE_LIBUV
+    /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
+     * for lsquic's time-driven state. POSIX folds the deadline into the
+     * epoll_pwait2 timeout via getTimeout() instead. */
+    struct us_timer_t *quic_timer;
+#endif
+    struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;
     void *ssl_data;
@@ -57,6 +89,11 @@ struct us_internal_loop_data_t {
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
     void* jsc_vm;
+    /* Reentrancy depth of us_loop_run_bun_tick. When >1, we are inside a
+     * nested tick (e.g. waitForPromise from a poll callback). Freeing closed
+     * sockets must be deferred to the outermost tick so the outer dispatch
+     * doesn't read a freed poll. */
+    int tick_depth;
 };
 
 #endif // LOOP_DATA_H

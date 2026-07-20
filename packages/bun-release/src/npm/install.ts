@@ -1,3 +1,4 @@
+import { isAbsolute, relative } from "path";
 import { unzipSync } from "zlib";
 import { debug, error } from "../console";
 import { fetch } from "../fetch";
@@ -107,12 +108,16 @@ async function downloadBun(platform: Platform, dst: string): Promise<void> {
     const size = parseInt(str(offset + 124, 12), 8);
     offset += 512;
     if (!isNaN(size)) {
-      write(join(dst, name), buffer.subarray(offset, offset + size));
-      if (name === platform.exe) {
-        try {
-          chmod(join(dst, name), 0o755);
-        } catch (error) {
-          debug("chmod failed", error);
+      const entryPath = join(dst, name);
+      const entryName = relative(dst, entryPath);
+      if (entryName && !entryName.startsWith("..") && !isAbsolute(entryName)) {
+        write(entryPath, buffer.subarray(offset, offset + size));
+        if (name === platform.exe) {
+          try {
+            chmod(entryPath, 0o755);
+          } catch (error) {
+            debug("chmod failed", error);
+          }
         }
       }
       offset += (size + 511) & ~511;

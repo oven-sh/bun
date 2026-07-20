@@ -1,0 +1,42 @@
+--- a/src/liblsquic/lsquic_conn_public.h	2026-04-20 23:16:15.000000000 +0000
++++ b/src/liblsquic/lsquic_conn_public.h	2026-04-27 08:51:00.711139257 +0000
+@@ -49,6 +49,7 @@
+     }                               u;
+     enum {
+         CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
++        CP_HAVE_PRIO            = 1 << 1,   /* Set once any stream gets a non-default priority */
+     }                               cp_flags;
+     struct lsquic_send_ctl         *send_ctl;
+ #if LSQUIC_CONN_STATS
+--- a/src/liblsquic/lsquic_send_ctl.c	2026-04-20 23:16:15.000000000 +0000
++++ b/src/liblsquic/lsquic_send_ctl.c	2026-04-27 08:51:00.711139257 +0000
+@@ -2963,6 +2963,11 @@
+     struct lsquic_hash_elem *el;
+     struct lsquic_hash *all_streams;
+ 
++    /* When no stream on this connection has ever been assigned a
++     * non-default priority, the loop below cannot find a lower one. */
++    if (!(ctl->sc_conn_pub->cp_flags & CP_HAVE_PRIO))
++        return BPT_HIGHEST_PRIO;
++
+     all_streams = ctl->sc_conn_pub->all_streams;
+     for (el = lsquic_hash_first(all_streams); el;
+                                      el = lsquic_hash_next(all_streams))
+--- a/src/liblsquic/lsquic_stream.c	2026-04-20 23:16:15.000000000 +0000
++++ b/src/liblsquic/lsquic_stream.c	2026-04-27 08:51:00.711139257 +0000
+@@ -4677,6 +4677,7 @@
+ {
+     if (0 == lsquic_stream_set_priority_internal(stream, priority))
+     {
++        stream->conn_pub->cp_flags |= CP_HAVE_PRIO;
+         if (stream->sm_bflags & SMBF_IETF)
+         {
+             if (stream->sm_bflags & SMBF_HTTP_PRIO)
+@@ -5589,6 +5590,7 @@
+             return -1;
+         }
+         stream->sm_priority = ehp->urgency;
++        stream->conn_pub->cp_flags |= CP_HAVE_PRIO;
+         if (ehp->incremental)
+             stream->sm_bflags |= SMBF_INCREMENTAL;
+         else

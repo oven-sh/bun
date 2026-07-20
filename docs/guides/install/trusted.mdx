@@ -7,26 +7,26 @@ mode: center
 Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall` and `node-gyp` builds. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
 
 <Note>
-  Bun includes a default allowlist of popular packages containing `postinstall` scripts that are known to be safe. You
-  can see this list [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt). This
-  default list only applies to packages installed from npm. For packages from other sources (such as `file:`, `link:`,
-  `git:`, or `github:` dependencies), you must explicitly add them to `trustedDependencies`.
+  Bun includes a default allowlist of popular packages whose `postinstall` scripts are known to be safe; see [the full
+  list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt). It only applies to
+  packages installed from npm. For packages from other sources (such as `file:`, `link:`, `git:`, or `github:`
+  dependencies), you must explicitly add them to `trustedDependencies`.
 </Note>
 
 ---
 
-If you are seeing one of the following errors, you are probably trying to use a package that uses `postinstall` to work properly:
+If you see one of the following errors, you are probably using a package that needs its `postinstall` script to work:
 
 - `error: could not determine executable to run for package`
 - `InvalidExe`
 
 ---
 
-To allow Bun to execute lifecycle scripts for a specific package, add the package to `trustedDependencies` in your package.json file. You can do this automatically by running the command `bun pm trust <pkg>`.
+To allow Bun to execute lifecycle scripts for a specific package, add the package to `trustedDependencies` in your `package.json`. You can do this automatically by running `bun pm trust <pkg>`.
 
 <Note>
-  Note that this only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the
-  dependencies of that dependency!
+  This only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the dependencies of
+  that dependency.
 </Note>
 
 ```json package.json icon="file-json"
@@ -39,7 +39,7 @@ To allow Bun to execute lifecycle scripts for a specific package, add the packag
 
 ---
 
-Once this is added, run a fresh install. Bun will re-install your dependencies and properly install
+Once this is added, run a fresh install. Bun re-installs your dependencies and runs the package's lifecycle scripts.
 
 ```sh terminal icon="terminal"
 rm -rf node_modules
@@ -49,4 +49,4 @@ bun install
 
 ---
 
-See [Docs > Package manager > Trusted dependencies](/pm/lifecycle) for complete documentation of trusted dependencies.
+See [trusted dependencies](/pm/lifecycle).

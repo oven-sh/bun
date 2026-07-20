@@ -48,7 +48,7 @@ console.log(next); // => next quarter-hour boundary
 
 ### Returns
 
-`Date | null` — the next matching time, or `null` if no match exists within 8 years (e.g. February 30th).
+`Date | null` — the next matching time, or `null` if no match exists within 8 years (for example, February 30th).
 
 ### Chaining calls
 
@@ -145,7 +145,7 @@ const job = Bun.cron("*/5 * * * *", async () => {
 });
 ```
 
-This is the lightweight option for long-running servers and workers — no system cron daemon required, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
+In-process scheduling is the lightweight option for long-running servers and workers — no system cron daemon required, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
 
 |                              | In-process                       | [OS-level](#bun-cron-path-schedule-title-os-level) |
 | ---------------------------- | -------------------------------- | -------------------------------------------------- |
@@ -162,7 +162,7 @@ This is the lightweight option for long-running servers and workers — no syste
 | `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
 | `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise — the next fire is not scheduled until it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
 
-Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid or has no future occurrences (e.g. `"0 0 30 2 *"` — February 30th).
+Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid or has no future occurrences, like `"0 0 30 2 *"` (February 30th).
 
 ### No-overlap guarantee
 
@@ -204,7 +204,7 @@ job.ref(); // keep the process alive (default)
 
 ### Fake timers
 
-In-process cron is anchored to the real wall clock. `jest.useFakeTimers()`, `setSystemTime()`, `advanceTimersByTime()`, and `runAllTimers()` do not affect when it fires.
+In-process cron honors `jest.useFakeTimers()`. `setSystemTime()`, `advanceTimersByTime()`, and `runAllTimers()` control when it fires, so you can test scheduled callbacks without waiting on the real clock.
 
 ---
 
@@ -301,7 +301,7 @@ Bun uses [launchd](https://developer.apple.com/library/archive/documentation/Mac
 ~/Library/LaunchAgents/bun.cron.<title>.plist
 ```
 
-The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported — Bun expands them into multiple `StartCalendarInterval` dicts via Cartesian product.
+The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported — Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product.
 
 **Viewing registered jobs:**
 
@@ -345,11 +345,11 @@ Most cron expressions are fully supported, including `@daily`, `@weekly`, `@mont
 
 #### User context
 
-Tasks are registered using [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored.
+Bun registers tasks with the [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored.
 
 TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only restriction is that S4U tasks cannot access [Windows-authenticated network resources](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks) (SMB file shares, mapped drives, Kerberos/NTLM services).
 
-On headless servers and CI environments where the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — `Bun.cron()` will fail with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
+On headless servers and CI environments where the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — `Bun.cron()` fails with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
 
 #### Trigger limit
 

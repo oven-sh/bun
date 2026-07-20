@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isASAN, isPosix, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { bunExe } from "./test_builder";
 import { createTestBuilder } from "./util";
@@ -12,7 +12,9 @@ $.env(bunEnv);
 $.cwd(process.cwd());
 $.nothrow();
 
-const DEFAULT_THRESHOLD = process.platform === "darwin" ? 100 * (1 << 20) : 150 * (1 << 20);
+// ASAN's quarantine retains freed allocations (default 256 MB) so per-iteration
+// RSS jumps run far higher under bun-asan; widen the threshold there.
+const DEFAULT_THRESHOLD = (isASAN ? 350 : process.platform === "darwin" ? 100 : 150) * (1 << 20);
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
@@ -57,16 +59,24 @@ describe.concurrent("fd leak", () => {
       const testcode = await Bun.file(join(import.meta.dirname, "./test_builder.ts")).text();
 
       const impl = /* ts */ `
-              import { openSync, closeSync } from "node:fs";
+              import { openSync, closeSync, readdirSync } from "node:fs";
               import { devNull } from "os";
               const TestBuilder = createTestBuilder(import.meta.path);
 
               const runs = ${runs};
               const threshold = ${threshold};
 
+              function getFDCount(): number {
+                if (process.platform === "darwin" || process.platform === "linux") {
+                  return readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").length;
+                }
+                const maxFD = openSync(devNull, "r");
+                closeSync(maxFD);
+                return maxFD;
+              }
+
               Bun.gc(true);
-              const baseline = openSync(devNull, "r");
-              closeSync(baseline);
+              const baseline = getFDCount();
 
               for (let i = 0; i < runs; i++) {
                 await ${builder.toString().slice("() =>".length)}.quiet().run();
@@ -74,10 +84,9 @@ describe.concurrent("fd leak", () => {
               // Run the GC, because the interpreter closes file descriptors when it
               // deinitializes when its finalizer is called
               Bun.gc(true);
-              const fd = openSync(devNull, "r");
-              closeSync(fd);
-              if (fd - baseline > threshold) {
-                console.error('FD leak detected:', fd - baseline, 'leaked (threshold:', threshold, ')');
+              const after = getFDCount();
+              if (after - baseline > threshold) {
+                console.error('FD leak detected:', after - baseline, 'leaked (threshold:', threshold, ')');
                 process.exit(1);
               }
             `;
@@ -123,7 +132,6 @@ describe.concurrent("fd leak", () => {
                 Bun.gc(true);
 
                 const objectTypeCounts = heapStats().objectTypeCounts;
-                heapStats().objectTypeCounts.ParsedShellScript
                 if (objectTypeCounts.ParsedShellScript > 3 || objectTypeCounts.ShellInterpreter > 3) {
                   console.error('TOO many ParsedShellScript or ShellInterpreter objects', objectTypeCounts.ParsedShellScript, objectTypeCounts.ShellInterpreter)
                   process.exit(1);
@@ -134,8 +142,9 @@ describe.concurrent("fd leak", () => {
                   prev = val;
                   prevprev = val;
                 } else {
-                  // console.error('Prev', prev, 'Val', val, 'Diff', Math.abs(prev - val), 'Threshold', threshold);
-                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
+                  // Growth from the baseline is a leak; a drop is the allocator
+                  // handing memory back (the idle sweep does this on purpose).
+                  if (!(val - prev < threshold)) process.exit(1);
                 }
               }
             `;
@@ -414,6 +423,14 @@ describe.concurrent("fd leak", () => {
           Bun.gc(true);
         }
 
+        // Same GC-settle window as the sibling test below: a dead interpreter can
+        // stay visible to heapStats for a tick; a real leak stays high forever.
+        for (let k = 0; k < 50; k++) {
+          const c = heapStats().objectTypeCounts;
+          if ((c.ShellInterpreter ?? 0) <= 3 && (c.ParsedShellScript ?? 0) <= 3) break;
+          await Bun.sleep(20);
+          Bun.gc(true);
+        }
         const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
         if (ShellInterpreter > 3 || ParsedShellScript > 3) {
           console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
@@ -452,6 +469,15 @@ describe.concurrent("fd leak", () => {
         run();
         Bun.gc(true);
 
+        // The newer module loader can keep the last inner-loop batch reachable
+        // via a conservative stack root for one extra tick; give GC a brief
+        // retry window before asserting (mirrors expectMaxObjectTypeCount).
+        for (let k = 0; k < 50; k++) {
+          const c = heapStats().objectTypeCounts;
+          if ((c.ShellInterpreter ?? 0) <= 3 && (c.ParsedShellScript ?? 0) <= 3) break;
+          await Bun.sleep(20);
+          Bun.gc(true);
+        }
         const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
         if (ShellInterpreter > 3 || ParsedShellScript > 3) {
           console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);

@@ -1,0 +1,28 @@
+{
+  "_id": "test-native-binlink-fallback-target",
+  "name": "test-native-binlink-fallback-target",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-fallback-target",
+      "version": "1.0.0",
+      "_id": "test-native-binlink-fallback-target@1.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "dist": {
+        "integrity": "sha512-PXq1c0L4eWe+D1G7W815HXv8WKLpiHqcp8zBf58JOlc5qqsDPQghTFnMM9sxaRYwFXJPKqX22RREdBJbYcn2cQ==",
+        "shasum": "522c67345782690a2c537eae6ef58d4e166040f8",
+        "tarball": "http://localhost:4873/test-native-binlink-fallback-target/-/test-native-binlink-fallback-target-1.0.0.tgz"
+      }
+    }
+  }
+}

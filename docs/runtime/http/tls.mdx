@@ -3,7 +3,7 @@ title: TLS
 description: Enable TLS in Bun.serve
 ---
 
-Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
+Bun's TLS support is built in, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). To enable TLS, pass both `key` and `cert`.
 
 ```ts
 Bun.serve({
@@ -14,7 +14,7 @@ Bun.serve({
 });
 ```
 
-The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. Each can be a string, `BunFile`, `TypedArray`, or `Buffer`.
 
 ```ts
 Bun.serve({
@@ -43,7 +43,7 @@ Bun.serve({
 
 ### CA Certificates
 
-Optionally, you can override the trusted CA certificates by passing a value for `ca`. By default, the server will trust the list of well-known CAs curated by Mozilla. When `ca` is specified, the Mozilla list is overwritten.
+Pass `ca` to override the trusted CA certificates. By default, the server trusts the list of well-known CAs curated by Mozilla; setting `ca` replaces that list.
 
 ```ts
 Bun.serve({

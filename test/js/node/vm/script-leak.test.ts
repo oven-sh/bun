@@ -1,5 +1,6 @@
 const vm = require("vm");
 const { describe, it, expect } = require("bun:test");
+const { isASAN } = require("harness");
 
 describe("vm.Script", () => {
   it("shouldn't leak memory", () => {
@@ -22,6 +23,8 @@ describe("vm.Script", () => {
 
     const finalUsage = process.memoryUsage.rss();
     const megabytes = Math.round(((finalUsage - initialUsage) / 1024 / 1024) * 100) / 100;
-    expect(megabytes).toBeLessThan(200);
+    // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+    // deltas run far higher under bun-asan; widen the threshold there.
+    expect(megabytes).toBeLessThan(isASAN ? 700 : 200);
   });
 });

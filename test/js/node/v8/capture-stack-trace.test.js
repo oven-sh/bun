@@ -1,6 +1,7 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -296,6 +297,75 @@ test("capture stack trace edge cases", () => {
   expect(Error.captureStackTrace({}, true)).toBe(undefined);
 });
 
+test("Error.captureStackTrace installs .stack as non-enumerable", () => {
+  // V8 installs .stack with enumerable: false regardless of target type.
+  const expectNonEnumerableStack = target => {
+    const d = Object.getOwnPropertyDescriptor(target, "stack");
+    expect({ enumerable: d.enumerable, configurable: d.configurable }).toEqual({
+      enumerable: false,
+      configurable: true,
+    });
+    // V8 installs an accessor (no `writable`), Bun installs a data property; both
+    // must allow assignment. Only `writable: false` would be a regression.
+    expect(d.writable).not.toBe(false);
+    expect(Object.prototype.propertyIsEnumerable.call(target, "stack")).toBe(false);
+  };
+
+  // plain object target
+  const o = { a: 1 };
+  Error.captureStackTrace(o);
+  expect(Object.keys(o)).toEqual(["a"]);
+  expect(JSON.stringify(o)).toBe('{"a":1}');
+  const forIn = [];
+  for (const k in o) forIn.push(k);
+  expect(forIn).toEqual(["a"]);
+  expectNonEnumerableStack(o);
+  expect(typeof o.stack).toBe("string");
+  o.stack = "overwritten";
+  expect(o.stack).toBe("overwritten");
+  expectNonEnumerableStack(o);
+
+  // plain object with Error.prepareStackTrace set. Inside the callback, .stack
+  // holds the temporary default-formatted string; observing it there pins the
+  // attribute on that write, which the final putDirect would otherwise mask.
+  let insidePrepare;
+  Error.prepareStackTrace = (err, sites) => {
+    insidePrepare = {
+      keys: Object.keys(err),
+      enumerable: Object.getOwnPropertyDescriptor(err, "stack").enumerable,
+    };
+    return "from-prepare";
+  };
+  try {
+    const o2 = {};
+    Error.captureStackTrace(o2);
+    expect(insidePrepare).toEqual({ keys: [], enumerable: false });
+    expect(Object.keys(o2)).toEqual([]);
+    expectNonEnumerableStack(o2);
+    expect(o2.stack).toBe("from-prepare");
+  } finally {
+    Error.prepareStackTrace = origPrepareStackTrace;
+  }
+
+  // Object.keys must run before any descriptor lookup: getOwnPropertyDescriptor trips
+  // ErrorInstance::materializeErrorInfoIfNeeded, which overwrites with its own DontEnum
+  // and would mask the attribute captureStackTrace installed on the accessor path.
+  const lazy = new Error("lazy");
+  Error.captureStackTrace(lazy);
+  expect(Object.keys(lazy)).toEqual([]);
+  expectNonEnumerableStack(lazy);
+
+  // ErrorInstance whose .stack has already been materialized
+  const materialized = new Error("materialized");
+  void materialized.stack;
+  Error.captureStackTrace(materialized);
+  expect(Object.keys(materialized)).toEqual([]);
+  expectNonEnumerableStack(materialized);
+  materialized.stack = "overwritten";
+  expect(materialized.stack).toBe("overwritten");
+  expectNonEnumerableStack(materialized);
+});
+
 test("prepare stack trace call sites", () => {
   function f1() {
     f2();
@@ -504,6 +574,16 @@ test("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
+  var referenceStack = "";
+  // Line numbers of the first two frames of a default-formatted stack string.
+  function defaultStackLineNumbers(stack) {
+    return String(stack)
+      .split("\n")
+      .map(line => /:(\d+):\d+\)?\s*$/.exec(line))
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(match => Number(match[1]));
+  }
   function functionWithAName() {
     // This is V8's behavior.
     let prevPrepareStackTrace = Error.prepareStackTrace;
@@ -515,16 +595,23 @@ test("err.stack should invoke prepareStackTrace", () => {
       expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
       expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
     };
-    const e = new Error();
+    // `reference` shares `e`'s line so the default formatter (consulted after the
+    // hook is removed) must report the same call-site lines prepareStackTrace saw.
+    const [reference, e] = [new Error(), new Error()];
     e.stack;
     Error.prepareStackTrace = prevPrepareStackTrace;
+    referenceStack = reference.stack;
   }
 
   functionWithAName();
 
+  const [expectedLineNumber, expectedParentLineNumber] = defaultStackLineNumbers(referenceStack);
+  expect(referenceStack).toContain("at functionWithAName");
+  expect(expectedLineNumber).toBeGreaterThan(0);
+  expect(expectedParentLineNumber).toBeGreaterThan(expectedLineNumber);
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(518);
-  expect(parentLineNumber).toBe(523);
+  expect(lineNumber).toBe(expectedLineNumber);
+  expect(parentLineNumber).toBe(expectedParentLineNumber);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -874,8 +961,7 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
     function recurse(depth) {
       if (depth === 0) return target();
       // Not a tail call — keeps each frame on the stack.
-      const r = recurse(depth - 1);
-      return { ...r };
+      return recurse(depth - 1) || null;
     }
     noInline(recurse);
 
@@ -888,4 +974,150 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
   } finally {
     Error.stackTraceLimit = origLimit;
   }
+});
+
+test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () => {
+  const origLimit = Error.stackTraceLimit;
+  try {
+    Error.stackTraceLimit = "foo";
+    const obj = {};
+    expect(() => Error.captureStackTrace(obj)).not.toThrow();
+    expect(typeof obj.stack).toBe("string");
+
+    delete Error.stackTraceLimit;
+    const obj2 = {};
+    expect(() => Error.captureStackTrace(obj2)).not.toThrow();
+    expect(typeof obj2.stack).toBe("string");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});
+
+test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
+  // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
+  const src = `
+    function depth(n) {
+      if (n) return 0 + depth(n - 1);
+      const e = {};
+      Error.captureStackTrace(e);
+      return e.stack.split("\\n").length - 1;
+    }
+    const reported = Error.stackTraceLimit;
+    const before = depth(30);
+    Error.stackTraceLimit = Error.stackTraceLimit;
+    const after = depth(30);
+    process.stdout.write(JSON.stringify({ reported, before, after }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { reported, before, after } = JSON.parse(stdout);
+  // Node.js defaults to 10 and the reported value must match the applied limit.
+  expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
+});
+
+test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
+  // Runs in its own process: which dispatch path delivers the message (and therefore
+  // which frames are on the stack under the listener) depends on prior event-loop state.
+  const src = [
+    `const { createHash } = require("node:crypto");`,
+    `const buffers = new Map();`,
+    `const server = Bun.listen({`,
+    `  hostname: "127.0.0.1",`,
+    `  port: 0,`,
+    `  socket: {`,
+    `    data(socket, chunk) {`,
+    `      const previous = buffers.get(socket) ?? Buffer.alloc(0);`,
+    `      const request = Buffer.concat([previous, chunk]);`,
+    `      buffers.set(socket, request);`,
+    `      const text = request.toString("latin1");`,
+    `      if (!text.includes("\\r\\n\\r\\n")) return;`,
+    `      const key = /^Sec-WebSocket-Key:\\s*(.+?)\\r\\n/im.exec(text)?.[1];`,
+    `      if (!key) { console.error("missing Sec-WebSocket-Key header"); process.exit(1); }`,
+    `      const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");`,
+    `      const response = "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n";`,
+    `      socket.write(Buffer.concat([Buffer.from(response, "latin1"), Buffer.from([0x81, 0x02, 0x68, 0x69])]));`,
+    `    },`,
+    `    error() { process.exit(1); },`,
+    `  },`,
+    `});`,
+    `const ws = new WebSocket("ws://127.0.0.1:" + server.port);`,
+    `ws.addEventListener("close", event => { console.error("closed " + event.code); process.exit(1); });`,
+    `ws.addEventListener("message", event => {`,
+    `  const previousPrepareStackTrace = Error.prepareStackTrace;`,
+    `  let callSites;`,
+    `  try {`,
+    `    Error.prepareStackTrace = (_error, stack) => stack;`,
+    `    const error = new Error();`,
+    `    Error.captureStackTrace(error);`,
+    `    callSites = error.stack;`,
+    `  } finally {`,
+    `    Error.prepareStackTrace = previousPrepareStackTrace;`,
+    `  }`,
+    `  console.log(event.data, callSites.filter(callSite => callSite.isNative()).length);`,
+    `  process.exit(0);`,
+    `});`,
+  ].join("\n");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("hi 0");
+  expect(exitCode).toBe(0);
+});
+
+test("printing an error whose message getter calls Error.captureStackTrace on itself prints normally", async () => {
+  const fixture = [
+    `const vm = require("node:vm");`,
+    `let src = "function f0() {\\n";`,
+    `src += "  const e = new Error('first');\\n";`,
+    `src += "  Object.defineProperty(e, 'message', { get() { Error.captureStackTrace(e); return 'second'; } });\\n";`,
+    `src += "  return e;\\n";`,
+    `src += "}\\n";`,
+    `for (let i = 1; i < 12; i++) src += "function f" + i + "() { return f" + (i - 1) + "(); }\\n";`,
+    `src += "f11();\\n";`,
+    `const err = vm.runInThisContext(src, { filename: "frame-index-fixture.js" });`,
+    `console.log(err);`,
+    `console.log("after");`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ lastLine: stdout.trimEnd().split("\n").pop(), exitCode }).toEqual({ lastLine: "after", exitCode: 0 });
+});
+
+// https://github.com/oven-sh/bun/issues/34095
+test("lazy error-info materialization does not store an empty stack value when the compute hook throws", async () => {
+  const src = `
+    Error.prepareStackTrace = (e, s) => "custom-stack";
+    const e = new Error("x");
+    Object.defineProperty(e, "message", { get() { throw new TypeError("msg-boom"); } });
+    let first = "no-throw";
+    try { void e.stack; } catch (err) { first = err.message; }
+    console.log(JSON.stringify({ first, secondType: typeof e.stack }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ first: "msg-boom", secondType: "undefined" }),
+    signalCode: null,
+  });
+  expect(exitCode).toBe(0);
 });

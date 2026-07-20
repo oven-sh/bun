@@ -7,13 +7,13 @@ In Bun, YAML is a first-class citizen alongside JSON and TOML. You can:
 
 - Parse YAML strings with `Bun.YAML.parse`
 - `import` & `require` YAML files as modules at runtime (including hot reloading & watch mode support)
-- `import` & `require` YAML files in frontend apps via bun's bundler
+- `import` & `require` YAML files in frontend apps with Bun's bundler
 
 ---
 
 ## Conformance
 
-Bun's YAML parser currently passes over 90% of the official YAML test suite. While we're actively working on reaching 100% conformance, the current implementation covers the vast majority of real-world use cases. The parser is written in Zig for optimal performance and is continuously being improved.
+Bun's YAML parser, written in Rust, passes over 90% of the official YAML test suite and covers the vast majority of real-world use cases. We're working toward 100% conformance.
 
 ---
 
@@ -127,7 +127,7 @@ try {
 
 ### ES Modules
 
-You can import YAML files directly as ES modules. The YAML content is parsed and made available as both default and named exports:
+Import YAML files directly as ES modules. Bun parses the content and exposes it as both default and named exports:
 
 ```yaml config.yaml
 database:
@@ -156,7 +156,7 @@ console.log(config.redis.port); // 6379
 
 #### Named Imports
 
-You can destructure top-level YAML properties as named imports:
+Top-level YAML properties are available as named imports:
 
 ```ts app.ts icon="/icons/typescript.svg"
 import { database, redis, features } from "./config.yaml";
@@ -182,7 +182,7 @@ if (features.rateLimit) {
 
 ### CommonJS
 
-YAML files can also be required in CommonJS:
+You can also `require` YAML files in CommonJS:
 
 ```ts app.ts icon="/icons/typescript.svg"
 const config = require("./config.yaml");
@@ -197,7 +197,7 @@ console.log(database.port); // 5432
 
 ## Hot Reloading with YAML
 
-One of the most powerful features of Bun's YAML support is hot reloading. When you run your application with `bun --hot`, changes to YAML files are automatically detected and reloaded without closing connections
+When you run your application with `bun --hot`, Bun detects changes to YAML files and reloads them without closing connections.
 
 ### Configuration Hot Reloading
 
@@ -239,12 +239,7 @@ Run with hot reloading:
 bun --hot server.ts
 ```
 
-Now when you modify `config.yaml`, the changes are immediately reflected in your running application. This is perfect for:
-
-- Adjusting configuration during development
-- Testing different settings without restarts
-- Live debugging with configuration changes
-- Feature flag toggling
+Now when you modify `config.yaml`, the running application picks up the change: you can adjust settings or toggle feature flags during development without restarting.
 
 ---
 
@@ -252,7 +247,7 @@ Now when you modify `config.yaml`, the changes are immediately reflected in your
 
 ### Environment-Based Configuration
 
-YAML excels at managing configuration across different environments:
+One YAML file can hold configuration for several environments, sharing defaults with anchors:
 
 ```yaml config.yaml
 defaults: &defaults
@@ -437,21 +432,21 @@ if (parseConfig(migrations).autoRun === "true") {
 
 ### Bundler Integration
 
-When you import YAML files in your application and bundle it with Bun, the YAML is parsed at build time and included as a JavaScript module:
+When you bundle an application that imports YAML files, Bun parses the YAML at build time and includes it as a JavaScript module:
 
 ```bash terminal icon="terminal"
 bun build app.ts --outdir=dist
 ```
 
-This means:
+Parsing at build time means:
 
-- Zero runtime YAML parsing overhead in production
+- No runtime YAML parsing overhead in production
 - Smaller bundle sizes
-- Tree-shaking support for unused configuration (named imports)
+- Tree shaking of unused configuration (named imports)
 
 ### Dynamic Imports
 
-YAML files can be dynamically imported, useful for loading configuration on demand:
+Dynamically import YAML files to load configuration on demand:
 
 ```ts Load configuration based on environment
 const env = process.env.NODE_ENV || "development";

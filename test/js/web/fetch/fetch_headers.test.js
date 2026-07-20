@@ -32,6 +32,13 @@ describe("Headers", async () => {
     expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value: '❤️'");
   });
 
+  it("Invalid values for well-known headers name the header, not its index", () => {
+    // The HTTPHeaderName fast path must report the header's name (e.g. 'Location'),
+    // not its numeric enum value (e.g. '51').
+    expect(() => new Headers({ location: "a\nb" })).toThrow("Header 'Location' has invalid value: 'a\nb'");
+    expect(() => new Headers({ "content-type": "\0" })).toThrow("Header 'Content-Type' has invalid value: '\0'");
+  });
+
   it("repro 1602", async () => {
     const origString = "😂1234".slice(3);
 

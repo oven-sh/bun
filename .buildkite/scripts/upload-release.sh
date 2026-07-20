@@ -61,22 +61,104 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
+function maybe_sudo() {
+  if [ "$(id -u)" -eq 0 ]; then
+    run_command "$@"
+  elif command -v sudo &> /dev/null; then
+    run_command sudo "$@"
+  else
+    run_command "$@"
+  fi
+}
+
+function package_manager_install() {
+  if command -v dnf &> /dev/null; then
+    maybe_sudo dnf install -y "$@"
+  elif command -v yum &> /dev/null; then
+    maybe_sudo yum install -y "$@"
+  elif command -v apt-get &> /dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    maybe_sudo apt-get install -y "$@"
+  elif command -v apk &> /dev/null; then
+    maybe_sudo apk add "$@"
+  else
+    echo "error: No supported package manager found to install: $*"
+    exit 1
+  fi
+}
+
+function install_gh_linux() {
+  local arch
+  case "$(uname -m)" in
+    x86_64 | amd64) arch="amd64" ;;
+    aarch64 | arm64) arch="arm64" ;;
+    *) echo "error: Unsupported architecture: $(uname -m)"; exit 1 ;;
+  esac
+  # Resolve the version from the releases/latest redirect, not the REST API: the API is rate
+  # limited to 60 req/hour per IP (GITHUB_TOKEN is not exported yet), and piping curl into a
+  # short-circuiting reader such as `grep -m1` makes curl exit 23 (EPIPE) under pipefail.
+  local url version
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/cli/cli/releases/latest")"
+  version="${url##*/tag/v}"
+  if [ -z "$version" ] || [ "$version" == "$url" ]; then
+    echo "error: Cannot determine latest gh release version from: $url"
+    exit 1
+  fi
+  local dir
+  dir="$(mktemp -d)"
+  run_command curl -fsSL "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${arch}.tar.gz" -o "$dir/gh.tar.gz"
+  run_command tar -xzf "$dir/gh.tar.gz" -C "$dir" --strip-components=1
+  maybe_sudo install -m 0755 "$dir/bin/gh" /usr/local/bin/gh
+  rm -rf "$dir"
+}
+
+function install_aws_linux() {
+  command -v unzip &> /dev/null || package_manager_install unzip
+  local dir
+  dir="$(mktemp -d)"
+  run_command curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$dir/awscliv2.zip"
+  run_command unzip -q "$dir/awscliv2.zip" -d "$dir"
+  maybe_sudo "$dir/aws/install" --update
+  rm -rf "$dir"
+}
+
+function install_sentry_cli_linux() {
+  # The installer drops a single static binary into INSTALL_DIR.
+  maybe_sudo bash -c "curl -fsSL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin sh"
+}
+
 function assert_command() {
   local command="$1"
   local package="$2"
   local help_url="$3"
-  if ! command -v "$command" &> /dev/null; then
-    echo "warning: $command is not installed, installing..."
-    if command -v brew &> /dev/null; then
-      HOMEBREW_NO_AUTO_UPDATE=1 run_command brew install "$package"
-    else
-      echo "error: Cannot install $command, please install it"
-      if [ -n "$help_url" ]; then
-        echo ""
-        echo "hint: See $help_url for help"
-      fi
-      exit 1
+  if command -v "$command" &> /dev/null; then
+    return
+  fi
+  echo "warning: $command is not installed, installing..."
+  if command -v brew &> /dev/null; then
+    HOMEBREW_NO_AUTO_UPDATE=1 run_command brew install "$package"
+  elif [ "$(uname -s)" == "Linux" ]; then
+    case "$command" in
+      gh) install_gh_linux ;;
+      aws) install_aws_linux ;;
+      sentry-cli) install_sentry_cli_linux ;;
+      *) echo "error: Don't know how to install $command on Linux"; exit 1 ;;
+    esac
+  else
+    echo "error: Cannot install $command, please install it"
+    if [ -n "$help_url" ]; then
+      echo ""
+      echo "hint: See $help_url for help"
     fi
+    exit 1
+  fi
+  if ! command -v "$command" &> /dev/null; then
+    echo "error: Failed to install $command"
+    if [ -n "$help_url" ]; then
+      echo ""
+      echo "hint: See $help_url for help"
+    fi
+    exit 1
   fi
 }
 
@@ -222,6 +304,14 @@ function create_release() {
     bun-linux-x64-musl-profile.zip
     bun-linux-x64-musl-baseline.zip
     bun-linux-x64-musl-baseline-profile.zip
+    bun-linux-aarch64-android.zip
+    bun-linux-aarch64-android-profile.zip
+    bun-linux-x64-android.zip
+    bun-linux-x64-android-profile.zip
+    bun-freebsd-aarch64.zip
+    bun-freebsd-aarch64-profile.zip
+    bun-freebsd-x64.zip
+    bun-freebsd-x64-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip

@@ -9,10 +9,15 @@
 //   bun run pr:comments 28838              # by PR number
 //   bun run pr:comments '#28838'           # also works
 //   bun run pr:comments https://github.com/oven-sh/bun/pull/28838
-//   bun run pr:comments 28838 --json       # machine-readable output for jq pipelines
+//   bun run pr:comments 28838 --include-resolved  # also show resolved threads
+//   bun run pr:comments 28838 --json              # machine-readable output for jq pipelines
 //
-// JSON mode emits one object per entry — no header, no legend — with fields:
-//   { when, user, kind, location?, body, url?, resolved?, outdated? }
+// Default output is XML with resolved threads and bot noise (robobun's CI
+// status comment, CodeRabbit body-level summaries/walkthroughs) filtered out.
+// Pass --include-resolved to restore resolved threads.
+//
+// JSON mode emits one object per entry with fields:
+//   { when, user, tag, state?, suggestion?, location?, body, url?, resolved?, outdated? }
 // resolved/outdated come from GitHub's GraphQL reviewThreads and are only
 // present on line comments / replies whose thread state was successfully
 // fetched. They're omitted entirely on issue comments, review verdicts, and
@@ -20,7 +25,6 @@
 // unambiguously means "confirmed unresolved thread". You can filter with jq,
 // e.g. (the PR is optional, defaults to current branch):
 //   bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
-//   bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'
 
 import { $ } from "bun";
 
@@ -213,12 +217,6 @@ function fmtDate(iso: string): string {
   return new Date(iso).toISOString().replace("T", " ").slice(0, 16);
 }
 
-function truncateBody(body: string, max = 600): string {
-  const trimmed = body.trim();
-  if (trimmed.length <= max) return trimmed;
-  return trimmed.slice(0, max) + `\n  ... [${trimmed.length - max} more chars]`;
-}
-
 function indent(text: string, prefix = "  "): string {
   return text
     .split("\n")
@@ -226,39 +224,36 @@ function indent(text: string, prefix = "  "): string {
     .join("\n");
 }
 
-// https://docs.github.com/en/rest/pulls/reviews — review `state` values:
-//   APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
-function labelForReviewState(state: string | undefined): string {
-  switch (state) {
-    case "APPROVED":
-      return "review (approved)";
-    case "CHANGES_REQUESTED":
-      return "review (changes requested)";
-    case "COMMENTED":
-      return "review (comment)";
-    case "DISMISSED":
-      return "review (dismissed)";
-    case "PENDING":
-      return "review (pending)";
-    default:
-      return `review (${(state ?? "unknown").toLowerCase()})`;
-  }
+function xmlEscape(s: string): string {
+  return s.replace(/[<>&"']/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]!);
 }
 
-// Every line-level comment is attached to a review container in GitHub's data
-// model, even single-comment reviews from "Add single comment" on the Files
-// changed tab. We only need to distinguish replies from top-level line comments.
-// A body containing a ```suggestion``` block is marked as an applicable suggestion.
-function labelForReviewComment(c: Json): string {
-  let base = c.in_reply_to_id ? "reply" : "line comment";
-  if (typeof c.body === "string" && /```suggestion\b/.test(c.body)) {
-    base += " + suggestion";
-  }
-  return base;
+// CodeRabbit appends a collapsed "🤖 Prompt for AI Agents" <details> block with
+// a fenced code block containing the actionable instruction. When present, that
+// block is the only part worth feeding back to an agent — the prose above it is
+// the human-facing duplicate. Otherwise: strip HTML comments (bot watermarks
+// like `<!-- generated-comment ... -->`) and cap length so one giant CI report
+// doesn't drown out review feedback.
+const aiPromptRe = /<summary>[^<]*🤖[^<]*AI [Aa]gents[^<]*<\/summary>\s*```[^\n]*\n([\s\S]*?)```/;
+
+function cleanBody(body: string, max = 1000): string {
+  const aiPrompt = body.match(aiPromptRe);
+  if (aiPrompt) return aiPrompt[1].trim();
+
+  const stripped = body.replace(/<!--[\s\S]*?-->/g, "").trim();
+  if (stripped.length <= max) return stripped;
+  return stripped.slice(0, max) + `\n... [${stripped.length - max} more chars truncated]`;
+}
+
+function xmlAttr(name: string, value: string | boolean | undefined): string {
+  if (value === undefined || value === false) return "";
+  if (value === true) return ` ${name}="true"`;
+  return ` ${name}="${xmlEscape(value)}"`;
 }
 
 const rawArgs = process.argv.slice(2);
 const jsonMode = rawArgs.includes("--json");
+const includeResolved = rawArgs.includes("--include-resolved");
 const positional = rawArgs.filter(a => !a.startsWith("--"))[0];
 
 const { repo, number } = await resolvePr(positional);
@@ -273,7 +268,9 @@ const [issueComments, reviews, reviewComments, threadState] = await Promise.all(
 type Entry = {
   when: string;
   user: string;
-  kind: string;
+  tag: "issue-comment" | "review" | "line-comment" | "reply";
+  state?: string;
+  suggestion?: boolean;
   location?: string;
   body: string;
   url?: string;
@@ -293,7 +290,7 @@ for (const c of issueComments) {
   entries.push({
     when: c.created_at,
     user: c.user?.login ?? "?",
-    kind: "issue comment",
+    tag: "issue-comment",
     body: c.body ?? "",
     url: c.html_url,
   });
@@ -310,7 +307,8 @@ for (const r of reviews) {
   entries.push({
     when: r.submitted_at,
     user: r.user?.login ?? "?",
-    kind: labelForReviewState(r.state),
+    tag: "review",
+    state: (r.state ?? "unknown").toLowerCase().replace(/_/g, "-"),
     body: r.body || "(no body)",
     url: r.html_url,
   });
@@ -322,12 +320,14 @@ for (const c of reviewComments) {
   // (GraphQL fetch failed) or this comment isn't in the map, we omit both
   // fields rather than setting them to null — see the Entry type comment.
   const state = threadState?.get(c.id);
+  const body = c.body ?? "";
   const entry: Entry = {
     when: c.created_at,
     user: c.user?.login ?? "?",
-    kind: labelForReviewComment(c),
+    tag: c.in_reply_to_id ? "reply" : "line-comment",
+    suggestion: /```suggestion\b/.test(body) || undefined,
     location: loc,
-    body: c.body ?? "",
+    body,
     url: c.html_url,
   };
   if (state) {
@@ -339,75 +339,58 @@ for (const c of reviewComments) {
 
 entries.sort((a, b) => a.when.localeCompare(b.when));
 
+// Bot-noise filter. CodeRabbit posts (a) line comments with an AI-agent prompt
+// — keep those — and (b) body-level entries (issue comments, review summaries)
+// that either have no AI prompt at all (Walkthrough, Reviews paused) or just
+// aggregate the line comments verbatim. Drop both (b) cases.
+const isLineLevel = (e: Entry) => e.tag === "line-comment" || e.tag === "reply";
+const coderabbitHasLineComments = entries.some(e => e.user === "coderabbitai[bot]" && isLineLevel(e));
+
+function isBotNoise(e: Entry): boolean {
+  // robobun's auto-updated CI status comment (the one it edits in place on
+  // every push) carries this watermark so the bot can find it again. Other
+  // robobun comments are kept.
+  if (e.user === "robobun" && e.body.includes("<!-- generated-comment ")) return true;
+  if (e.user === "coderabbitai[bot]" && !isLineLevel(e)) {
+    if (!aiPromptRe.test(e.body)) return true;
+    if (coderabbitHasLineComments) return true;
+  }
+  return false;
+}
+
+// Resolved threads are noise when you're looking for what's actionable. Only
+// drop entries we know are resolved — issue comments and review verdicts have
+// no thread state and always pass through.
+const resolvedHidden = entries.reduce((n, e) => n + (e.resolved === true ? 1 : 0), 0);
+const visible = entries.filter(e => !isBotNoise(e) && (includeResolved || e.resolved !== true));
+
 if (jsonMode) {
-  process.stdout.write(JSON.stringify(entries, null, 2) + "\n");
+  process.stdout.write(JSON.stringify(visible, null, 2) + "\n");
   process.exit(0);
 }
 
-// Summary header — group by kind so you can see at a glance what's there.
-const byKind = new Map<string, number>();
-for (const e of entries) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
-
-console.log(`PR: ${repo}#${number}`);
-console.log(`URL: https://github.com/${repo}/pull/${number}`);
-if (entries.length === 0) {
-  console.log("");
-  console.log("(no comments)");
-  process.exit(0);
+const url = `https://github.com/${repo}/pull/${number}`;
+const hiddenAttr = !includeResolved && resolvedHidden > 0 ? xmlAttr("resolved-hidden", String(resolvedHidden)) : "";
+console.log(
+  `<pr-comments${xmlAttr("repo", repo)}${xmlAttr("number", String(number))}${xmlAttr("url", url)}${hiddenAttr}>`,
+);
+for (const e of visible) {
+  const attrs =
+    xmlAttr("user", e.user) +
+    xmlAttr("when", fmtDate(e.when)) +
+    xmlAttr("state", e.state) +
+    xmlAttr("location", e.location) +
+    xmlAttr("suggestion", e.suggestion) +
+    xmlAttr("resolved", e.resolved) +
+    xmlAttr("outdated", e.outdated) +
+    xmlAttr("url", e.url);
+  const body = cleanBody(e.body);
+  if (body) {
+    console.log(`  <${e.tag}${attrs}>`);
+    console.log(indent(xmlEscape(body), "    "));
+    console.log(`  </${e.tag}>`);
+  } else {
+    console.log(`  <${e.tag}${attrs} />`);
+  }
 }
-// Naive `+ "s"` mangles labels like "review (comment)" and "reply", so the
-// plural form is spelled out per kind here.
-const pluralLabels: Record<string, string> = {
-  "issue comment": "issue comments",
-  "line comment": "line comments",
-  reply: "replies",
-  "line comment + suggestion": "line comments + suggestions",
-  "reply + suggestion": "replies + suggestions",
-  "review (approved)": "reviews (approved)",
-  "review (changes requested)": "reviews (changes requested)",
-  "review (comment)": "reviews (comment)",
-  "review (dismissed)": "reviews (dismissed)",
-  "review (pending)": "reviews (pending)",
-};
-const summary = [...byKind.entries()].map(([k, n]) => `${n} ${n === 1 ? k : (pluralLabels[k] ?? k + "s")}`).join(", ");
-console.log(`Found: ${summary}`);
-
-// Count how many line comments / replies still need attention vs. done.
-// Only thread-capable entries (those where resolved !== undefined) contribute.
-let unresolvedCount = 0;
-let resolvedCount = 0;
-let outdatedCount = 0;
-for (const e of entries) {
-  if (e.resolved === true) resolvedCount++;
-  else if (e.resolved === false) unresolvedCount++;
-  if (e.outdated === true) outdatedCount++;
-}
-if (resolvedCount || unresolvedCount) {
-  const parts: string[] = [];
-  if (unresolvedCount) parts.push(`${unresolvedCount} unresolved`);
-  if (resolvedCount) parts.push(`${resolvedCount} resolved`);
-  if (outdatedCount) parts.push(`${outdatedCount} outdated`);
-  console.log(`Threads: ${parts.join(", ")}`);
-}
-console.log("");
-
-console.log("Legend:");
-console.log("  issue comment  — general conversation on the PR (Conversation tab)");
-console.log("  review (*)     — top-level review verdict (approved / changes requested / comment)");
-console.log("  line comment   — inline comment on a specific file line (Files changed tab)");
-console.log("  reply          — threaded reply to another line comment");
-console.log("  + suggestion   — body contains a ```suggestion``` block a maintainer can apply");
-console.log("  [resolved]     — reviewer marked this thread resolved; no action needed");
-console.log("  [outdated]     — the line this comment was attached to has since moved");
-console.log("");
-
-for (const e of entries) {
-  const flags: string[] = [];
-  if (e.resolved === true) flags.push("resolved");
-  if (e.outdated === true) flags.push("outdated");
-  const flagSegment = flags.length ? `[${flags.join(", ")}]` : undefined;
-  const header = [fmtDate(e.when), e.user, e.kind, e.location, flagSegment].filter(Boolean).join(" | ");
-  console.log("---");
-  console.log(header);
-  console.log(indent(truncateBody(e.body)));
-}
+console.log(`</pr-comments>`);

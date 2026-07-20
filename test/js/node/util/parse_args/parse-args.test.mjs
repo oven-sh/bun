@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1032,6 +1033,61 @@ describe("parseArgs extra tests", () => {
   });
 
   describe("stress test", () => {
+    test("option default supplied by a getter survives a garbage collection during parsing", async () => {
+      // The `default` getter returns a freshly allocated string whose only live
+      // reference is the one the parser keeps internally between reading the
+      // option definitions and filling in defaults. A getter on the args array
+      // forces a full GC (plus heap churn) in that window. The default must
+      // still come back intact in `values`.
+      const script = `
+        const { parseArgs } = require("node:util");
+        const expected = "x".repeat(64);
+        for (let iter = 0; iter < 50; iter++) {
+          const args = [];
+          Object.defineProperty(args, "0", {
+            enumerable: true,
+            configurable: true,
+            get() {
+              Bun.gc(true);
+              // Churn the heap so any prematurely collected cell gets reused.
+              const sink = [];
+              for (let i = 0; i < 5000; i++) sink.push(("y" + i).repeat(8));
+              return "positional";
+            },
+          });
+          const { values, positionals } = parseArgs({
+            args,
+            allowPositionals: true,
+            options: {
+              foo: {
+                type: "string",
+                get default() {
+                  return "x".repeat(64);
+                },
+              },
+            },
+          });
+          if (values.foo !== expected) {
+            throw new Error("default value corrupted on iteration " + iter + ": " + JSON.stringify(values.foo));
+          }
+          if (positionals.length !== 1 || positionals[0] !== "positional") {
+            throw new Error("positionals corrupted on iteration " + iter);
+          }
+        }
+        console.log("OK");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+      // 50 iterations of Bun.gc(true) + heap churn take >10s under a debug build.
+    }, 60_000);
+
     test("1000 options", () => {
       const result = parseArgs({
         allowPositionals: true,
@@ -1072,5 +1128,17 @@ describe("parseArgs extra tests", () => {
     expect(parseArgs({ options: null })).toEqual({ values: { __proto__: null }, positionals: [] });
     expect(parseArgs({ allowPositionals: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
     expect(parseArgs({ allowPositionals: null })).toEqual({ values: { __proto__: null }, positionals: [] });
+  });
+
+  test("classifies UTF-16 and Latin-1 positional tokens correctly", () => {
+    for (const p of ["x\u0100y", "x\u00e9y"]) {
+      expect(
+        parseArgs({
+          args: ["--flag", p, "-a"],
+          options: { flag: { type: "boolean" }, a: { type: "boolean", short: "a" } },
+          allowPositionals: true,
+        }),
+      ).toEqual({ values: { __proto__: null, flag: true, a: true }, positionals: [p] });
+    }
   });
 });

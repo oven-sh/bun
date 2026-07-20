@@ -3,7 +3,7 @@ title: "Watch Mode"
 description: "Automatic reloading in Bun with --watch and --hot modes"
 ---
 
-Bun supports two kinds of automatic reloading via CLI flags:
+Bun supports two kinds of automatic reloading:
 
 - `--watch` mode, which hard restarts Bun's process when imported files change.
 - `--hot` mode, which soft reloads the code (without restarting the process) when imported files change.
@@ -12,7 +12,7 @@ Bun supports two kinds of automatic reloading via CLI flags:
 
 ## `--watch` mode
 
-Watch mode can be used with `bun test` or when running TypeScript, JSX, and JavaScript files.
+Watch mode works with `bun test` and when running TypeScript, JSX, and JavaScript files.
 
 To run a file in `--watch` mode:
 
@@ -26,13 +26,13 @@ To run your tests in `--watch` mode:
 bun --watch test
 ```
 
-In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a change is detected, Bun restarts the process, preserving the same set of CLI arguments and environment variables used in the initial run. If Bun crashes, `--watch` will attempt to automatically restart the process.
+In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
 
 <Note>
 
-**⚡️ Reloads are fast.** The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or worse, rely on polling.
+**⚡️ Reloads are fast.** The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or, worse, rely on polling.
 
-Instead, Bun uses operating system native filesystem watcher APIs like kqueue or inotify to detect changes to files. Bun also applies several optimizations to scale to larger projects (such as setting a high rlimit for file descriptors, statically allocated file path buffers, reuse file descriptors when possible, etc).
+Instead, Bun uses the operating system's native filesystem watcher APIs, like kqueue or inotify, to detect file changes. Bun also applies several optimizations to scale to larger projects, such as setting a high rlimit for file descriptors, statically allocating file path buffers, and reusing file descriptors when possible.
 
 </Note>
 
@@ -55,13 +55,11 @@ serve({
 });
 ```
 
-In this example, Bun is
-
 <Frame>
   ![bun watch gif](https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif)
 </Frame>
 
-Running `bun test` in watch mode and `save-on-keypress` enabled:
+Running `bun test` in watch mode with `save-on-keypress` enabled:
 
 ```bash terminal icon="terminal"
 bun --watch test
@@ -72,21 +70,20 @@ bun --watch test
 </Frame>
 
 <Note>
-  The **`--no-clear-screen`** flag is useful in scenarios where you don't want the terminal to clear, such as when
-  running multiple `bun build --watch` commands simultaneously using tools like `concurrently`. Without this flag, the
-  output of one instance could clear the output of others, potentially hiding errors from one instance beneath the
-  output of another. The `--no-clear-screen` flag, similar to TypeScript's `--preserveWatchOutput`, prevents this issue.
-  It can be used in combination with `--watch`, for example: `bun build --watch --no-clear-screen`.
+  The **`--no-clear-screen`** flag, like TypeScript's `--preserveWatchOutput`, keeps Bun from clearing the terminal in
+  watch mode. Use it when running multiple `bun build --watch` commands at the same time with a tool like
+  `concurrently`, where one instance clearing the screen could hide another's errors: `bun build --watch
+  --no-clear-screen`.
 </Note>
 
 ---
 
 ## `--hot` mode
 
-Use `bun --hot` to enable hot reloading when executing code with Bun. This is distinct from `--watch` mode in that Bun does not hard-restart the entire process. Instead, it detects code changes and updates its internal module cache with the new code.
+Use `bun --hot` to enable hot reloading when executing code with Bun. Unlike `--watch` mode, Bun doesn't hard-restart the entire process. It detects code changes and updates its internal module cache with the new code.
 
 <Note>
-  This is not the same as hot reloading in the browser! Many frameworks provide a "hot reloading" experience, where you
+  This is not the same as hot reloading in the browser. Many frameworks provide a "hot reloading" experience, where you
   can edit & save your frontend code (say, a React component) and see the changes reflected in the browser without
   refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in the
   browser, use a framework like [Vite](https://vite.dev).
@@ -96,7 +93,7 @@ Use `bun --hot` to enable hot reloading when executing code with Bun. This is di
 bun --hot server.ts
 ```
 
-Starting from the entrypoint (`server.ts` in the example above), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a change is detected, Bun performs a "soft reload". All files are re-evaluated, but all global state (notably, the `globalThis` object) is persisted.
+Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". All files are re-evaluated, but global state (notably, the `globalThis` object) persists.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // make TypeScript happy
@@ -124,11 +121,11 @@ Reloaded 2 times
 Reloaded 3 times
 ```
 
-Traditional file watchers like `nodemon` restart the entire process, so HTTP servers and other stateful objects are lost. By contrast, `bun --hot` is able to reflect the updated code without restarting the process.
+Traditional file watchers like `nodemon` restart the entire process, so HTTP servers and other stateful objects are lost. By contrast, `bun --hot` reflects the updated code without restarting the process.
 
 ### HTTP servers
 
-This makes it possible, for instance, to update your HTTP request handler without shutting down the server itself. When you save the file, your HTTP server will be reloaded with the updated code without the process being restarted. This results in seriously fast refresh speeds.
+You can update your HTTP request handler without shutting down the server: when you save the file, Bun reloads the server with the updated code without restarting the process. This results in seriously fast refresh speeds.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 globalThis.count ??= 0;
@@ -143,7 +140,7 @@ Bun.serve({
 ```
 
 <Note>
-**Note** — In a future version of Bun, support for Vite's `import.meta.hot` is planned to enable better lifecycle management for hot reloading and to align with the ecosystem.
+Support for Vite's `import.meta.hot` is planned, to enable better lifecycle management for hot reloading and to align with the ecosystem.
 
 </Note>
 

@@ -1,6 +1,9 @@
 // Avoid using String.prototype.repeat in this file because it's very slow in
 // debug builds of JavaScriptCore
-const MAX_ALLOWED_MEMORY_USAGE = 256;
+// ASAN's quarantine retains freed allocations (default 256 MB) and shadow memory
+// raises the absolute RSS floor, so widen the cap to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
+const MAX_ALLOWED_MEMORY_USAGE = isASAN ? 768 : 256;
 const dest = process.argv.at(-1);
 
 async function run(inputType) {

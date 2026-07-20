@@ -3,7 +3,11 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "c2010c47d12c525d36adabe3a17b2eb6ec850960";
+// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
+// -lto variants built with ThinLTO (per-module summaries for cross-language
+// importing), and the Windows ICU data table filtered + per-item zstd
+// compressed (lazily decompressed via bun_icu_decompress.cpp).
+export const WEBKIT_VERSION = "a0e65bf298499d828f0c60d4557899b94a69d7ae";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -57,6 +61,7 @@ import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSo
 function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
+  if (cfg.linux && cfg.abi === "android") s += "-android";
   // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
   // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
   // arm64 or macOS. Suffix order matches the release asset names:
@@ -69,7 +74,7 @@ function prebuiltSuffix(cfg: Config): string {
 }
 
 function prebuiltUrl(cfg: Config): string {
-  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : "linux";
+  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
@@ -82,8 +87,27 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  const version16 = cfg.webkitVersion.slice(0, 16);
-  return resolve(cfg.cacheDir, `webkit-${version16}${prebuiltSuffix(cfg)}`);
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  const v = cfg.webkitVersion;
+  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
+  // Cross-compiled targets share a host (and cache dir) with native builds,
+  // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
+  // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
+  // version. Windows is keyed only when cross-compiling so native Windows
+  // dev machines keep their existing cache dirs.
+  const osKey =
+    cfg.windows && cfg.host.os !== "windows"
+      ? "-windows"
+      : cfg.freebsd
+        ? "-freebsd"
+        : cfg.darwin
+          ? "-macos"
+          : cfg.abi === "android"
+            ? "-android"
+            : "";
+  const archKey = cfg.arm64 ? "-arm64" : "";
+  return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -116,7 +140,7 @@ function prebuiltIcuLibs(cfg: Config): string[] {
     const d = cfg.debug ? "d" : "";
     return [`lib/sicudt${d}.lib`, `lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`];
   }
-  if (cfg.linux) {
+  if (cfg.linux || cfg.freebsd) {
     return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
   }
   return []; // darwin: system ICU
@@ -221,7 +245,16 @@ export const webkit: Dependency = {
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
     const optFlags: string[] = computeCpuTargetFlags(cfg);
-    if (cfg.lto) optFlags.push("-flto=full");
+    // -fno-pic: match bun's own C++ (flags.ts) so JSC/WTF const-pointer
+    // tables land in .rodata instead of .data.rel.ro. We link -no-pie, so
+    // PIC codegen here is pure overhead (GOT indirections + ~550 KB of
+    // RW-segment vtables that would otherwise be shared RO). Android stays
+    // PIC because bionic mandates PIE.
+    // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
+    // PIE-default distros — without it the driver still passes -pie and the
+    // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
+    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(
@@ -231,10 +264,69 @@ export const webkit: Dependency = {
         "-Wno-backend-plugin",
       );
     }
+    // Android local mode: NOT using CMAKE_SYSTEM_NAME=Android because that
+    // module force-selects the NDK's bundled clang, overriding our
+    // CMAKE_{C,CXX}_COMPILER. Instead, treat it as a generic Linux
+    // cross-compile (CMAKE_SYSTEM_NAME=Linux + CMAKE_CROSSCOMPILING) and
+    // pass --target/--sysroot in CFLAGS. WebKit's source detects Android
+    // via __ANDROID__ (set by clang --target=*-android*); we set the cmake
+    // ANDROID variable manually so `if (ANDROID)` blocks trigger too.
+    if (cfg.abi === "android") {
+      const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
+      optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`, `-isystem`, join(icuRoot, "include"));
+    }
+    if (cfg.freebsd && cfg.crossTarget !== undefined) {
+      optFlags.push(`--target=${cfg.crossTarget}`, `--sysroot=${cfg.sysroot!}`);
+    }
     const optFlagStr = optFlags.join(" ");
+    let cxxOptFlagStr = optFlagStr;
+    if (cfg.abi === "android") {
+      const inc = join(cfg.sysroot!, "usr", "include");
+      const triple = `${cfg.x64 ? "x86_64" : "aarch64"}-linux-android`;
+      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${join(inc, triple)} -isystem ${inc}`;
+    } else if (cfg.freebsd && cfg.sysroot !== undefined) {
+      const inc = join(cfg.sysroot, "usr", "include");
+      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${inc}`;
+    }
     const args: Record<string, string> = {
       CMAKE_C_FLAGS: optFlagStr,
-      CMAKE_CXX_FLAGS: optFlagStr,
+      CMAKE_CXX_FLAGS: cxxOptFlagStr,
+      ...(cfg.abi === "android"
+        ? {
+            CMAKE_SYSTEM_NAME: "Linux",
+            CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
+            CMAKE_SYSROOT: cfg.sysroot!,
+            ANDROID: "ON",
+            ENABLE_API_TESTS: "OFF",
+            // No system ICU on Android. Point at a static cross-built ICU
+            // (see Dockerfile.android for the recipe). FindICU also probes
+            // CMAKE_FIND_ROOT_PATH so we whitelist the prefix. ICU_INCLUDE_DIR
+            // explicit: the NDK sysroot ships annotated headers that mark
+            // most ICU functions __INTRODUCED_IN(31), so FindICU picking
+            // those up makes everything unavailable at API 28.
+            ICU_ROOT: process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android",
+            ICU_INCLUDE_DIR: join(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"),
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
+      ...(cfg.freebsd && cfg.crossTarget !== undefined
+        ? {
+            CMAKE_SYSTEM_NAME: "FreeBSD",
+            CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
+            CMAKE_SYSROOT: cfg.sysroot!,
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
+      // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
+      // to ON for static-archive targets, which puts ~550 KB of vtables into
+      // .data.rel.ro. We link -no-pie so this is dead weight in the RW
+      // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
+      // never being suppressed there.
+      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -329,8 +421,17 @@ export const webkit: Dependency = {
     // Windows ICU libs are NOT listed here — they're preBuild.outputs,
     // which source.ts appends to the resolved libs automatically. Listing
     // them here would make dep_build also claim to produce them (dup error).
-    // Posix uses system ICU (linked via -licu* in bun.ts).
+    // Posix uses system ICU (linked via -licu* in bun.ts). Android has no
+    // system ICU — link the static cross-built libs from BUN_ANDROID_ICU_ROOT.
     const libs = [...coreLibs(cfg), bmallocLib(cfg)];
+    if (cfg.abi === "android") {
+      const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
+      libs.push(
+        resolve(icuRoot, "lib", "libicui18n.a"),
+        resolve(icuRoot, "lib", "libicuuc.a"),
+        resolve(icuRoot, "lib", "libicudata.a"),
+      );
+    }
 
     const includes = [
       // ABSOLUTE — resolved here because they're in the build dir, not src.
@@ -344,6 +445,11 @@ export const webkit: Dependency = {
     ];
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));
+    // Android: ICU headers from BUN_ANDROID_ICU_ROOT (the NDK sysroot's
+    // unicode/ headers are __INTRODUCED_IN(31)-gated and unusable at API 28).
+    if (cfg.abi === "android") {
+      includes.push(resolve(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"));
+    }
 
     return { libs, includes };
   },

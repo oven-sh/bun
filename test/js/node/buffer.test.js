@@ -1,6 +1,9 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { gc } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
+import { createHash } from "node:crypto";
+import os from "node:os";
+import { join } from "node:path";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -359,6 +362,89 @@ for (let withOverridenBufferWrite of [false, true]) {
         }
       });
 
+      it("write BigInt64 with an out-of-range or non-integer offset throws ERR_OUT_OF_RANGE", () => {
+        // Node's boundsError reports a negative offset as ERR_OUT_OF_RANGE
+        // (">= 0 and <= max"), not ERR_BUFFER_OUT_OF_BOUNDS.
+        const buf = Buffer.alloc(16);
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          expect(() => buf[fn](1n, -1)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received -1',
+            }),
+          );
+          // A fractional or NaN offset reports "an integer", even when negative.
+          expect(() => buf[fn](1n, -1.5)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received -1.5',
+            }),
+          );
+          expect(() => buf[fn](1n, NaN)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received NaN',
+            }),
+          );
+          // +-Infinity are NOT "an integer" to Node's boundsError (its
+          // Math.floor(value) !== value test is false for them), so they
+          // get the range message instead.
+          expect(() => buf[fn](1n, Infinity)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received Infinity',
+            }),
+          );
+          expect(() => buf[fn](1n, -Infinity)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received -Infinity',
+            }),
+          );
+          // The too-large path is unchanged.
+          expect(() => buf[fn](1n, 9)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received 9',
+            }),
+          );
+          // A too-short buffer is still ERR_BUFFER_OUT_OF_BOUNDS (matches Node's
+          // boundsError when `length < 0`).
+          expect(() => Buffer.alloc(7)[fn](1n, 0)).toThrow(
+            expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
+          );
+          // On a too-short buffer Node still reports the offset's type and
+          // integer-ness FIRST, and only then the buffer length.
+          expect(() => Buffer.alloc(7)[fn](1n, "x")).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `The "offset" argument must be of type number. Received type string ('x')`,
+            }),
+          );
+          expect(() => Buffer.alloc(7)[fn](1n, 1.5)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received 1.5',
+            }),
+          );
+          expect(() => Buffer.alloc(7)[fn](1n, NaN)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received NaN',
+            }),
+          );
+          // An integer (or +-Infinity) offset on a too-short buffer is still
+          // the buffer error: Node's `length < 0` test beats the range message.
+          expect(() => Buffer.alloc(7)[fn](1n, -1)).toThrow(
+            expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
+          );
+          expect(() => Buffer.alloc(7)[fn](1n, Infinity)).toThrow(
+            expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
+          );
+        }
+      });
+
       it("copy() beyond end of buffer", () => {
         const b = Buffer.allocUnsafe(64);
         // Try to copy 0 bytes worth of data into an empty buffer
@@ -377,6 +463,32 @@ for (let withOverridenBufferWrite of [false, true]) {
         writeTest.write("e", 3, "ascii");
         writeTest.write("j", 4, "ascii");
         expect(writeTest.toString()).toBe("nodejs");
+      });
+
+      // https://github.com/oven-sh/bun/issues/31083
+      // Per Node docs, `'ascii'` on encode is equivalent to `'latin1'`
+      // (verbatim byte copy, not 7-bit masking). Covers write / fill / alloc.
+      it("'ascii' encoding preserves high-bit bytes on encode (Node parity)", () => {
+        // write()
+        const buf = Buffer.alloc(4, 0);
+        buf.write(String.fromCharCode(128), 0, "ascii");
+        buf.write(String.fromCharCode(129), 1, "ascii");
+        buf.write(String.fromCharCode(128), 2, "latin1");
+        buf.write(String.fromCharCode(129), 3, "latin1");
+        expect([buf[0], buf[1], buf[2], buf[3]]).toEqual([128, 129, 128, 129]);
+
+        // write() with multi-byte Latin-1 input
+        const buf2 = Buffer.alloc(4, 0);
+        buf2.write(String.fromCharCode(128, 129, 250, 255), 0, "ascii");
+        expect([buf2[0], buf2[1], buf2[2], buf2[3]]).toEqual([128, 129, 250, 255]);
+
+        // fill()
+        const buf3 = Buffer.alloc(4).fill(String.fromCharCode(128), "ascii");
+        expect([buf3[0], buf3[1], buf3[2], buf3[3]]).toEqual([128, 128, 128, 128]);
+
+        // alloc() with fill string
+        const buf4 = Buffer.alloc(4, String.fromCharCode(129), "ascii");
+        expect([buf4[0], buf4[1], buf4[2], buf4[3]]).toEqual([129, 129, 129, 129]);
       });
 
       it("ASCII slice", () => {
@@ -762,6 +874,98 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => Buffer.from("", "buffer")).toThrow(/encoding/);
       });
 
+      // Like Node.js, the base64 and base64url decoders are lenient: both
+      // alphabets are accepted, whitespace and any other non-alphabet
+      // characters are ignored, and decoding stops at the first '='.
+      forEachBase64("lenient decoding skips non-alphabet characters", encoding => {
+        expect(Buffer.from("Zm9v\x80YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9v*YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9v\x00YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("\xffZm9vYmFy\x03", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from(" Z m 9\tv\nY\rm F y ", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from(" \n\t ", encoding).length).toBe(0);
+        // two-byte strings: code units whose low byte is not in the alphabet are skipped too
+        expect(Buffer.from("Zm9v\u0100YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9vYmFy\u3000", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      // Like Node.js, two-byte (UTF-16) strings are decoded from the low byte
+      // of each code unit: a unit like U+013D acts like '=', U+1234 acts like
+      // '4', and units whose low byte is not in the alphabet are skipped.
+      forEachBase64("two-byte strings decode from the low byte of each code unit", encoding => {
+        // \uD83D (first unit of 😀) narrows to 0x3D ('='), which stops decoding
+        expect(Buffer.from("QUJD\u{1F600}REVG", encoding).toString("latin1")).toBe("ABC");
+        expect(Buffer.from("\u{1F600}QUJDREVG", encoding).length).toBe(0);
+        expect(Buffer.from("QUJD\uD83D", encoding).toString("latin1")).toBe("ABC");
+        expect(Buffer.from("\u013DZm9v", encoding).length).toBe(0);
+        expect(Buffer.from("Zm9vYmFy\u013D", encoding).toString("latin1")).toBe("foobar");
+
+        // U+1234 narrows to 0x34 ('4'), U+0441 narrows to 0x41 ('A'): they contribute data
+        expect(Array.from(Buffer.from("\u1234QUJDREVG", encoding))).toStrictEqual([0xe1, 0x05, 0x09, 0x0d, 0x11, 0x15]);
+        expect(Buffer.from("Zm9v\u0441YmFy", encoding)).toStrictEqual(Buffer.from("Zm9vAYmFy", encoding));
+
+        // write() and fill() narrow the same way
+        {
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("QUJD\u{1F600}REVG", 0, encoding)).toBe(3);
+          expect(b.toString("hex")).toBe("414243aaaaaaaaaa");
+        }
+        {
+          const b = Buffer.alloc(1, 0xaa);
+          expect(b.write("YWJj\u3000", 0, encoding)).toBe(1);
+          expect(b.toString("hex")).toBe("61");
+        }
+        expect(Buffer.alloc(6, "QUJD\u{1F600}REVG", encoding).toString("latin1")).toBe("ABCABC");
+      });
+
+      forEachBase64("lenient decoding accepts both alphabets in the same input", encoding => {
+        expect(Array.from(Buffer.from("-_+/", encoding))).toStrictEqual([0xfb, 0xff, 0xbf]);
+        expect(Buffer.from("PDw/Pz8+Pg==", encoding).toString("latin1")).toBe("<<???>>");
+        expect(Buffer.from("PDw_Pz8-Pg", encoding).toString("latin1")).toBe("<<???>>");
+      });
+
+      forEachBase64("lenient decoding stops at the first '='", encoding => {
+        expect(Buffer.from("Zm9v=YmFy", encoding).toString("latin1")).toBe("foo");
+        expect(Buffer.from("=Zm9vYmFy", encoding).length).toBe(0);
+        expect(Buffer.from("YW55=======", encoding).toString("latin1")).toBe("any");
+        expect(Buffer.from("Zm9vYmFy=", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zg=", encoding).toString("latin1")).toBe("f");
+        // a single leftover character contributes nothing
+        expect(Buffer.from("Zm9vYmFyA", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      forEachBase64("lenient decoding of long inputs", encoding => {
+        const expected = Buffer.alloc(6 * 1024, "foobar").toString("latin1");
+        const b64 = Buffer.alloc(8 * 1024, "Zm9vYmFy").toString("latin1");
+        expect(Buffer.from(b64, encoding).toString("latin1")).toBe(expected);
+        expect(Buffer.from(b64.replace(/(.{64})/g, "$1\n"), encoding).toString("latin1")).toBe(expected);
+        expect(Buffer.from(b64.replace(/(.{64})/g, "$1\x85"), encoding).toString("latin1")).toBe(expected);
+      });
+
+      forEachBase64("write() only reports bytes actually written", encoding => {
+        {
+          const b = Buffer.alloc(3, 0xaa);
+          expect(b.write("Zm9vYmFy", 0, encoding)).toBe(3);
+          expect(b.toString("latin1")).toBe("foo");
+        }
+        {
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("Zm9vYmFy", 2, 3, encoding)).toBe(3);
+          expect(Array.from(b)).toStrictEqual([0xaa, 0xaa, 0x66, 0x6f, 0x6f, 0xaa, 0xaa, 0xaa]);
+        }
+        {
+          // '=' early in the string: nothing is decoded and nothing is written
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("Z=m9vYmFy", 0, 3, encoding)).toBe(0);
+          expect(Array.from(b)).toStrictEqual(Array(8).fill(0xaa));
+        }
+        {
+          const b = Buffer.alloc(4, 0xaa);
+          expect(b.write("QQ==QUJD", 0, encoding)).toBe(1);
+          expect(Array.from(b)).toStrictEqual([0x41, 0xaa, 0xaa, 0xaa]);
+        }
+      });
+
       it("creating buffers larger than pool size", () => {
         const l = Buffer.poolSize + 5;
         const s = "h".repeat(l);
@@ -830,6 +1034,130 @@ for (let withOverridenBufferWrite of [false, true]) {
 
       it("if a trailing character is discarded, rest of string is processed", () => {
         expect(Buffer.from("Abx", "hex")).toEqual(Buffer.from("Ab", "hex"));
+      });
+
+      it("hex input containing byte 0xFF is treated as invalid", () => {
+        // hex_table is indexed by the full u8 range; 0xFF must not read out of bounds.
+        // latin1 (8-bit) string path
+        expect(Buffer.from("\xff\xff", "hex")).toEqual(Buffer.alloc(0));
+        expect(Buffer.from("ab\xff\xffcd", "hex")).toEqual(Buffer.from([0xab]));
+        // 16-bit string path (U+0100 forces two-byte storage, U+00FF still <= 0xFF)
+        expect(Buffer.from("ab\xff\xff\u0100", "hex")).toEqual(Buffer.from([0xab]));
+
+        const buf = Buffer.alloc(4);
+        expect(buf.write("ab\xff\xffcd", "hex")).toBe(1);
+        expect(buf).toEqual(Buffer.from([0xab, 0, 0, 0]));
+      });
+
+      // The hex decoder takes a SIMD path once the input has at least 16 byte
+      // pairs and falls back to scalar code for short inputs, vector tails and
+      // the block containing the first invalid character. These tests sweep the
+      // boundaries of those blocks against a plain JS reference decoder.
+      describe("hex decoding around SIMD block boundaries", () => {
+        const hexDigitValue = c => {
+          if (c >= 0x30 && c <= 0x39) return c - 0x30;
+          if (c >= 0x61 && c <= 0x66) return c - 0x61 + 10;
+          if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10;
+          return -1;
+        };
+        const referenceHexDecode = (str, maxBytes = Infinity) => {
+          const out = [];
+          for (let i = 0; i + 1 < str.length && out.length < maxBytes; i += 2) {
+            const hi = hexDigitValue(str.charCodeAt(i));
+            const lo = hexDigitValue(str.charCodeAt(i + 1));
+            if (hi < 0 || lo < 0) break;
+            out.push((hi << 4) | lo);
+          }
+          return Buffer.from(out);
+        };
+        // deterministic pattern covering all byte values, with mixed case
+        const patternHex = pairs => {
+          let s = "";
+          for (let i = 0; i < pairs; i++) {
+            const byte = (i * 7 + 13) & 0xff;
+            const hex = byte.toString(16).padStart(2, "0");
+            s += i % 3 === 0 ? hex.toUpperCase() : hex;
+          }
+          return s;
+        };
+        // keeps only ASCII hex characters but forces two-byte string storage
+        const toUTF16 = s => (s + "\u0100").slice(0, -1);
+
+        it("decodes valid input at every length around the vector widths", () => {
+          for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
+            for (const extraChar of ["", "a"]) {
+              // `extraChar` leaves a trailing lone digit that must be ignored
+              const hex = patternHex(pairs) + extraChar;
+              const expected = referenceHexDecode(hex);
+              expect(expected.length).toBe(pairs);
+
+              const fromLatin1 = Buffer.from(hex, "hex");
+              expect(fromLatin1).toEqual(expected);
+
+              const fromUTF16 = Buffer.from(toUTF16(hex), "hex");
+              expect(fromUTF16).toEqual(expected);
+            }
+          }
+        });
+
+        it("stops at an invalid character at any position", () => {
+          const pairs = 80; // several vector blocks on every target
+          for (const bad of ["x", "g", "G", ":", "@", "/", " ", "\x00", "\x80", "\xff"]) {
+            for (let pos = 0; pos < pairs * 2; pos += 7) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = bad;
+              const hex = chars.join("");
+              const expected = referenceHexDecode(hex);
+              expect(expected.length).toBe(Math.floor(pos / 2));
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+              expect(Buffer.from(toUTF16(hex), "hex")).toEqual(expected);
+            }
+          }
+        });
+
+        it("treats UTF-16 code units above 0xFF as invalid even when their low byte is a hex digit", () => {
+          // U+0130, U+0141, U+3061, U+FF41 truncate to '0', 'A', 'a', 'A' — the
+          // decoder must reject them rather than decode the truncated byte.
+          const pairs = 64;
+          for (const bad of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+            for (const pos of [0, 1, 31, 32, 63, 64, 97, 126, 127]) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = bad;
+              const hex = chars.join("");
+              const expected = referenceHexDecode(hex);
+              expect(expected.length).toBe(Math.floor(pos / 2));
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+            }
+          }
+        });
+
+        it("buf.write() with long hex input respects the destination length", () => {
+          const pairs = 100;
+          const hex = patternHex(pairs);
+          const expected = referenceHexDecode(hex);
+
+          // exact fit
+          const exact = Buffer.alloc(pairs);
+          expect(exact.write(hex, "hex")).toBe(pairs);
+          expect(exact).toEqual(expected);
+
+          // destination smaller than the input: truncated, remaining bytes untouched
+          const small = Buffer.alloc(40, 0xaa);
+          expect(small.write(hex, 3, "hex")).toBe(37);
+          expect(small.subarray(0, 3)).toEqual(Buffer.from([0xaa, 0xaa, 0xaa]));
+          expect(small.subarray(3)).toEqual(expected.subarray(0, 37));
+
+          // destination larger than the input
+          const large = Buffer.alloc(pairs + 10, 0xbb);
+          expect(large.write(hex, "hex")).toBe(pairs);
+          expect(large.subarray(0, pairs)).toEqual(expected);
+          expect(large.subarray(pairs)).toEqual(Buffer.alloc(10, 0xbb));
+
+          // 16-bit string path
+          const utf16Target = Buffer.alloc(pairs);
+          expect(utf16Target.write(toUTF16(hex), "hex")).toBe(pairs);
+          expect(utf16Target).toEqual(expected);
+        });
       });
 
       it("single base64 char encodes as 0", () => {
@@ -1409,6 +1737,27 @@ for (let withOverridenBufferWrite of [false, true]) {
         );
       });
 
+      it("Buffer.byteLength matches the encoder for unpaired surrogates", () => {
+        // byteLength used simdutf's non-validating UTF-16 length, which charges
+        // an unpaired surrogate 2 bytes; the encoder writes U+FFFD (3 bytes).
+        // byteLength(s) === Buffer.from(s).length must hold by definition.
+        const cases = [
+          "\ud800",
+          "\udfff",
+          "\ud800a",
+          "a\ud800",
+          "\ud800a".repeat(17),
+          "\ud800\udc00",
+          "a\udc00\ud800b",
+        ];
+        expect(cases.map(s => ({ input: JSON.stringify(s), byteLength: Buffer.byteLength(s, "utf8") }))).toEqual(
+          cases.map(s => ({ input: JSON.stringify(s), byteLength: Buffer.from(s, "utf8").length })),
+        );
+        expect(Buffer.byteLength("\ud800a".repeat(17), "utf8")).toBe(68);
+        // TextEncoder shares the same length helper and must agree.
+        expect(new TextEncoder().encode("\ud800a".repeat(17)).byteLength).toBe(68);
+      });
+
       it("Buffer.isBuffer", () => {
         expect(Buffer.isBuffer(new Buffer(1))).toBe(true);
         gc();
@@ -1644,6 +1993,46 @@ for (let withOverridenBufferWrite of [false, true]) {
             expect(input.join("")).toBe(demo.join(""));
           });
         }
+
+        // Node copies min(encodedLength, fillLength) raw bytes of the
+        // pattern's encoding (node_buffer.cc `Fill`): a pattern longer than
+        // the destination is cut mid code unit, not restarted on a boundary.
+        it("byte-truncates a ucs2 pattern longer than the destination", () => {
+          // "abc" encodes to 61 00 62 00 63 00
+          expect(Array.from(Buffer.alloc(3, "abc", "ucs2"))).toEqual([0x61, 0x00, 0x62]);
+          expect(Array.from(Buffer.alloc(5, "abc", "ucs2"))).toEqual([0x61, 0x00, 0x62, 0x00, 0x63]);
+          expect(Array.from(Buffer.alloc(1, "abc", "ucs2"))).toEqual([0x61]);
+          expect(Array.from(Buffer.alloc(3, "abc", "utf16le"))).toEqual([0x61, 0x00, 0x62]);
+          expect(Array.from(Buffer.alloc(3).fill("abc", "ucs2"))).toEqual([0x61, 0x00, 0x62]);
+          // an odd start offset exercises the unaligned destination path
+          expect(Array.from(Buffer.alloc(6).fill("abc", 1, 6, "ucs2"))).toEqual([0x00, 0x61, 0x00, 0x62, 0x00, 0x63]);
+          // a two-byte source string (U+0101 forces UTF-16 storage) agrees
+          expect(Array.from(Buffer.alloc(3, "\u0101bc", "ucs2"))).toEqual([0x01, 0x01, 0x62]);
+          // when the pattern fits, it still repeats
+          expect(Array.from(Buffer.alloc(7, "abc", "ucs2"))).toEqual([0x61, 0x00, 0x62, 0x00, 0x63, 0x00, 0x61]);
+          expect(Array.from(Buffer.alloc(8, "ab", "ucs2"))).toEqual([0x61, 0x00, 0x62, 0x00, 0x61, 0x00, 0x62, 0x00]);
+        });
+
+        it("byte-truncates a utf8 pattern longer than the destination", () => {
+          // "a\xe9" encodes to 61 c3 a9
+          expect(Array.from(Buffer.alloc(2, "a\xe9"))).toEqual([0x61, 0xc3]);
+          expect(Array.from(Buffer.alloc(1, "\xe9\xe9"))).toEqual([0xc3]);
+          // when the pattern fits, it still repeats
+          expect(Array.from(Buffer.alloc(3, "a\xe9"))).toEqual([0x61, 0xc3, 0xa9]);
+          expect(Array.from(Buffer.alloc(4, "a\xe9"))).toEqual([0x61, 0xc3, 0xa9, 0x61]);
+        });
+
+        // A lone high surrogate encodes as U+FFFD (ef bf bd), the same as
+        // every other UTF-16 -> UTF-8 path in Node. It is not an error.
+        it("encodes a lone high surrogate as U+FFFD in fill and write", () => {
+          expect(Array.from(Buffer.alloc(4, "\ud800"))).toEqual([0xef, 0xbf, 0xbd, 0xef]);
+          expect(Array.from(Buffer.alloc(3, "\ud800"))).toEqual([0xef, 0xbf, 0xbd]);
+          expect(Array.from(Buffer.alloc(2, "\ud800"))).toEqual([0xef, 0xbf]);
+          expect(Array.from(Buffer.alloc(4).fill("\ud800"))).toEqual([0xef, 0xbf, 0xbd, 0xef]);
+          const b = Buffer.alloc(4);
+          expect(b.write("\ud800")).toBe(3);
+          expect(Array.from(b)).toEqual([0xef, 0xbf, 0xbd, 0x00]);
+        });
       });
 
       it("Buffer.fill 1 char string", () => {
@@ -1937,6 +2326,31 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf.includes("this", 4)).toBe(false);
       });
 
+      it("indexOf/lastIndexOf/includes on an empty buffer", () => {
+        // An empty haystack is not an automatic -1: Node still finds an
+        // empty needle in it at offset 0.
+        const empty = Buffer.alloc(0);
+        expect(empty.indexOf(Buffer.alloc(0))).toBe(0);
+        expect(empty.lastIndexOf(Buffer.alloc(0))).toBe(0);
+        expect(empty.includes(Buffer.alloc(0))).toBe(true);
+        expect(empty.indexOf("")).toBe(0);
+        expect(empty.lastIndexOf("")).toBe(0);
+        expect(empty.includes("")).toBe(true);
+        // byteOffset is clamped to [0, length] for an empty needle.
+        expect(empty.indexOf("", 5)).toBe(0);
+        expect(empty.indexOf("", -5)).toBe(0);
+        // A non-empty needle in an empty haystack is still -1.
+        expect(empty.indexOf("a")).toBe(-1);
+        expect(empty.indexOf(Buffer.from("a"))).toBe(-1);
+        expect(empty.indexOf(97)).toBe(-1);
+        expect(empty.lastIndexOf(97)).toBe(-1);
+        expect(empty.includes(97)).toBe(false);
+        // A non-empty haystack with an empty needle was already correct.
+        expect(Buffer.from("ab").indexOf(Buffer.alloc(0))).toBe(0);
+        expect(Buffer.from("ab").indexOf(Buffer.alloc(0), 5)).toBe(2);
+        expect(Buffer.from("ab").lastIndexOf("")).toBe(2);
+      });
+
       it("indexOf", () => {
         const buf = Buffer.from("this is a buffer");
 
@@ -2013,6 +2427,184 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.lastIndexOf("b", [])).toBe(-1);
       });
 
+      it("lastIndexOf/indexOf(Buffer, negativeOffset, 'ucs2') wraps against the raw byte length on odd-length haystacks", () => {
+        // Node's IndexOfBuffer wraps a negative byteOffset against the full byte
+        // length and only then floors to 16-bit units; truncating to even first
+        // makes `-byteLength` land before the start and miss present data.
+        const h3 = Buffer.from("bbc", "latin1"); // <62 62 63>
+        const n = Buffer.from("bb", "latin1"); // <62 62>
+        for (const enc of ["ucs2", "utf16le"]) {
+          expect(h3.lastIndexOf(n, -3, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, -2, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, 0, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, -4, enc)).toBe(-1);
+          expect(h3.indexOf(n, -3, enc)).toBe(0);
+          expect(h3.indexOf(n, -2, enc)).toBe(-1);
+          expect(h3.indexOf(n, -1, enc)).toBe(-1);
+          expect(h3.indexOf(n, 1, enc)).toBe(-1);
+        }
+
+        // Even-length haystack is unchanged.
+        expect(Buffer.from("bbcc", "latin1").lastIndexOf(n, -4, "ucs2")).toBe(0);
+
+        // 5-byte haystack: the wrapped offset must also floor to the correct
+        // 16-bit unit so the rightmost match is found.
+        const h5 = Buffer.from([0x62, 0x62, 0x62, 0x62, 0x63]);
+        expect(h5.lastIndexOf(n, -5, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(n, -3, "ucs2")).toBe(2);
+        expect(h5.lastIndexOf(n, -6, "ucs2")).toBe(-1);
+        // Odd-length needle: only the whole 16-bit unit participates.
+        const n3 = Buffer.from([0x62, 0x62, 0x62]);
+        expect(h5.lastIndexOf(n3, -5, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(n3, 0, "ucs2")).toBe(0);
+
+        // Empty Buffer needle on an odd-length haystack: the clamped result
+        // must reflect the raw-byte wrap, bounded by the even search end.
+        const empty = Buffer.alloc(0);
+        expect(h3.lastIndexOf(empty, -3, "ucs2")).toBe(0);
+        expect(h3.lastIndexOf(empty, -1, "ucs2")).toBe(2);
+        expect(h3.lastIndexOf(empty, 3, "ucs2")).toBe(2);
+        expect(h3.lastIndexOf(empty, undefined, "ucs2")).toBe(2);
+
+        // 1-byte haystack has no 16-bit units.
+        const h1 = Buffer.from([0x62]);
+        expect(h1.lastIndexOf(n, 0, "ucs2")).toBe(-1);
+        expect(h1.lastIndexOf(n, -1, "ucs2")).toBe(-1);
+        expect(h1.lastIndexOf(empty, 0, "ucs2")).toBe(0);
+
+        // String needles: Node's IndexOfString truncates the haystack length to
+        // even BEFORE wrapping (unlike IndexOfBuffer), so -byteLength on an
+        // odd-length haystack is before the start.
+        const sn = "\u6262"; // encodes as <62 62> in ucs2
+        expect(h3.lastIndexOf(sn, -3, "ucs2")).toBe(-1);
+        expect(h3.lastIndexOf(sn, -2, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(sn, -5, "ucs2")).toBe(-1);
+        expect(h5.lastIndexOf(sn, -3, "ucs2")).toBe(0);
+      });
+
+      it("lastIndexOf(value, encoding) defaults to searching from the end", () => {
+        // When the second argument is an encoding string (no byteOffset), the
+        // search must start from the end of the buffer, matching Node.js.
+        const b = Buffer.from("ello hello hello");
+        expect(b.lastIndexOf("hello", "utf8")).toBe(11);
+        expect(b.lastIndexOf("hello", "latin1")).toBe(11);
+        expect(b.lastIndexOf("hello", "binary")).toBe(11);
+
+        const b16 = Buffer.from("ello hello hello", "utf16le");
+        expect(b16.lastIndexOf("hello", "utf16le")).toBe(22);
+        expect(b16.lastIndexOf("hello", "ucs2")).toBe(22);
+
+        const bhex = Buffer.from("aabbccaabbcc", "hex");
+        expect(bhex.lastIndexOf("aabb", "hex")).toBe(3);
+
+        const bb64 = Buffer.from("Zm9vYmFyZm9v", "base64");
+        expect(bb64.lastIndexOf("Zm9v", "base64")).toBe(6);
+
+        // Forward indexOf with the same overload must remain 0-based.
+        expect(b.indexOf("hello", "utf8")).toBe(5);
+        expect(b.includes("hello", "utf8")).toBe(true);
+
+        // Explicit byteOffset still works.
+        expect(b.lastIndexOf("hello", 8, "utf8")).toBe(5);
+      });
+
+      it("indexOf(value, encoding) is unchanged by the lastIndexOf fix", () => {
+        // The lastIndexOf fix routes the encoding-as-2nd-arg case through the
+        // direction-aware default. For forward indexOf/includes that default is
+        // 0, so these must keep returning the FIRST match from offset 0. The
+        // buffer repeats "hello" so a regression that searched from the end
+        // would return 12 instead of 0.
+        const b = Buffer.from("hello world hello");
+        expect(b.indexOf("hello", "utf8")).toBe(0);
+        expect(b.indexOf("hello", "latin1")).toBe(0);
+        expect(b.indexOf("hello", "binary")).toBe(0);
+        expect(b.indexOf("hello", "ascii")).toBe(0);
+        expect(b.includes("hello", "utf8")).toBe(true);
+        expect(b.indexOf("zzz", "utf8")).toBe(-1);
+        expect(b.indexOf("o", "utf8")).toBe(4);
+
+        const b16 = Buffer.from("hello world hello", "utf16le");
+        expect(b16.indexOf("hello", "utf16le")).toBe(0);
+        expect(b16.indexOf("hello", "ucs2")).toBe(0);
+        expect(b16.includes("hello", "utf16le")).toBe(true);
+
+        const bhex = Buffer.from("aabbccaabbcc", "hex");
+        expect(bhex.indexOf("aabb", "hex")).toBe(0);
+        expect(bhex.includes("aabb", "hex")).toBe(true);
+
+        const bb64 = Buffer.from("Zm9vYmFyZm9v", "base64");
+        expect(bb64.indexOf("Zm9v", "base64")).toBe(0);
+        expect(bb64.includes("Zm9v", "base64")).toBe(true);
+
+        // A 3-arg indexOf(value, byteOffset, encoding) still skips forward.
+        expect(b.indexOf("hello", 1, "utf8")).toBe(12);
+
+        // A non-string 2nd arg is a byteOffset, not an encoding: these go
+        // through the other branch and must also be unchanged.
+        const abc = Buffer.from("abcdef");
+        expect(abc.indexOf("b", undefined)).toBe(1);
+        expect(abc.indexOf("b", null)).toBe(1);
+        expect(abc.indexOf("b", {})).toBe(1);
+        expect(abc.indexOf("b", [])).toBe(1);
+      });
+
+      it("indexOf/lastIndexOf with an explicit byteOffset are unchanged by the fix", () => {
+        // When a numeric byteOffset is supplied (with or without a trailing
+        // encoding), both methods take the non-string branch that the fix does
+        // NOT touch. The needle repeats ("hello" at 0 and 12, "o" at 4/7/16) so
+        // the offset genuinely selects which occurrence is returned.
+        const b = Buffer.from("hello world hello");
+
+        // indexOf(value, byteOffset): searches forward from the offset.
+        expect(b.indexOf("hello", 0)).toBe(0);
+        expect(b.indexOf("hello", 1)).toBe(12);
+        expect(b.indexOf("hello", 12)).toBe(12);
+        expect(b.indexOf("hello", 13)).toBe(-1);
+        expect(b.indexOf("hello", -5)).toBe(12); // negative counts from the end
+        expect(b.indexOf("o", 5)).toBe(7);
+        expect(b.indexOf("o", 8)).toBe(16);
+
+        // indexOf(value, byteOffset, encoding): same, with an explicit encoding.
+        expect(b.indexOf("hello", 1, "utf8")).toBe(12);
+        expect(b.indexOf("hello", 0, "latin1")).toBe(0);
+
+        // lastIndexOf(value, byteOffset): searches backward from the offset.
+        expect(b.lastIndexOf("hello", -1)).toBe(12);
+        expect(b.lastIndexOf("hello", 11)).toBe(0);
+        expect(b.lastIndexOf("hello", 12)).toBe(12);
+        expect(b.lastIndexOf("hello", 0)).toBe(0);
+        expect(b.lastIndexOf("o", 6)).toBe(4);
+        expect(b.lastIndexOf("o", 100)).toBe(16); // past the end is clamped
+
+        // lastIndexOf(value, byteOffset, encoding): same, with an encoding.
+        expect(b.lastIndexOf("hello", 11, "utf8")).toBe(0);
+        expect(b.lastIndexOf("hello", 16, "utf8")).toBe(12);
+
+        // utf16le: the byteOffset is in bytes ("hello" starts at byte 0 and 24).
+        const b16 = Buffer.from("hello world hello", "utf16le");
+        expect(b16.indexOf("hello", 2, "ucs2")).toBe(24);
+        expect(b16.lastIndexOf("hello", 22, "ucs2")).toBe(0);
+      });
+
+      it("lastIndexOf with utf16le only matches on a code-unit boundary", () => {
+        // UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
+        // so a raw byte match at an ODD offset is not a real match. The needle
+        // "a" is bytes [0x61, 0x00]; they occur here only at byte offset 1.
+        const h = Buffer.from([0x00, 0x61, 0x00, 0x00]);
+        expect(h.lastIndexOf(Buffer.from("a", "utf16le"), undefined, "utf16le")).toBe(-1);
+        expect(h.lastIndexOf("a", undefined, "utf16le")).toBe(-1);
+        // The forward search was already uint16-aligned.
+        expect(h.indexOf("a", 0, "utf16le")).toBe(-1);
+        // An even-offset match is still found.
+        const h2 = Buffer.from("ba", "utf16le");
+        expect(h2.lastIndexOf("a", undefined, "utf16le")).toBe(2);
+        expect(h2.lastIndexOf(Buffer.from("a", "utf16le"), undefined, "utf16le")).toBe(2);
+        // byteOffset is floored to a code-unit boundary.
+        const h3 = Buffer.from("aaaa", "utf16le");
+        expect(h3.lastIndexOf("a", 5, "utf16le")).toBe(4);
+        expect(h3.lastIndexOf("a", 3, "utf16le")).toBe(2);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");
@@ -2058,6 +2650,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect.unreachable();
         } catch (exception) {
           expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
+          expect(exception.code).toBe("ERR_INVALID_BUFFER_SIZE");
+          expect(exception).toBeInstanceOf(RangeError);
         }
       });
 
@@ -2084,6 +2678,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect.unreachable();
         } catch (exception) {
           expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
+          expect(exception.code).toBe("ERR_INVALID_BUFFER_SIZE");
+          expect(exception).toBeInstanceOf(RangeError);
         }
       });
 
@@ -2110,6 +2706,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect.unreachable();
         } catch (exception) {
           expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
+          expect(exception.code).toBe("ERR_INVALID_BUFFER_SIZE");
+          expect(exception).toBeInstanceOf(RangeError);
         }
       });
 
@@ -2611,6 +3209,33 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => Buffer.allocUnsafe(8).fill("a", 0, 9)).toThrow();
       });
 
+      it("fill() with a fractional offset or end throws ERR_OUT_OF_RANGE", () => {
+        // Node routes offset/end through validateOffset (= validateInteger),
+        // so a non-integer throws instead of being silently truncated.
+        expect(() => Buffer.alloc(4, "x").fill("a", 1.5)).toThrow(
+          expect.objectContaining({
+            code: "ERR_OUT_OF_RANGE",
+            message: 'The value of "offset" is out of range. It must be an integer. Received 1.5',
+          }),
+        );
+        expect(() => Buffer.alloc(4, "x").fill("a", 0, 1.5)).toThrow(
+          expect.objectContaining({
+            code: "ERR_OUT_OF_RANGE",
+            message: 'The value of "end" is out of range. It must be an integer. Received 1.5',
+          }),
+        );
+        expect(() => Buffer.alloc(4, "x").fill("a", NaN)).toThrow(
+          expect.objectContaining({
+            code: "ERR_OUT_OF_RANGE",
+            message: 'The value of "offset" is out of range. It must be an integer. Received NaN',
+          }),
+        );
+        // Integer offsets still work and still range-check.
+        expect(Buffer.alloc(4, "x").fill("a", 3).toString()).toBe("xxxa");
+        expect(() => Buffer.alloc(4).fill("a", -1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+        expect(() => Buffer.alloc(4).fill("a", 0, 5)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+      });
+
       it("fill() should not hang indefinitely", () => {
         // Make sure this doesn't hang indefinitely.
         Buffer.allocUnsafe(8).fill("");
@@ -2856,8 +3481,10 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf.latin1Slice(1, 2)).toStrictEqual("é");
 
         expect(() => buf.latin1Slice(1, 4)).toThrow(RangeError);
-        expect(() => buf.latin1Slice(4, 1)).toThrow(RangeError);
-        expect(() => buf.latin1Slice(4, 0)).toThrow(RangeError);
+
+        // start >= end short-circuits to "" before the range check, as in Node.
+        expect(buf.latin1Slice(4, 1)).toStrictEqual("");
+        expect(buf.latin1Slice(4, 0)).toStrictEqual("");
 
         expect(buf.latin1Slice(3)).toStrictEqual("");
         expect(buf.latin1Slice(3, 1)).toStrictEqual("");
@@ -2875,9 +3502,10 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(latin1Slice.call(buf, 1, 2)).toStrictEqual("é");
 
         expect(() => latin1Slice.call(buf, 1, 4)).toThrow(RangeError);
-        expect(() => latin1Slice.call(buf, 4, 1)).toThrow(RangeError);
-        expect(() => latin1Slice.call(buf, 4, 0)).toThrow(RangeError);
         expect(() => latin1Slice.call(buf, 3, 999999)).toThrow(RangeError);
+
+        expect(latin1Slice.call(buf, 4, 1)).toStrictEqual("");
+        expect(latin1Slice.call(buf, 4, 0)).toStrictEqual("");
 
         expect(latin1Slice.call(buf, 3)).toStrictEqual("");
         expect(latin1Slice.call(buf, 3, 1)).toStrictEqual("");
@@ -3162,6 +3790,85 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });
 
+describe("Buffer.from(arrayBuffer, byteOffset, length) bounds", () => {
+  it("clamps NaN and non-positive lengths to 0", () => {
+    const ab = new ArrayBuffer(16);
+    const cases = [
+      [ab, 4, -1],
+      [ab, 4, -100],
+      [ab, 0, -Infinity],
+      [ab, 0, -0],
+      [ab, 0, "-5"],
+      [ab, 0, NaN],
+      [ab, 16, -1],
+      [ab, undefined, -1],
+      [ab, 4, { valueOf: () => -1 }],
+      [new SharedArrayBuffer(16), 4, -1],
+    ];
+    const lengths = cases.map(args => {
+      try {
+        return Buffer.from(...args).length;
+      } catch (e) {
+        return e.code;
+      }
+    });
+    expect(lengths).toEqual(cases.map(() => 0));
+    // the byteOffset is still respected
+    expect(Buffer.from(ab, 4, -1).byteOffset).toBe(4);
+    // deprecated constructor form takes the same path
+    expect(new Buffer(ab, 4, -1).length).toBe(0);
+  });
+
+  it("throws ERR_BUFFER_OUT_OF_BOUNDS for positive lengths past the end", () => {
+    const ab = new ArrayBuffer(16);
+    expect(() => Buffer.from(ab, 0, 17)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 8, 9)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 0, Infinity)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    // Node compares the un-truncated length against the remaining capacity
+    expect(() => Buffer.from(ab, 0, 16.5)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(Buffer.from(ab, 0, 16).length).toBe(16);
+    expect(Buffer.from(ab, 0, 15.5).length).toBe(15);
+    expect(Buffer.from(ab, 8, 8).length).toBe(8);
+    // ... and that capacity is computed from the un-truncated offset
+    expect(() => Buffer.from(ab, 0.5, 16)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 15.5, 1)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(Buffer.from(ab, 0.5, 15).length).toBe(15);
+    const fractional = Buffer.from(ab, 3.5, 12);
+    expect([fractional.byteOffset, fractional.length]).toEqual([3, 12]);
+  });
+
+  it("throws ERR_BUFFER_OUT_OF_BOUNDS for offsets past the end", () => {
+    const ab = new ArrayBuffer(16);
+    expect(() => Buffer.from(ab, 17)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, Infinity)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    // Node compares the un-truncated offset against byteLength
+    expect(() => Buffer.from(ab, 16.5)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, -1)).toThrow(RangeError);
+    expect(Buffer.from(ab, 16).length).toBe(0);
+    // (-1, 0] truncates to a zero offset
+    expect(Buffer.from(ab, -0.5).length).toBe(16);
+  });
+
+  it("honors an explicit length on a resizable ArrayBuffer", () => {
+    const rab = new ArrayBuffer(8, { maxByteLength: 32 });
+    const fixed = Buffer.from(rab, 0, 4);
+    const clamped = Buffer.from(rab, 4, -1);
+    const tracking = Buffer.from(rab, 4);
+    expect([fixed.length, clamped.length, clamped.byteOffset, tracking.length]).toEqual([4, 0, 4, 4]);
+    rab.resize(32);
+    // only the no-length form is a length-tracking view
+    expect([fixed.length, clamped.length, tracking.length]).toEqual([4, 0, 28]);
+  });
+
+  it("honors an explicit length on a growable SharedArrayBuffer", () => {
+    const gsab = new SharedArrayBuffer(8, { maxByteLength: 32 });
+    const fixed = Buffer.from(gsab, 0, 4);
+    const tracking = Buffer.from(gsab);
+    gsab.grow(32);
+    expect([fixed.length, tracking.length]).toEqual([4, 32]);
+  });
+});
+
 describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
   for (const method of ["writeBigInt64BE", "writeBigInt64LE", "writeBigUInt64BE", "writeBigUInt64LE"]) {
     for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
@@ -3200,6 +3907,160 @@ describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
   }
 });
 
+// Node's _fill (lib/buffer.js) only reinterprets a string `offset`/`end` as
+// the encoding when the fill value is itself a string; otherwise they reach
+// validateOffset and a non-number throws ERR_INVALID_ARG_TYPE. And `end` is
+// only read at all once `offset` is present.
+describe("Buffer.fill offset/end argument handling", () => {
+  it("rejects a string offset when the fill value is not a string", () => {
+    for (const value of [0, true, new Uint8Array([1])]) {
+      expect(() => Buffer.alloc(5).fill(value, "1", 3)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "offset" argument must be of type number. Received type string ('1')`,
+        }),
+      );
+      // Two-argument form: a string in the offset slot is not an encoding either.
+      expect(() => Buffer.alloc(5).fill(value, "hex")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "offset" argument must be of type number. Received type string ('hex')`,
+        }),
+      );
+    }
+    expect(() => Buffer.alloc(5).fill(0, null, 3)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "offset" argument must be of type number. Received null',
+      }),
+    );
+  });
+
+  it("rejects a string end when the fill value is not a string", () => {
+    for (const value of [0, true, new Uint8Array([1])]) {
+      expect(() => Buffer.alloc(5).fill(value, 1, "3")).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "end" argument must be of type number. Received type string ('3')`,
+        }),
+      );
+    }
+    expect(() => Buffer.alloc(5).fill(0, 1, null)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "end" argument must be of type number. Received null',
+      }),
+    );
+  });
+
+  it("ignores end entirely when offset is undefined", () => {
+    // Node resets end = buf.length when offset === undefined; end is never
+    // validated, so even an otherwise invalid value there is accepted.
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, 3))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, "3"))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, -1))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, null))).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("discards end when a string value's offset slot holds the encoding", () => {
+    // fill(value, encoding) has no end slot, so anything there is ignored.
+    expect(Buffer.alloc(5, 0xaa).fill("b", "utf8", 3).toString()).toBe("bbbbb");
+    expect(Buffer.alloc(5, 0xaa).fill("b", undefined, 3).toString()).toBe("bbbbb");
+    // An explicit numeric offset keeps end meaningful.
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill("b", 1, 3))).toEqual([0xaa, 0x62, 0x62, 0xaa, 0xaa]);
+  });
+
+  it("still treats a string offset/end as the encoding when the value is a string", () => {
+    expect(Buffer.alloc(4, 0xaa).fill("ab", "utf16le").toString("hex")).toBe("61006200");
+    expect(Buffer.alloc(4, 0xaa).fill("ab", 0, "utf16le").toString("hex")).toBe("61006200");
+    expect(() => Buffer.alloc(4).fill("a", "bogus")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.alloc(4).fill("a", 0, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+
+  it("never treats the 4-argument encoding as meaningful for a non-string value", () => {
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "bogus"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+  });
+
+  it("zero-fills the whole buffer when called with no arguments", () => {
+    // Node forwards the undefined value into the numeric path, which coerces to 0.
+    expect(Array.from(Buffer.alloc(3, 0xaa).fill())).toEqual([0, 0, 0]);
+    expect(Array.from(Buffer.alloc(3, 0xaa).fill(undefined))).toEqual([0, 0, 0]);
+  });
+
+  it("ignores positional arguments past the fourth", () => {
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "utf8", "x"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+    expect(Buffer.alloc(5, 0xaa).fill("ab", 0, 4, "utf16le", "x").toString("hex")).toBe("61006200aa");
+  });
+
+  it("lets an undefined offset shadow an explicit 4th-argument encoding, like Node", () => {
+    // Node's _fill assigns `encoding = offset` whenever offset is undefined or
+    // a string, so fill(str, undefined, ..., encoding) falls back to utf8 and a
+    // bogus 4th-argument encoding is never even validated.
+    expect(Buffer.alloc(4, 0xaa).fill("ab", undefined, undefined, "utf16le").toString("hex")).toBe("61626162");
+    expect(Buffer.alloc(4, 0xaa).fill("a", undefined, undefined, "bogus").toString("hex")).toBe("61616161");
+    // With a numeric offset the explicit encoding is honored.
+    expect(Buffer.alloc(4, 0xaa).fill("ab", 0, undefined, "utf16le").toString("hex")).toBe("61006200");
+    expect(() => Buffer.alloc(4).fill("a", 1, undefined, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+
+  it("treats a null or empty-string encoding like an absent one, as Node's normalizeEncoding does", () => {
+    // normalizeEncoding returns utf8 for exactly undefined, null, and "".
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, null).toString("hex")).toBe("aa6161aaaa");
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, "").toString("hex")).toBe("aa6161aaaa");
+    // A string "" in the offset or end slot becomes the encoding first, then
+    // that encoding is treated as absent.
+    expect(Buffer.alloc(5, 0xaa).fill("a", "").toString("hex")).toBe("6161616161");
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, "").toString("hex")).toBe("aa61616161");
+    expect(Buffer.alloc(3, "a", null).toString("hex")).toBe("616161");
+    expect(Buffer.alloc(3, "a", "").toString("hex")).toBe("616161");
+    // toString goes through Node's getEncodingOps, not normalizeEncoding, so a
+    // null or empty-string encoding there is still ERR_UNKNOWN_ENCODING. Pins
+    // that the handling lives at the fill/alloc gates, not inside parseEncoding.
+    expect(() => Buffer.from("ab").toString(null)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.from("ab").toString("")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    // A String object is not a string primitive, so it is not "absent".
+    expect(() => Buffer.alloc(3, "a", new String(""))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  // Bun coerces an object encoding via toString (Node rejects a non-string
+  // encoding up front with ERR_INVALID_ARG_TYPE instead). An exception thrown
+  // from that toString must surface, not degrade to an empty or null string.
+  it("propagates an exception thrown from an object encoding's toString", () => {
+    const boom = {
+      toString() {
+        throw new Error("boom");
+      },
+    };
+    expect(() => Buffer.alloc(4, 0xaa).fill("a", 0, 4, boom)).toThrow("boom");
+    expect(() => Buffer.alloc(4, "a", boom)).toThrow("boom");
+  });
+
+  // Differential test: the fixture enumerates every fill() argument shape and
+  // prints the resulting bytes or the thrown error class + code. Running it
+  // under Node.js and under Bun must produce byte-identical output.
+  it.skipIf(!nodeExe())("every fill() argument shape produces the same output in Node.js and Bun", async () => {
+    const fixture = join(import.meta.dir, "buffer-fill-args-fixture.js");
+    async function run(exe) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+    const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
+    expect(nodeRun.stdout).toContain("fill(");
+    expect(bunRun.stdout).toBe(nodeRun.stdout);
+    expect(nodeRun.exitCode).toBe(0);
+    expect(bunRun.exitCode).toBe(0);
+  });
+});
+
 describe("*Write methods with NaN/invalid offset and length", () => {
   // Regression test: NaN offset/length values must be handled safely.
   // NaN offset should be treated as 0, and length should be clamped to buffer size.
@@ -3234,7 +4095,11 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       // Result should be clamped to buffer size
       expect(result).toBeLessThanOrEqual(buf.length);
     });
+  }
 
+  // Node only put utf8/latin1/ascii behind the strict JS wrapper that rejects an
+  // oversized length; the remaining encodings are still the raw C++ binding.
+  for (const method of ["utf8Write", "latin1Write", "asciiWrite"]) {
     it(`${method} should throw on length larger than available buffer space`, () => {
       const buf = Buffer.from("string");
       // Length 1000 with valid offset 0 should throw ERR_BUFFER_OUT_OF_BOUNDS
@@ -3245,4 +4110,538 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       );
     });
   }
+
+  for (const method of ["utf16leWrite", "ucs2Write", "base64Write", "base64urlWrite", "hexWrite"]) {
+    it(`${method} should clamp length larger than available buffer space`, () => {
+      const buf = Buffer.from("string");
+      const written = buf[method]("test".repeat(100), 0, 1000);
+      expect(written).toBeLessThanOrEqual(buf.length);
+    });
+  }
 });
+
+// These raw prototype methods come straight from Node's C++ bindings, not from the
+// documented toString()/write() wrappers, and they have looser bounds rules:
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc
+describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
+  const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE", message: "Index out of range" });
+  const OUT_OF_BOUNDS = expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" });
+
+  const sliceMethods = [
+    "utf8Slice",
+    "latin1Slice",
+    "asciiSlice",
+    "ucs2Slice",
+    "utf16leSlice",
+    "base64Slice",
+    "base64urlSlice",
+    "hexSlice",
+  ];
+  // "hello!", 6 bytes.
+  const hello = () => Buffer.from("68656c6c6f21", "hex");
+
+  describe("<enc>Slice", () => {
+    it.each(sliceMethods)('%s returns "" when start >= end, without a range check', method => {
+      const buf = hello();
+      expect(buf[method](6)).toBe("");
+      expect(buf[method](7)).toBe("");
+      expect(buf[method](7, 3)).toBe("");
+      expect(buf[method](7, 7)).toBe("");
+      expect(buf[method](3, 1)).toBe("");
+      expect(buf[method](1e9)).toBe("");
+      expect(buf[method](2 ** 53)).toBe("");
+      expect(buf[method](2 ** 64)).toBe("");
+      expect(buf[method](Infinity)).toBe("");
+      expect(buf[method](0, NaN)).toBe("");
+    });
+
+    it.each(sliceMethods)("%s still throws when end is past the end of the buffer", method => {
+      const buf = hello();
+      expect(() => buf[method](0, 7)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](2, 1e9)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](6, 1e9)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](0, Infinity)).toThrow(OUT_OF_RANGE);
+    });
+
+    it.each(sliceMethods)("%s treats NaN as 0 and rejects negative indexes", method => {
+      const buf = hello();
+      expect(buf[method](NaN)).toBe(buf[method]());
+      expect(buf[method](-0)).toBe(buf[method]());
+      expect(() => buf[method](-1)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](-Infinity)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](0, -1)).toThrow(OUT_OF_RANGE);
+    });
+
+    it("decodes the same ranges Node decodes", () => {
+      const buf = hello();
+      expect(buf.hexSlice()).toBe("68656c6c6f21");
+      expect(buf.hexSlice(2)).toBe("6c6c6f21");
+      expect(buf.hexSlice(0, 2)).toBe("6865");
+      expect(buf.hexSlice(5, 6)).toBe("21");
+      expect(buf.utf8Slice(1.9)).toBe("ello!");
+      expect(buf.utf8Slice("2", "4")).toBe("ll");
+    });
+
+    it("the documented toString() wrapper is unchanged", () => {
+      const buf = hello();
+      expect(buf.toString("hex", 7)).toBe("");
+      expect(buf.toString("hex", 7, 3)).toBe("");
+      expect(buf.toString("hex", 0, 1e9)).toBe("68656c6c6f21");
+    });
+
+    // Both <enc>Slice and toString() read byteLength before coercing their indexes, so a
+    // valueOf() that shrinks a resizable buffer leaves the range stale. Spawned because an
+    // unclamped range aborts a debug build rather than throwing.
+    it.each(["hexSlice", "toString"])("%s clamps the range when valueOf() shrinks the buffer", async method => {
+      const read = method === "toString" ? `buf.toString("hex", 0, shrink)` : `buf.hexSlice(0, shrink)`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ab = new ArrayBuffer(9, { maxByteLength: 9 });
+           const buf = Buffer.from(ab);
+           buf.fill(0x41);
+           const shrink = { valueOf() { ab.resize(2); return 9; } };
+           console.log(JSON.stringify({ read: ${read}, length: buf.length }));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Surface stderr so an abort diagnostic shows up in the diff if the assert regresses.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `{"read":"4141","length":2}`,
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe("<enc>Write", () => {
+    // Node's utf8Write/latin1Write/asciiWrite go through a JS wrapper that rejects an
+    // out-of-range length; base64/base64url/hex/ucs2 stay on the clamping C++ binding.
+    const strict = ["utf8Write", "latin1Write", "asciiWrite"];
+    const clamping = ["ucs2Write", "utf16leWrite", "base64Write", "base64urlWrite", "hexWrite"];
+    const source = {
+      utf8Write: "hello",
+      latin1Write: "hello",
+      asciiWrite: "hello",
+      ucs2Write: "hello",
+      utf16leWrite: "hello",
+      base64Write: "aGVsbG8=",
+      base64urlWrite: "aGVsbG8",
+      hexWrite: "68656c6c6f",
+    };
+    // 9 bytes of 0xcc, so offset 6 leaves 3 bytes of room.
+    const dest = () => Buffer.alloc(9, 0xcc);
+    const untouched = "cccccccccccccccccc";
+
+    it.each(clamping)("%s clamps an oversized length to the space left", method => {
+      const expected = {
+        ucs2Write: { written: 2, hex: "cccccccccccc6800cc" },
+        utf16leWrite: { written: 2, hex: "cccccccccccc6800cc" },
+        base64Write: { written: 3, hex: "cccccccccccc68656c" },
+        base64urlWrite: { written: 3, hex: "cccccccccccc68656c" },
+        hexWrite: { written: 3, hex: "cccccccccccc68656c" },
+      };
+      const buf = dest();
+      const written = buf[method](source[method], 6, 1000);
+      expect({ written, hex: buf.toString("hex") }).toEqual(expected[method]);
+    });
+
+    it.each(clamping)("%s writes nothing when no space is left", method => {
+      const buf = dest();
+      expect(buf[method](source[method], 9, 1)).toBe(0);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(clamping)("%s reports a negative offset or length as ERR_OUT_OF_RANGE", method => {
+      const buf = dest();
+      expect(() => buf[method](source[method], -1)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](source[method], -1, 2)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](source[method], 0, -1)).toThrow(OUT_OF_RANGE);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(strict)("%s rejects an oversized length with ERR_BUFFER_OUT_OF_BOUNDS", method => {
+      const buf = dest();
+      expect(() => buf[method](source[method], 6, 1000)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 9, 1)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], -1)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 0, -1)).toThrow(OUT_OF_BOUNDS);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each([...strict, ...clamping])("%s rejects an offset past the end of the buffer", method => {
+      const buf = dest();
+      expect(() => buf[method](source[method], 10)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 10, 1)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], Infinity)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 2 ** 53, 1)).toThrow(OUT_OF_BOUNDS);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(strict)("%s with a NaN offset and no length writes nothing", method => {
+      // The wrapper's default length is `byteLength - offset`, i.e. NaN, which truncates to 0.
+      const buf = dest();
+      expect(buf[method](source[method], NaN)).toBe(0);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(clamping)("%s with a NaN offset and no length writes from offset 0", method => {
+      const expected = {
+        ucs2Write: { written: 8, hex: "680065006c006c00cc" },
+        utf16leWrite: { written: 8, hex: "680065006c006c00cc" },
+        base64Write: { written: 5, hex: "68656c6c6fcccccccc" },
+        base64urlWrite: { written: 5, hex: "68656c6c6fcccccccc" },
+        hexWrite: { written: 5, hex: "68656c6c6fcccccccc" },
+      };
+      const buf = dest();
+      const written = buf[method](source[method], NaN);
+      expect({ written, hex: buf.toString("hex") }).toEqual(expected[method]);
+    });
+
+    it.each([...strict, ...clamping])("%s with a NaN length writes nothing", method => {
+      const buf = dest();
+      expect(buf[method](source[method], 0, NaN)).toBe(0);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it("the documented write() wrapper is unchanged", () => {
+      const buf = dest();
+      expect(() => buf.write("hello", 6, 1000)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+      expect(buf.write("hello", 6)).toBe(3);
+      expect(buf.toString("hex")).toBe("cccccccccccc68656c");
+    });
+
+    // A detaching valueOf on the offset or length argument is the one case that runs user JS;
+    // the binding re-checks detachment there and must not write into freed memory.
+    it.each(["offset", "length"])("%s throws when a detaching valueOf runs mid-coercion", async which => {
+      const args = which === "offset" ? `detach, 5` : `0, detach`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const buf = Buffer.from(new ArrayBuffer(9));
+           const detach = { valueOf() { structuredClone(buf.buffer, { transfer: [buf.buffer] }); return 5; } };
+           try { buf.hexWrite("68656c", ${args}); console.log("NO THROW"); }
+           catch (e) { console.log(e.constructor.name); }`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "TypeError",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+
+    it("clamps when a length valueOf shrinks a resizable buffer", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ab = new ArrayBuffer(9, { maxByteLength: 9 });
+           const buf = Buffer.from(ab);
+           const shrink = { valueOf() { ab.resize(2); return 1000; } };
+           const written = buf.hexWrite("68656c6c6f", 0, shrink);
+           console.log(JSON.stringify({ written, length: buf.length }));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // 2 bytes left after the shrink, so only one byte-pair is written.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `{"written":2,"length":2}`,
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+  });
+});
+
+describe("Buffer.copyBytesFrom", () => {
+  it("copies the correct bytes from a Uint8Array view with a non-zero byteOffset", () => {
+    const ab = new ArrayBuffer(10);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 10; i++) full[i] = i;
+
+    // byteOffset (2) < byteLength (6)
+    const view = new Uint8Array(ab, 2, 6);
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([2, 3, 4, 5, 6, 7]);
+
+    // ensure it's an independent copy
+    full[2] = 0xff;
+    expect(buf[0]).toBe(2);
+  });
+
+  it("handles a view where byteOffset > byteLength without underflowing", () => {
+    const ab = new ArrayBuffer(10);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 10; i++) full[i] = i;
+
+    // byteOffset (6) > byteLength (4) -> previously underflowed to ~SIZE_MAX and threw OOM
+    const view = new Uint8Array(ab, 6, 4);
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([6, 7, 8, 9]);
+  });
+
+  it("copies the correct bytes from a multi-byte TypedArray view with a non-zero byteOffset", () => {
+    const ab = new ArrayBuffer(16);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 16; i++) full[i] = i;
+
+    const view = new Uint16Array(ab, 8, 4); // bytes 8..15
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
+  });
+});
+
+describe("Buffer.prototype.toString binary-to-text encodings", () => {
+  // Reference implementations (scalar, independent of Bun's native encoders) so
+  // the SIMD/bulk paths for hex and base64 are checked byte-for-byte, including
+  // vector-width boundaries and the scalar tail.
+  const HEX_PAIRS = Array.from({ length: 256 }, (_, b) => b.toString(16).padStart(2, "0"));
+  function hexReference(buf) {
+    const parts = new Array(buf.length);
+    for (let i = 0; i < buf.length; i++) {
+      parts[i] = HEX_PAIRS[buf[i]];
+    }
+    return parts.join("");
+  }
+
+  const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function base64Reference(buf) {
+    const parts = [];
+    let i = 0;
+    for (; i + 2 < buf.length; i += 3) {
+      const n = (buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2];
+      parts.push(
+        B64_ALPHABET[(n >> 18) & 63] +
+          B64_ALPHABET[(n >> 12) & 63] +
+          B64_ALPHABET[(n >> 6) & 63] +
+          B64_ALPHABET[n & 63],
+      );
+    }
+    const remaining = buf.length - i;
+    if (remaining === 1) {
+      const n = buf[i] << 16;
+      parts.push(B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + "==");
+    } else if (remaining === 2) {
+      const n = (buf[i] << 16) | (buf[i + 1] << 8);
+      parts.push(B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + B64_ALPHABET[(n >> 6) & 63] + "=");
+    }
+    return parts.join("");
+  }
+
+  function base64urlReference(buf) {
+    return base64Reference(buf).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  }
+
+  // Deterministic bytes covering all 256 values with no short repeating period.
+  function fillPattern(buf, seed = 0x9e3779b9) {
+    let state = seed >>> 0;
+    for (let i = 0; i < buf.length; i++) {
+      // xorshift32
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      state >>>= 0;
+      buf[i] = state & 0xff;
+    }
+    return buf;
+  }
+
+  it("toString('hex') matches the reference at SIMD width boundaries", () => {
+    withoutAggressiveGC(() => {
+      // Cover every length around 8/16/32/64/128-byte chunk boundaries plus the
+      // threshold where the bulk kernel takes over from the scalar loop.
+      const sizes = [];
+      for (let size = 0; size <= 130; size++) sizes.push(size);
+      for (const boundary of [192, 256, 512, 1024]) sizes.push(boundary - 1, boundary, boundary + 1);
+
+      for (const size of sizes) {
+        const buf = fillPattern(Buffer.alloc(size), 0x12345678 + size);
+        expect(buf.toString("hex")).toBe(hexReference(buf));
+      }
+    });
+  });
+
+  it("toString('hex') on unaligned subarray views matches the reference", () => {
+    withoutAggressiveGC(() => {
+      const parent = fillPattern(Buffer.alloc(4096 + 16));
+      for (const offset of [1, 3, 7, 9, 15]) {
+        const view = parent.subarray(offset, offset + 4096);
+        expect(view.toString("hex")).toBe(hexReference(view));
+      }
+      // Range arguments go through the same encoder.
+      expect(parent.toString("hex", 5, 3000)).toBe(hexReference(parent.subarray(5, 3000)));
+    });
+  });
+
+  it("toString('hex'/'base64'/'base64url') is byte-exact for a large buffer", () => {
+    withoutAggressiveGC(() => {
+      // The whole-string SHA-256 digests below were cross-checked against
+      // Node.js and against the pure-JS reference encoders above for this
+      // exact deterministic buffer.
+      const buf = fillPattern(Buffer.alloc(110000));
+      const hex = buf.toString("hex");
+      const base64 = buf.toString("base64");
+      const base64url = buf.toString("base64url");
+
+      expect(hex.length).toBe(220000);
+      expect(base64.length).toBe(146668);
+      expect(base64url.length).toBe(146667);
+
+      // Head slices compared against the scalar reference give a readable diff
+      // if the bulk path breaks; 3000 bytes = 1000 complete base64 blocks.
+      expect(hex.slice(0, 2 * 3000)).toBe(hexReference(buf.subarray(0, 3000)));
+      expect(base64.slice(0, 4000)).toBe(base64Reference(buf.subarray(0, 3000)));
+      expect(base64url.slice(0, 4000)).toBe(base64urlReference(buf.subarray(0, 3000)));
+      expect(buf.hexSlice(0, 3000)).toBe(hexReference(buf.subarray(0, 3000)));
+
+      expect(createHash("sha256").update(hex).digest("hex")).toBe(
+        "8f48a2a797f617a898da5661349a9279c19107be7341ad6693ab46e627908d6e",
+      );
+      expect(createHash("sha256").update(base64).digest("hex")).toBe(
+        "13b33d6ad0580d09c649be335d52f11f85641beea65ccdac79974bf77b4d19ce",
+      );
+      expect(createHash("sha256").update(base64url).digest("hex")).toBe(
+        "85f9f3844442bfab913e2d15c015a9551b9f5ea958f1fa2cbb528538c0b25894",
+      );
+
+      // Round-trips decode back to the original bytes.
+      expect(Buffer.from(hex, "hex").equals(buf)).toBe(true);
+      expect(Buffer.from(base64, "base64").equals(buf)).toBe(true);
+      expect(Buffer.from(base64url, "base64url").equals(buf)).toBe(true);
+    });
+  });
+
+  // Hex-encoder throughput guard. Baseline is a same-output-size latin1 copy
+  // so both sides pay identical allocation costs (allocator-agnostic): scalar
+  // hex is ~5x that, SIMD ~1.3x, so 3x separates the regimes. Skip debug/ASAN.
+  it.skipIf(isDebug || isASAN)(
+    "toString('hex') large-buffer throughput stays within 3x of a same-size latin1 copy",
+    async () => {
+      const script = `
+      const buf = Buffer.alloc(110000);
+      const ref = Buffer.alloc(buf.length * 2);
+      for (let i = 0; i < ref.length; i++) ref[i] = i & 0x7f;
+      let state = 0x9e3779b9 >>> 0;
+      for (let i = 0; i < buf.length; i++) {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        state >>>= 0;
+        buf[i] = state & 0xff;
+      }
+      const sample = fn => {
+        Bun.gc(true);
+        const start = Bun.nanoseconds();
+        fn();
+        return Bun.nanoseconds() - start;
+      };
+      const median = times => times.slice().sort((a, b) => a - b)[Math.floor(times.length / 2)];
+      for (let i = 0; i < 5; i++) {
+        buf.toString("hex");
+        ref.toString("latin1");
+      }
+      const hexTimes = [];
+      const latin1Times = [];
+      for (let i = 0; i < 13; i++) {
+        latin1Times.push(sample(() => ref.toString("latin1")));
+        hexTimes.push(sample(() => buf.toString("hex")));
+      }
+      console.log(JSON.stringify({ hex: median(hexTimes), latin1: median(latin1Times) }));
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      const { hex, latin1 } = JSON.parse(stdout.trim());
+      expect(hex).toBeLessThan(3 * latin1);
+    },
+  );
+
+  it("toString('base64') and toString('base64url') match the reference for small buffers", () => {
+    withoutAggressiveGC(() => {
+      // 0..66 covers every `length % 3` padding shape on both sides of the
+      // 64-byte boundary.
+      for (let size = 0; size <= 66; size++) {
+        const buf = fillPattern(Buffer.alloc(size), 0xabcdef01 + size);
+        expect(buf.toString("base64")).toBe(base64Reference(buf));
+        expect(buf.toString("base64url")).toBe(base64urlReference(buf));
+      }
+    });
+  });
+});
+
+// MAX_LENGTH is 2**32 on 64-bit: a buffer of exactly that length must not
+// hit the uint32 truncation path that made toString()/write() see length 0.
+it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
+  "Buffer of length exactly MAX_LENGTH (2**32) supports toString/write without uint32 wrap",
+  async () => {
+    const script = `
+      const assert = require("assert");
+      const N = 2 ** 32;
+      const b = Buffer.alloc(N);
+      assert.strictEqual(b.length, N);
+      b.set([0x71, 0x72, 0x73], N - 3);
+
+      const out = {};
+      for (const enc of ["latin1", "utf8", "hex", "base64", "ucs2"]) {
+        try { b.toString(enc); out["full_" + enc] = "no throw"; }
+        catch (e) { out["full_" + enc] = e.code; }
+      }
+      out.ranged_latin1 = b.toString("latin1", N - 4, N);
+      out.ranged_hex = b.toString("hex", N - 4, N);
+      out.ranged_utf8_start0 = b.toString("utf8", 0, 3);
+      out.write_ret = b.write("xyz", N - 3);
+      out.after_write = b.toString("latin1", N - 3, N);
+      out.write_enc_ret = b.write("ab", N - 2, "latin1");
+      out.after_write_enc = b.toString("latin1", N - 2, N);
+      out.write_full = b.write("hi");
+      try { b.write("x", N + 1); out.write_oob = "no throw"; }
+      catch (e) { out.write_oob = e.code; }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        full_latin1: "ERR_STRING_TOO_LONG",
+        full_utf8: "ERR_STRING_TOO_LONG",
+        full_hex: "ERR_STRING_TOO_LONG",
+        full_base64: "ERR_STRING_TOO_LONG",
+        full_ucs2: "ERR_STRING_TOO_LONG",
+        ranged_latin1: "\x00qrs",
+        ranged_hex: "00717273",
+        ranged_utf8_start0: "\x00\x00\x00",
+        write_ret: 3,
+        after_write: "xyz",
+        write_enc_ret: 2,
+        after_write_enc: "ab",
+        write_full: 2,
+        write_oob: "ERR_OUT_OF_RANGE",
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-test("workspace devDependencies should take priority over peerDependencies for resolution", async () => {
+// Each test has its own tempDirWithFiles and spawns its own processes; nothing is shared.
+test.concurrent("workspace devDependencies should take priority over peerDependencies for resolution", async () => {
   const dir = tempDirWithFiles("dev-peer-priority", {
     "package.json": JSON.stringify({
       name: "test-monorepo",
@@ -110,7 +111,7 @@ test("workspace devDependencies should take priority over peerDependencies for r
   expect(testResult.trim()).toBe("2.0.0");
 });
 
-test("devDependencies and peerDependencies with different versions should coexist", async () => {
+test.concurrent("devDependencies and peerDependencies with different versions should coexist", async () => {
   const dir = tempDirWithFiles("dev-peer-different-versions", {
     "package.json": JSON.stringify({
       name: "test-monorepo",
@@ -171,7 +172,7 @@ test("devDependencies and peerDependencies with different versions should coexis
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
-test("dependency behavior comparison prioritizes devDependencies", async () => {
+test.concurrent("dependency behavior comparison prioritizes devDependencies", async () => {
   const dir = tempDirWithFiles("behavior-comparison", {
     "package.json": JSON.stringify({
       name: "test-app",
@@ -218,7 +219,7 @@ test("dependency behavior comparison prioritizes devDependencies", async () => {
   expect(await Bun.file(lockfilePath).exists()).toBe(true);
 });
 
-test("Next.js monorepo scenario should not make unnecessary network requests", async () => {
+test.concurrent("Next.js monorepo scenario should not make unnecessary network requests", async () => {
   const dir = tempDirWithFiles("nextjs-monorepo", {
     "package.json": JSON.stringify({
       name: "nextjs-monorepo",

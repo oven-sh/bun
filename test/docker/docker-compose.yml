@@ -1,24 +1,25 @@
 services:
   # PostgreSQL Services
+  # These images bake a pre-initialized PGDATA (initdb + init scripts) into the
+  # image so cold container start is `exec postgres` (~1-2s) instead of the
+  # stock entrypoint's first-boot init. State lives on the container's CoW
+  # layer, so a fresh container is still a fresh cluster.
   postgres_plain:
-    image: postgres:15
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_USER: postgres
-    volumes:
-      - ./init-scripts/postgres:/docker-entrypoint-initdb.d:ro
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres-plain
+    image: bun-postgres-plain:local
     ports:
       - target: 5432
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   postgres_tls:
     build:
@@ -37,24 +38,19 @@ services:
       -c ssl_key_file=/etc/postgresql/ssl/server.key
       -c max_prepared_transactions=1000
       -c max_connections=2000
-    tmpfs:
-      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s
       start_interval: 1s
 
   postgres_auth:
-    image: postgres:15
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_USER: postgres
-    volumes:
-      - ./init-scripts/postgres-auth:/docker-entrypoint-initdb.d:ro
-      - ./config/pg_hba_auth.conf:/etc/postgresql/pg_hba.conf:ro
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres-auth
+    image: bun-postgres-auth:local
     ports:
       - target: 5432
         published: 0
@@ -64,53 +60,61 @@ services:
       -c hba_file=/etc/postgresql/pg_hba.conf
       -c max_prepared_transactions=1000
       -c max_connections=2000
-    tmpfs:
-      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   # MySQL Services
+  # These images bake a pre-initialized data dir so cold container start is
+  # `exec mysqld` (~2-3s) instead of the stock entrypoint's first-boot init
+  # (`mysqld --initialize` + temp server + tzinfo load, ~60s on loaded CI
+  # hosts). State lives on the container's CoW layer, so a fresh container is a
+  # fresh database.
   mysql_plain:
-    image: mysql:8.4
-    environment:
-      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
-      MYSQL_DATABASE: bun_sql_test
+    build:
+      context: .
+      dockerfile: Dockerfile.mysql-plain
+    image: bun-mysql-plain:local
     ports:
       - target: 3306
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 1h # Effectively disable after startup
+      # 127.0.0.1 (not localhost) forces TCP — `localhost` would use the unix
+      # socket, which is up during the entrypoint's temporary init server and
+      # passes the check before the real TCP listener exists. Auth + SELECT 1
+      # so we don't go healthy until the real server is accepting connections.
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
+      # Once start_period elapses the engine probes at `interval`, not
+      # `start_interval`, so a long interval would wedge health at "starting"
+      # if init overshot the window; keep interval short so an overshoot on any
+      # service recovers within one probe.
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
   mysql_native_password:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: bun
-      MYSQL_DATABASE: bun_sql_test
-      MYSQL_ROOT_HOST: "%"
-    command: --default-authentication-plugin=mysql_native_password
+    build:
+      context: .
+      dockerfile: Dockerfile.mysql-native-password
+    image: bun-mysql-native-password:local
     ports:
       - target: 3306
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
-      interval: 1h # Effectively disable after startup
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
   mysql_tls:
     build:
@@ -119,21 +123,17 @@ services:
       args:
         MYSQL_VERSION: 8.4
     image: bun-mysql-tls:local
-    environment:
-      MYSQL_ROOT_PASSWORD: bun
-      MYSQL_DATABASE: bun_sql_test
     ports:
       - target: 3306
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
-      interval: 1h # Effectively disable after startup
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
   # Redis/Valkey Services
   redis_plain:
@@ -185,30 +185,43 @@ services:
       - /data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   # WebSocket Autobahn Test Suite
   # NOTE: Autobahn requires port 9002 to match both internal and external ports
   # because it validates the Host header against its configured listening port.
   # Dynamic port mapping causes "port X does not match server listening port 9002" errors.
   autobahn:
-    image: crossbario/autobahn-testsuite
-    volumes:
-      - ./config/fuzzingserver.json:/config/fuzzingserver.json:ro
+    build:
+      context: .
+      dockerfile: Dockerfile.autobahn
+    image: bun-autobahn:local
     command: wstest -m fuzzingserver -s /config/fuzzingserver.json
     ports:
       - target: 9002
         published: 0 # Dynamic port
         protocol: tcp
+    healthcheck:
+      # wstest needs a moment to load its config and bind 9002; without a
+      # healthcheck `up --wait` returns at "running" and the test's
+      # /getCaseCount fetch can hit before the listener exists.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9002), 1).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 1s
 
   # Squid proxy for WebSocket proxy testing
   squid:
-    image: ubuntu/squid:5.2-22.04_beta
-    volumes:
-      - ./config/squid.conf:/etc/squid/squid.conf:ro
+    build:
+      context: .
+      dockerfile: Dockerfile.squid
+    image: bun-squid:local
     ports:
       - target: 3128
         published: 0
@@ -218,10 +231,11 @@ services:
       - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "pgrep squid > /dev/null"]
-      interval: 1h
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
 
 volumes:
   redis-unix:

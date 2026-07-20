@@ -1,6 +1,11 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+
+// These tests drive real `bun install` runs against a mock registry, which is
+// slow under the debug/ASAN build — give them the same generous timeout the
+// other install test files use so they don't flake on the 5s default.
+setDefaultTimeout(1000 * 60 * 5);
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.
@@ -71,6 +76,8 @@ describe("minimum-release-age", () => {
     const tarball = Buffer.concat(entries, tarSize);
     return Bun.gzipSync(tarball);
   };
+
+  let manyVersionsManifest: string | undefined;
 
   beforeAll(async () => {
     // Start mock registry server
@@ -784,6 +791,43 @@ describe("minimum-release-age", () => {
           };
 
           return Response.json(packageData);
+        }
+
+        // TEST PACKAGE: many-versions-package (large version count, time entries
+        // in reverse order relative to versions). Exercises the publish-time
+        // index built during manifest parse.
+        if (url.pathname === "/many-versions-package") {
+          if (manyVersionsManifest === undefined) {
+            const N = 2000;
+            const versions: Record<string, unknown> = {};
+            const timeEntries: Array<[string, string]> = [];
+            for (let i = 0; i < N; i++) {
+              const v = `1.${i}.0`;
+              versions[v] = {
+                name: "many-versions-package",
+                version: v,
+                dist: {
+                  tarball: `${mockRegistryUrl}/many-versions-package/-/many-versions-package-${v}.tgz`,
+                  integrity: "sha512-fake==",
+                },
+              };
+              // Newest few versions are 1 day old; everything else is 30 days old.
+              timeEntries.push([v, i >= N - 3 ? daysAgo(1) : daysAgo(30)]);
+            }
+            // Reverse the time entries so the per-version lookup cannot rely on
+            // matching array positions between `versions` and `time`.
+            timeEntries.reverse();
+            timeEntries.unshift(["created", daysAgo(30)], ["modified", daysAgo(1)]);
+            manyVersionsManifest = JSON.stringify({
+              name: "many-versions-package",
+              "dist-tags": { latest: `1.${N - 1}.0` },
+              versions,
+              time: Object.fromEntries(timeEntries),
+            });
+          }
+          return new Response(manyVersionsManifest, {
+            headers: { "content-type": "application/json" },
+          });
         }
 
         // Serve tarballs
@@ -1548,6 +1592,34 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).toContain("bugfix-package@1.0.0");
       expect(lockfile).toContain("canary-package@");
+    });
+
+    test("large manifest: per-version publish times resolve independent of time-object order", async () => {
+      // The mock registry serves 2000 versions with the `time` object reversed
+      // relative to `versions`. The newest 3 versions are 1 day old; the rest
+      // are 30 days old. With a 5-day threshold the resolver must pick 1.1996.0.
+      using dir = tempDir("many-versions", {
+        "package.json": JSON.stringify({
+          dependencies: { "many-versions-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("many-versions-package@1.1996.0");
+      expect(lockfile).not.toContain("many-versions-package@1.1999.0");
+      expect(lockfile).not.toContain("many-versions-package@1.1997.0");
     });
   });
 

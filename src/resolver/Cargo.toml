@@ -1,0 +1,51 @@
+[package]
+name = "bun_resolver"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+debug_logs = []
+
+[lints]
+workspace = true
+
+[dependencies]
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+bun_analytics.workspace = true
+bun_base64.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_crash_handler.workspace = true
+bun_dotenv.workspace = true
+bun_errno.workspace = true
+bun_glob.workspace = true
+bun_http_types.workspace = true
+bun_install_types.workspace = true
+bun_parsers.workspace = true
+bun_ptr.workspace = true
+bun_resolve_builtins.workspace = true
+bun_js_parser.workspace = true
+bun_ast.workspace = true
+bun_options_types.workspace = true
+bun_paths.workspace = true
+bun_perf.workspace = true
+bun_semver.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_watcher.workspace = true
+bun_url.workspace = true
+bun_wyhash.workspace = true
+bun_hash.workspace = true
+bun_zstd.workspace = true

@@ -76,7 +76,8 @@ export interface BuildNode {
 export interface CompileCommand {
   directory: string;
   file: string;
-  output: string;
+  /** Optional per the JSON Compilation Database spec; omitted for entries that exist only for clangd (unified-source originals). */
+  output?: string;
   arguments: string[];
 }
 

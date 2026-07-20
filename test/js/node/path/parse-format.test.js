@@ -1,4 +1,5 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import path from "node:path";
 
@@ -219,5 +220,38 @@ describe("path.parse", () => {
     // See https://github.com/nodejs/node/issues/44343
     assert.strictEqual(path.format({ name: "x", ext: "png" }), "x.png");
     assert.strictEqual(path.format({ name: "x", ext: ".png" }), "x.png");
+  });
+});
+
+describe("path.format", () => {
+  test("formats { dir, name, ext } with a dot-less ext when the result exceeds the platform path limit", async () => {
+    // When `base` is absent and `ext` does not start with ".", format() inserts the dot itself.
+    // The formatted result must stay correct even when the combined length of dir/name/ext is far
+    // larger than the platform MAX_PATH, and the process must not crash. Run in a subprocess so a
+    // crash in the native formatter shows up as a bad exit code instead of taking down the runner.
+    const code = `
+      const path = require("node:path");
+      const dir = "/" + "d".repeat(70000);
+      const name = "n".repeat(70000);
+      const ext = "txt";
+
+      const posix = path.posix.format({ dir, name, ext });
+      const win = path.win32.format({ dir, name, ext });
+
+      console.log(posix === dir + "/" + name + "." + ext);
+      console.log(win === dir + "\\\\" + name + "." + ext);
+
+      // Legitimate small case keeps working too.
+      console.log(path.posix.format({ dir: "/tmp", name: "file", ext: "txt" }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\ntrue\n/tmp/file.txt\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -50,7 +50,7 @@ describe("TextEncoder", () => {
 });
 ```
 
-If you are fixing a bug that was reported from a GitHub issue, remember to add a test in the `test/regression/` directory.
+When fixing a bug, add the test to the existing test file for that code (e.g. a fetch bug → `test/js/web/fetch/fetch.test.ts`). Only use `test/regression/` when the bug has a GitHub issue number **and** is a true regression — it worked in a previous release and then broke.
 
 ```ts
 // test/regression/issue/02005.test.ts
@@ -65,12 +65,6 @@ it("regex literal should work with non-latin1", () => {
 ```
 
 In the future, a bot will automatically close or re-open issues when a regression is detected or resolved.
-
-## Zig tests
-
-These tests live in various `.zig` files throughout Bun's codebase, leveraging Zig's builtin `test` keyword.
-
-Currently, they're not run automatically nor is there a simple way to run all of them. We will make this better soon.
 
 ## TypeScript
 

@@ -1,6 +1,6 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
-import http, { Server } from "node:http";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
@@ -19,7 +19,9 @@ const req = http.get(
   resolve,
 );
 
-const { socket } = req;
 await promise;
+// Once the response (the flushed headers) has arrived, the request is still
+// attached to its socket.
+const { socket } = req;
 expect(socket._httpMessage).toBe(req);
 socket.destroy();

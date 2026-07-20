@@ -1,0 +1,25 @@
+[package]
+name = "bun_spawn_sys"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bstr.workspace = true
+libc.workspace = true
+scopeguard.workspace = true
+bun_analytics.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+bun_windows_sys.workspace = true  # tier-0 no_std leaf; unconditional like bun_sys/bun_core do — keeps IoCounters alias valid on non-Windows so the flat re-exports at lib.rs:173 and spawn/process.rs:66 stay un-cfg'd
+enumset.workspace = true
+strum.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys.workspace = true

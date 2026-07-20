@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, realpathSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1081,6 +1081,31 @@ it("Missing DB throws SQLITE_CANTOPEN", () => {
   }
 });
 
+it.each([
+  ["query().get() with a syntax error", db => db.query("selecx 1").get()],
+  ["query().all() with an unknown table", db => db.query("SELECT * FROM not_a_table").all()],
+  ["query().all() with an unknown column", db => db.query("SELECT not_a_column FROM foo").all()],
+  ["run() with a syntax error", db => db.run("selecx 1")],
+  ["exec() with a syntax error", db => db.exec("selecx 1")],
+  ["prepare() with a syntax error", db => db.prepare("selecx 1")],
+])("generic errors set code to SQLITE_ERROR: %s", (label, fn) => {
+  using db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY)");
+
+  let error;
+  try {
+    fn(db);
+  } catch (e) {
+    error = e;
+  }
+
+  expect(error).toBeInstanceOf(SQLiteError);
+  expect({ code: error.code, errno: error.errno }).toEqual({
+    code: "SQLITE_ERROR",
+    errno: 1,
+  });
+});
+
 it("empty blob", () => {
   const db = new Database(":memory:");
   db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB)");
@@ -1493,4 +1518,620 @@ it("#13082", async () => {
   }
 
   await Promise.allSettled(runs);
+});
+
+// The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to
+// perform an off-by-one bounds check on the database handle (`>` instead of
+// `>=`), so a handle equal to databases().size() skipped the early-return and
+// indexed past the end of the WTF::Vector, crashing the process instead of
+// throwing a catchable error.
+it("internal SQL helpers reject out-of-range database handles", async () => {
+  const src = `
+    const { SQL } = require("bun:internal-for-testing");
+    const ctor = SQL[0];
+    const tuple = SQL[1];
+
+    // No databases have been opened, so databases().size() === 0 and handle 0
+    // is out of range. Each call must throw "Invalid database handle" rather
+    // than fall through to databases()[0] and crash.
+    const results = [];
+    for (const [name, fn] of [
+      ["isInTransaction", () => ctor.isInTransaction(0)],
+      ["prepare", () => ctor.prepare(0, "SELECT 1", undefined, 0, 0)],
+      ["run", () => ctor.run(0, 0, tuple, "SELECT 1")],
+    ]) {
+      try {
+        fn();
+        results.push(name + ": no throw");
+      } catch (e) {
+        results.push(name + ": " + e.message);
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([
+      "isInTransaction: Invalid database handle",
+      "prepare: Invalid database handle",
+      "run: Invalid database handle",
+    ]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Property getters on a bindings object run arbitrary JS in the middle of the
+// bind loop. A getter for a later parameter must not be able to (1) change the
+// bytes sqlite stores for an earlier blob parameter by mutating/detaching its
+// ArrayBuffer after it was bound, or (2) keep the bind/step loop running on a
+// statement it just finalized. Run in a subprocess because the unsafe variant
+// of (2) operates on a freed sqlite3_stmt.
+it("binds blob parameters by copy and rejects statements finalized while binding", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    // 1. The getter for $b mutates and detaches the buffer that was already
+    //    bound for $a. The stored blob must be the bytes as they were at bind
+    //    time, not whatever the buffer's memory holds when the query runs.
+    {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a BLOB, b INT)");
+      const ab = new ArrayBuffer(256);
+      const u8 = new Uint8Array(ab);
+      u8.fill(0xab);
+      db.run("INSERT INTO t VALUES ($a, $b)", {
+        get $a() {
+          return u8;
+        },
+        get $b() {
+          u8.fill(0xee);
+          ab.transfer();
+          return 1;
+        },
+      });
+      const row = db.query("SELECT a, b FROM t").get();
+      out.blobLength = row.a.length;
+      out.blobIsOriginal = row.a.every(byte => byte === 0xab);
+      out.b = row.b;
+      db.close();
+    }
+
+    // 2. A getter that finalizes the statement whose parameters are being
+    //    bound must result in an error, not continued use of the statement.
+    {
+      const db = new Database(":memory:");
+      const q = db.query("SELECT $x AS x");
+      let message = "did not throw";
+      try {
+        q.get({
+          get $x() {
+            q.finalize();
+            return 1;
+          },
+        });
+      } catch (e) {
+        message = e.message;
+      }
+      out.finalizeDuringBind = message;
+      out.dbStillWorks = db.query("SELECT 123 AS y").get().y;
+      db.close();
+    }
+
+    // 3. Plain blob binding still round-trips.
+    {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a BLOB)");
+      db.run("INSERT INTO t VALUES ($a)", { $a: new Uint8Array([1, 2, 3]) });
+      out.plainBlob = Array.from(db.query("SELECT a FROM t").get().a);
+      db.close();
+    }
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      blobLength: 256,
+      blobIsOriginal: true,
+      b: 1,
+      finalizeDuringBind: "Statement has finalized",
+      dbStillWorks: 123,
+      plainBlob: [1, 2, 3],
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Pushing a result row into the output array can re-enter JavaScript when an
+// indexed accessor is installed on Array.prototype. If that JS finalizes the
+// statement being iterated, the row-collection loop must stop with an error
+// instead of stepping the freed sqlite3_stmt. Run in a subprocess because the
+// unsafe variant operates on freed memory and because installing an indexed
+// accessor on Array.prototype affects every array in the process.
+it("all() reports an error when a result-row push finalizes the statement", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.run("INSERT INTO t VALUES (1), (2), (3)");
+
+    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
+    Object.defineProperty(Array.prototype, 0, {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+      set(_row) {
+        stmt.finalize();
+      },
+    });
+
+    let message = "did not throw";
+    try {
+      stmt.all();
+    } catch (e) {
+      message = e.message;
+    }
+    out.finalizeDuringAll = message;
+
+    // Remove the accessor; result collection must still work afterwards.
+    delete Array.prototype[0];
+    out.rows = db.query("SELECT a FROM t ORDER BY a DESC").all();
+    db.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      finalizeDuringAll: "Statement has finalized",
+      rows: [{ a: 3 }, { a: 2 }, { a: 1 }],
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Binding an ArrayStorage-backed sparse array whose public length exceeds the
+// number of slots in its backing vector must not read JSValues from beyond the
+// vector. Holes fall back to the slow indexed lookup and bind as NULL. Run in
+// a subprocess because the unsafe variant reads out-of-bounds heap memory.
+it("binds sparse array holes as NULL instead of reading past the backing store", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+    const db = new Database(":memory:");
+
+    // defineProperty with non-default attributes followed by growing .length
+    // forces the array into ArrayStorage with a public length (3) larger than
+    // the number of elements actually stored in the butterfly vector.
+    const params = [];
+    Object.defineProperty(params, 0, {
+      value: 1,
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    params.length = 3;
+
+    out.sparse = db.query("SELECT ?1 AS a, ?2 AS b, ?3 AS c").get(params);
+
+    // A plain dense array still binds positionally.
+    out.dense = db.query("SELECT ?1 AS a, ?2 AS b, ?3 AS c").get([4, 5, 6]);
+    db.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      sparse: { a: 1, b: null, c: null },
+      dense: { a: 4, b: 5, c: 6 },
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+it("run() reports a closed database when a bound parameter's getter closes it", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t (a TEXT, b TEXT)");
+
+    let message = "did not throw";
+    try {
+      db.run("INSERT INTO t (a, b) VALUES ($a, $b)", {
+        get $a() {
+          db.close();
+          return "x";
+        },
+        get $b() {
+          return "y";
+        },
+      });
+    } catch (e) {
+      message = e.message;
+    }
+    out.closeDuringBind = message;
+
+    const db2 = new Database(":memory:");
+    db2.run("CREATE TABLE t (a TEXT, b TEXT)");
+    db2.run("INSERT INTO t (a, b) VALUES ($a, $b)", { $a: "x", $b: "y" });
+    out.plain = db2.query("SELECT a, b FROM t").get();
+    db2.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+    stdout: JSON.stringify({
+      closeDuringBind: "Database has closed",
+      plain: { a: "x", b: "y" },
+    }),
+    exitCode: 0,
+  });
+});
+
+// Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
+// a full pointer or int64 through the result argument, so the result buffer
+// must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
+// as-is and overflowed.
+it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
+  const dir = tempDirWithFiles("sqlite-fcntl-bounds", { "empty.txt": "" });
+  const db = new Database(path.join(dir, "my.db"));
+
+  expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
+    "TypedArray must be at least 8 bytes",
+  );
+  expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(7))).toThrow(
+    "TypedArray must be at least 8 bytes",
+  );
+
+  // 8-byte buffers and plain numbers still work.
+  expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(8))).toBe(0);
+  expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)).toBe(0);
+  // Pointer-returning opcodes get an 8-byte output slot even when JS passes a
+  // plain number for the result argument.
+  expect(db.fileControl(constants.SQLITE_FCNTL_VFSNAME, 0)).toBe(0);
+
+  db.close();
+});
+
+it("decodes non-UTF-8 TEXT leniently and consistently across the 64-byte boundary", () => {
+  const db = new Database(":memory:");
+  const q = bytes => db.query(`SELECT CAST(x'${Buffer.from(bytes).toString("hex")}' AS TEXT) t`);
+
+  // Short non-UTF-8 TEXT (4 bytes, Latin-1 "José") used to be silently dropped to "".
+  // It must now decode leniently with U+FFFD, matching node:sqlite.
+  const stmt = q([0x4a, 0x6f, 0x73, 0xe9]);
+  expect(stmt.get().t).toBe("Jos�");
+  expect(stmt.all()).toEqual([{ t: "Jos�" }]);
+  expect(stmt.values()).toEqual([["Jos�"]]);
+
+  // The decoder previously switched implementations at len === 64. Verify the
+  // same invalid trailing byte yields the same replacement on both sides of
+  // that boundary so there is no length-dependent discontinuity.
+  for (const n of [1, 4, 32, 63, 64, 65, 100]) {
+    const bytes = Buffer.alloc(n, 0x61);
+    bytes[n - 1] = 0xe9;
+    expect(q(bytes).get().t).toBe(Buffer.alloc(n - 1, "a").toString() + "�");
+  }
+
+  // Valid UTF-8 short strings are unaffected.
+  expect(q(Buffer.from("héllo")).get().t).toBe("héllo");
+  expect(q(Buffer.from("👋")).get().t).toBe("👋");
+
+  db.close();
+});
+
+it("decodes non-UTF-8 column names leniently instead of dropping the column", () => {
+  // SQLite does not validate UTF-8 in identifiers, so a database created by an
+  // external tool can have a column name containing raw non-UTF-8 bytes. The
+  // column-name decoder used strict fromUTF8, which returns a null string on any
+  // invalid byte; two such names then both collapsed to "" and collided, silently
+  // dropping one column from every row (and tripping a null-AtomString assertion
+  // in debug builds). Decode leniently to U+FFFD instead.
+  const file = tmpbase + `sqlite-badcols-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+
+  const setup = new Database(file, { create: true });
+  // Distinctive, same-length ASCII names so we can binary-patch them in place.
+  setup.run(`CREATE TABLE t ("Xaa" INTEGER, "Ybb" INTEGER)`);
+  setup.run("INSERT INTO t VALUES (1, 2)");
+  setup.close();
+
+  // Replace the ASCII names inside the stored CREATE TABLE text with the same
+  // length but different invalid lead bytes (0xE9, 0xFF) so the two names decode
+  // to distinct replacement strings and must not collide.
+  const buf = readFileSync(file);
+  const patch = (find, replacement) => {
+    const at = buf.indexOf(Buffer.from(find, "latin1"));
+    expect(at).toBeGreaterThanOrEqual(0);
+    Buffer.from(replacement).copy(buf, at);
+  };
+  patch('"Xaa"', [0x22, 0x58, 0xe9, 0x61, 0x22]); // "X\xe9a"
+  patch('"Ybb"', [0x22, 0x59, 0xff, 0x62, 0x22]); // "Y\xffb"
+  writeFileSync(file, buf);
+
+  const db = new Database(file);
+  const q = db.query("SELECT * FROM t");
+  const row = q.get();
+
+  // Both columns survive with distinct, leniently-decoded names; no data is lost.
+  expect(q.columnNames).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
+  expect(row).toEqual({ "X\uFFFDa": 1, "Y\uFFFDb": 2 });
+
+  db.close();
+});
+
+it("expands bound non-UTF-8 values in Statement#toString instead of returning an empty string", () => {
+  const db = new Database(":memory:");
+  const stmt = db.prepare("SELECT ? AS x");
+
+  // A lone surrogate binds via sqlite3_bind_text16 and is stored by SQLite as
+  // invalid UTF-8. sqlite3_expanded_sql() then returns those bytes, which the
+  // strict decoder turned into a null string -> the whole toString() became "".
+  stmt.get("\uD800");
+  expect(String(stmt)).toBe("SELECT '\uFFFD\uFFFD\uFFFD' AS x");
+
+  // Valid values still round-trip.
+  stmt.get("ok");
+  expect(String(stmt)).toBe("SELECT 'ok' AS x");
+
+  db.close();
+});
+
+it("decodes declared types leniently and accepts single-character declared types", () => {
+  // A single-character declared type is valid SQLite but tripped a length>1 assert
+  // (jsNontrivialString). A non-UTF-8 declared type from an externally-created DB
+  // decoded to a null string and then null-dereferenced. Both must work now.
+  const mem = new Database(":memory:");
+  mem.run(`CREATE TABLE t (a "X", b "INTEGER")`);
+  const s0 = mem.query("SELECT a, b FROM t");
+  s0.all();
+  expect(s0.declaredTypes).toEqual(["X", "INTEGER"]);
+  mem.close();
+
+  // Non-UTF-8 declared type: patch "INTQGER" -> "INT\xe9GER" in the stored schema.
+  const file = tmpbase + `sqlite-decltype-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+  const setup = new Database(file, { create: true });
+  setup.run(`CREATE TABLE t (a "INTQGER")`);
+  setup.run("INSERT INTO t VALUES (5)");
+  setup.close();
+
+  const buf = readFileSync(file);
+  const at = buf.indexOf(Buffer.from("INTQGER", "latin1"));
+  expect(at).toBeGreaterThanOrEqual(0);
+  buf[at + 3] = 0xe9; // the "Q" -> 0xe9
+  writeFileSync(file, buf);
+
+  const db = new Database(file);
+  const s = db.query("SELECT a FROM t");
+  s.all();
+  expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
+  db.close();
+});
+
+// The process-global SQLite database registry is shared by every Worker
+// thread. Concurrent opens, prepares, serialize/deserialize, and closes from
+// several Workers must not corrupt the registry while its backing storage
+// grows. Run in a subprocess so a crash shows up as a non-zero exit code
+// instead of taking down the test runner.
+it("keeps database handles working when many Workers open databases concurrently", async () => {
+  const dir = tempDirWithFiles("sqlite-worker-registry", {
+    "main.js": `
+      import { Database } from "bun:sqlite";
+
+      const WORKER_COUNT = 4;
+      const workerUrl = new URL("./worker.js", import.meta.url).href;
+
+      const results = await Promise.all(
+        Array.from({ length: WORKER_COUNT }, () => {
+          return new Promise((resolve, reject) => {
+            const worker = new Worker(workerUrl);
+            worker.onmessage = event => {
+              resolve(event.data);
+              worker.terminate();
+            };
+            worker.onerror = event => {
+              reject(new Error(event.message ?? "worker error"));
+              worker.terminate();
+            };
+          });
+        }),
+      );
+
+      // The main thread's own database still works after the Workers churned
+      // the shared registry.
+      const db = new Database(":memory:");
+      db.exec("CREATE TABLE t (a INTEGER)");
+      db.run("INSERT INTO t VALUES (42)");
+      const main = db.query("SELECT a FROM t").get().a;
+      db.close();
+
+      console.log(JSON.stringify({ workers: results, main }));
+    `,
+    "worker.js": `
+      import { Database } from "bun:sqlite";
+
+      const ROUNDS = 12;
+      const DBS_PER_ROUND = 8;
+      const ROWS = 4;
+
+      let total = 0;
+      for (let round = 0; round < ROUNDS; round++) {
+        const dbs = [];
+        for (let i = 0; i < DBS_PER_ROUND; i++) {
+          const db = new Database(":memory:");
+          db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
+          const insert = db.query("INSERT INTO t (a, b) VALUES (?1, ?2)");
+          for (let j = 0; j < ROWS; j++) insert.run(j, "row" + j);
+          total += db.query("SELECT count(*) AS n FROM t").get().n;
+
+          // serialize() and deserialize() index into / append to the same
+          // process-wide registry as open().
+          const restored = Database.deserialize(db.serialize());
+          total += restored.query("SELECT count(*) AS n FROM t").get().n;
+          restored.close();
+
+          dbs.push(db);
+        }
+        for (const db of dbs) db.close();
+      }
+
+      const expected = ROUNDS * DBS_PER_ROUND * ROWS * 2;
+      postMessage(total === expected ? "ok" : "bad total: " + total + " expected " + expected);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ workers: ["ok", "ok", "ok", "ok"], main: 42 }),
+    stderr: "",
+    exitCode: 0,
+  });
+}, 30000);
+
+it("exit-time WAL checkpoint runs even with a never-finalized prepared statement", async () => {
+  // Sibling of the node:sqlite test. With un-finalized statements, close_v2
+  // zombifies the connection and defers the WAL checkpoint to a finalize
+  // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
+  // checkpoints explicitly first.
+  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require('bun:sqlite');
+       const db = new Database('exit.db');
+       db.exec('PRAGMA journal_mode = WAL');
+       db.exec('CREATE TABLE t (x INTEGER)');
+       const stmt = db.prepare('INSERT INTO t VALUES (?)');
+       stmt.run(42);
+       // stmt stays referenced and is never finalized; db is never closed.
+       console.log(require('node:fs').statSync('exit.db-wal').size > 0);`,
+    ],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("true\n");
+  const wal = path.join(dir, "exit.db-wal");
+  // TRUNCATE moved every frame into exit.db (or the sidecar was unlinked
+  // by a full close). Either way, no un-checkpointed data is stranded.
+  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
+  const verify = new Database(path.join(dir, "exit.db"));
+  expect(verify.query("SELECT x FROM t").get().x).toBe(42);
+  verify.close();
+  expect(exitCode).toBe(0);
+});
+
+// sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
+// multi-statement loop used to re-prepare the same empty statement forever
+// once the head reached a NUL, pinning the event loop at 100% CPU.
+it("exec/run with an embedded NUL byte in the SQL string does not hang", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const db = new Database(":memory:");
+    const results = [];
+    const cases = [
+      ["lone", () => db.exec("\\0")],
+      ["trailing", () => db.exec("select 1\\0")],
+      ["leading", () => db.exec("\\0select 1")],
+      ["mid", () => db.exec("select 1\\0; select 2")],
+      ["run", () => db.run("select ?\\0x", [1])],
+    ];
+    for (const [name, fn] of cases) {
+      try {
+        fn();
+        results.push(name + ": ok");
+      } catch (e) {
+        results.push(name + ": " + e.message);
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: before the fix, the first case spun forever at 100% CPU.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const empty = "Query contained no valid SQL statement; likely empty query.";
+  expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: JSON.stringify(["lone: " + empty, "trailing: ok", "leading: " + empty, "mid: ok", "run: ok"]),
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
 });

@@ -11,7 +11,7 @@ function translatePeerCertificate(c) {
   }
   if (c.infoAccess != null) {
     const info = c.infoAccess;
-    c.infoAccess = Object.create(null);
+    const parsed = (c.infoAccess = Object.create(null));
 
     // XXX: More key validation?
     info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all, key, val) => {
@@ -23,8 +23,8 @@ function translatePeerCertificate(c) {
         // so this should never throw.
         val = JSON.parse(val);
       }
-      if (key in c.infoAccess) c.infoAccess[key].push(val);
-      else c.infoAccess[key] = [val];
+      if (key in parsed) parsed[key].push(val);
+      else parsed[key] = [val];
     });
   }
   return c;

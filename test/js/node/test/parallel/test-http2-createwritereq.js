@@ -23,7 +23,7 @@ const encodings = {
   'ucs2': 'ucs2',
   'ucs-2': 'ucs2',
   'utf16le': 'ucs2',
-  // 'utf-16le': 'ucs2',
+  'utf-16le': 'ucs2',
   'UTF8': 'utf8' // Should fall through to Buffer.from
 };
 
@@ -42,7 +42,7 @@ const server = http2.createServer(common.mustCall((req, res) => {
 
 server.listen(0, common.mustCall(function() {
   Object.keys(encodings).forEach((writeEncoding) => {
-    const client = http2.connect(`http://127.0.0.1:${this.address().port}`);
+    const client = http2.connect(`http://localhost:${this.address().port}`);
     const req = client.request({
       ':path': `/${writeEncoding}`,
       ':method': 'POST'

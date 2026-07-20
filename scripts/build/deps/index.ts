@@ -18,9 +18,14 @@ import { hdrhistogram } from "./hdrhistogram.ts";
 import { highway } from "./highway.ts";
 import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
+import { libjpegTurbo } from "./libjpeg-turbo.ts";
+import { libspng } from "./libspng.ts";
 import { libuv } from "./libuv.ts";
+import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
+import { lsqpack } from "./lsqpack.ts";
+import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
@@ -47,16 +52,25 @@ export const allDeps: readonly Dependency[] = [
   brotli,
   libdeflate,
   libarchive,
+  // Image codecs — libspng has fetchDeps:["zlib"], so after zlib.
+  libjpegTurbo,
+  libspng,
+  libwebp,
   cares,
   hdrhistogram,
   highway,
   libuv,
   lolhtml,
   lshpack,
+  lsqpack,
   mimalloc,
   sqlite,
   tinycc,
   boringssl,
+  // lsquic after boringssl: needs ssl.h at compile time (fetchDeps), and as
+  // a DirectBuild dep its .o files go straight on the link line so static
+  // link order doesn't apply.
+  lsquic,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
@@ -71,9 +85,14 @@ export {
   highway,
   libarchive,
   libdeflate,
+  libjpegTurbo,
+  libspng,
   libuv,
+  libwebp,
   lolhtml,
   lshpack,
+  lsqpack,
+  lsquic,
   mimalloc,
   nodejsHeaders,
   picohttpparser,

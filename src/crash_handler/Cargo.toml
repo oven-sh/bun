@@ -1,0 +1,40 @@
+[package]
+name = "bun_crash_handler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_errno.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_analytics.workspace = true
+bun_base64.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_dispatch.workspace = true
+bun_collections.workspace = true
+bun_io.workspace = true
+bun_options_types.workspace = true
+bun_ast.workspace = true
+bun_paths.workspace = true
+bun_ptr.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_which.workspace = true
+bun_zlib.workspace = true
+
+[features]
+show_crash_trace = []

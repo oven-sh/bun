@@ -21,7 +21,7 @@ declare module "bun" {
   type ServerWebSocketSendStatus = number;
 
   /**
-   * A state that represents if a WebSocket is connected.
+   * The connection state of a WebSocket.
    *
    * - `WebSocket.CONNECTING` is `0`, the connection is pending.
    * - `WebSocket.OPEN` is `1`, the connection is established and `send()` is possible.
@@ -37,11 +37,11 @@ declare module "bun" {
    *
    * Features:
    * - **Message compression** - Messages can be compressed
-   * - **Backpressure** - If the client is not ready to receive data, the server will tell you.
-   * - **Dropped messages** - If the client cannot receive data, the server will tell you.
+   * - **Backpressure** - `send()` reports when the client is not ready to receive data.
+   * - **Dropped messages** - `send()` reports when the client cannot receive data.
    * - **Topics** - Messages can be {@link ServerWebSocket.publish}ed to a specific topic and the client can {@link ServerWebSocket.subscribe} to topics
    *
-   * This is slightly different than the browser {@link WebSocket} which Bun supports for clients.
+   * This differs slightly from the browser {@link WebSocket}, which Bun supports for clients.
    *
    * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
    *
@@ -68,11 +68,13 @@ declare module "bun" {
      * Sends a message to the client.
      *
      * @param data The data to send.
-     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @param compress Whether to compress the data. Ignored if the client does not support compression
      * @example
+     * ```ts
      * ws.send("Hello!");
      * ws.send("Compress this.", true);
      * ws.send(new Uint8Array([1, 2, 3, 4]));
+     * ```
      */
     send(data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
@@ -80,10 +82,12 @@ declare module "bun" {
      * Sends a text message to the client.
      *
      * @param data The data to send.
-     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @param compress Whether to compress the data. Ignored if the client does not support compression
      * @example
+     * ```ts
      * ws.send("Hello!");
      * ws.send("Compress this.", true);
+     * ```
      */
     sendText(data: string, compress?: boolean): ServerWebSocketSendStatus;
 
@@ -91,23 +95,25 @@ declare module "bun" {
      * Sends a binary message to the client.
      *
      * @param data The data to send.
-     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @param compress Whether to compress the data. Ignored if the client does not support compression
      * @example
+     * ```ts
      * ws.send(new TextEncoder().encode("Hello!"));
      * ws.send(new Uint8Array([1, 2, 3, 4]), true);
+     * ```
      */
     sendBinary(data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Closes the connection.
      *
-     * Here is a list of close codes:
+     * Close codes:
      * - `1000` means "normal closure" **(default)**
      * - `1009` means a message was too big and was rejected
      * - `1011` means the server encountered an error
      * - `1012` means the server is restarting
      * - `1013` means the server is too busy or the client is rate-limited
-     * - `4000` through `4999` are reserved for applications (you can use it!)
+     * - `4000` through `4999` are reserved for applications
      *
      * To close the connection abruptly, use `terminate()`.
      *
@@ -117,9 +123,9 @@ declare module "bun" {
     close(code?: number, reason?: string): void;
 
     /**
-     * Abruptly close the connection.
+     * Closes the connection abruptly.
      *
-     * To gracefully close the connection, use `close()`.
+     * To close the connection gracefully, use `close()`.
      */
     terminate(): void;
 
@@ -142,11 +148,13 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @param compress Whether to compress the data. Ignored if the client does not support compression
      * @example
+     * ```ts
      * ws.publish("chat", "Hello!");
      * ws.publish("chat", "Compress this.", true);
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
+     * ```
      */
     publish(topic: string, data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
@@ -155,10 +163,12 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @param compress Whether to compress the data. Ignored if the client does not support compression
      * @example
+     * ```ts
      * ws.publish("chat", "Hello!");
      * ws.publish("chat", "Compress this.", true);
+     * ```
      */
     publishText(topic: string, data: string, compress?: boolean): ServerWebSocketSendStatus;
 
@@ -167,10 +177,12 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @param compress Whether to compress the data. Ignored if the client does not support compression
      * @example
+     * ```ts
      * ws.publish("chat", new TextEncoder().encode("Hello!"));
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
+     * ```
      */
     publishBinary(topic: string, data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
@@ -179,26 +191,32 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @example
+     * ```ts
      * ws.subscribe("chat");
+     * ```
      */
     subscribe(topic: string): void;
 
     /**
-     * Unsubscribes a client to the topic.
+     * Unsubscribes a client from the topic.
      *
      * @param topic The topic name.
      * @example
+     * ```ts
      * ws.unsubscribe("chat");
+     * ```
      */
     unsubscribe(topic: string): void;
 
     /**
-     * Is the client subscribed to a topic?
+     * Returns whether the client is subscribed to the topic.
      *
      * @param topic The topic name.
      * @example
+     * ```ts
      * ws.subscribe("chat");
      * console.log(ws.isSubscribed("chat")); // true
+     * ```
      */
     isSubscribed(topic: string): boolean;
 
@@ -206,9 +224,11 @@ declare module "bun" {
      * Returns an array of all topics the client is currently subscribed to.
      *
      * @example
+     * ```ts
      * ws.subscribe("chat");
      * ws.subscribe("notifications");
      * console.log(ws.subscriptions); // ["chat", "notifications"]
+     * ```
      */
     readonly subscriptions: string[];
 
@@ -221,11 +241,13 @@ declare module "bun" {
      *
      * @param callback The callback to run.
      * @example
+     * ```ts
      * ws.cork((ctx) => {
      *   ctx.send("These messages");
      *   ctx.sendText("are sent");
      *   ctx.sendBinary(new TextEncoder().encode("together!"));
      * });
+     * ```
      */
     cork<T = unknown>(callback: (ws: ServerWebSocket<T>) => T): T;
 
@@ -233,7 +255,9 @@ declare module "bun" {
      * The IP address of the client.
      *
      * @example
+     * ```ts
      * console.log(socket.remoteAddress); // "127.0.0.1"
+     * ```
      */
     readonly remoteAddress: string;
 
@@ -246,7 +270,9 @@ declare module "bun" {
      * - if `3`, the client is closed.
      *
      * @example
+     * ```ts
      * console.log(socket.readyState); // 1
+     * ```
      */
     readonly readyState: WebSocketReadyState;
 
@@ -258,18 +284,21 @@ declare module "bun" {
      * - if `uint8array`, binary data is returned as `Uint8Array` objects.
      *
      * @example
+     * ```ts
      * let ws: WebSocket;
      * ws.binaryType = "uint8array";
      * ws.addEventListener("message", ({ data }) => {
      *   console.log(data instanceof Uint8Array); // true
      * });
+     * ```
      */
     binaryType?: "nodebuffer" | "arraybuffer" | "uint8array";
 
     /**
-     * Custom data that you can assign to a client, can be read and written at any time.
+     * Custom data you can assign to a client. It can be read and written at any time.
      *
      * @example
+     * ```ts
      * import { serve } from "bun";
      *
      * serve({
@@ -289,6 +318,7 @@ declare module "bun" {
      *     }
      *   }
      * });
+     * ```
      */
     data: T;
 
@@ -312,11 +342,11 @@ declare module "bun" {
     | "256KB";
 
   /**
-   * Create a server-side {@link ServerWebSocket} handler for use with {@link Bun.serve}
+   * Server-side {@link ServerWebSocket} event handlers for {@link Bun.serve}
    *
    * @example
    * ```ts
-   * import { websocket, serve } from "bun";
+   * import { serve } from "bun";
    *
    * serve<{name: string}>({
    *   port: 3000,
@@ -353,8 +383,8 @@ declare module "bun" {
   interface WebSocketHandler<T> {
     /**
      * Specify the type for the {@link ServerWebSocket.data} property on
-     * connecting websocket clients. You can pass this value when you make a
-     * call to {@link Server.upgrade}.
+     * connecting websocket clients. You can pass this value when you call
+     * {@link Server.upgrade}.
      *
      * This pattern exists in Bun due to a [TypeScript limitation (#26242)](https://github.com/microsoft/TypeScript/issues/26242)
      *
@@ -372,7 +402,7 @@ declare module "bun" {
     data?: T;
 
     /**
-     * Called when the server receives an incoming message.
+     * Called when the server receives a message.
      *
      * If the message is not a `string`, its type is based on the value of `binaryType`.
      * - if `nodebuffer`, then the message is a `Buffer`.
@@ -392,8 +422,8 @@ declare module "bun" {
     open?(ws: ServerWebSocket<T>): void | Promise<void>;
 
     /**
-     * Called when a connection was previously under backpressure,
-     * meaning it had too many queued messages, but is now ready to receive more data.
+     * Called when a connection that was under backpressure (too many queued
+     * messages) is ready to receive more data.
      *
      * @param ws The websocket that is ready for more data
      */
@@ -409,7 +439,7 @@ declare module "bun" {
     close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
 
     /**
-     * Called when a ping is sent.
+     * Called when a ping is received.
      *
      * @param ws The websocket that received the ping
      * @param data The data sent with the ping
@@ -419,27 +449,27 @@ declare module "bun" {
     /**
      * Called when a pong is received.
      *
-     * @param ws The websocket that received the ping
-     * @param data The data sent with the ping
+     * @param ws The websocket that received the pong
+     * @param data The data sent with the pong
      */
     pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 
     /**
-     * Sets the maximum size of messages in bytes.
+     * Sets the maximum size of a message, in bytes.
      *
-     * Default is 16 MB, or `1024 * 1024 * 16` in bytes.
+     * @default 1024 * 1024 * 16 // 16 MB
      */
     maxPayloadLength?: number;
 
     /**
      * Sets the maximum number of bytes that can be buffered on a single connection.
      *
-     * Default is 16 MB, or `1024 * 1024 * 16` in bytes.
+     * @default 1024 * 1024 * 16 // 16 MB
      */
     backpressureLimit?: number;
 
     /**
-     * Sets if the connection should be closed if `backpressureLimit` is reached.
+     * Whether to close the connection when `backpressureLimit` is reached.
      *
      * @default false
      */
@@ -454,21 +484,21 @@ declare module "bun" {
     idleTimeout?: number;
 
     /**
-     * Should `ws.publish()` also send a message to `ws` (itself), if it is subscribed?
+     * Whether `ws.publish()` also sends the message to `ws` (itself), if it is subscribed.
      *
      * @default false
      */
     publishToSelf?: boolean;
 
     /**
-     * Should the server automatically send and respond to pings to clients?
+     * Whether the server automatically sends pings to clients and responds to pings.
      *
      * @default true
      */
     sendPings?: boolean;
 
     /**
-     * Sets the compression level for messages, for clients that supports it. By default, compression is disabled.
+     * Sets the compression level for messages, for clients that support it.
      *
      * @default false
      */
@@ -520,7 +550,7 @@ declare module "bun" {
           /**
            * Enable automatic workspace folders for Chrome DevTools
            *
-           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+           * With this enabled, you can persistently edit files in the browser. Bun adds the following route to the server:
            * `/.well-known/appspecific/com.chrome.devtools.json`
            *
            * The response is a JSON object with the following shape:
@@ -534,9 +564,9 @@ declare module "bun" {
            * ```
            *
            * The `root` field is the current working directory of the server.
-           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+           * The `uuid` field is a hash of the file that started the server and a hash of the current working directory.
            *
-           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+           * For security, requests from a remote address other than localhost, 127.0.0.1, or ::1 are ignored.
            * @default true
            */
           chromeDevToolsAutomaticWorkspaceFolders?: boolean;
@@ -590,7 +620,7 @@ declare module "bun" {
       /**
        * Enable websockets with {@link Bun.serve}
        *
-       * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
+       * Upgrade a {@link Request} to a {@link ServerWebSocket} with {@link Server.upgrade}
        *
        * Pass `data` in {@link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
        *
@@ -672,19 +702,19 @@ declare module "bun" {
       tls?: TLSOptions | TLSOptions[];
 
       /**
-       * What is the maximum size of a request body? (in bytes)
+       * The maximum size of a request body, in bytes
        * @default 1024 * 1024 * 128 // 128MB
        */
       maxRequestBodySize?: number;
 
       /**
-       * Render contextual errors? This enables bun's error page
+       * Whether to render contextual errors with Bun's error page
        * @default process.env.NODE_ENV !== 'production'
        */
       development?: Development;
 
       /**
-       * Callback called when an error is thrown during request handling
+       * Called when an error is thrown during request handling
        * @param error The error that was thrown
        * @returns A response to send to the client
        *
@@ -704,20 +734,20 @@ declare module "bun" {
        *
        * **When bun is started with the `--hot` flag**:
        *
-       * This string will be used to hot reload the server without interrupting
-       * pending requests or websockets. If not provided, a value will be
-       * generated. To disable hot reloading, set this value to `null`.
+       * Bun uses this string to hot reload the server without interrupting
+       * pending requests or websockets. If not provided, a value is generated.
+       * To disable hot reloading, set this value to `null`.
        *
        * **When bun is not started with the `--hot` flag**:
        *
-       * This string will currently do nothing. But in the future it could be useful for logs or metrics.
+       * This string has no effect.
        */
       id?: string | null;
     }
 
     interface HostnamePortServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
       /**
-       * What hostname should the server listen on?
+       * The hostname the server listens on
        *
        * @default
        * ```js
@@ -732,12 +762,12 @@ declare module "bun" {
        * "remix.run" // Only listen on remix.run
        * ````
        *
-       * note: hostname should not include a {@link port}
+       * The hostname should not include a {@link port}
        */
       hostname?: "0.0.0.0" | "127.0.0.1" | "localhost" | (string & {});
 
       /**
-       * What port should the server listen on?
+       * The port the server listens on
        * @default process.env.PORT || "3000"
        */
       port?: string | number;
@@ -758,6 +788,21 @@ declare module "bun" {
       ipv6Only?: boolean;
 
       /**
+       * Also listen for HTTP/3 (QUIC) on the same port. Requires {@link tls}.
+       * @default false
+       * @experimental
+       */
+      http3?: boolean;
+
+      /**
+       * Listen for HTTP/1.1 over TCP. Set to `false` together with
+       * `http3: true` to serve HTTP/3 only.
+       * @default true
+       * @experimental
+       */
+      http1?: boolean;
+
+      /**
        * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
        *
@@ -768,15 +813,15 @@ declare module "bun" {
 
     interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
       /**
-       * If set, the HTTP server will listen on a unix socket instead of a port.
+       * If set, the HTTP server listens on a unix socket instead of a port.
        * (Cannot be used with hostname+port)
        */
       unix?: string;
     }
 
     /**
-     * The type of options that can be passed to {@link serve}, with support for
-     * `routes` and a safer requirement for `fetch`
+     * Options for {@link serve}, with support for `routes` and a safer
+     * requirement for `fetch`
      *
      * @example
      * ```ts
@@ -815,7 +860,7 @@ declare module "bun" {
    * That means starting a new server allocates about 500 KB of memory. Try to
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
-   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets).
    */
   interface Server<WebSocketData> extends Disposable {
     /**
@@ -830,9 +875,6 @@ declare module "bun" {
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
-     *
-     * This is useful if you want to change the behavior of your server without
-     * restarting it or for hot reloading.
      *
      * @example
      *
@@ -852,16 +894,16 @@ declare module "bun" {
      * });
      * ```
      *
-     * Passing other options such as `port` or `hostname` won't do anything.
+     * Passing other options such as `port` or `hostname` has no effect.
      */
     reload<R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
 
     /**
      * Mock the fetch handler for a running server.
      *
-     * This feature is not fully implemented yet. It doesn't normalize URLs
-     * consistently in all cases and it doesn't yet call the `error` handler
-     * consistently. This needs to be fixed
+     * This feature is not fully implemented: it doesn't normalize URLs
+     * consistently in all cases and it doesn't always call the `error`
+     * handler.
      */
     fetch(request: Request | string): Response | Promise<Response>;
 
@@ -911,6 +953,7 @@ declare module "bun" {
         ? [
             options?: {
               /**
+               * Send any additional headers while upgrading, like cookies
                */
               headers?: HeadersInit;
 
@@ -952,13 +995,13 @@ declare module "bun" {
     ): boolean;
 
     /**
-     * Send a message to all connected {@link ServerWebSocket} subscribed to a topic
+     * Send a message to all connected {@link ServerWebSocket} clients subscribed to a topic
      *
      * @param topic The topic to publish to
      * @param data The data to send
      * @param compress Should the data be compressed? Ignored if the client does not support compression.
      *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
+     * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
      *
      * @example
      *
@@ -990,10 +1033,10 @@ declare module "bun" {
     /**
      * A count of connections subscribed to a given topic
      *
-     * This operation will loop through each topic internally to get the count.
+     * This loops through each topic internally to get the count.
      *
-     * @param topic the websocket topic to check how many subscribers are connected to
-     * @returns the number of subscribers
+     * @param topic The websocket topic to count subscribers for
+     * @returns The number of subscribers
      */
     subscriberCount(topic: string): number;
 
@@ -1012,7 +1055,7 @@ declare module "bun" {
     requestIP(request: Request): SocketAddress | null;
 
     /**
-     * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
+     * Reset the idle timeout of the given Request to the given number of seconds. `0` means no timeout.
      *
      * @example
      * ```js
@@ -1032,7 +1075,7 @@ declare module "bun" {
      *
      * If the Server has already been stopped, this does nothing.
      *
-     * If {@link Server.ref} is called multiple times, this does nothing. Think of it as a boolean toggle.
+     * If {@link Server.ref} is called multiple times, this does nothing.
      */
     ref(): void;
 
@@ -1047,12 +1090,12 @@ declare module "bun" {
     unref(): void;
 
     /**
-     * How many requests are in-flight right now?
+     * The number of in-flight requests
      */
     readonly pendingRequests: number;
 
     /**
-     * How many {@link ServerWebSocket}s are in-flight right now?
+     * The number of in-flight {@link ServerWebSocket}s
      */
     readonly pendingWebSockets: number;
 
@@ -1061,7 +1104,7 @@ declare module "bun" {
     /**
      * The port the server is listening on.
      *
-     * This will be undefined when the server is listening on a unix socket.
+     * This is `undefined` when the server is listening on a unix socket.
      *
      * @example
      * ```js
@@ -1073,7 +1116,7 @@ declare module "bun" {
     /**
      * The hostname the server is listening on. Does not include the port.
      *
-     * This will be `undefined` when the server is listening on a unix socket.
+     * This is `undefined` when the server is listening on a unix socket.
      *
      * @example
      * ```js
@@ -1092,12 +1135,11 @@ declare module "bun" {
     readonly protocol: "http" | "https" | null;
 
     /**
-     * Is the server running in development mode?
+     * Whether the server is running in development mode.
      *
      * In development mode, `Bun.serve()` returns rendered error messages with
-     * stack traces instead of a generic 500 error. This makes debugging easier,
-     * but development mode shouldn't be used in production or you will risk
-     * leaking sensitive information.
+     * stack traces instead of a generic 500 error. Don't use development mode
+     * in production: it risks leaking sensitive information.
      */
     readonly development: boolean;
 
@@ -1106,15 +1148,15 @@ declare module "bun" {
      *
      * When bun is started with the `--hot` flag, this ID is used to hot reload the server without interrupting pending requests or websockets.
      *
-     * When bun is not started with the `--hot` flag, this ID is currently unused.
+     * When bun is not started with the `--hot` flag, this ID is unused.
      */
     readonly id: string;
   }
 
   /**
-   * Bun.serve provides a high-performance HTTP server with built-in routing support.
-   * It enables both function-based and object-based route handlers with type-safe
-   * parameters and method-specific handling.
+   * Bun.serve starts a high-performance HTTP server with built-in routing.
+   * Routes can be static responses, handler functions, or per-method handler
+   * objects, with type-safe path parameters.
    *
    * @param options Server configuration options
    *

@@ -6,8 +6,9 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -53,6 +54,7 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
+const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -113,6 +115,24 @@ describe("bunshell", () => {
     runTest("Date", TestBuilder.command`echo hello ${new Date()}`.stdout(`hello ${new Date().toString()}\n`));
     runTest("BigInt", TestBuilder.command`echo ${BigInt((2 ^ 52) - 1)}`.stdout(`${BigInt((2 ^ 52) - 1)}\n`));
     runTest("Array", TestBuilder.command`echo ${[1, 2, 3]}`.stdout(`1 2 3\n`));
+
+    test("flattens nested template arrays up to the depth limit", async () => {
+      let nested: any = "x";
+      for (let i = 0; i < 100; i++) nested = [nested];
+      const { stdout } = await $`echo ${nested}`;
+      expect(stdout.toString()).toEqual("x\n");
+      expect(() => $`echo ${[nested]}`).toThrow(
+        "Shell script template arrays cannot be nested more than 100 levels deep",
+      );
+    });
+
+    test("rejects template arrays nested past the depth limit", () => {
+      let nested: any = "x";
+      for (let i = 0; i < 101; i++) nested = [nested];
+      expect(() => $`echo ${nested}`).toThrow(
+        "Shell script template arrays cannot be nested more than 100 levels deep",
+      );
+    });
   });
 
   describe("escape", async () => {
@@ -135,6 +155,59 @@ describe("bunshell", () => {
     escapeTest("lmao=✔", '"lmao=✔"');
     escapeTest("元気かい、兄弟", "元気かい、兄弟");
     escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
+    // Strings made only of U+0000-U+00FF code points use JSC's 8-bit (Latin-1)
+    // storage; quoting must re-encode those code units to UTF-8, not copy the
+    // raw bytes, or every one of them becomes U+FFFD.
+    escapeTest("é");
+    escapeTest("é;", '"é;"');
+    escapeTest("ü;id", '"ü;id"');
+    escapeTest("café && ok", '"café && ok"');
+    escapeTest("\u0080;\u00ff", '"\u0080;\u00ff"');
+
+    test.each(["é;", "ü;id", "café && ok", "\u0080;\u00ff"])(
+      "latin-1 value %p survives $.escape + {raw:} round trip",
+      async value => {
+        const escaped = $.escape(value);
+        expect(escaped).not.toInclude("\uFFFD");
+        const { stdout } = await $`echo ${{ raw: escaped }}`;
+        expect(stdout.toString()).toEqual(`${value}\n`);
+      },
+    );
+
+    test("$.escape of an empty string is an empty shell word", async () => {
+      expect($.escape("")).toBe('""');
+      // `{ raw: $.escape(v) }` must contribute exactly one argv entry, even for "".
+      const { stdout } = await $`echo a ${{ raw: $.escape("") }} b`;
+      expect(stdout.toString()).toEqual("a  b\n");
+    });
+
+    test("quotes values containing a tab, carriage return, or question mark", async () => {
+      expect($.escape("a\tb")).toEqual('"a\tb"');
+      expect($.escape("a\rb")).toEqual('"a\rb"');
+      expect($.escape("a?b")).toEqual('"a?b"');
+      const { stdout } = await $`echo ${"a\tb"} ${"a?b"}`;
+      expect(stdout.toString()).toEqual("a\tb a?b\n");
+    });
+
+    test("escaped values containing interpolation marker bytes stay literal data", async () => {
+      // Interpolated values that need escaping are stored out-of-band and
+      // referenced from the script source via an internal `\x08__bunstr_N`
+      // marker. A value passed through $.escape() and embedded with `{raw:}`
+      // must never be re-interpreted as one of those references, otherwise it
+      // would be replaced with a *different* interpolation's value.
+      const secret = "name=top-secret-value";
+      const hostile = "\x08__bunstr_0";
+      const escaped = $.escape(hostile);
+      // The escaped form must not contain the bare marker prefix the lexer resolves.
+      expect(escaped).not.toContain("\x08__bunstr_");
+
+      const { stdout } = await $`echo ${{ raw: escaped }} ${secret}`;
+      expect(stdout.toString()).toEqual(`${hostile} ${secret}\n`);
+
+      // A normal value still round-trips through $.escape() + {raw:}.
+      const { stdout: ok } = await $`echo ${{ raw: $.escape("hello world") }}`;
+      expect(ok.toString()).toEqual("hello world\n");
+    });
 
     describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";
@@ -369,6 +442,14 @@ describe("bunshell", () => {
       TestBuilder.command`echo ${" à"}`.stdout(" à\n").runAsTest("latin-1 character preceded by space");
       TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").runAsTest("multiple latin-1 characters");
       TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').runAsTest("latin-1 characters in quotes");
+      // An ASCII run before the first non-ASCII code unit must not be emitted
+      // twice. This shape (ASCII prefix + Latin-1 + no shell metacharacters)
+      // takes the no-escape append_latin1_impl path, unlike every case above.
+      TestBuilder.command`echo ${"café"}`.stdout("café\n").runAsTest("ascii prefix before a latin-1 character");
+      TestBuilder.command`echo ${"résumé"}`.stdout("résumé\n").runAsTest("interleaved ascii and latin-1 runs");
+      TestBuilder.command`echo ${{ raw: "café" }}`
+        .stdout("café\n")
+        .runAsTest("ascii prefix before a latin-1 character via raw");
     });
   });
 
@@ -466,6 +547,32 @@ describe("bunshell", () => {
       TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~ && echo ~/Documents`
         .stdout("lmao\nlmao/Documents\n")
         .runAsTest("2");
+    });
+
+    describe("with command substitution", async () => {
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo bin)/subdir`
+        .stdout("/home/user/bin/subdir\n")
+        .runAsTest("atom after cmd subst is preserved");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo a)/$(echo b)/c`
+        .stdout("/home/user/a/b/c\n")
+        .runAsTest("multiple cmd substs");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~$(echo /bin)/sub`
+        .stdout("/home/user/bin/sub\n")
+        .runAsTest("cmd subst immediately after tilde");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo bin)`
+        .stdout("/home/user/bin\n")
+        .runAsTest("cmd subst as last atom");
+    });
+
+    describe("interpolated values", async () => {
+      // A `~` that comes from an interpolated value is data, not syntax.
+      TestBuilder.command`echo ${"~"}/x`.stdout("~/x\n").runAsTest("interpolated tilde stays literal");
+      TestBuilder.command`echo ${"~/secret"}`.stdout("~/secret\n").runAsTest("interpolated tilde path stays literal");
+      // A literal `~` in the source after an interpolation keeps its meaning.
+      TestBuilder.command`echo ${"a b"}~/x`.stdout("a b~/x\n").runAsTest("literal tilde after interpolated value");
+      TestBuilder.command`echo ${"a b"}~bak`
+        .stdout("a b~bak\n")
+        .runAsTest("backup-suffix idiom after interpolated value");
     });
   });
 
@@ -669,6 +776,163 @@ booga"
         expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
       })
       .runAsTest("Should work with a different cwd");
+
+    describe("interpolated values cannot inject glob syntax", () => {
+      // Only `*`/`**` written literally in the template act as glob syntax.
+      // Metacharacters arriving via `${...}` interpolation are data and must
+      // match only files containing them literally.
+      TestBuilder.command`echo ${"**/"}*`
+        .ensureTempDir()
+        .file("f.txt", "f")
+        .directory("sub")
+        .file("sub/deep.txt", "deep")
+        .exitCode(1)
+        .stderr("bun: no matches found: **/*\n")
+        .runAsTest("injected ** does not recurse");
+
+      TestBuilder.command`echo a${"?"}*`
+        .ensureTempDir()
+        .file("ax.txt", "ax")
+        .exitCode(1)
+        .stderr("bun: no matches found: a?*\n")
+        .runAsTest("injected ? is literal");
+
+      TestBuilder.command`echo ${"!keep"}*`
+        .ensureTempDir()
+        .file("keep.txt", "")
+        .file("other.txt", "")
+        .file("!keep1.txt", "")
+        .stdout(out => {
+          expect(out).toContain("!keep1.txt");
+          expect(out).not.toContain("other.txt");
+          // `!keep1.txt` does not contain the substring `keep.txt`, so this
+          // asserts the un-negated `keep.txt` fixture was not matched.
+          expect(out).not.toContain("keep.txt");
+        })
+        .runAsTest("injected leading ! does not negate");
+
+      TestBuilder.command`echo a${"[bc]"}*`
+        .ensureTempDir()
+        .file("ab.txt", "")
+        .file("ac.txt", "")
+        .file("a[bc].txt", "")
+        .stdout(out => {
+          expect(out).toContain("a[bc].txt");
+          expect(out).not.toContain("ab.txt");
+          expect(out).not.toContain("ac.txt");
+        })
+        .runAsTest("injected [...] is literal");
+
+      TestBuilder.command`echo ${"foo"}*`
+        .ensureTempDir()
+        .file("foo1.txt", "")
+        .file("foo2.txt", "")
+        .file("bar.txt", "")
+        .stdout(out => {
+          expect(out).toContain("foo1.txt");
+          expect(out).toContain("foo2.txt");
+          expect(out).not.toContain("bar.txt");
+        })
+        .runAsTest("plain interpolation followed by a literal * still globs");
+
+      TestBuilder.command`echo **/*.txt`
+        .ensureTempDir()
+        .file("a.txt", "")
+        .directory("sub")
+        .file("sub/b.txt", "")
+        .stdout(out => {
+          expect(out.replaceAll("\\", "/")).toContain("sub/b.txt");
+        })
+        .runAsTest("literal ** still recurses");
+
+      // A run of interpolated `!` longer than the matcher's brace-nesting
+      // limit (10) must still match literally: neutralizing every `!` as its
+      // own `{!}` group used to overflow the brace stack and turn the whole
+      // word into "no matches found".
+      const bangRun = Buffer.alloc(11, "!").toString();
+
+      TestBuilder.command`echo prefix${bangRun}*`
+        .ensureTempDir()
+        .file(`prefix${bangRun}x.txt`, "")
+        .file("prefixy.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`prefix${bangRun}x.txt`);
+          expect(out).not.toContain("prefixy.txt");
+        })
+        .runAsTest("long run of injected ! inside a word stays literal");
+
+      TestBuilder.command`echo ${bangRun}keep*`
+        .ensureTempDir()
+        .file(`${bangRun}keep1.txt`, "")
+        .file("keep2.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`${bangRun}keep1.txt`);
+          expect(out).not.toContain("keep2.txt");
+        })
+        .runAsTest("long leading run of injected ! stays literal");
+    });
+
+    test("glob on a nonexistent absolute directory does not crash the process", async () => {
+      const missing = join(tmpdirSync(), "does-not-exist").replaceAll("\\", "/");
+      const script = `
+        import { $ } from "bun";
+        const missing = ${JSON.stringify(missing)};
+        const results = [];
+
+        {
+          const r = await $\`echo \${missing}/*\`.nothrow().quiet();
+          results.push({ exitCode: r.exitCode, stderr: r.stderr.toString() });
+        }
+
+        try {
+          await $\`echo \${missing}/*\`.quiet();
+          results.push({ threw: false });
+        } catch (e) {
+          results.push({ threw: true, exitCode: e.exitCode, stderr: e.stderr.toString() });
+        }
+
+        {
+          const r = await $\`FOO=\${missing}/*; echo $FOO\`.nothrow().quiet();
+          results.push({ exitCode: r.exitCode, stdout: r.stdout.toString() });
+        }
+
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { threw: true, exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { exitCode: 0, stdout: `${missing}/*\n` },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
+      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
+      mkdirSync(noaccess);
+      chmodSync(noaccess, 0o000);
+      try {
+        const { stderr, exitCode } = await $`echo ${noaccess}/*`.quiet().nothrow();
+        expect(stderr.toString()).toContain(`bun: Permission denied: ${noaccess}`);
+        expect(stderr.toString()).not.toContain("no matches found");
+        expect(exitCode).toBe(1);
+
+        const assign = await $`FOO=${noaccess}/*; echo $FOO`.quiet().nothrow();
+        expect(assign.stderr.toString()).toBe("");
+        expect(assign.stdout.toString()).toBe(`${noaccess}/*\n`);
+        expect(assign.exitCode).toBe(0);
+      } finally {
+        chmodSync(noaccess, 0o755);
+      }
+    });
   });
 
   describe("brace expansion", () => {
@@ -785,6 +1049,110 @@ booga"
     test("cd -", async () => {
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
       expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
+    });
+
+    test("cd with no args goes to $HOME", async () => {
+      const { stdout, stderr, exitCode } = await $`pwd && cd && pwd`
+        .env({ ...bunEnv, HOME: temp_dir, USERPROFILE: temp_dir })
+        .quiet()
+        .nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe(`${process.cwd().replaceAll("\\", "/")}\n${temp_dir}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("cd with no args and HOME unset errors", async () => {
+      const env: Record<string, string | undefined> = { ...bunEnv, HOME: "", USERPROFILE: "" };
+      delete env.HOME;
+      delete env.USERPROFILE;
+      const { stderr, exitCode } = await $`cd`.env(env).quiet().nothrow();
+      expect(stderr.toString()).toBe("cd: HOME not set\n");
+      expect(exitCode).toBe(1);
+    });
+
+    // Overflowing the 4096-byte threadlocal join_buf used by changeCwdImpl would
+    // corrupt adjacent TLS (ReleaseFast) or trip bounds checks (debug). These must
+    // now return ENAMETOOLONG instead. Spawned in a subprocess so a regression
+    // crashes the child, not the test runner.
+    test("cd rejects path longer than buffer with ENAMETOOLONG", async () => {
+      const script = `
+        import { $ } from "bun";
+        const big = "/" + Buffer.alloc(1 << 20, "a").toString();
+        const { stderr, exitCode } = await $\`cd \${big}\`.nothrow().quiet();
+        console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(JSON.stringify({ exitCode: 1, stderr: "cd: file name too long\n" }));
+      expect(exitCode).toBe(0);
+    });
+
+    test("cd rejects relative path that would overflow join buffer", async () => {
+      // cwd + "/" + rel must exceed join_buf.len (4096) even though rel alone might not;
+      // the relative branch normalizes into the same buffer via joinZ with no bounds check.
+      // Uses a 1MB relative path so a regression faults rather than silently corrupting TLS.
+      const script = `
+        import { $ } from "bun";
+        const rel = Buffer.alloc(1 << 20, "a/").toString();
+        const { stderr, exitCode } = await $\`cd \${rel}\`.nothrow().quiet();
+        console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(JSON.stringify({ exitCode: 1, stderr: "cd: file name too long\n" }));
+      expect(exitCode).toBe(0);
+    });
+
+    test(".cwd() rejects path longer than buffer with ENAMETOOLONG", async () => {
+      const script = `
+        import { $ } from "bun";
+        const big = "/" + Buffer.alloc(1 << 20, "a").toString();
+        try {
+          await $\`echo hi\`.cwd(big);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e.code ?? e.message);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ENAMETOOLONG");
+      expect(exitCode).toBe(0);
+    });
+
+    // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
+    // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
+    // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
+    test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
+      const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
+      const noaccess = join(dir, "noaccess");
+      mkdirSync(noaccess);
+      chmodSync(noaccess, 0o000);
+      try {
+        const { stderr, exitCode } = await $`cd ${noaccess}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: Permission denied: ${noaccess}\n`);
+        expect(exitCode).toBe(1);
+      } finally {
+        chmodSync(noaccess, 0o755);
+      }
     });
   });
 
@@ -1007,7 +1375,7 @@ describe("deno_task", () => {
 
     if (isPosix) {
       TestBuilder.command`ls . | echo hi`.exitCode(0).stdout("hi\n").runAsTest("broken pipe builtin");
-      TestBuilder.command`grep hi src/js_parser.zig | echo hi`
+      TestBuilder.command`grep hi src/js_parser/parser.rs | echo hi`
         .exitCode(0)
         .stdout("hi\n")
         .stderr("")
@@ -1197,6 +1565,68 @@ describe("deno_task", () => {
       .stderr("bun: ambiguous redirect: at `echo`\n")
       .exitCode(1)
       .runAsTest("zero arguments after re-direct");
+
+    describe("multiple arguments after re-direct (ambiguous)", () => {
+      // bash: `*.txt: ambiguous redirect`, exit 1, tree unchanged.
+      // Previously bun concatenated the matched names into one bogus path.
+      TestBuilder.command`echo hi > *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching multiple files");
+
+      TestBuilder.command`echo hi >> *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest(">> glob matching multiple files");
+
+      TestBuilder.command`cat < *.txt`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr(s => {
+          expect(s).toContain("ambiguous redirect");
+          expect(s).not.toContain("a1.txt");
+          expect(s).not.toContain("b2.txt");
+        })
+        .exitCode(1)
+        .runAsTest("< glob matching multiple files");
+
+      TestBuilder.command`echo hi > {a,b}.txt; ls`
+        .ensureTempDir()
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .stdout("")
+        .runAsTest("> brace expansion producing multiple words");
+
+      TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log("hi")' > *.txt; ls`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .stderr(s => expect(s).toContain("ambiguous redirect"))
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["a1.txt", "b2.txt"]))
+        .fileEquals("a1.txt", "A\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching multiple files (subprocess)");
+
+      // Control: a glob that matches exactly one file redirects to it.
+      TestBuilder.command`echo hi > a1*`
+        .ensureTempDir()
+        .file("a1.txt", "A\n")
+        .file("b2.txt", "B\n")
+        .exitCode(0)
+        .fileEquals("a1.txt", "hi\n")
+        .fileEquals("b2.txt", "B\n")
+        .runAsTest("> glob matching a single file writes to it");
+    });
 
     TestBuilder.command`echo foo bar > file.txt; cat < file.txt`
       .ensureTempDir()
@@ -1909,9 +2339,15 @@ cat redir_out`
 describe("condexprs", () => {
   TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
   TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");
+  TestBuilder.command`[[ -f mydir ]] && echo yes!`.directory("mydir").exitCode(1).runAsTest("-f directory");
+  TestBuilder.command`[[ -f /dev/null ]] && echo yes!`.exitCode(1).runAsTest("-f character device");
 
   TestBuilder.command`[[ -d mydir ]] && echo yes!`.directory("mydir").stdout("yes!\n").runAsTest("-d");
   TestBuilder.command`[[ -d mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-d non-existent");
+  TestBuilder.command`[[ -d package.json ]] && echo yes!`
+    .file("package.json", "hi")
+    .exitCode(1)
+    .runAsTest("-d regular file");
 
   TestBuilder.command`[[ -c /dev/null ]] && echo yes!`.stdout("yes!\n").runAsTest("-c");
   TestBuilder.command`[[ -c lol ]] && echo yes!`.exitCode(1).file("lol", "lol").runAsTest("-c not character device");
@@ -2516,3 +2952,223 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
+
+describe("interpolated values in assignment position", () => {
+  // An `=` that arrives via an interpolated template value is data, not shell
+  // syntax. The value must remain a single inert command word instead of being
+  // reinterpreted as an environment-variable assignment applied to the rest of
+  // the command line.
+  TestBuilder.command`${"FOO_INJECTED=1"} echo hi`
+    .exitCode(1)
+    .stderr("bun: command not found: FOO_INJECTED=1\n")
+    .runAsTest("interpolated word containing equals stays a single command word");
+
+  // The assignment-shaped value must not land in a spawned child's environment
+  // with the following word promoted to the command name.
+  TestBuilder.command`${"SHELL_TEST_INJECTED=evil"} ${BUN} -e ${"console.log(process.env.SHELL_TEST_INJECTED)"}`
+    .exitCode(1)
+    .stderr("bun: command not found: SHELL_TEST_INJECTED=evil\n")
+    .runAsTest("interpolated word containing equals is not exported to the child environment");
+
+  // Legitimate uses keep working: a literal `=` in the template source still
+  // creates an assignment even when its value is interpolated, and an
+  // interpolated `=` in argument position passes through verbatim.
+  TestBuilder.command`FOO=${"bar"} ${BUN} -e ${"console.log(process.env.FOO)"}`
+    .stdout("bar\n")
+    .runAsTest("literal assignment with interpolated value still works");
+  TestBuilder.command`echo ${"a=b"}`
+    .stdout("a=b\n")
+    .runAsTest("interpolated equals in argument position passes through");
+});
+
+describe("interpolated values in reserved-word position", () => {
+  TestBuilder.command`if true; then ${"if"} BUNISBAD; echo A; fi`
+    .stdout("A\n")
+    .stderr("bun: command not found: if\n")
+    .runAsTest("interpolated if stays a single command word");
+
+  TestBuilder.command`if echo A; ${"then"} echo B; then echo C; fi`
+    .stdout("A\n")
+    .stderr("bun: command not found: then\n")
+    .runAsTest("interpolated then stays a single command word");
+
+  TestBuilder.command`if BUNISBAD; then echo A; ${"elif"} true; then echo B; fi`
+    .stdout("")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("interpolated elif stays a single command word");
+
+  TestBuilder.command`if BUNISBAD; then echo A; elif BUNISBAD2; then echo B; ${"else"} echo C; fi`
+    .stdout("")
+    .stderr("bun: command not found: BUNISBAD\nbun: command not found: BUNISBAD2\n")
+    .runAsTest("interpolated else stays a single command word");
+
+  TestBuilder.command`if BUNISBAD; then echo A; ${"fi"}; echo B; fi`
+    .stdout("")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("interpolated fi stays a single command word");
+
+  TestBuilder.command`if BUNISBAD; then echo not true; ${"else"} echo unreachable; fi`
+    .stdout("")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("interpolated else inside a then body stays a plain word");
+
+  TestBuilder.command`if BUNISBAD; then echo A; ${"fi"}; echo B; fi; echo ${"if"} ${"then"} ${"elif"} ${"else"} ${"fi"}`
+    .stdout("if then elif else fi\n")
+    .stderr("bun: command not found: BUNISBAD\n")
+    .runAsTest("interpolated reserved words in argument position pass through");
+});
+
+test("redirect target buffer stays attached while a builtin command is running", async () => {
+  // A builtin with `> ${buf}` caches the buffer's raw pointer and length for
+  // the whole (asynchronous) lifetime of the command. The backing store must
+  // stay alive and attached until the command finishes so the output lands in
+  // memory the caller can still see.
+  //
+  // `ls` is used (rather than `cat`) because `cat` is in the
+  // DISABLED_ON_POSIX list and delegates to the system binary on Linux/macOS,
+  // which never takes the builtin ArrayBuffer redirect path. `ls` is a real
+  // builtin on every platform and always suspends on a thread-pool task, so
+  // the command is guaranteed to still be in flight when the detach is
+  // attempted below.
+  using dir = tempDir("shell-redirect-pin", { "pin.txt": "x" });
+  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const promise = $`ls ${String(dir)} > ${buffer}`.env(bunEnv).nothrow();
+  // Calling .then() starts the interpreter synchronously, so the redirect slot
+  // now holds the buffer while the directory-listing task is still pending.
+  const running = promise.then(o => o);
+
+  // Attempting to detach the redirect target while the command is in flight
+  // must leave the buffer attached (refusing the detach by throwing is also
+  // acceptable).
+  try {
+    buffer.buffer.transfer();
+  } catch {}
+  expect(buffer.buffer.detached).toBe(false);
+
+  await running;
+  expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
+});
+
+test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
+  // `< ${buf}` snapshots the buffer's contents when the command starts and
+  // streams them to the child's stdin across multiple event-loop turns.
+  // Mutating or detaching the source buffer after the command has started
+  // must not change what the child receives.
+  const SIZE = 4 * 1024 * 1024;
+  const input = new Uint8Array(SIZE).fill(0x41); // "A"
+  const childCode = `
+    const bytes = new Uint8Array(await Bun.stdin.arrayBuffer());
+    let a = 0;
+    let other = 0;
+    for (const byte of bytes) {
+      if (byte === 0x41) a++;
+      else other++;
+    }
+    console.log(JSON.stringify({ total: bytes.length, a, other }));
+  `;
+
+  const promise = $`${BUN} -e ${childCode} < ${input}`.env(bunEnv).nothrow();
+  // Calling .then() starts the interpreter synchronously, so the stdin
+  // redirect has captured the buffer's contents while the child process is
+  // still starting up and has read at most a pipe-buffer's worth of data.
+  const running = promise.then(o => o);
+
+  // Overwrite every byte of the source buffer, then detach it. Neither may
+  // affect the bytes delivered to the child.
+  input.fill(0x42); // "B"
+  try {
+    input.buffer.transfer();
+  } catch {}
+
+  const result = await running;
+  expect(JSON.parse(result.stdout.toString())).toEqual({ total: SIZE, a: SIZE, other: 0 });
+  expect(result.exitCode).toBe(0);
+}, 60_000);
+
+describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {
+  // A spawned command reading stdin (cat) must see EOF when the redirect
+  // source is an empty ArrayBuffer/TypedArray, same as an empty Blob.
+  const cases: Array<[string, ArrayBufferLike | ArrayBufferView | Blob]> = [
+    ["ArrayBuffer(0)", new ArrayBuffer(0)],
+    ["Uint8Array(0)", new Uint8Array(0)],
+    ["Buffer.alloc(0)", Buffer.alloc(0)],
+    ["DataView(0)", new DataView(new ArrayBuffer(0))],
+    ["SharedArrayBuffer(0)", new SharedArrayBuffer(0)],
+    ["Uint8Array(64).subarray(3, 3)", new Uint8Array(64).subarray(3, 3)],
+    ["Blob([])", new Blob([])],
+  ];
+  test.concurrent.each(cases)("%s", async (_name, input) => {
+    const result = await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${input}`
+      .env(bunEnv)
+      .nothrow();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+test("output redirect buffer for an external command stays attached until the command finishes", async () => {
+  // `> ${buf}` for an external (non-builtin) command stores the buffer and
+  // copies the child's stdout into it as chunks arrive across event-loop
+  // turns. The backing store must therefore stay attached for the whole
+  // duration of the command so those writes land in memory the caller still
+  // owns. (The builtin equivalent of this test is directly above; this one
+  // spawns a real subprocess so it goes through the subprocess output path.)
+  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const childCode = "console.log('external-redirect-output')";
+  const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).nothrow();
+  // Calling .then() starts the interpreter synchronously, so the redirect
+  // slot already holds the buffer while the child process is still running.
+  const running = promise.then(o => o);
+
+  // Attempting to detach the redirect target while the command is in flight
+  // must leave the buffer attached (refusing the detach by throwing is also
+  // acceptable).
+  try {
+    buffer.buffer.transfer();
+  } catch {}
+  expect(buffer.buffer.detached).toBe(false);
+
+  const result = await running;
+  expect(stringifyBuffer(buffer)).toEqual("external-redirect-output\n");
+  expect(result.exitCode).toBe(0);
+});
+
+test("cd treats interpolated arguments starting with tilde or dash as literal directory names", async () => {
+  // A value that arrives via template interpolation is data, not shell
+  // syntax: `cd ${value}` must change into the directory literally named by
+  // the value, even when it begins with `~` or `-`, instead of being
+  // reinterpreted as "go to $HOME" or "go to the previous directory".
+  using dir = tempDir("cd-literal-arg", {
+    "~": { "marker.txt": "tilde-dir\n" },
+    "-p": { "marker.txt": "dash-dir\n" },
+  });
+  const cwd = String(dir).replaceAll("\\", "/");
+
+  // Interpolated value beginning with `~` is a literal relative path.
+  {
+    const { stdout, stderr, exitCode } = await $`cd ${"~"} && cat marker.txt`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("tilde-dir\n");
+    expect(exitCode).toBe(0);
+  }
+
+  // Interpolated value beginning with `-` is a literal relative path.
+  {
+    const { stdout, stderr, exitCode } = await $`cd ${"-p"} && cat marker.txt`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("dash-dir\n");
+    expect(exitCode).toBe(0);
+  }
+
+  // A nonexistent interpolated target reports an error naming that exact
+  // value rather than silently changing to some other directory.
+  {
+    const { stdout, stderr, exitCode } = await $`cd ${"~does-not-exist"} && cat marker.txt`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString()).toContain("~does-not-exist");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(1);
+  }
+});

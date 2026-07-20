@@ -1,0 +1,28 @@
+{
+  "_id": "test-native-binlink-altpath-target",
+  "name": "test-native-binlink-altpath-target",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-altpath-target",
+      "version": "1.0.0",
+      "_id": "test-native-binlink-altpath-target@1.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "dist": {
+        "integrity": "sha512-+LnJuEt4mt1XOvXeBq6wEbpvcNb1kL1oPdnjCrpy322Dsr/ud1oHFEeg6fyzeIiSW9LkCvA9ikhpr4w89hRcIQ==",
+        "shasum": "c3e2e29fc1f033aec922c6b8c0384157ea85d312",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-1.0.0.tgz"
+      }
+    }
+  }
+}

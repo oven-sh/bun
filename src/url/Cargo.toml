@@ -1,0 +1,28 @@
+[package]
+name = "bun_url"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+# TODO(b1): bun_io gated — crate does not compile yet; local Write stub in lib.rs
+# bun_io.workspace = true
+bun_paths.workspace = true
+bun_wyhash.workspace = true

@@ -25,33 +25,31 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   downloadArtifacts,
+  inheritOrderFile,
   isCI,
+  mustGenerateOrderFile,
+  orderFileContext,
+  orderFileEligible,
   packageAndUpload,
   printEnvironment,
+  regenerateOrderFile,
+  reportOrderFileBootstrap,
+  reportOrderFileFailure,
+  shouldGenerateOrderFile,
   spawnWithAnnotations,
   startGroup,
   uploadArtifacts,
+  verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configure, type ConfigureResult } from "./build/configure.ts";
+import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
-import { getProfile } from "./build/profiles.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main
 // ───────────────────────────────────────────────────────────────────────────
-
-try {
-  await main();
-} catch (err) {
-  if (err instanceof BuildError) {
-    process.stderr.write(err.format());
-    process.exit(1);
-  }
-  throw err;
-}
 
 async function main(): Promise<void> {
   // Windows: re-exec inside the VS dev shell if not already there.
@@ -77,34 +75,96 @@ async function main(): Promise<void> {
 
   const args = parseArgs(process.argv.slice(2));
 
-  // Resolve PartialConfig: either from --config-file (ninja's generator rule
+  // Skip on --configure-only / --config-file (ninja regen): those paths
+  // return before spawning ninja, so the NO_PROXY mutation can't reach any
+  // child and would be pure wasted wall-clock (up to 2s behind a
+  // silent-drop firewall).
+  if (!args.configureOnly) {
+    await maybeBypassProxyForCratesIo();
+  }
+
+  // Resolve ConfigureInput: either from --config-file (ninja's generator rule
   // replaying a previous configure) or from --profile + overrides (normal use).
-  const partial: PartialConfig = args.configFile
+  // We pass the *unresolved* {profile, overrides} pair through — configure()
+  // expands the profile itself and persists the unresolved form, so editing
+  // profiles.ts propagates to existing build dirs on the next regen instead
+  // of being frozen at first-configure time.
+  const input: ConfigureInput = args.configFile
     ? loadConfigFile(args.configFile)
-    : { ...getProfile(args.profile), ...args.overrides };
+    : { profile: args.profile, overrides: args.overrides };
 
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
-  const ninjaEnv = (env: Record<string, string>) => ({ ...process.env, ...env });
+  // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
+  // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
+  // --target. The CI build containers set them for the *host* gcc toolchain
+  // (.buildkite/Dockerfile), which hijacks <vector> & co. away from the MSVC
+  // STL when cross-compiling for Windows ("'bits/c++config.h' file not
+  // found"). Scrub them for Windows cross builds — they are host-targeted by
+  // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
+  // every other target keep the environment as provisioned.
+  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
+    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+    if (cfg.windows && cfg.host.os !== "windows") {
+      for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
+        delete merged[name];
+      }
+    }
+    return merged;
+  };
 
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () => configure(partial))) as ConfigureResult;
+    const result = (await startGroup("Configure", () => configure(input))) as ConfigureResult;
     if (args.configureOnly) return;
 
-    // link-only: download cpp-only + zig-only artifacts before ninja.
+    // link-only: download cpp-only + rust-only artifacts before ninja.
     if (result.cfg.buildkite && result.cfg.mode === "link-only") {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
 
-    await startGroup("Build", () =>
-      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.env) }),
-    );
+    // The order file is a link input, so it must land before ninja.
+    const orderCtx = orderFileContext();
+    let inherited = false;
+    if (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)) {
+      inherited = (await startGroup("Inherit symbol order file", () =>
+        inheritOrderFile(result.cfg, orderCtx),
+      )) as boolean;
+    }
 
-    // cpp-only/zig-only: upload build outputs for downstream link-only.
+    const runNinja = () =>
+      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.cfg, result.env) });
+
+    await startGroup("Build", runNinja);
+
+    // Trace and relink when we are a release, when a commit asked for it, or when
+    // there was nothing to inherit. A failed trace is not fatal: the order file is
+    // an optimization, and a flaky workload must not kill a release 40 minutes in.
+    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
+      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
+      let traced = true;
+      await startGroup("Generate symbol order file", () => {
+        try {
+          regenerateOrderFile(result.cfg, orderCtx);
+        } catch (error) {
+          traced = false;
+          reportOrderFileFailure(error as Error);
+        }
+      });
+      if (traced) {
+        await startGroup("Relink against symbol order file", runNinja);
+        // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
+        if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
+      }
+    } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
+      // Inherited: a stale file is a slower binary, not a broken one.
+      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+    }
+
+    // cpp-only/rust-only: upload build outputs for downstream link-only.
     // link-only: package + upload zips for downstream test steps.
     if (result.cfg.buildkite) {
-      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "zig-only") {
+      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
       if (result.cfg.mode === "link-only") {
@@ -113,7 +173,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(partial);
+    const result = await configure(input);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -150,9 +210,9 @@ async function main(): Promise<void> {
       return;
     }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
-    // zig) writes live output there, bypassing ninja's per-job buffering.
+    // cargo) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
-    // zig progress in real time. A log file (CI) doesn't —
+    // cargo build progress in real time. A log file (CI) doesn't —
     // that live output is noise (hundreds of `-- Looking for header.h`
     // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they
@@ -171,7 +231,10 @@ async function main(): Promise<void> {
     }
     const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
       stdio,
-      env: ninjaEnv(result.env),
+      env: ninjaEnv(result.cfg, result.env),
+      // cargo's compile output (now part of the ninja graph via emitRust) can
+      // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
+      maxBuffer: 1024 * 1024 * 1024,
     });
     if (ninja.error) {
       process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
@@ -218,13 +281,71 @@ async function main(): Promise<void> {
   }
 }
 
-/** Load a PartialConfig from JSON (for ninja's generator rule replay). */
-function loadConfigFile(path: string): PartialConfig {
+/**
+ * When an HTTP proxy is configured, cargo's `-Zbuild-std` (release lolhtml)
+ * must reach crates.io. Some CI/corporate proxies 403 CONNECT to package
+ * registries while direct egress is open. If a proxy is set and crates.io
+ * isn't already exempted, probe direct connectivity once: if it works, add
+ * crates.io to NO_PROXY so cargo goes direct. If the probe fails (mandatory-
+ * egress-proxy topology, firewall drops direct), leave NO_PROXY untouched so
+ * cargo keeps using the proxy. Runs once per build; propagates to all ninja
+ * children via process.env.
+ */
+async function maybeBypassProxyForCratesIo(): Promise<void> {
+  const proxySet =
+    process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+  if (!proxySet) return;
+
+  // Both case variants are honoured by different tools; merge them so we
+  // don't clobber one when writing the unified value back to both.
+  const bypass = new Set<string>();
+  for (const v of [process.env.NO_PROXY, process.env.no_proxy]) {
+    for (const entry of (v ?? "").split(",")) {
+      const t = entry.trim();
+      if (t) bypass.add(t);
+    }
+  }
+  if (bypass.has("crates.io")) return;
+
+  const { connect } = await import("node:net");
+  const directReachable = await new Promise<boolean>(resolve => {
+    const sock = connect({ host: "index.crates.io", port: 443, timeout: 2000 });
+    const done = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.once("connect", () => done(true));
+    sock.once("timeout", () => done(false));
+    sock.once("error", () => done(false));
+  });
+  if (!directReachable) return;
+
+  for (const h of ["crates.io", "static.crates.io", "index.crates.io"]) bypass.add(h);
+  const merged = [...bypass].join(",");
+  process.env.NO_PROXY = merged;
+  process.env.no_proxy = merged;
+}
+
+/**
+ * Load a ConfigureInput from JSON (for ninja's generator rule replay).
+ *
+ * Current format: `{ profile?: string, overrides?: PartialConfig }`.
+ * Legacy format (pre profile-name persistence): a flat PartialConfig — if we
+ * see neither `profile` nor `overrides` keys, wrap the whole object as
+ * overrides so old build dirs still regen.
+ */
+function loadConfigFile(path: string): ConfigureInput {
+  let raw: Record<string, unknown>;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as PartialConfig;
+    raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   } catch (cause) {
     throw new BuildError(`Failed to load config file: ${path}`, { cause });
   }
+  if ("profile" in raw || "overrides" in raw) {
+    return raw as ConfigureInput;
+  }
+  // Legacy flat PartialConfig.
+  return { overrides: raw as PartialConfig };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -287,7 +408,6 @@ function parseArgs(argv: string[]): CliArgs {
   const boolFields = new Set([
     "lto",
     "asan",
-    "zigAsan",
     "assertions",
     "logs",
     "baseline",
@@ -297,6 +417,10 @@ function parseArgs(argv: string[]): CliArgs {
     "tinycc",
     "valgrind",
     "fuzzilli",
+    "socketFaultInjection",
+    "unifiedSources",
+    "archiveDeps",
+    "timeTrace",
     "ci",
     "buildkite",
   ]);
@@ -312,10 +436,13 @@ function parseArgs(argv: string[]): CliArgs {
     "cacheDir",
     "nodejsVersion",
     "nodejsAbiVersion",
-    "zigCommit",
     "webkitVersion",
     "pgoGenerate",
     "pgoUse",
+    "androidNdk",
+    "macosSdk",
+    "osxDeploymentTarget",
+    "winsysroot",
   ]);
 
   for (let i = 0; i < argv.length; i++) {
@@ -425,12 +552,16 @@ Options:
   --profile=<name>        Build profile (default: debug)
                           Profiles: debug, debug-local, debug-no-asan,
                                     release, release-local, release-asan,
-                                    release-assertions, ci-*
+                                    release-assertions, ci-*,
+                                    windows-{x64,arm64}[-release] (cross-compile
+                                    from a non-Windows host)
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
-                                  buildDir, mode (full|cpp-only|link-only)
+                                  buildDir, mode (full|cpp-only|link-only),
+                                  unifiedSources, timeTrace, os, arch, abi,
+                                  winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
   -j<N>, -v, -k<N>        Passed through to ninja
@@ -445,6 +576,18 @@ Examples:
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
   bun scripts/build.ts --profile=debug-local run script.ts
-  bun scripts/build.ts --target=bun-zig
+  bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only
 `;
+
+// Entry point — must run after all module-level declarations (USAGE) are
+// initialized, otherwise parseArgs hits a TDZ ReferenceError on --help.
+try {
+  await main();
+} catch (err) {
+  if (err instanceof BuildError) {
+    process.stderr.write(err.format());
+    process.exit(1);
+  }
+  throw err;
+}

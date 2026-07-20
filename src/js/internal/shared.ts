@@ -132,7 +132,11 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = callback.$apply(this, args);
+    const fn = callback;
+    // Drop the reference so the wrapper cannot keep the callback's
+    // closure (and everything it captured) alive once it has run.
+    callback = undefined;
+    const result = fn.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };
@@ -151,6 +155,159 @@ function getLazy<T>(initializer: () => T) {
   };
 }
 
+// ─── Node-style performance-entry observation ────────────────────────────────
+// For entry types the native (WebCore) PerformanceObserver does not implement
+// ('net', 'dns', ...). Mirrors lib/internal/perf/observe.js: producers check
+// hasObserver() before doing any work, startPerf() stashes a context on the
+// producing object, and stopPerf() builds a plain entry and dispatches it to
+// the registered observers on a fresh tick.
+// https://github.com/nodejs/node/blob/v25.2.1/lib/internal/perf/observe.js
+
+const observerCounts = new Map();
+const kObservers = new Set();
+
+/** Entry types routed through this JS-side registry instead of the native observer. */
+const kNodeEntryTypes = new Set(["net", "dns", "http", "function"]);
+
+function hasObserver(type) {
+  return (observerCounts.get(type) ?? 0) > 0;
+}
+
+/**
+ * Hand a finished entry to every registered observer. Used by callers that
+ * construct the entry themselves (e.g. perf_hooks timerify) instead of the
+ * startPerf/stopPerf pair.
+ */
+function enqueueNodeEntry(entry) {
+  for (const observer of kObservers) {
+    observer.bufferEntry(entry);
+  }
+}
+
+// Node's PerformanceNodeEntry — the shape used by every JS-side entry type
+// ('function', 'net', 'dns', 'http'). Lives here (not in perf_hooks.ts) so
+// stopPerf can construct it without a circular require. The prototype chain
+// is linked to PerformanceEntry by perf_hooks.ts at load time using its
+// captured global (every construction is gated behind hasObserver(), which
+// is only true after perf_hooks has loaded).
+class PerformanceNodeEntry {
+  name;
+  entryType;
+  startTime;
+  duration;
+  detail;
+
+  constructor(name, entryType, startTime, duration, detail) {
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+    this.detail = detail;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
+}
+
+function startPerf(target, key, context) {
+  context.startTime = performance.now();
+  target[key] = context;
+}
+
+function stopPerf(target, key, context) {
+  const ctx = target[key];
+  if (!ctx) {
+    return;
+  }
+  target[key] = undefined;
+  const startTime = ctx.startTime;
+  // Node.js merges the detail recorded at startPerf() with the detail
+  // passed to stopPerf() (e.g. http entries carry both req and res).
+  const detail =
+    ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined;
+  enqueueNodeEntry(new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail));
+}
+
+/**
+ * One registered observer of node-only entry types. The PerformanceObserver
+ * wrapper in node:perf_hooks owns one of these when it observes such a type.
+ */
+class NodeEntryObserver {
+  callback;
+  owner;
+  types = new Set();
+  buffer = [];
+  scheduled = false;
+
+  constructor(callback, owner) {
+    this.callback = callback;
+    this.owner = owner;
+  }
+
+  observe(types) {
+    for (const type of this.types) {
+      observerCounts.set(type, (observerCounts.get(type) ?? 1) - 1);
+    }
+    this.types = new Set(types);
+    for (const type of this.types) {
+      observerCounts.set(type, (observerCounts.get(type) ?? 0) + 1);
+    }
+    kObservers.add(this);
+  }
+
+  disconnect() {
+    for (const type of this.types) {
+      observerCounts.set(type, (observerCounts.get(type) ?? 1) - 1);
+    }
+    this.types.clear();
+    this.buffer = [];
+    kObservers.delete(this);
+  }
+
+  bufferEntry(entry) {
+    if (!this.types.has(entry.entryType)) {
+      return;
+    }
+    this.buffer.push(entry);
+    if (!this.scheduled) {
+      this.scheduled = true;
+      setImmediate(() => {
+        this.scheduled = false;
+        const entries = this.buffer;
+        if (entries.length === 0) {
+          return;
+        }
+        this.buffer = [];
+        this.callback.$call(undefined, makeNodeEntryList(entries), this.owner);
+      });
+    }
+  }
+}
+
+function makeNodeEntryList(entries) {
+  // Node's PerformanceObserverEntryList hands entries out in chronological
+  // (startTime) order and getEntriesByName takes an optional type filter.
+  const sorted = entries.slice().sort((a, b) => a.startTime - b.startTime);
+  return {
+    getEntries() {
+      return sorted.slice();
+    },
+    getEntriesByType(type) {
+      return sorted.filter(entry => entry.entryType === type);
+    },
+    getEntriesByName(name, type) {
+      return sorted.filter(entry => entry.name === name && (type === undefined || entry.entryType === type));
+    },
+  };
+}
+
 //
 
 export default {
@@ -164,6 +321,14 @@ export default {
   ErrnoException,
   once,
   getLazy,
+
+  hasObserver,
+  startPerf,
+  stopPerf,
+  enqueueNodeEntry,
+  kNodeEntryTypes,
+  NodeEntryObserver,
+  PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),

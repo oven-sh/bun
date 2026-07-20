@@ -165,6 +165,31 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
+  test("watchFile returns a shared StatWatcher and unwatchFile stops it", async () => {
+    const file = path.join(testDir, "watch.txt");
+    const listener1 = () => {};
+    const listener2 = () => {};
+    const watcher = fs.watchFile(file, { interval: 50 }, listener1);
+    try {
+      // watching the same file again (even via a file: URL) reuses the same StatWatcher
+      expect(fs.watchFile(pathToFileURL(file), { interval: 50 }, listener2)).toBe(watcher);
+      expect(watcher.listenerCount("change")).toBe(2);
+
+      // removing a single listener keeps the watcher alive
+      fs.unwatchFile(file, listener1);
+      expect(watcher.listenerCount("change")).toBe(1);
+
+      // removing the last listener stops the watcher and emits "stop"
+      const { promise, resolve } = Promise.withResolvers<void>();
+      watcher.once("stop", resolve);
+      fs.unwatchFile(file);
+      await promise;
+      expect(watcher.listenerCount("change")).toBe(0);
+    } finally {
+      fs.unwatchFile(file);
+    }
+  });
+
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {
     const EventEmitter = require("events");
     let defaultMaxListeners = EventEmitter.defaultMaxListeners;
@@ -269,4 +294,125 @@ describe("fs.watchFile", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
+
+  // Many initial-stat completions for nonexistent paths land in the worker's
+  // concurrent task queue. When terminate() fires the termination exception
+  // mid-drain, one completion's listener.call() throws it; the tick loop must
+  // stop there. The unfixed build kept draining with the termination
+  // exception still on the VM, so the next completion re-entered
+  // executeCallImpl() under scope.assertNoException() and aborted. In the
+  // reported release crash this surfaced through
+  // StatWatcher::initial_stat_error_on_main_thread ->
+  // report_active_exception_as_unhandled -> VM::clearException as a null
+  // dereference.
+  test("terminating a worker while many watchFile initial-stat callbacks are queued does not crash", async () => {
+    const fixture = /* js */ `
+      const { Worker } = require("worker_threads");
+
+      const workerCode = \`
+        const fs = require("fs");
+        const os = require("os");
+        const path = require("path");
+        const base = path.join(os.tmpdir(), "bun-watchfile-nx-" + process.pid + "-");
+        for (let i = 0; i < 200; i++) {
+          fs.watchFile(base + i, { interval: 1000000, persistent: false }, () => {});
+        }
+        require("worker_threads").parentPort.postMessage("ready");
+      \`;
+
+      const w = new Worker(workerCode, { eval: true });
+      w.on("message", () => { w.terminate(); });
+      w.on("error", (e) => { console.error("worker error:", e && e.message); process.exit(1); });
+      w.on("exit", () => { console.log("ok"); process.exit(0); });
+    `;
+
+    // Run several iterations concurrently: the race window depends on how
+    // many InitialStatTask completions are queued when terminate() fires.
+    const runOnce = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...bunEnv,
+          // detect_leaks=0: ConcurrentTask/ManagedTask nodes left in a
+          // terminated worker's undrained concurrent queue are a known
+          // pre-existing leak (see #32071); this test asserts no crash, not
+          // no leaks. symbolize=0 so a pre-fix ASAN abort exits promptly
+          // instead of spending seconds in llvm-symbolizer.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+    };
+
+    const results = await Promise.all(Array.from({ length: 4 }, runOnce));
+    for (const result of results) {
+      expect(result).toEqual({
+        stdout: "ok",
+        stderr: expect.not.stringContaining("ASSERTION"),
+        exitCode: 0,
+        signalCode: null,
+      });
+    }
+  }, 30_000);
+
+  // A listener that throws during the initial ENOENT callback must surface as
+  // an uncaught exception but keep the watcher scheduled. Guards the
+  // reordering in initial_stat_error_on_main_thread (append before
+  // propagating the error).
+  test("a throwing listener on the initial ENOENT callback keeps watching", async () => {
+    // Fresh per-run directory so the target is guaranteed not to exist and
+    // the initial stat takes the ENOENT path.
+    const dir = tempDirWithFiles("watchfile-throw", {
+      ".keep": "",
+    });
+    const target = path.join(dir, "does-not-exist.txt");
+
+    const fixture = /* js */ `
+      const fs = require("fs");
+
+      const target = ${JSON.stringify(target)};
+      let calls = 0;
+
+      process.on("uncaughtException", (err) => {
+        if (err && err.message === "listener-boom") {
+          console.log("uncaught");
+        } else {
+          console.error("unexpected uncaught:", err && err.message);
+          process.exit(1);
+        }
+      });
+
+      fs.watchFile(target, { interval: 20, persistent: true }, (curr, prev) => {
+        calls++;
+        if (calls === 1) {
+          // Initial ENOENT callback: throw and then create the file so the
+          // watcher (still scheduled) observes a change.
+          process.nextTick(() => fs.writeFileSync(target, "a"));
+          throw new Error("listener-boom");
+        } else {
+          console.log("second");
+          fs.unwatchFile(target);
+          process.exit(0);
+        }
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "uncaught\nsecond",
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 20_000);
 });

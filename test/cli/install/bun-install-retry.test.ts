@@ -1,7 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import * as net from "node:net";
 import { join } from "path";
 import {

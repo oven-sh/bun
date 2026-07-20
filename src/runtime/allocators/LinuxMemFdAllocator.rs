@@ -46,7 +46,7 @@ impl LinuxMemFdAllocator {
     /// Close the fd, then free the allocation.
     ///
     /// # Safety
-    /// Refcount hit 0; `this` came from `heap::alloc` in `IntrusiveArc::new`.
+    /// Refcount hit 0; `this` came from `heap::alloc` in `RefPtr::new`.
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: sole owner — close fd before reclaiming the Box.
         unsafe { (*this).fd.close() };
@@ -77,7 +77,7 @@ impl LinuxMemFdAllocator {
 
     /// # Safety
     /// `this` must point to a live, Box-allocated `Self` (as produced by
-    /// [`Self::new`] / `IntrusiveArc::new`), and the caller must own one
+    /// [`Self::new`] / `RefPtr::new`), and the caller must own one
     /// outstanding ref. After this call `this` may be dangling; the caller
     /// must not hold any live `&Self`/`&mut Self` derived from `this`.
     //
@@ -93,7 +93,7 @@ impl LinuxMemFdAllocator {
 
     /// # Safety
     /// `this` must be the `*mut Self` originally produced by `heap::alloc`
-    /// (via [`Self::new`] / `IntrusiveArc::new`) — the returned allocator's
+    /// (via [`Self::new`] / `RefPtr::new`) — the returned allocator's
     /// `free` will call [`Self::deref`] on it, which on the final ref drops
     /// the `Box`. A `*mut Self` derived from `&self` (SharedReadOnly
     /// provenance) would make that `heap::take` UB.
@@ -303,7 +303,7 @@ mod allocator_interface {
 
     /// # Safety
     /// `ptr` must be the `*mut LinuxMemFdAllocator` originally produced by
-    /// `heap::alloc` (via [`LinuxMemFdAllocator::new`] / `IntrusiveArc::new`)
+    /// `heap::alloc` (via [`LinuxMemFdAllocator::new`] / `RefPtr::new`)
     /// and the caller must own one outstanding ref on it. No `&Self`/`&mut Self`
     /// borrow of `*ptr` may be live across this call — when the refcount hits
     /// zero, `*ptr` is dropped and freed.

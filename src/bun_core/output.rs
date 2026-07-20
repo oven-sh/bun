@@ -1466,11 +1466,8 @@ pub fn println(args: fmt::Arguments<'_>) {
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Debug-only logs which should not appear in release mode.
-///
-/// To enable a specific log at runtime, set the environment variable
-///   `BUN_DEBUG_${TAG}` to 1.
-///
+/// Default visibility of a [`ScopedLogger`]: whether it emits without
+/// `BUN_DEBUG_${TAG}=1` set.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Visibility {
     /// Hide logs for this scope by default.

@@ -961,9 +961,9 @@ use crate::internal_state::{RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-/// Generic `HttpContext<const SSL>` alias — `crate::HttpContext` /
-/// `crate::HttpsContext` (above) are concrete-SSL aliases; the state machine
-/// needs a const-generic spelling for `get_ssl_ctx<IS_SSL>()`.
+/// Generic `HttpContext<const SSL>` alias — `crate::HttpsContext` (above) is
+/// the concrete-SSL alias; the state machine needs a const-generic spelling
+/// for `get_ssl_ctx<IS_SSL>()`.
 pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 
 // ── header constants ────────────────────────────────────────────────────

@@ -6,7 +6,7 @@
 //! large and the number of actual items in a given set is usually
 //! small, they may be less memory efficient than an array set.
 //!
-//! There are five variants defined here:
+//! There are four variants defined here:
 //!
 //! IntegerBitSet:
 //!   A bit set with static size, which is backed by a single integer.
@@ -17,10 +17,6 @@
 //!   A bit set with static size, which is backed by an array of usize.
 //!   This set is good for sets with a larger size, but may use
 //!   more bytes than necessary if your set is small.
-//!
-//! StaticBitSet:
-//!   Picks either IntegerBitSet or ArrayBitSet depending on the requested
-//!   size.  The interfaces of these two types match exactly, except for fields.
 //!
 //! DynamicBitSet:
 //!   A bit set with runtime-known size, backed by an allocated slice

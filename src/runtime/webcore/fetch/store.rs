@@ -441,7 +441,10 @@ fn parse_stored_json(bytes: &[u8]) -> Option<StoredResponse> {
             h.for_each_property(|k, _loc, v| {
                 headers.push((
                     k.to_vec().into_boxed_slice(),
-                    v.as_string(&bump).unwrap_or(b"").to_vec().into_boxed_slice(),
+                    v.as_string(&bump)
+                        .unwrap_or(b"")
+                        .to_vec()
+                        .into_boxed_slice(),
                 ));
             });
         }

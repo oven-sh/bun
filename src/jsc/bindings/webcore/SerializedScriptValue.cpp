@@ -6406,11 +6406,16 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         if (auto arrayBuffer = toPossiblySharedArrayBuffer(vm, transferable.get())) {
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
                 return Exception { DataCloneError };
-            if (arrayBuffer->isLocked()) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
+            if (arrayBuffer->isWasmMemory()) {
                 throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
+            // No generic isDetachable() gate: Bun's native borrows call
+            // ArrayBuffer::pin(), which clears isDetachable() without setting
+            // the lock flag. A pinned buffer falls through so transferTo()
+            // takes its copyTo() fallback (see bindings.cpp
+            // JSC__JSValue__pinArrayBuffer). WebAssembly.Memory stays rejected
+            // above per the spec's [[ArrayBufferDetachKey]] requirement.
             arrayBuffers.append(WTF::move(arrayBuffer));
             continue;
         }

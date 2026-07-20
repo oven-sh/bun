@@ -785,13 +785,11 @@ impl<'a> URL<'a> {
                 b'@' => {
                     // we found a password, everything before this point in the slice is a password
                     self.password = &str[0..i];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            str[i..].len() < 2
-                                || u16::from_le_bytes([str[i], str[i + 1]])
-                                    != u16::from_le_bytes(*b"//")
-                        );
-                    }
+                    debug_assert!(
+                        str[i..].len() < 2
+                            || u16::from_le_bytes([str[i], str[i + 1]])
+                                != u16::from_le_bytes(*b"//")
+                    );
                     return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no password
@@ -1269,9 +1267,8 @@ impl QueryStringMap {
     }
 }
 
-// Browsers typically limit URL lengths to around 64k
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
-// pick ArrayBitSet directly. 2048 / 64 == 32 masks.
+// Browsers typically limit URL lengths to around 64k.
+// IntegerBitSet caps at ≤64 bits, so pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
 /// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
 /// out of bounds.
@@ -1331,9 +1328,7 @@ impl<'a> Iterator<'a> {
             .position(|p| p.name_hash == hash)
         {
             let real_i = current_i + next_index + self.i;
-            if cfg!(debug_assertions) {
-                debug_assert!(!self.visited.is_set(real_i));
-            }
+            debug_assert!(!self.visited.is_set(real_i));
 
             self.visited.set(real_i);
             target[target_i] = self.map.str(remainder[current_i + next_index].value);

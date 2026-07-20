@@ -69,7 +69,8 @@ void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
 {
     // The shared DateCache reset and the per-instance gregorian-cache
     // invalidation must always travel together; callers use this pair.
-    vm.dateCache.resetIfNecessarySlow();
+    WTF::timeZoneDidChange();
+    vm.dateCache.clearForTimeZoneChange();
     invalidateLiveDateInstanceCaches(vm);
 }
 

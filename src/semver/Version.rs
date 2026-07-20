@@ -579,9 +579,6 @@ impl<T: VersionInt> VersionType<T> {
                     }
 
                     part_start_i = i;
-                    while i < input.len() && matches!(input[i], b' ') {
-                        i += 1;
-                    }
                     let tag_result = Tag::parse(sliced_string.sub(&input[part_start_i..]));
                     result.version.tag = tag_result.tag;
                     i += tag_result.len as usize;
@@ -1156,12 +1153,10 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(!strings::contains_char(
-                                    result.tag.build.slice(sliced_string.buf),
-                                    b'-'
-                                ));
-                            }
+                            debug_assert!(!strings::contains_char(
+                                result.tag.build.slice(sliced_string.buf),
+                                b'-'
+                            ));
                             state = State::None;
                         }
                     }

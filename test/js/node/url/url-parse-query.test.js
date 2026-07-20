@@ -17,6 +17,28 @@ describe("url.parse", () => {
     assert.strictEqual(query.toString, undefined);
   });
 
+  // parseQueryString is documented to use querystring.parse(), not URLSearchParams.
+  // Covers both code paths in Url.prototype.parse: the simplePath fast path (no
+  // protocol) and the full parse (with protocol).
+  describe.each([
+    ["simple path", "/p"],
+    ["full parse", "http://h/p"],
+  ])("parseQueryString uses querystring.parse semantics (%s)", (_, prefix) => {
+    test("preserves a leading ? in the first key", () => {
+      // search is "??a=1", so the query string is "?a=1".
+      assert.deepStrictEqual({ ...url.parse(prefix + "??a=1", true).query }, { "?a": "1" });
+    });
+
+    test("caps the number of parsed keys at 1000 (querystring's default maxKeys)", () => {
+      const big = Array.from({ length: 1500 }, (_, i) => `k${i}=v`).join("&");
+      const { query } = url.parse(prefix + "?" + big, true);
+      assert.strictEqual(Object.keys(query).length, 1000);
+      assert.strictEqual(query.k0, "v");
+      assert.strictEqual(query.k999, "v");
+      assert.strictEqual(query.k1000, undefined);
+    });
+  });
+
   test.todo("with query string", () => {
     function createWithNoPrototype(properties = []) {
       const noProto = { __proto__: null };

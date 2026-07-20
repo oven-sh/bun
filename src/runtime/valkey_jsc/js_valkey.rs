@@ -1204,7 +1204,9 @@ impl JSValkeyClient {
     }
 
     pub fn on_valkey_unsubscribe(&self) {
-        debug_assert!(self.is_subscriber());
+        // A trailing UNSUBSCRIBE ack can legitimately arrive after subscriber
+        // mode has exited (two queued unsubscribes empty the handler map before
+        // the second ack lands), so do not assert `is_subscriber()` here.
         debug_assert!(self.this_value.get().is_strong());
 
         self.flush_and_update_poll_ref();

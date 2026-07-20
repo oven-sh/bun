@@ -1107,8 +1107,6 @@ mod tests {
         assert_eq!(expected, vec![200, 201, 202, 203, 204, 206, 207]);
     }
 
-    // Exhaustively remove every valid offset from a wrapped layout and compare
-    // against a reference `Vec`. Uses a fresh FIFO per offset (remove mutates).
     #[test]
     fn iter_visits_both_halves_of_wrapped_ring() {
         let mut fifo = WrapFifo::init();
@@ -1129,6 +1127,8 @@ mod tests {
         assert_eq!(got.len(), fifo.readable_length());
     }
 
+    // Exhaustively remove every valid offset from a wrapped layout and compare
+    // against a reference `Vec`. Uses a fresh FIFO per offset (remove mutates).
     #[test]
     fn ordered_remove_item_wrapped_all_offsets_match_reference() {
         // Build the same wrapped layout as the tail-branch test: head=8, count=14.

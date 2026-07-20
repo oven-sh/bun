@@ -3924,10 +3924,16 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         x if x == windows::ntstatus::SUCCESS => return bun_sys::Result::success(),
         // The filesystem does not support FileDispositionInformationEx. Seen
         // as INVALID_PARAMETER on FAT32/exFAT, INVALID_INFO_CLASS or
-        // NOT_SUPPORTED on SMB redirectors and some ReFS variants.
+        // NOT_SUPPORTED on SMB redirectors and some ReFS variants. The full
+        // ERROR_INVALID_FUNCTION preimage (NOT_IMPLEMENTED,
+        // INVALID_DEVICE_REQUEST, ILLEGAL_FUNCTION) is matched too so the
+        // fallback covers the same set as libuv's Win32-level check.
         x if x == windows::ntstatus::INVALID_PARAMETER
             || x == windows::ntstatus::INVALID_INFO_CLASS
-            || x == windows::ntstatus::NOT_SUPPORTED => {}
+            || x == windows::ntstatus::NOT_SUPPORTED
+            || x == windows::ntstatus::NOT_IMPLEMENTED
+            || x == windows::ntstatus::INVALID_DEVICE_REQUEST
+            || x == windows::ntstatus::ILLEGAL_FUNCTION => {}
         // For all other statuses, fall down to the switch below to handle them.
         _ => need_fallback = false,
     }

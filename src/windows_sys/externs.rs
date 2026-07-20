@@ -905,6 +905,10 @@ impl NTSTATUS {
     /// valid information class for the specified object (driver does not
     /// implement it). Maps to `ERROR_INVALID_FUNCTION`.
     pub const INVALID_INFO_CLASS: NTSTATUS = NTSTATUS(0xC000_0003);
+    /// `STATUS_INVALID_DEVICE_REQUEST` — maps to `ERROR_INVALID_FUNCTION`.
+    pub const INVALID_DEVICE_REQUEST: NTSTATUS = NTSTATUS(0xC000_0010);
+    /// `STATUS_ILLEGAL_FUNCTION` — maps to `ERROR_INVALID_FUNCTION`.
+    pub const ILLEGAL_FUNCTION: NTSTATUS = NTSTATUS(0xC000_00AF);
     /// `STATUS_NOT_SUPPORTED` — the request is not supported. Returned by
     /// filesystem/redirector drivers for info classes they do not implement.
     pub const NOT_SUPPORTED: NTSTATUS = NTSTATUS(0xC000_00BB);

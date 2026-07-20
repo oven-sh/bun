@@ -1144,7 +1144,8 @@ impl JSValkeyClient {
     }
 
     fn reset_connection_timeout(&self) {
-        self.timer.arm(self, self.client.get().get_timeout_interval());
+        self.timer
+            .arm(self, self.client.get().get_timeout_interval());
     }
 
     pub fn disable_connection_timeout(&self) {

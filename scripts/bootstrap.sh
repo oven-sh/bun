@@ -1180,23 +1180,14 @@ install_llvm() {
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		# apt.llvm.org stopped publishing focal arm64 binaries for the 22
-		# release (binary-arm64 has only the Architecture:all packages). The
-		# bullseye repo still has the full arm64 set and is built against
-		# glibc 2.31 (same as focal), so force that codename on focal arm64.
-		# The bullseye clang-22 Depends names Debian's gcc-10 dev packages,
-		# which focal doesn't ship; stub them with equivs so apt resolves
-		# (we use gcc-13's libstdc++ via install_gcc()).
+		# release (binary-arm64 has only the Architecture:all packages); no CI
+		# lane runs bootstrap.sh on focal arm64 (that path goes through
+		# .buildkite/Dockerfile, which has the full bullseye-repo workaround),
+		# so fail clearly here rather than carry a half-working copy of it.
 		if [ "$arch" = "aarch64" ] && [ "$release" = "20.04" ]; then
-			install_packages equivs
-			for p in libstdc++-10-dev libgcc-10-dev libobjc-10-dev; do
-				printf 'Section: misc\nPriority: optional\nStandards-Version: 3.9.2\nPackage: %s\nVersion: 99\nDescription: dummy for bullseye clang dep\n' "$p" > "/tmp/$p.ctl"
-				(cd /tmp && execute_sudo equivs-build "$p.ctl" && execute_sudo dpkg -i "${p}_99_all.deb" && rm -f "$p.ctl" "${p}_99_all.deb")
-			done
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" -n bullseye
-			install_packages "llvm-$(llvm_version)" "llvm-$(llvm_version)-dev" "libclang-rt-$(llvm_version)-dev" "clang-format-$(llvm_version)" "clang-tidy-$(llvm_version)"
-		else
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+			error "apt.llvm.org has no focal arm64 packages for LLVM $(llvm_version). Use a newer Ubuntu (22.04+) on arm64, or see .buildkite/Dockerfile for the bullseye-repo workaround."
 		fi
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"
@@ -1208,9 +1199,7 @@ install_llvm() {
 		# alpine 3.24 ships clang22/llvm22/lld22 at 22.1.3; edge has 22.1.8.
 		# Tag the edge main repo so only the llvm packages come from there
 		# (musl is the same version in both, so edge's binaries run on 3.24).
-		if ! grep -q '@edge' /etc/apk/repositories 2>/dev/null; then
-			execute_sudo /usr/bin/sh -c 'echo "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main" >> /etc/apk/repositories'
-		fi
+		append_file /etc/apk/repositories "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main"
 		install_packages \
 			"llvm$(llvm_version)@edge" \
 			"clang$(llvm_version)@edge" \

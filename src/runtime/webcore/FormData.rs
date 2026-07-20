@@ -9,6 +9,7 @@ use bun_jsc::{
 };
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
+use std::borrow::Cow;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
@@ -83,8 +84,9 @@ impl AsyncFormDataExt for AsyncFormData {
 /// file bodies are binary data that can contain null bytes, which
 /// Semver.String's inline storage treats as terminators.
 pub struct Field<'a> {
-    /// Borrows into the caller-owned input buffer (binary body slice).
-    pub value: &'a [u8],
+    /// Borrows into the caller-owned input buffer, or owns a decoded copy when
+    /// the part carried `Content-Transfer-Encoding: base64`.
+    pub value: Cow<'a, [u8]>,
     pub filename: bun_semver::String,
     pub content_type: bun_semver::String,
     pub is_file: bool,
@@ -94,7 +96,7 @@ pub struct Field<'a> {
 impl Default for Field<'_> {
     fn default() -> Self {
         Field {
-            value: b"",
+            value: Cow::Borrowed(b""),
             filename: bun_semver::String::default(),
             content_type: bun_semver::String::default(),
             is_file: false,
@@ -217,7 +219,7 @@ pub fn to_js_from_multipart_data(
 
     impl<'a> Wrapper<'a> {
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
-            let value_str: &[u8] = field.value;
+            let value_str: &[u8] = &field.value;
             let key = ZigString::init_utf8(name.slice(buf));
 
             if field.is_file {
@@ -339,7 +341,8 @@ pub fn for_each_multipart_entry<C>(
         let mut filename: Option<bun_semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
+        let mut is_base64 = false;
+        while !header_chunk.is_empty() {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
@@ -407,6 +410,15 @@ pub fn for_each_multipart_entry<C>(
                         break;
                     }
                 }
+            } else if strings::eql_case_insensitive_ascii(key, b"content-transfer-encoding", true) {
+                // RFC 7578 §4.7 deprecates Content-Transfer-Encoding in
+                // multipart/form-data, but undici decodes base64 parts and
+                // Bun matches that for compatibility.
+                is_base64 = strings::eql_case_insensitive_ascii(
+                    strings::trim(value, b" \t"),
+                    b"base64",
+                    true,
+                );
             } else if !value.is_empty()
                 && field.content_type.is_empty()
                 && strings::eql_case_insensitive_ascii(key, b"content-type", true)
@@ -435,7 +447,14 @@ pub fn for_each_multipart_entry<C>(
         if body.ends_with(b"\r\n") {
             body = &body[..body.len() - 2];
         }
-        field.value = body;
+        field.value = if is_base64 {
+            let mut out = vec![0u8; bun_base64::decode_lenient_len(body.len())];
+            let wrote = bun_base64::decode_lenient(&mut out, body, false);
+            out.truncate(wrote);
+            Cow::Owned(out)
+        } else {
+            Cow::Borrowed(body)
+        };
         field.filename = filename.unwrap_or_default();
         field.is_file = is_file;
 

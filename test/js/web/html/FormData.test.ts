@@ -241,6 +241,38 @@ describe("FormData", () => {
     }
   }
 
+  it("decodes a part with Content-Transfer-Encoding: base64", async () => {
+    const raw = crypto.getRandomValues(new Uint8Array(256));
+    const body =
+      "--X\r\n" +
+      'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n' +
+      "Content-Type: application/octet-stream\r\n" +
+      "Content-Transfer-Encoding: base64\r\n" +
+      "\r\n" +
+      Buffer.from(raw).toString("base64") +
+      "\r\n--X--\r\n";
+    const form = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=X" },
+    }).formData();
+    const file = form.get("file") as File;
+    expect(file.type).toBe("application/octet-stream");
+    expect(Buffer.from(await file.arrayBuffer()).equals(Buffer.from(raw))).toBe(true);
+  });
+
+  it("decodes a base64 part without a filename as a string value", async () => {
+    const body =
+      "--X\r\n" +
+      'Content-Disposition: form-data; name="greeting"\r\n' +
+      "content-transfer-encoding: Base64\r\n" +
+      "\r\n" +
+      Buffer.from("hello world").toString("base64") +
+      "\r\n--X--\r\n";
+    const form = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=X" },
+    }).formData();
+    expect(form.get("greeting")).toBe("hello world");
+  });
+
   it("should throw on missing final boundary", async () => {
     const response = new Response('-foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {

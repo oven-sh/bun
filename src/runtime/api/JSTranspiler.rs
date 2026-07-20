@@ -182,8 +182,7 @@ impl Config {
 
             // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
             let define_obj_ref = unsafe { &*define_obj };
-            let mut define_iter =
-                JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
+            let mut define_iter = JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
             // `defer define_iter.deinit()` → Drop
 
             // `define_iter.i` is the property position, not a dense index of yielded

@@ -576,9 +576,13 @@ pub fn resolve_against_cwd(path: &[u8]) -> Box<[u8]> {
         Err(_) => return path.to_vec().into_boxed_slice(),
     };
     let mut out = bun_paths::path_buffer_pool::get();
-    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(cwd, &mut out, &[path])
-        .to_vec()
-        .into_boxed_slice()
+    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        cwd,
+        &mut out,
+        &[path],
+    )
+    .to_vec()
+    .into_boxed_slice()
 }
 
 pub struct RuntimeOptions {

@@ -368,6 +368,11 @@ describe("Valkey: RESP push frame routing", () => {
       ">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n",
     ],
     [
+      "send('SUBSCRIBE', ...)",
+      (c: Bun.RedisClient) => c.send("SUBSCRIBE", ["ch"]),
+      ">3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n",
+    ],
+    [
       "send('SSUBSCRIBE', ...)",
       (c: Bun.RedisClient) => c.send("SSUBSCRIBE", ["shard-ch"]),
       ">3\r\n$10\r\nssubscribe\r\n$8\r\nshard-ch\r\n:1\r\n",

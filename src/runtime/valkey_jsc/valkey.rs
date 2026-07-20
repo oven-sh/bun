@@ -902,10 +902,10 @@ impl ValkeyClient {
                 .subscription_ctx
                 .get()
                 .channels_subscribed_to_count(&global_this);
-            // Only `.subscribe(ch, handler)` wires the handler map, so only a
-            // plain `subscribe` ack enters subscriber mode; psubscribe /
-            // ssubscribe acks just settle their promise (RESP3 allows this).
-            if matches!(kind, protocol::SubscriptionPushMessage::Subscribe) {
+            // Only `.subscribe(ch, handler)` wires the handler map; enter
+            // subscriber mode iff a handler is actually registered, so raw
+            // `send('SUBSCRIBE'/'PSUBSCRIBE'/'SSUBSCRIBE', ...)` never does.
+            if sub_count > 0 {
                 p.add_subscription();
                 self.parent().on_valkey_subscribe();
             }

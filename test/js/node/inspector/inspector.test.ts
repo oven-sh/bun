@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import inspector from "node:inspector";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import inspector from "node:inspector";
 
 // Node prints this and blocks while a CDP frontend is still attached at exit.
 const DISCONNECT_NOTICE = "Waiting for the debugger to disconnect...";

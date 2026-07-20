@@ -7,7 +7,7 @@ CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer for the deadline and
 associate it with the loop's IOCP via NtAssociateWaitCompletionPacket; the
 kernel posts a NULL-overlapped completion when it fires, which the dequeue
 path already treats as a pure wakeup. GQCS itself then blocks with INFINITE.
-On older Windows, fall back to timeBeginPeriod(1).
+On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
 --- a/src/uv-common.h
 +++ b/src/uv-common.h
 @@ -437,6 +437,10 @@ struct uv__loop_internal_fields_s {
@@ -110,33 +110,25 @@ On older Windows, fall back to timeBeginPeriod(1).
                                     LOAD_LIBRARY_SEARCH_SYSTEM32);
 --- a/src/win/core.c
 +++ b/src/win/core.c
-@@ -36,9 +36,18 @@
- #include "heap-inl.h"
- #include "req-inl.h"
- 
-+/* winmm.dll: timeBeginPeriod. windows.h under WIN32_LEAN_AND_MEAN omits it. */
-+__declspec(dllimport) UINT __stdcall timeBeginPeriod(UINT uPeriod);
-+#pragma comment(lib, "winmm.lib")
-+
+@@ -39,6 +39,10 @@
  /* uv_once initialization guards */
  static uv_once_t uv_init_guard_ = UV_ONCE_INIT;
  
 +/* Non-zero when CREATE_WAITABLE_TIMER_HIGH_RESOLUTION and the
-+ * Nt*WaitCompletionPacket family are both available (Win10 1803+). When zero
-+ * the process falls back to timeBeginPeriod(1). */
++ * Nt*WaitCompletionPacket family are both available (Win10 1803+). */
 +static int uv__have_hrtimer;
 +
  
  #if defined(_DEBUG) && (defined(_MSC_VER) || defined(__MINGW64_VERSION_MAJOR))
  /* Our crt debug report handler allows us to temporarily disable asserts
-@@ -221,6 +230,53 @@ static void uv__init(void) {
+@@ -221,6 +225,51 @@
  
    /* Initialize system wakeup detection */
    uv__init_detect_system_wakeup();
 +
 +  /* Probe high-res waitable timer + wait-completion-packet support so
 +   * uv__poll can wake at sub-ms precision (see the hrtimer arm there).
-+   * Pre Win10 1803 falls back to raising the system tick to 1ms. */
++   * Pre Win10 1803: probe fails, uv__poll keeps the plain GQCS ms wait. */
 +  uv__have_hrtimer = 0;
 +  if (pNtCreateWaitCompletionPacket != NULL &&
 +      pNtAssociateWaitCompletionPacket != NULL &&
@@ -152,8 +144,6 @@ On older Windows, fall back to timeBeginPeriod(1).
 +      CloseHandle(h);
 +    }
 +  }
-+  if (!uv__have_hrtimer)
-+    timeBeginPeriod(1);
 +}
 +
 +
@@ -183,7 +173,7 @@ On older Windows, fall back to timeBeginPeriod(1).
  }
  
  
-@@ -300,6 +356,8 @@ int uv_loop_init(uv_loop_t* loop) {
+@@ -300,6 +349,8 @@
    if (err)
      goto fail_async_init;
  
@@ -192,7 +182,7 @@ On older Windows, fall back to timeBeginPeriod(1).
    return 0;
  
  fail_async_init:
-@@ -367,6 +425,12 @@ void uv__loop_close(uv_loop_t* loop) {
+@@ -367,6 +418,12 @@
    loop->timer_heap = NULL;
  
    lfields = uv__get_internal_fields(loop);
@@ -205,7 +195,7 @@ On older Windows, fall back to timeBeginPeriod(1).
    uv_mutex_destroy(&lfields->loop_metrics.lock);
    uv__free(lfields);
    loop->internal_fields = NULL;
-@@ -463,6 +527,34 @@ static void uv__poll(uv_loop_t* loop, DWORD timeout) {
+@@ -463,6 +520,34 @@
       */
      lfields->current_timeout = timeout;
  

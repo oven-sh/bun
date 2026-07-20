@@ -52,7 +52,7 @@ export const libuv: Dependency = {
   // win-hrtimer: GQCS's ms timeout rounds to the ~15.6ms system tick, so
   // arm a CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer and post it
   // to the IOCP via NtAssociateWaitCompletionPacket (Go runtime's recipe,
-  // golang/go#44343); fall back to timeBeginPeriod(1) on older Windows.
+  // golang/go#44343). Pre Win10 1803: probe fails, behavior is unchanged.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",

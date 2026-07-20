@@ -77,6 +77,66 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
+// Test-only bindings for `bun_perf::hw_timer`. The bodies live here (like
+// `bun_get_use_system_ca` above) because `bun_perf` is a low-tier crate with
+// no `*_jsc` sibling and must not depend on `bun_jsc`.
+
+/// `hwTimerInternals.resolveTscFrequency(hypervisor, hvMaxLeaf, hvTscKhz,
+/// leaf15Eax, leaf15Ebx, leaf15Ecx)` — run the x64 TSC-frequency decision on
+/// caller-supplied CPUID values so tests can cover hypervisor/bare-metal
+/// combinations this machine doesn't exhibit.
+pub(crate) fn perf_hw_timer_resolve_tsc_frequency(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let got = frame.arguments_count() as usize;
+    if got < 6 {
+        return Err(global.throw_not_enough_arguments("resolveTscFrequency", 6, got));
+    }
+    let uint = |i: usize| -> JsResult<u32> {
+        let v = frame.argument(i).coerce_to_int64(global)?;
+        Ok(v.clamp(0, i64::from(u32::MAX)) as u32)
+    };
+    let info = bun_perf::hw_timer::X64TscCpuidInfo {
+        hypervisor: frame.argument(0).to_boolean(),
+        hv_max_leaf: uint(1)?,
+        hv_tsc_khz: uint(2)?,
+        leaf_15_eax: uint(3)?,
+        leaf_15_ebx: uint(4)?,
+        leaf_15_ecx: uint(5)?,
+    };
+    Ok(JSValue::js_number_from_uint64(
+        bun_perf::hw_timer::resolve_x64_tsc_frequency(info),
+    ))
+}
+
+/// `hwTimerInternals.calibrationState()` — the frequency `bun_perf::hw_timer`
+/// would calibrate with on this machine plus a counter/OS-clock sample pair,
+/// so tests can measure the real counter rate and compare.
+pub(crate) fn perf_hw_timer_calibration_state(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let snapshot = bun_perf::hw_timer::calibration_snapshot();
+    let result = JSValue::create_empty_object(global, 3);
+    result.put(
+        global,
+        b"frequencyHz",
+        JSValue::js_number_from_uint64(snapshot.frequency_hz),
+    );
+    result.put(
+        global,
+        b"counter",
+        JSValue::js_number_from_uint64(snapshot.counter),
+    );
+    result.put(
+        global,
+        b"osNs",
+        JSValue::js_number_from_uint64(snapshot.os_ns),
+    );
+    Ok(result)
+}
+
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,

@@ -285,6 +285,27 @@ export const dgramInternals = {
   isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
+export const hwTimerInternals = {
+  /**
+   * Run the x64 TSC-frequency decision (`bun_perf::hw_timer`) on caller-supplied CPUID values:
+   * (hypervisor, hvMaxLeaf, hvTscKhz, leaf15Eax, leaf15Ebx, leaf15Ecx) -> Hz (0 = OS-clock fallback).
+   */
+  resolveTscFrequency: $newZigFunction("hw_timer.zig", "resolveTscFrequency", 6) as (
+    hypervisor: boolean,
+    hvMaxLeaf: number,
+    hvTscKhz: number,
+    leaf15Eax: number,
+    leaf15Ebx: number,
+    leaf15Ecx: number,
+  ) => number,
+  /** The frequency hw_timer would calibrate with on this machine, plus a counter/OS-clock sample pair. */
+  calibrationState: $newZigFunction("hw_timer.zig", "calibrationState", 0) as () => {
+    frequencyHz: number;
+    counter: number;
+    osNs: number;
+  },
+};
+
 export const decodeURIComponentSIMD = $newCppFunction(
   "decodeURIComponentSIMD.cpp",
   "jsFunctionDecodeURIComponentSIMD",

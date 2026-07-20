@@ -346,6 +346,68 @@ describe("fetch store", () => {
     expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(2);
   });
 
+  test("redirect mode is part of the cache key", async () => {
+    using cacheDir = tempDir("fetch-store-redirect", {});
+    await using target = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("final");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch() {
+        return Response.redirect(`http://localhost:${target.port}/final`, 302);
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const url = `http://localhost:${origin.port}/r`;
+
+    const follow1 = await fetch(url, { store });
+    expect(follow1.status).toBe(200);
+    expect(await follow1.text()).toBe("final");
+
+    const manual1 = await fetch(url, { redirect: "manual", store });
+    expect(manual1.status).toBe(302);
+
+    const follow2 = await fetch(url, { store });
+    expect(follow2.status).toBe(200);
+    const manual2 = await fetch(url, { redirect: "manual", store });
+    expect(manual2.status).toBe(302);
+
+    expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(2);
+  });
+
+  test.concurrent("store: null opts out of a process-wide --fetch-cache", async () => {
+    using cacheDir = tempDir("fetch-store-null", {});
+    using srcDir = tempDir("fetch-store-null-src", {
+      "script.ts": `
+        let hits = 0;
+        await using server = Bun.serve({
+          port: 0,
+          fetch() { hits++; return new Response("n" + hits); },
+        });
+        const url = "http://localhost:" + server.port + "/null";
+        const a = await (await fetch(url)).text();
+        const b = await (await fetch(url, { store: null })).text();
+        const c = await (await fetch(url, { store: false })).text();
+        console.log(JSON.stringify({ a, b, c, hits }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--fetch-cache", String(cacheDir), "script.ts"],
+      env: bunEnv,
+      cwd: String(srcDir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { a: "n1", b: "n2", c: "n3", hits: 3 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("ReadableStream request bodies bypass the store", async () => {
     using cacheDir = tempDir("fetch-store-stream", {});
     let hits = 0;

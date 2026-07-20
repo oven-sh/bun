@@ -1003,7 +1003,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_verbose verbose;
     };
 
-    // store: { type: "dir" | "memory", ... } | undefined
+    // store: { type: "dir" | "memory", ... } | null | false | undefined
     let fetch_store: Option<FetchStore> = 'extract_store: {
         let objects_to_try = [
             options_object.unwrap_or(JSValue::ZERO),
@@ -1012,7 +1012,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(store_val) = obj.get(global_this, "store")? {
-                    if !store_val.is_undefined_or_null() {
+                    if store_val.is_null() || store_val == JSValue::FALSE {
+                        break 'extract_store None;
+                    }
+                    if !store_val.is_undefined() {
                         break 'extract_store FetchStore::from_js(global_this, store_val)?;
                     }
                 }
@@ -2097,10 +2100,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let body_bytes = if s.is_empty() { None } else { Some(s) };
             let empty_headers;
             let req = store::build_request(
-                method,
-                url.href,
-                unix_socket_path.slice(),
-                proxy.as_ref().map(|p| p.href).unwrap_or(b""),
+                &store::KeyInputs {
+                    method,
+                    url: url.href,
+                    unix_socket_path: unix_socket_path.slice(),
+                    proxy_href: proxy.as_ref().map(|p| p.href).unwrap_or(b""),
+                    redirect: redirect_type,
+                    decompress: !disable_decompression,
+                },
                 match headers.as_ref() {
                     Some(h) => h,
                     None => {

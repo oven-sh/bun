@@ -90,17 +90,35 @@ impl StoredResponse {
 
 // ─── key derivation ───────────────────────────────────────────────────────
 
+/// Inputs that select the transport or shape the response and so must feed
+/// the cache key. Non-default values are emitted into the preimage so the
+/// common case (no unix/proxy, follow redirects, decompress) keeps the same
+/// key as earlier versions.
+pub struct KeyInputs<'a> {
+    pub method: Method,
+    pub url: &'a [u8],
+    pub unix_socket_path: &'a [u8],
+    pub proxy_href: &'a [u8],
+    pub redirect: bun_http::FetchRedirect,
+    pub decompress: bool,
+}
+
 /// Derive the store key and the owned request snapshot in one pass.
 /// `body` is `None` for GET/HEAD or when the body is a stream (streams are
 /// unhashable; a streamed request is never cached).
 pub fn build_request(
-    method: Method,
-    url: &[u8],
-    unix_socket_path: &[u8],
-    proxy_href: &[u8],
+    inputs: &KeyInputs<'_>,
     headers: &Headers,
     body: Option<&[u8]>,
 ) -> StoredRequest {
+    let KeyInputs {
+        method,
+        url,
+        unix_socket_path,
+        proxy_href,
+        redirect,
+        decompress,
+    } = *inputs;
     let entries = headers.entries.slice();
     let names = entries.items_name();
     let values = entries.items_value();
@@ -130,6 +148,14 @@ pub fn build_request(
         buf.extend_from_slice(b"\0proxy:");
         buf.extend_from_slice(proxy_href);
         buf.push(b'\n');
+    }
+    match redirect {
+        bun_http::FetchRedirect::Follow => {}
+        bun_http::FetchRedirect::Manual => buf.extend_from_slice(b"\0redirect:manual\n"),
+        bun_http::FetchRedirect::Error => buf.extend_from_slice(b"\0redirect:error\n"),
+    }
+    if !decompress {
+        buf.extend_from_slice(b"\0decompress:false\n");
     }
     for (n, v) in &hv {
         buf.extend_from_slice(n);

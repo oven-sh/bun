@@ -2018,11 +2018,12 @@ interface BunFetchRequestInit extends RequestInit {
    *
    * The process-wide default can be set with `--fetch-cache=<path|memory>`
    * or `[fetch] cache` in `bunfig.toml`; this per-call option overrides it.
+   * Pass `null` or `false` to bypass the process-wide store for this call.
    *
    * Not part of the Fetch API specification.
    * @experimental
    */
-  store?: { type: "dir"; path: string } | { type: "memory"; ttl?: number; max?: number };
+  store?: { type: "dir"; path: string } | { type: "memory"; ttl?: number; max?: number } | null | false;
 
   /**
    * Force the underlying HTTP version. `"http2"` advertises only `h2` in

@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -36,6 +35,22 @@ fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
 bun_output::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
+
+/// +1-ref BoringSSL `SSL_CTX*` owned by this client (`TLS::Custom` only).
+/// Drops via `SSL_CTX_free`.
+pub(crate) struct OwnedSslCtx(NonNull<uws::SslCtx>);
+impl OwnedSslCtx {
+    #[inline]
+    pub(crate) fn as_ptr(&self) -> *mut uws::SslCtx {
+        self.0.as_ptr()
+    }
+}
+impl Drop for OwnedSslCtx {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is a +1-ref `SSL_CTX*` from `SSLContextCache::get_or_create`.
+        unsafe { boringssl::c::SSL_CTX_free(self.0.as_ptr()) }
+    }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // SubscriptionCtx
@@ -290,8 +305,8 @@ pub struct JSValkeyClient {
 
     pub _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
-    /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
-    pub _secure: Cell<Option<*mut uws::SslCtx>>,
+    /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this `None`.
+    pub _secure: JsCell<Option<OwnedSslCtx>>,
 
     pub timer: JsCell<Timer::EventLoopTimer>,
     pub reconnect_timer: JsCell<Timer::EventLoopTimer>,
@@ -640,7 +655,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: Cell::new(None),
+            _secure: JsCell::new(None),
             timer: JsCell::new(Timer::EventLoopTimer::init_paused(
                 Timer::Tag::ValkeyConnectionTimeout,
             )),
@@ -740,7 +755,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: Cell::new(None),
+            _secure: JsCell::new(None),
             timer: JsCell::new(Timer::EventLoopTimer::init_paused(
                 Timer::Tag::ValkeyConnectionTimeout,
             )),
@@ -1454,7 +1469,12 @@ impl JSValkeyClient {
                 // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
                 // stable address for the VM's lifetime, JS-thread-only.
                 let cache = unsafe { &mut (*state).ssl_ctx_cache };
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                self._secure.set(
+                    cache
+                        .get_or_create(custom, &mut err)
+                        .and_then(NonNull::new)
+                        .map(OwnedSslCtx),
+                );
             }
             self._secure.get().is_none()
         } else {
@@ -1479,7 +1499,7 @@ impl JSValkeyClient {
                 // SAFETY: `vm_ptr` is the live per-thread VM (see above).
                 Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
             }
-            valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
+            valkey::TLS::Custom(_) => Some(self._secure.get().as_ref().unwrap().as_ptr()),
         };
 
         self.client_mut().status = valkey::Status::Connecting;
@@ -1579,10 +1599,6 @@ impl JSValkeyClient {
             // SAFETY: last ref dropped — sole owner of `*this` (see above).
             let this_ref = unsafe { &*this };
             debug_assert!(this_ref.client.get().socket.is_closed());
-            if let Some(s) = this_ref._secure.get() {
-                // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-                unsafe { boringssl::c::SSL_CTX_free(s) };
-            }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());
             this_ref.stop_timers();

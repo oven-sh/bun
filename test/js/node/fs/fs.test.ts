@@ -5607,7 +5607,9 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 
   it("is transparent to fs.Dir callbacks", async () => {
     const { stdout, exitCode } = await runScript(`
-      require("fs").opendir(${dirLit}, (err, dir) => {
+      const odir = require("fs").mkdtempSync(require("os").tmpdir() + "/cb-throw-opendir-");
+      require("fs").writeFileSync(odir + "/file.txt", "x");
+      require("fs").opendir(odir, (err, dir) => {
         if (err) throw err;
         dir.read((e, ent) => {
           console.log(ent && ent.name);

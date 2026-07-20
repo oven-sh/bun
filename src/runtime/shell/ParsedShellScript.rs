@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{OwnedString, String as BunString, fmt, strings};
 use bun_jsc::{
     CallFrame, ErrorCode, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsCell, JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
@@ -121,12 +121,13 @@ impl ParsedShellScript {
         };
         let str = OwnedString::new(BunString::from_js(str_js, global)?);
         if str.index_of_ascii_char(0).is_some() {
+            let bytes = str.to_owned_slice();
             return Err(global
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
-                        "cwd must be a string without null bytes. Received \"{}\"",
-                        str.to_zig_string()
+                        "cwd must be a string without null bytes. Received {}",
+                        fmt::quote(&bytes)
                     ),
                 )
                 .throw());
@@ -176,12 +177,13 @@ impl ParsedShellScript {
             }
 
             if key.index_of_ascii_char(0).is_some() {
+                let bytes = key.to_owned_slice();
                 return Err(global
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
                         format_args!(
-                            "env key must be a string without null bytes. Received \"{}\"",
-                            key.to_zig_string()
+                            "env key must be a string without null bytes. Received {}",
+                            fmt::quote(&bytes)
                         ),
                     )
                     .throw());
@@ -198,9 +200,9 @@ impl ParsedShellScript {
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
                         format_args!(
-                            "env value for \"{}\" must be a string without null bytes. Received \"{}\"",
-                            key.to_zig_string(),
-                            value_str
+                            "env value for {} must be a string without null bytes. Received {}",
+                            fmt::quote(&keyslice),
+                            fmt::quote(&slice)
                         ),
                     )
                     .throw());

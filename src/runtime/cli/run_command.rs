@@ -3886,7 +3886,15 @@ impl RunCommand {
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
             })
             .collect();
-        strings::sort_asc(&mut all_keys);
+        if descriptions.len() == all_keys.len() {
+            // `descriptions[i]` pairs with `all_keys[i]`; keep them aligned.
+            let mut order: Vec<usize> = (0..all_keys.len()).collect();
+            order.sort_by(|&a, &b| strings::order(all_keys[a], all_keys[b]));
+            all_keys = order.iter().map(|&i| all_keys[i]).collect();
+            descriptions = order.iter().map(|&i| descriptions[i]).collect();
+        } else {
+            strings::sort_asc(&mut all_keys);
+        }
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
         let parked = runner_arena().alloc(results);

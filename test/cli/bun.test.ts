@@ -125,6 +125,40 @@ describe("bun", () => {
         expect(exitCode).toBe(0);
       }
     });
+
+    test("getcompletes z pairs each script with its own description", () => {
+      using dir = tempDir("getcompletes-z-desc", {
+        // Keys deliberately out of alphabetical order so the internal sort
+        // would mis-pair them with a parallel description array that was
+        // left unsorted.
+        "package.json": JSON.stringify({
+          scripts: {
+            zeta: "echo zeta-cmd",
+            alpha: "echo alpha-cmd",
+            beta: "echo beta-cmd",
+          },
+        }),
+      });
+
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "getcompletes", "z"],
+        env: { ...bunEnv, SHELL: "/bin/zsh", MAX_DESCRIPTION_LEN: "200" },
+        cwd: String(dir),
+      });
+
+      const lines = stdout
+        .toString()
+        .split("\n")
+        .filter(Boolean)
+        .map(l => l.split("\t"));
+
+      expect(lines).toEqual([
+        ["alpha", "echo alpha-cmd"],
+        ["beta", "echo beta-cmd"],
+        ["zeta", "echo zeta-cmd"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {

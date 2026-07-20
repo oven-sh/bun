@@ -168,6 +168,20 @@ bun_core::comptime_string_set! {
     };
 }
 
+bun_core::comptime_string_set! {
+    /// Commands whose reply is a subscribe/unsubscribe ack push rather than a
+    /// normal in-line reply; their promise must carry SUBSCRIPTION_REQUEST so
+    /// the push handler knows which in-flight entry to consume.
+    static SUBSCRIPTION_COMMANDS = {
+        b"SUBSCRIBE",
+        b"PSUBSCRIBE",
+        b"SSUBSCRIBE",
+        b"UNSUBSCRIBE",
+        b"PUNSUBSCRIBE",
+        b"SUNSUBSCRIBE",
+    };
+}
+
 impl Meta {
     pub fn check(self, command_name: &[u8]) -> Self {
         let mut new = self;
@@ -187,6 +201,9 @@ impl Meta {
             Meta::SUPPORTS_AUTO_PIPELINING,
             !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(probe),
         );
+        if SUBSCRIPTION_COMMANDS.contains(probe) {
+            new.insert(Meta::SUBSCRIPTION_REQUEST);
+        }
         new
     }
 }

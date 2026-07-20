@@ -4432,7 +4432,6 @@ impl<'a> Resolver<'a> {
                             bun_sys::WindowsOpenDirOptions {
                                 iterable: true,
                                 no_follow: false,
-                                read_only: true,
                                 ..Default::default()
                             },
                         )
@@ -4462,6 +4461,23 @@ impl<'a> Resolver<'a> {
                                 || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                             {
                                 return Ok(None);
+                            }
+                            // A permission-denied ancestor (sandboxed drive roots, x-only
+                            // shared dirs) is treated as opaque and empty, like the
+                            // ENOTDIR tolerance; the requested directory itself stays fatal.
+                            if queue_slice_len > 0
+                                && matches!(
+                                    err,
+                                    crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                                )
+                            {
+                                debuglog!(
+                                    "treating permission-denied ancestor \"{}\" as empty: {}",
+                                    bstr::BStr::new(queue_top_unsafe_path),
+                                    bstr::BStr::new(err.name())
+                                );
+                                break 'open_dir FD::INVALID;
                             }
                             let cached_dir_entry_result = rfs!()
                                 .entries
@@ -4495,7 +4511,9 @@ impl<'a> Resolver<'a> {
                 }
             };
 
-            if !queue_top.fd.is_valid() {
+            // `open_dir` is INVALID for a permission-denied ancestor treated as
+            // an opaque directory; there is nothing to track or close then.
+            if !queue_top.fd.is_valid() && open_dir.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
@@ -4589,27 +4607,31 @@ impl<'a> Resolver<'a> {
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
 
-                let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                // NOTE: `WrappedIterator::next` returns
-                // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
-                // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-                // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-                let mut filename_store = FilenameStoreAppender::new();
-                loop {
-                    let _value = match dir_iterator.next() {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(_) => break,
-                    };
-                    new_entry
-                        .add_entry_with_store(
-                            // SAFETY: see block-wide note above.
-                            in_place.map(|existing| unsafe { &mut (*existing).data }),
-                            &_value,
-                            &mut filename_store,
-                            (),
-                        )
-                        .expect("unreachable");
+                // A permission-denied ancestor has no fd to enumerate; its
+                // entry set stays empty.
+                if open_dir.is_valid() {
+                    let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                    // NOTE: `WrappedIterator::next` returns
+                    // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
+                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                    let mut filename_store = FilenameStoreAppender::new();
+                    loop {
+                        let _value = match dir_iterator.next() {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break,
+                            Err(_) => break,
+                        };
+                        new_entry
+                            .add_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
@@ -4792,7 +4814,8 @@ impl<'a> Resolver<'a> {
                 // because we want the output to always be deterministic
                 let plen = i32::try_from(prefix.len()).expect("int cast");
                 let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.starts_with(prefix)
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length
                         || (plen == longest_match_prefix_length

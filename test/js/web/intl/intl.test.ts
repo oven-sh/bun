@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against (Linux); macOS uses Apple's libicucore and
@@ -137,6 +137,38 @@ describe("Intl.Collator", () => {
     expect(c.compare("a", "A")).toBe(0);
     expect(c.compare("a", "á")).toBe(0);
     expect(c.compare("a", "b")).toBeLessThan(0);
+  });
+
+  // oven-sh/WebKit#313: a Latin-1 string of length >= 2^30 cannot be upconverted
+  // into a Vector<char16_t>, so the ucol_strcoll fallback must throw instead of
+  // hitting Vector's FailureAction::Crash. The null byte forces the DUCET fast
+  // path to bail so the fallback is reached.
+  test("compare throws RangeError instead of aborting on a 2^30-byte Latin-1 operand", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        String.raw`
+          const big = Buffer.alloc(2 ** 30).toString("latin1");
+          let thrown = 0;
+          for (const fn of [
+            () => "x".localeCompare(big),
+            () => big.localeCompare("x"),
+            () => new Intl.Collator().compare("x", big),
+          ]) {
+            try { fn(); } catch (e) { if (e instanceof RangeError) thrown++; }
+          }
+          console.log("thrown=" + thrown, "ascii=" + "x".localeCompare("y"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("thrown=3 ascii=-1");
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -269,6 +269,83 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Regression: archive_read_set_options() clobbered the a->format set by
+  // archive_read_set_format(), so archive_read_open1() fell back to format
+  // bidding. The tar bidder needs 512 decompressed bytes up front; when the
+  // first HTTP chunk is smaller than the 10-byte gzip header, the gzip
+  // filter returns ARCHIVE_RETRY, which the bidder (called with avail=NULL)
+  // treats as "no data" and bids 0, yielding "Unrecognized archive format"
+  // and a user-facing "Fail extracting tarball". Observed in CI on macOS
+  // (where kqueue tends to surface a tiny first chunk) for large packages
+  // such as aws-cdk-lib and next.
+  test("streaming extract succeeds when the first chunk is smaller than the gzip header", async () => {
+    let tarballHits = 0;
+    const server: Server = createServer((req, res) => {
+      const url = new URL(req.url!, "http://x");
+      if (url.pathname.endsWith("/stream-pkg")) {
+        const body = JSON.stringify({
+          name: "stream-pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "stream-pkg",
+              version: "1.0.0",
+              dist: { shasum, integrity, tarball: `http://127.0.0.1:${port}/stream-pkg/-/stream-pkg-1.0.0.tgz` },
+            },
+          },
+        });
+        res.setHeader("content-type", "application/json");
+        res.end(body);
+        return;
+      }
+      if (url.pathname.endsWith("/stream-pkg-1.0.0.tgz")) {
+        tarballHits++;
+        res.setHeader("content-type", "application/octet-stream");
+        res.setHeader("content-length", String(tgz.length));
+        req.socket.setNoDelay(true);
+        // First chunk: only the gzip magic bytes. gzip's header is 10 bytes,
+        // so the filter cannot even finish consume_header() and must return
+        // ARCHIVE_RETRY the first time the streaming extractor calls it.
+        res.write(tgz.subarray(0, 2));
+        // Give the client long enough to receive the 2 bytes, schedule its
+        // drain task, and run open_archive() before any further body arrives.
+        // This is shaping the input, not waiting on a condition in the test.
+        setTimeout(() => res.end(tgz.subarray(2)), 100);
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      using dir = tempDir("streaming-extract-tiny-first-chunk", {
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "stream-pkg": "1.0.0" },
+        }),
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\n`,
+      });
+
+      const { stderr, exitCode } = await runInstall(String(dir));
+      expect(stderr).not.toContain("Fail extracting tarball");
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("Streamed ");
+      expect(tarballHits).toBe(1);
+
+      const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+      for (const { path, body } of entries) {
+        const got = readFileSync(join(pkgRoot, path));
+        expect([path, got.equals(body)]).toEqual([path, true]);
+      }
+      expect(exitCode).toBe(0);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   test("tarballs below BUN_INSTALL_STREAMING_MIN_SIZE take the buffered path", async () => {
     // Reuse the same large tarball but raise the threshold above it.
     // The server sends Content-Length, so `notify()` sees a body_size

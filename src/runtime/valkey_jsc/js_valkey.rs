@@ -57,9 +57,9 @@ pub struct SubscriptionCtx {
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
 pub use crate::generated_classes::js_RedisClient as Js;
 
-// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
+// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient.subscription_ctx`
 // (intrusive backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`.
-bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
+bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient.subscription_ctx; fn parent; }
 
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &JSValkeyClient, parent_this: JSValue) -> Self {
@@ -298,10 +298,10 @@ pub struct JSValkeyClient {
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
 
-    pub _subscription_ctx: JsCell<SubscriptionCtx>,
+    pub subscription_ctx: JsCell<SubscriptionCtx>,
     /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this `None`.
-    pub _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
+    pub ssl_ctx: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
     pub timer: JsCell<Timer::EventLoopTimer>,
     pub reconnect_timer: JsCell<Timer::EventLoopTimer>,
@@ -611,7 +611,7 @@ impl JSValkeyClient {
     ///
     /// The single construction site for the `JSValkeyClient` struct literal —
     /// shared by both JS construction (`create_no_js_no_pubsub`) and
-    /// `.duplicate()` (`clone_without_connecting`). `_subscription_ctx` is a
+    /// `.duplicate()` (`clone_without_connecting`). `subscription_ctx` is a
     /// placeholder here; properly initialized later by [`bind_js`](Self::bind_js).
     #[allow(clippy::too_many_arguments)]
     fn new_disconnected(
@@ -624,12 +624,12 @@ impl JSValkeyClient {
         flags: valkey::ConnectionFlags,
         max_retries: u32,
         connection_timeout_ms: u32,
-        idle_timeout_interval_ms: u32,
+        idle_timeout_ms: u32,
     ) -> *mut JSValkeyClient {
         let vm: &'static VirtualMachine = global_object.bun_vm();
         JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
+            subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
                 address,
@@ -647,7 +647,7 @@ impl JSValkeyClient {
                 flags,
                 max_retries,
                 connection_timeout_ms,
-                idle_timeout_interval_ms,
+                idle_timeout_ms,
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
                 reply_scanner: Default::default(),
@@ -657,7 +657,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: JsCell::new(None),
+            ssl_ctx: JsCell::new(None),
             timer: JsCell::new(Timer::EventLoopTimer::init_paused(
                 Timer::Tag::ValkeyConnectionTimeout,
             )),
@@ -734,7 +734,7 @@ impl JSValkeyClient {
         let this_ref = unsafe { &*this };
         this_ref.this_value.set(JsRef::init_weak(js_this));
         this_ref
-            ._subscription_ctx
+            .subscription_ctx
             .set(SubscriptionCtx::init(this_ref, js_this));
     }
 
@@ -757,7 +757,7 @@ impl JSValkeyClient {
         global_object: &JSGlobalObject,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
         let client = self.client.get();
-        let sub_ctx = self._subscription_ctx.get();
+        let sub_ctx = self.subscription_ctx.get();
 
         Ok(Self::new_disconnected(
             GlobalRef::from(global_object),
@@ -785,21 +785,21 @@ impl JSValkeyClient {
             },
             client.max_retries,
             client.connection_timeout_ms,
-            client.idle_timeout_interval_ms,
+            client.idle_timeout_ms,
         ))
     }
 
     pub fn add_subscription(&self) {
         debug!(
             "addSubscription: entering, current subscriber state: {}",
-            self._subscription_ctx.get().is_subscriber()
+            self.subscription_ctx.get().is_subscriber()
         );
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         let _guard = self.ref_scope();
 
         let flags = &self.client.get().flags;
         let (q, p) = (flags.enable_offline_queue, flags.enable_auto_pipelining);
-        let entered = self._subscription_ctx.with_mut(|s| {
+        let entered = self.subscription_ctx.with_mut(|s| {
             if s.saved_flags.is_none() {
                 s.saved_flags = Some(SavedFlags {
                     enable_offline_queue: q,
@@ -816,14 +816,14 @@ impl JSValkeyClient {
         }
         debug!(
             "addSubscription: exiting, new subscriber state: {}",
-            self._subscription_ctx.get().is_subscriber()
+            self.subscription_ctx.get().is_subscriber()
         );
     }
 
     pub fn remove_subscription(&self) {
         debug!(
             "removeSubscription: entering, has subscriptions: {}",
-            self._subscription_ctx
+            self.subscription_ctx
                 .get()
                 .has_subscriptions(&self.global_object)
         );
@@ -831,14 +831,14 @@ impl JSValkeyClient {
 
         // This is the last subscription, restore original flags
         if !self
-            ._subscription_ctx
+            .subscription_ctx
             .get()
             .has_subscriptions(&self.global_object)
         {
-            if let Some(saved) = self._subscription_ctx.get().saved_flags {
+            if let Some(saved) = self.subscription_ctx.get().saved_flags {
                 self.client_mut().flags.enable_offline_queue = saved.enable_offline_queue;
                 self.client_mut().flags.enable_auto_pipelining = saved.enable_auto_pipelining;
-                self._subscription_ctx.with_mut(|s| s.saved_flags = None);
+                self.subscription_ctx.with_mut(|s| s.saved_flags = None);
             }
             debug!("removeSubscription: calling updatePollRef");
             self.update_poll_ref();
@@ -847,7 +847,7 @@ impl JSValkeyClient {
     }
 
     pub fn is_subscriber(&self) -> bool {
-        self._subscription_ctx.get().is_subscriber()
+        self.subscription_ctx.get().is_subscriber()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1064,7 +1064,7 @@ impl JSValkeyClient {
                     protocol::RedisError::IdleTimeout,
                     format_args!(
                         "Idle timeout reached after {}ms",
-                        self.client.get().idle_timeout_interval_ms
+                        self.client.get().idle_timeout_ms
                     ),
                 );
                 // TODO: properly propagate exception upwards
@@ -1249,7 +1249,7 @@ impl JSValkeyClient {
         };
 
         // Invoke callbacks for this channel with message and channel as arguments
-        if let Err(e) = self._subscription_ctx.get().invoke_callbacks(
+        if let Err(e) = self.subscription_ctx.get().invoke_callbacks(
             &global_object,
             channel_value,
             &[message_value, channel_value],
@@ -1417,7 +1417,7 @@ impl JSValkeyClient {
         this.this_value.with_mut(|t| t.finalize());
         this.client_mut().flags.finalized = true;
         this.close_socket_next_tick();
-        // `_subscription_ctx` is an inline `Option<SavedFlags>` (no allocation,
+        // `subscription_ctx` is an inline `Option<SavedFlags>` (no allocation,
         // no GC ref); nothing to release. `update_poll_ref()` gates on the JS
         // handler map, not this flag.
     }
@@ -1461,13 +1461,13 @@ impl JSValkeyClient {
             }
         };
 
-        // Populate `_secure` first, then handle the failure branch outside the
+        // Populate `ssl_ctx` first, then handle the failure branch outside the
         // borrow of `self.client.tls`.
         let mut tls_err = uws::create_bun_socket_error_t::none;
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
             // Reuse across reconnect — the SSL_CTX is the only thing the
             // old `_socket_ctx` cache existed to preserve.
-            if self._secure.get().is_none() {
+            if self.ssl_ctx.get().is_none() {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
@@ -1477,13 +1477,13 @@ impl JSValkeyClient {
                 // stable address for the VM's lifetime, JS-thread-only.
                 let cache = unsafe { &mut (*state).ssl_ctx_cache };
                 // SAFETY: `get_or_create` returns a +1-ref `SSL_CTX*` (or null).
-                self._secure.set(
+                self.ssl_ctx.set(
                     cache
                         .get_or_create(custom, &mut tls_err)
                         .and_then(|p| unsafe { boringssl::c::OwnedSslCtx::from_raw(p) }),
                 );
             }
-            self._secure.get().is_none()
+            self.ssl_ctx.get().is_none()
         } else {
             false
         };
@@ -1512,7 +1512,7 @@ impl JSValkeyClient {
                 // SAFETY: `vm_ptr` is the live per-thread VM (see above).
                 Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
             }
-            valkey::TLS::Custom(_) => Some(self._secure.get().as_ref().unwrap().as_ptr()),
+            valkey::TLS::Custom(_) => Some(self.ssl_ctx.get().as_ref().unwrap().as_ptr()),
         };
 
         self.client_mut().status = valkey::Status::Connecting;
@@ -1643,7 +1643,7 @@ impl JSValkeyClient {
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
         let subs_deletable = !self
-            ._subscription_ctx
+            .subscription_ctx
             .get()
             .has_subscriptions(&self.global_object);
 

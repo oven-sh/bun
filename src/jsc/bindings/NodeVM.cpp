@@ -1480,7 +1480,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     MarkedArgumentBuffer parameters;
     JSValue paramsArg = callFrame->argument(1);
     if (paramsArg && !paramsArg.isUndefined()) {
-        if (!paramsArg.isObject() || !isArray(globalObject, paramsArg)) {
+        bool paramsIsArray = paramsArg.isObject() && isArray(globalObject, paramsArg);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!paramsIsArray) {
             return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
         }
 
@@ -1535,7 +1537,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Process contextExtensions if they exist
     JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
 
-    if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
+    bool hasContextExtensionsArray = !options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasContextExtensionsArray) {
         auto* contextExtensionsArray = dynamicDowncast<JSArray>(options.contextExtensions);
         unsigned length = contextExtensionsArray ? contextExtensionsArray->length() : 0;
 
@@ -2060,7 +2064,9 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
             if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
-                if (!isArray(globalObject, contextExtensionsObject))
+                bool isArr = isArray(globalObject, contextExtensionsObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!isArr)
                     return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
                 // Validate that all items in the array are objects

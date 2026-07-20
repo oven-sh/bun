@@ -1104,7 +1104,7 @@ impl ValkeyClient {
 
             match value {
                 RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
+                    self.fail(err, RedisError::ServerError)?;
                     return Ok(());
                 }
                 RESPValue::Push(push) => {

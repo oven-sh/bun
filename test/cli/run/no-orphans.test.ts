@@ -988,10 +988,11 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 // link: it spawns the leaf via plain CreateProcess, so the leaf escapes
 // libuv's job but not the --no-orphans job. The leaf writes its pid to a file
 // so the test can observe it after cmd.exe's stdout pipe is torn down.
-async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>) {
+async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>, bunfig = false) {
   // No `cwd` anywhere in the chain: the leaf must not hold an open handle on
   // the tempDir (CWD lock) or the negative test's cleanup races the rm.
   const dir = tempDir("no-orphans-win", {
+    ...(bunfig && { "bunfig.toml": "[run]\nnoOrphans = true\n" }),
     "leaf.js": `
       require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
       setInterval(()=>{}, 1000);
@@ -1010,7 +1011,7 @@ async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>
   const env: Record<string, string> = { ...bunEnv, ...extraEnv, PIDFILE: pidfile, BAT: `${dir}\\run.bat` };
   if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   const bun = Bun.spawn({
-    cmd: [bunExe(), ...argv, `${dir}\\outer.js`],
+    cmd: [bunExe(), ...(bunfig ? ["-c", `${dir}\\bunfig.toml`] : []), ...argv, `${dir}\\outer.js`],
     env,
     stdout: "ignore",
     stderr: "ignore",
@@ -1060,11 +1061,12 @@ test.concurrent.skipIf(!isWindows)(
 );
 
 describe.concurrent.each([
-  { via: "--no-orphans", argv: ["--no-orphans"], env: {} },
-  { via: "BUN_FEATURE_FLAG_NO_ORPHANS=1", argv: [], env: { BUN_FEATURE_FLAG_NO_ORPHANS: "1" } },
-])("windows: $via reaps a cmd.exe-spawned descendant when Bun is TerminateProcess'd", ({ argv, env }) => {
+  { via: "--no-orphans", argv: ["--no-orphans"], env: {}, bunfig: false },
+  { via: "BUN_FEATURE_FLAG_NO_ORPHANS=1", argv: [], env: { BUN_FEATURE_FLAG_NO_ORPHANS: "1" }, bunfig: false },
+  { via: "bunfig [run] noOrphans = true", argv: [], env: {}, bunfig: true },
+])("windows: $via reaps a cmd.exe-spawned descendant when Bun is TerminateProcess'd", ({ argv, env, bunfig }) => {
   test.concurrent.skipIf(!isWindows)("leaf dies", async () => {
-    const { bun, leafPid, reap } = await spawnTreeWindows(argv, env);
+    const { bun, leafPid, reap } = await spawnTreeWindows(argv, env, bunfig);
     try {
       expect(leafPid).toBeGreaterThan(0);
       expect(isAlive(leafPid)).toBe(true);

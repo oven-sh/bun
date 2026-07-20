@@ -380,6 +380,37 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
     RELEASE_AND_RETURN(scope, readableStreamBYOBReaderErrorReadIntoRequests(globalObject, static_cast<JSReadableStreamBYOBReader*>(reader), error));
 }
 
+// The Bun type:"direct" [[cancelAlgorithm]]: invoke underlyingSource.cancel(reason) under
+// the stream's construction-time async context, wrapping the completion in a promise.
+static JSPromise* directUnderlyingSourceCancel(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* underlyingSource, JSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!underlyingSource)
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    StreamAsyncContextScope asyncContextScope(globalObject, stream);
+    JSValue cancelFunction = underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto callData = JSC::getCallData(cancelFunction);
+    if (callData.type == CallData::Type::None)
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    JSValue result;
+    JSValue thrown;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer args;
+        args.append(reason);
+        ASSERT(!args.hasOverflowed());
+        result = JSC::call(globalObject, cancelFunction, callData, underlyingSource, args);
+        if (catchScope.exception()) [[unlikely]]
+            thrown = takeAbruptCompletion(globalObject, catchScope);
+    }
+    if (!thrown.isEmpty())
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    if (result.isEmpty())
+        return nullptr;
+    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+}
+
 // ReadableStreamCancel(stream, reason)
 JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
 {
@@ -412,7 +443,13 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     JSPromise* sourceCancelPromise = nullptr;
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
-        sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get()) {
+            stream->m_directUnderlyingSource.clear();
+            stream->m_bunMode = BunStreamMode::Default;
+            sourceCancelPromise = directUnderlyingSourceCancel(vm, globalObject, stream, underlyingSource, reason);
+        } else {
+            sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        }
         break;
     case ControllerKind::Default:
         sourceCancelPromise = defaultControllerOf(stream)->cancelSteps(globalObject, reason);
@@ -422,11 +459,10 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
         break;
     case ControllerKind::Direct: {
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        controller->onClose(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, nullptr);
         // readableStreamClose above already moved the stream out of Readable, so onClose
-        // early-returned; a direct read still pending on the controller settles as done here
-        // (a canceled read resolves with { value: undefined, done: true }).
+        // would early-return; a direct read still pending on the controller settles as done
+        // here (a canceled read resolves with { value: undefined, done: true }).
+        controller->m_closed = true;
         if (auto* pendingRead = controller->m_pendingRead.get()) {
             controller->m_pendingRead.clear();
             JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);
@@ -434,7 +470,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
             pendingRead->fulfill(vm, doneResult);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
-        sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        sourceCancelPromise = directUnderlyingSourceCancel(vm, globalObject, stream, controller->m_underlyingSource.get(), reason);
         break;
     }
     case ControllerKind::NativeSink: {

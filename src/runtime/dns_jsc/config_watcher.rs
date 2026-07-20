@@ -84,8 +84,8 @@ mod posix {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_watch_fd() -> Option<Fd> {
-        use core::ffi::c_char;
         use bun_sys::linux::{IN, inotify_add_watch, inotify_init1};
+        use core::ffi::c_char;
 
         let fd = inotify_init1(IN::NONBLOCK | IN::CLOEXEC);
         if fd < 0 {
@@ -102,8 +102,13 @@ mod posix {
                 _ => c"/etc".as_ptr(),
             };
         // SAFETY: `dir` is NUL-terminated, `fd` is the live inotify instance.
-        if unsafe { inotify_add_watch(fd, dir, IN::CREATE | IN::MODIFY | IN::MOVED_TO | IN::ONLYDIR) }
-            < 0
+        if unsafe {
+            inotify_add_watch(
+                fd,
+                dir,
+                IN::CREATE | IN::MODIFY | IN::MOVED_TO | IN::ONLYDIR,
+            )
+        } < 0
         {
             let _ = bun_sys::close(Fd::from_native(fd));
             return None;

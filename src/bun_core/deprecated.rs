@@ -12,5 +12,3 @@ pub struct BufferedReader<const BUFFER_SIZE: usize, R> {
     pub start: usize,
     pub end: usize,
 }
-
-

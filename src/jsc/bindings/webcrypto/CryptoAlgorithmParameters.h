@@ -39,6 +39,7 @@ class CryptoAlgorithmParameters {
 public:
     enum class Class {
         None,
+        AeadParams,
         AesCbcCfbParams,
         AesCtrParams,
         AesGcmParams,

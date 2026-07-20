@@ -109,6 +109,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
 
     RefPtr<CryptoKeyHMAC> result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
@@ -161,6 +162,7 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = Vector<uint8_t>(hmacKey.key());
         break;

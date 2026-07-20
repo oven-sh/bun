@@ -80,11 +80,13 @@ String convertEnumerationToString(SubtleCrypto::KeyFormat enumerationValue)
         MAKE_STATIC_STRING_IMPL("spki"),
         MAKE_STATIC_STRING_IMPL("pkcs8"),
         MAKE_STATIC_STRING_IMPL("jwk"),
+        MAKE_STATIC_STRING_IMPL("raw-secret"),
     };
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Raw) == 0, "SubtleCrypto::KeyFormat::Raw is not 0 as expected");
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Spki) == 1, "SubtleCrypto::KeyFormat::Spki is not 1 as expected");
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Pkcs8) == 2, "SubtleCrypto::KeyFormat::Pkcs8 is not 2 as expected");
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Jwk) == 3, "SubtleCrypto::KeyFormat::Jwk is not 3 as expected");
+    static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::RawSecret) == 4, "SubtleCrypto::KeyFormat::RawSecret is not 4 as expected");
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
@@ -101,6 +103,7 @@ template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto:
         { "jwk"_s, SubtleCrypto::KeyFormat::Jwk },
         { "pkcs8"_s, SubtleCrypto::KeyFormat::Pkcs8 },
         { "raw"_s, SubtleCrypto::KeyFormat::Raw },
+        { "raw-secret"_s, SubtleCrypto::KeyFormat::RawSecret },
         { "spki"_s, SubtleCrypto::KeyFormat::Spki },
     }) };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
@@ -110,7 +113,7 @@ template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto:
 
 template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>()
 {
-    return "\"raw\", \"spki\", \"pkcs8\", \"jwk\""_s;
+    return "\"raw\", \"spki\", \"pkcs8\", \"jwk\", \"raw-secret\""_s;
 }
 
 // Functions

@@ -160,9 +160,6 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     if (!ktyValue.isUndefined()) {
         result.kty = convert<IDLDOMString>(lexicalGlobalObject, ktyValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "kty"_s, "JsonWebKey"_s, "DOMString"_s);
-        return {};
     }
     JSValue nValue;
     if (isNullOrUndefined)

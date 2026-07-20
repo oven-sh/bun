@@ -2547,6 +2547,7 @@ private:
         case CryptoAlgorithmIdentifier::X25519:
             write(CryptoAlgorithmIdentifierTag::X25519);
             break;
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;

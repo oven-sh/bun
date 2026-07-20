@@ -54,7 +54,8 @@ enum class CryptoAlgorithmIdentifier : uint8_t {
     HKDF,
     PBKDF2,
     Ed25519,
-    X25519
+    X25519,
+    ChaCha20_Poly1305
 };
 
 } // namespace WebCore

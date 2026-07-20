@@ -1,5 +1,4 @@
-/*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+/* Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,20 +22,14 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
-#if ENABLE(WEB_CRYPTO)
-
-namespace WebCore {
-
-enum class CryptoKeyFormat {
-    Raw,
-    Spki,
-    Pkcs8,
-    Jwk,
-    RawSecret
+[
+    Conditional=WEB_CRYPTO,
+    ImplementedAs=CryptoAlgorithmAeadParams
+] dictionary AeadParams : CryptoAlgorithmParameters {
+    // The initialization vector to use. May be up to 2^64-1 bytes long.
+    required BufferSource iv;
+    // The additional authentication data to include.
+    BufferSource additionalData;
+    // The desired length of the authentication tag. May be 0 - 128.
+    [EnforceRange] octet tagLength;
 };
-
-}
-
-#endif

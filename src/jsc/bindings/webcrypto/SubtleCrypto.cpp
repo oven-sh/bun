@@ -33,6 +33,7 @@
 #include "CryptoAlgorithmX25519Params.h"
 #include "JSAesCbcCfbParams.h"
 #include "JSAesCtrParams.h"
+#include "JSAeadParams.h"
 #include "JSAesGcmParams.h"
 #include "JSAesKeyParams.h"
 #include "JSCryptoAlgorithmParameters.h"
@@ -196,6 +197,14 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmAesGcmParams>(params);
             break;
         }
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305: {
+            auto params = convertDictionary<CryptoAlgorithmAeadParams>(state, value.get());
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.iv) || !isAcceptableVectorSource(params.additionalData))
+                return Exception { OperationError, "Input data is too large"_s };
+            result = makeUnique<CryptoAlgorithmAeadParams>(params);
+            break;
+        }
         default:
             return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
@@ -301,6 +310,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::X25519:
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -395,6 +405,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::AES_KW:
         case CryptoAlgorithmIdentifier::Ed25519:
         case CryptoAlgorithmIdentifier::X25519:
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::HMAC: {
@@ -466,6 +477,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         }
         case CryptoAlgorithmIdentifier::HKDF:
         case CryptoAlgorithmIdentifier::PBKDF2:
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -563,6 +575,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
     case SubtleCrypto::KeyFormat::Spki:
     case SubtleCrypto::KeyFormat::Pkcs8:
     case SubtleCrypto::KeyFormat::Raw:
+    case SubtleCrypto::KeyFormat::RawSecret:
         return std::visit(
             WTF::makeVisitor(
                 [&promise](JsonWebKey&) -> std::optional<KeyData> {
@@ -624,6 +637,7 @@ static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifie
     case CryptoAlgorithmIdentifier::ECDH:
     case CryptoAlgorithmIdentifier::Ed25519:
     case CryptoAlgorithmIdentifier::X25519:
+    case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
         return true;
     default:
         return false;
@@ -1131,6 +1145,7 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
             switch (format) {
             case SubtleCrypto::KeyFormat::Spki:
             case SubtleCrypto::KeyFormat::Pkcs8:
+            case SubtleCrypto::KeyFormat::RawSecret:
             case SubtleCrypto::KeyFormat::Raw: {
                 Vector<uint8_t>& rawKey = std::get<Vector<uint8_t>>(key);
                 fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), rawKey.begin(), rawKey.size());
@@ -1216,6 +1231,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                 switch (format) {
                 case SubtleCrypto::KeyFormat::Spki:
                 case SubtleCrypto::KeyFormat::Pkcs8:
+                case SubtleCrypto::KeyFormat::RawSecret:
                 case SubtleCrypto::KeyFormat::Raw:
                     bytes = std::get<Vector<uint8_t>>(key);
                     break;
@@ -1347,6 +1363,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                 switch (format) {
                 case SubtleCrypto::KeyFormat::Spki:
                 case SubtleCrypto::KeyFormat::Pkcs8:
+                case SubtleCrypto::KeyFormat::RawSecret:
                 case SubtleCrypto::KeyFormat::Raw:
                     keyData = bytes;
                     break;

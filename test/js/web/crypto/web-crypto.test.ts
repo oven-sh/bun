@@ -134,7 +134,7 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // Previously this promise never settled: the TypeError from JsonWebKey
+    // Previously this promise never settled: the error from JsonWebKey
     // dictionary conversion escaped as an uncaught exception and the
     // DeferredPromise was left in m_pendingPromises forever.
     it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
@@ -145,8 +145,8 @@ describe("Web Crypto", () => {
           () => null,
           e => e,
         );
-      expect(err).toBeInstanceOf(TypeError);
-      expect(err.message).toContain("kty");
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {

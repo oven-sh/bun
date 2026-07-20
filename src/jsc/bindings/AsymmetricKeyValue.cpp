@@ -132,6 +132,7 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     case CryptoAlgorithmIdentifier::SHA3_512:
     case CryptoAlgorithmIdentifier::HKDF:
     case CryptoAlgorithmIdentifier::PBKDF2:
+    case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
     case CryptoAlgorithmIdentifier::None:
         key = nullptr;
         break;

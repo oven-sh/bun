@@ -131,6 +131,9 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     RefPtr<CryptoKeyOKP> result;
     bool keyTypeMismatch = false;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
@@ -201,6 +204,9 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         auto jwk = ecKey.exportJwk();
         if (jwk.hasException()) {

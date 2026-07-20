@@ -934,6 +934,9 @@ pub struct Parser<'bump> {
     /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
     /// refs). See `Lexer::js_string_ranges`.
     pub js_string_ranges: &'bump [TextRange],
+    /// Strpool positions that were written by a backslash-escaped byte. See
+    /// `Lexer::escaped_positions`.
+    pub escaped_positions: &'bump [u32],
     pub alloc: &'bump Bump,
     pub jsobjs: &'bump mut [JSValue],
     pub current: u32,
@@ -966,13 +969,14 @@ type ParseResult<T> = crate::Result<T>;
 impl<'bump> Parser<'bump> {
     pub fn new(
         bump: &'bump Bump,
-        lex_result: LexResult<'bump>,
+        lex_result: &LexResult<'bump>,
         jsobjs: &'bump mut [JSValue],
     ) -> ParseResult<Parser<'bump>> {
         Ok(Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
             js_string_ranges: lex_result.js_string_ranges,
+            escaped_positions: lex_result.escaped_positions,
             alloc: bump,
             jsobjs,
             current: 0,
@@ -991,6 +995,7 @@ impl<'bump> Parser<'bump> {
             strpool: self.strpool,
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
+            escaped_positions: self.escaped_positions,
             alloc: self.alloc,
             // reshaped for borrowck — move the
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
@@ -1710,6 +1715,17 @@ impl<'bump> Parser<'bump> {
         let mut has_brace_open = false;
         let mut has_brace_close = false;
         let mut has_comma = false;
+        // A `{x..y}` sequence expression has no dedicated token — `..` is
+        // just two dots inside an ordinary text chunk — so unlike
+        // `has_comma` this can only be detected by scanning text atoms.
+        let mut has_dotdot = false;
+        // The strpool range of the plain (non-tilde, non-quoted-empty) Text
+        // atom most recently pushed, if any — used to look up
+        // `escaped_positions` for the precise sequence-hint check below.
+        // Only meaningful when `atoms` ends up being exactly
+        // `[BraceBegin, Text, BraceEnd]`, in which case this is that Text
+        // atom's range (nothing else in that shape pushes a Text atom).
+        let mut last_text_range: Option<TextRange> = None;
         let mut has_glob_syntax = false;
         {
             while match self.peek() {
@@ -1809,6 +1825,9 @@ impl<'bump> Parser<'bump> {
                     | Token::Text(txtrng) => {
                         let _ = self.advance();
                         let mut txt = self.text(txtrng);
+                        if !has_dotdot && strings::contains(txt, b"..") {
+                            has_dotdot = true;
+                        }
                         if peeked.tag() == TokenTag::Text && !txt.is_empty() && txt[0] == b'~' {
                             txt = &txt[1..];
                             atoms.push(ast::SimpleAtom::Tilde);
@@ -1822,6 +1841,7 @@ impl<'bump> Parser<'bump> {
                             // Preserve empty quoted strings ("", '') as explicit empty arguments
                             atoms.push(ast::SimpleAtom::QuotedEmpty);
                         } else {
+                            last_text_range = Some(txtrng);
                             atoms.push(ast::SimpleAtom::Text(txt));
                         }
                         if next_delimits {
@@ -1883,12 +1903,57 @@ impl<'bump> Parser<'bump> {
             }
         }
 
+        // `has_dotdot` alone is a coarse, cheap hint (any ".." anywhere in
+        // the word) that would route plenty of non-sequences into brace
+        // expansion — and a brace group with no real comma-separated
+        // variants loses its literal `{`/`}` when that happens (a
+        // pre-existing quirk of the single-variant path, harmless while
+        // gated behind `has_comma` alone, since a comma-less group already
+        // never reached it). For the common case where the entire group is
+        // one plain text atom (`{1..5}`, `{1..}`, `{aa..cc}`, no `$var` /
+        // nested braces involved), we already have the exact same (and
+        // non-allocating) validation `braces::is_valid_brace_sequence` will
+        // run later, so use it here for a precise answer instead of the
+        // coarse substring check. Anything more complex (interpolation,
+        // nesting, commas) still falls back to the coarse hint.
+        //
+        // A backslash-escaped byte anywhere in that text atom disqualifies
+        // it outright (bash: `{1\..3}`, `{1..\3}`, `{\1..3}` all stay fully
+        // literal — verified against bash 5.3.0) — checked against
+        // `self.escaped_positions` via `last_text_range`, since the escaped
+        // byte itself is never visible in the already-de-escaped `txt`.
+        let brace_expansion_hint = has_brace_open
+            && has_brace_close
+            && (has_comma
+                || match atoms.as_slice() {
+                    [
+                        ast::SimpleAtom::BraceBegin,
+                        ast::SimpleAtom::Text(txt),
+                        ast::SimpleAtom::BraceEnd,
+                    ] => {
+                        // Check the (cheap-ish, and usually-failing for
+                        // plain non-sequence text like `{foo}`) sequence
+                        // grammar first so it can short-circuit before ever
+                        // touching `escaped_positions`. That list is
+                        // populated in strictly increasing `self.j` order
+                        // (see its doc comment), so a sorted binary search
+                        // via `partition_point` replaces the linear scan.
+                        crate::braces::is_valid_brace_sequence(txt)
+                            && !last_text_range.is_some_and(|r| {
+                                let idx = self.escaped_positions.partition_point(|&p| p < r.start);
+                                idx < self.escaped_positions.len()
+                                    && self.escaped_positions[idx] < r.end
+                            })
+                    }
+                    _ => has_dotdot,
+                });
+
         Ok(match atoms.len() {
             0 => None,
             1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
             _ => Some(ast::Atom::Compound(ast::CompoundAtom {
                 atoms: atoms.into_bump_slice(),
-                brace_expansion_hint: has_brace_open && has_brace_close && has_comma,
+                brace_expansion_hint,
                 glob_hint: has_glob_syntax,
             })),
         })
@@ -2353,6 +2418,7 @@ pub struct LexResult<'bump> {
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
     pub js_string_ranges: &'bump [TextRange],
+    pub escaped_positions: &'bump [u32],
 }
 
 impl<'bump> LexResult<'bump> {
@@ -2447,6 +2513,16 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     /// one must not create an env assignment).
     pub js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
+    /// Strpool positions written by a backslash-escaped byte. Brace
+    /// sequence-expression recognition (`braces::is_valid_brace_sequence`)
+    /// must not fire on a word whose braces span one of these positions —
+    /// bash disqualifies a group from sequence recognition if ANY byte
+    /// inside it was escaped, even one unrelated to the `..` itself
+    /// (verified against bash 5.3.0). The byte written to `strpool` is
+    /// already de-escaped (the backslash itself is never stored), so this
+    /// is the only way to recover "was this byte escaped" downstream.
+    pub escaped_positions: bun_alloc::ArenaVec<'bump, u32>,
+
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
     pub string_refs: &'bump mut [BunString],
@@ -2470,6 +2546,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: bun_alloc::ArenaVec::new_in(bump),
             errors: bun_alloc::ArenaVec::new_in(bump),
             js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
+            escaped_positions: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2486,6 +2563,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: self.strpool.into_bump_slice(),
             errors: self.errors.into_bump_slice(),
             js_string_ranges: self.js_string_ranges.into_bump_slice(),
+            escaped_positions: self.escaped_positions.into_bump_slice(),
         }
     }
 
@@ -2515,6 +2593,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 &mut self.js_string_ranges,
                 bun_alloc::ArenaVec::new_in(bump),
             ),
+            escaped_positions: core::mem::replace(
+                &mut self.escaped_positions,
+                bun_alloc::ArenaVec::new_in(bump),
+            ),
             in_subshell: Some(kind),
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
@@ -2537,6 +2619,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
         self.js_string_ranges = core::mem::replace(
             &mut sublexer.js_string_ranges,
+            bun_alloc::ArenaVec::new_in(bump),
+        );
+        self.escaped_positions = core::mem::replace(
+            &mut sublexer.escaped_positions,
             bun_alloc::ArenaVec::new_in(bump),
         );
 
@@ -3128,6 +3214,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 continue;
             }
 
+            if escaped {
+                // `self.j` is the strpool position this byte is about to
+                // land at (the backslash itself is never written — see
+                // `escaped_positions`'s doc comment).
+                self.escaped_positions.push(self.j);
+            }
             self.append_char_to_str_pool(char)?;
         }
 

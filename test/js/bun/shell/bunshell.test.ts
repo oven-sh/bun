@@ -967,6 +967,48 @@ booga"
       );
     });
 
+    describe("range/sequence", () => {
+      // Verified against `bash 5.3.0`.
+      doTest("{1..5}", "1 2 3 4 5");
+      doTest("{5..1}", "5 4 3 2 1");
+      doTest("{1..1}", "1");
+      doTest("{-3..3}", "-3 -2 -1 0 1 2 3");
+
+      doTest("{0..10..2}", "0 2 4 6 8 10");
+      doTest("{10..0..2}", "10 8 6 4 2 0");
+      doTest("{1..3..-1}", "1 2 3"); // increment sign is ignored; direction comes from the endpoints
+      doTest("{1..5..0}", "1 2 3 4 5"); // increment of 0 behaves like no increment
+
+      doTest("{01..10}", "01 02 03 04 05 06 07 08 09 10");
+      doTest("{1..10}", "1 2 3 4 5 6 7 8 9 10"); // no leading zero -> no padding
+      doTest("{00..3}", "00 01 02 03");
+      doTest("{-05..5}", "-05 -04 -03 -02 -01 000 001 002 003 004 005");
+
+      doTest("{a..e}", "a b c d e");
+      doTest("{e..a}", "e d c b a");
+      doTest("{z..a..5}", "z u p k f a");
+
+      doTest("{a,{1..3}}", "a 1 2 3"); // composes with comma lists when nested
+      doTest("{pre{1..3}post}", "pre1post pre2post pre3post");
+
+      // Step that doesn't evenly divide the distance: stop at the last
+      // value that doesn't overshoot `end`, same as bash — not an infinite
+      // loop trying to land on `end` exactly.
+      doTest("{0..5..2}", "0 2 4");
+      doTest("{5..0..2}", "5 3 1");
+      doTest("{a..d..2}", "a c");
+
+      // Not a valid sequence expression -> left as literal text, same as bash.
+      doTest("{1..}", "{1..}");
+      doTest("{aa..cc}", "{aa..cc}");
+
+      // A backslash-escaped byte anywhere in the group disqualifies
+      // sequence recognition, even one unrelated to the `..` itself.
+      doTest("{1\\..3}", "{1..3}");
+      doTest("{1..\\3}", "{1..3}");
+      doTest("{\\1..3}", "{1..3}");
+    });
+
     test("command", async () => {
       const { stdout } = await $`{echo,a,b,c} {d,e,f}`;
       expect(stdout.toString()).toEqual("a b c d e f\n");

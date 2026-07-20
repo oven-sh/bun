@@ -635,6 +635,263 @@ const MAX_NESTED_BRACES: usize = 10;
 
 const MAX_BRACE_GROUPS: usize = 256;
 
+/// Cap on how many variants a single `{x..y[..incr]}` sequence expression
+/// may expand to. Mirrors the reasoning behind the `u16` `ExpansionVariant`
+/// packing above: past a few thousand variants the result is not something
+/// anyone actually wants, and without a cap a command like `{1..99999999}`
+/// would eagerly materialize tens of millions of tokens before any
+/// downstream size check ever runs. A sequence past this limit is treated
+/// as not-a-sequence and left as literal text, same as any other malformed
+/// sequence expression (e.g. `{1..}`).
+const MAX_SEQUENCE_EXPANSION: usize = 10_000;
+
+// ─── Brace sequence expressions (`{x..y}`, `{x..y..incr}`) ─────────────────
+//
+// Bash's brace expansion has two forms: comma lists (`{a,b,c}`, handled by
+// the tokenizer/parser above) and "sequence expressions" — either both
+// endpoints decimal integers, or both endpoints a single ASCII letter,
+// joined by `..` with an optional third `..incr` term. This section detects
+// a sequence expression inside an otherwise-plain brace group and rewrites
+// it into the same `Text, Comma, Text, Comma, ..., Text` shape a literal
+// comma list would tokenize to, so the existing parser/expander needs no
+// changes to support it.
+//
+// The exact zero-padding and range rules below were verified empirically
+// against `bash 5.3.0`, not derived from the manual (which only documents
+// the feature informally). Notably: padding triggers only when an operand's
+// digit run (after stripping an optional `-`) is longer than one digit and
+// starts with `0`; the padded width is the longer of the two operands'
+// *full* text length (sign included). A leading `+` sign is deliberately
+// NOT accepted as a valid operand — bash accepts it but applies the
+// zero-padding rule inconsistently for `+`-prefixed operands in a way that
+// doesn't follow from the rule above (verified: `{+01..3}` doesn't pad but
+// `{+1..03}` does), and a leading `+` in a brace sequence is vanishingly
+// rare in real shell usage. `{+01..3}` therefore falls through as literal
+// text rather than attempting to bug-for-bug match that corner.
+
+/// A parsed decimal integer operand of a sequence expression.
+struct IntOperand {
+    value: i128,
+    /// Length of the digit run, excluding an optional leading `-`.
+    digit_len: usize,
+}
+
+/// Parses `s` as `-?[0-9]+` in full (no surrounding junk). Digit runs longer
+/// than 18 characters are rejected rather than risking i128 overflow further
+/// down — no legitimate brace sequence needs operands anywhere near that
+/// large.
+fn parse_int_operand(s: &[u8]) -> Option<IntOperand> {
+    if s.is_empty() {
+        return None;
+    }
+    let (negative, digits) = if s[0] == b'-' {
+        (true, &s[1..])
+    } else {
+        (false, s)
+    };
+    if digits.is_empty() || digits.len() > 18 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut value: i128 = 0;
+    for &b in digits {
+        value = value * 10 + i128::from(b - b'0');
+    }
+    Some(IntOperand {
+        value: if negative { -value } else { value },
+        digit_len: digits.len(),
+    })
+}
+
+/// Splits `s` at the first `..`, returning `(before, after)`. Used both to
+/// find the `x..y` boundary and, on the remainder, the optional `..incr`.
+fn split_once_dotdot(s: &[u8]) -> Option<(&[u8], &[u8])> {
+    let mut i = 0;
+    while i + 1 < s.len() {
+        if s[i] == b'.' && s[i + 1] == b'.' {
+            return Some((&s[..i], &s[i + 2..]));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The digit immediately after an optional leading `-`.
+fn first_digit(operand: &[u8]) -> u8 {
+    if operand[0] == b'-' {
+        operand[1]
+    } else {
+        operand[0]
+    }
+}
+
+fn format_int_padded(v: i128, pad_width: usize) -> Vec<u8> {
+    if pad_width == 0 {
+        return v.to_string().into_bytes();
+    }
+    if v < 0 {
+        format!("-{:0width$}", -v, width = pad_width.saturating_sub(1)).into_bytes()
+    } else {
+        format!("{:0width$}", v, width = pad_width).into_bytes()
+    }
+}
+
+/// Parses the increment term of a sequence expression (the part after the
+/// second `..`, if present). An increment of `0` behaves as if omitted
+/// (matches bash: `{1..5..0}` expands the same as `{1..5}`); the sign is
+/// discarded — direction always comes from comparing the two endpoints,
+/// never from the increment (matches bash: `{1..3..-1}` still counts up).
+fn parse_step_magnitude(incr: Option<&[u8]>) -> Option<i128> {
+    match incr {
+        None => Some(1),
+        Some(bytes) => {
+            let parsed = parse_int_operand(bytes)?;
+            Some(if parsed.value == 0 {
+                1
+            } else {
+                parsed.value.abs()
+            })
+        }
+    }
+}
+
+/// A validated, size-capped sequence expression, ready to materialize.
+/// Computing this (rather than jumping straight to generating the output
+/// `Vec<Vec<u8>>`) is what lets `is_valid_brace_sequence` answer a plain
+/// yes/no without allocating up to `MAX_SEQUENCE_EXPANSION` strings just to
+/// throw them away.
+enum SequenceSpec {
+    Int {
+        start: i128,
+        step: i128,
+        pad_width: usize,
+        count: usize,
+    },
+    Char {
+        start: u8,
+        step: i128,
+        count: usize,
+    },
+}
+
+/// `(end - start).abs() / step_mag + 1`, rejecting anything over
+/// `MAX_SEQUENCE_EXPANSION`. Always >= 1 for `step_mag > 0` (asserted by
+/// callers), so this only ever rejects for being too large.
+///
+/// Callers currently only ever pass operands bounded to 18 decimal digits
+/// (`parse_int_operand` rejects longer ones), so `count` can't get anywhere
+/// near overflowing `usize` in practice — but comparing against the cap in
+/// the wide `i128` type, before ever casting to `usize`, means that stays
+/// true by construction instead of by the caller's current behavior.
+fn sequence_count(start: i128, end: i128, step_mag: i128) -> Option<usize> {
+    debug_assert!(step_mag > 0);
+    let count = (end - start).abs() / step_mag + 1;
+    if count > MAX_SEQUENCE_EXPANSION as i128 {
+        return None;
+    }
+    Some(count as usize)
+}
+
+fn parse_sequence_spec(text: &[u8]) -> Option<SequenceSpec> {
+    let (first, rest) = split_once_dotdot(text)?;
+    let (second, incr) = match split_once_dotdot(rest) {
+        Some((second, incr)) => (second, Some(incr)),
+        None => (rest, None),
+    };
+    if first.is_empty() || second.is_empty() {
+        return None;
+    }
+
+    if let (Some(x), Some(y)) = (parse_int_operand(first), parse_int_operand(second)) {
+        let step_mag = parse_step_magnitude(incr)?;
+        let count = sequence_count(x.value, y.value, step_mag)?;
+        let pad_width = if (x.digit_len > 1 && first_digit(first) == b'0')
+            || (y.digit_len > 1 && first_digit(second) == b'0')
+        {
+            first.len().max(second.len())
+        } else {
+            0
+        };
+        let step = if x.value <= y.value {
+            step_mag
+        } else {
+            -step_mag
+        };
+        return Some(SequenceSpec::Int {
+            start: x.value,
+            step,
+            pad_width,
+            count,
+        });
+    }
+
+    if first.len() == 1
+        && second.len() == 1
+        && first[0].is_ascii_alphabetic()
+        && second[0].is_ascii_alphabetic()
+    {
+        let step_mag = parse_step_magnitude(incr)?;
+        let count = sequence_count(i128::from(first[0]), i128::from(second[0]), step_mag)?;
+        let step = if first[0] <= second[0] {
+            step_mag
+        } else {
+            -step_mag
+        };
+        return Some(SequenceSpec::Char {
+            start: first[0],
+            step,
+            count,
+        });
+    }
+
+    None
+}
+
+/// Cheap yes/no check for whether `text` is a valid bash brace sequence
+/// expression — same grammar and cap as `parse_brace_sequence`, without
+/// materializing the (possibly thousands of) expanded variants just to
+/// discard them. Used by the parser's `brace_expansion_hint` computation.
+pub(crate) fn is_valid_brace_sequence(text: &[u8]) -> bool {
+    parse_sequence_spec(text).is_some()
+}
+
+/// Recognizes `text` as a bash brace sequence expression — `x..y` or
+/// `x..y..incr`, where `x`/`y` are both decimal integers or both single
+/// ASCII letters — and returns the expanded variants in order. Returns
+/// `None` for anything else (comma lists, plain words, malformed sequences
+/// like `{1..}`), in which case the caller leaves the brace group untouched.
+pub(crate) fn parse_brace_sequence(text: &[u8]) -> Option<Vec<Vec<u8>>> {
+    // Compute each value fresh from `start + offset * step` (`offset` bounded
+    // by `count <= MAX_SEQUENCE_EXPANSION`), not by repeatedly adding `step`
+    // to a running value: when the step doesn't evenly divide the distance
+    // (e.g. `{0..5..2}`, verified against bash to stop at 4, not reach 5),
+    // stepping until equal to `end` overshoots and never terminates — an
+    // infinite loop that would OOM well before any caller notices. Offset
+    // multiplication also means the loop never adds past the last value
+    // actually used, unlike a running `v += step` that still executes (and
+    // could in principle overflow) once more after the final push.
+    match parse_sequence_spec(text)? {
+        SequenceSpec::Int {
+            start,
+            step,
+            pad_width,
+            count,
+        } => {
+            let mut out = Vec::with_capacity(count);
+            for offset in 0..count as i128 {
+                out.push(format_int_padded(start + offset * step, pad_width));
+            }
+            Some(out)
+        }
+        SequenceSpec::Char { start, step, count } => {
+            let mut out = Vec::with_capacity(count);
+            for offset in 0..count as i128 {
+                out.push(vec![(i128::from(start) + offset * step) as u8]);
+            }
+            Some(out)
+        }
+    }
+}
+
 fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
     let opens = tokens
         .iter()
@@ -1200,6 +1457,10 @@ pub struct NewLexer<const ENCODING: Encoding> {
     chars: Chars<ENCODING>,
     tokens: Vec<Token>,
     contains_nested: bool,
+    /// Ordinals (Nth `Open` token seen, 0-indexed — NOT a token index; see
+    /// the comment in `tokenize_impl`) of `Open`s whose group contained a
+    /// backslash-escaped byte anywhere at its own level.
+    escaped_group_opens: Vec<u32>,
 }
 
 impl<const ENCODING: Encoding> NewLexer<ENCODING> {
@@ -1208,6 +1469,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             chars: Chars::<ENCODING>::init(src),
             tokens: Vec::new(),
             contains_nested: false,
+            escaped_group_opens: Vec::new(),
         };
 
         let contains_nested = this.tokenize_impl()?;
@@ -1242,23 +1504,44 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         //   - Start at beginning of brace, replacing special tokens back with
         //     chars, skipping over actual closed braces
         let mut brace_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
+        // Tracks whether the innermost currently-open group has seen an
+        // escaped byte directly at its own level (not a nested child's).
+        // Bash disqualifies a group from sequence-expression recognition if
+        // ANY byte inside it was backslash-escaped, even one unrelated to
+        // the `..` — verified against bash 5.3.0: `{\1..3}`, `{1..\3}`, and
+        // `{1\..3}` all stay fully literal. Recorded into
+        // `self.escaped_group_opens` by raw token index on close; remapped
+        // to the stable "Nth Open" ordinal `expand_brace_sequences` uses
+        // once rollback (which can delete an outer unclosed Open while
+        // leaving an inner closed one intact — see
+        // `remap_escaped_group_opens_to_ordinals`) has settled which Opens
+        // actually survive.
+        let mut brace_has_escape: SmallVec<[bool; MAX_NESTED_BRACES]> = SmallVec::new();
 
         loop {
             let Some(input) = self.eat() else { break };
             let char = input.char;
             let escaped = input.escaped;
 
-            if !escaped {
+            if escaped {
+                if let Some(top) = brace_has_escape.last_mut() {
+                    *top = true;
+                }
+            } else {
                 // `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
                         brace_stack.push(u32::try_from(self.tokens.len()).expect("int cast"));
+                        brace_has_escape.push(false);
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
                     c if c == u32::from(b'}') => {
                         if brace_stack.len() > 0 {
-                            let _ = brace_stack.pop();
+                            let open_idx = brace_stack.pop().unwrap();
+                            if brace_has_escape.pop() == Some(true) {
+                                self.escaped_group_opens.push(open_idx);
+                            }
                             self.tokens.push(Token::Close);
                             continue;
                         }
@@ -1285,10 +1568,111 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             self.rollback_braces(top_idx);
         }
 
+        self.remap_escaped_group_opens_to_ordinals();
         self.flatten_tokens()?;
+        self.expand_brace_sequences()?;
         self.tokens.push(Token::Eof);
 
         Ok(self.contains_nested)
+    }
+
+    /// Converts `self.escaped_group_opens` from raw token indices (assigned
+    /// while `tokenize_impl`'s main loop runs, before rollback) to ordinals
+    /// — "the Nth `Open` token, 0-indexed" — counted over the *current*
+    /// (post-rollback) token stream. Must run after the unclosed-braces
+    /// rollback loop and before `flatten_tokens`/`expand_brace_sequences`.
+    ///
+    /// Rollback can convert an outer *unclosed* `Open` back into literal
+    /// `Text` while leaving an inner, already-closed group's `Open` intact
+    /// (`rollback_braces`'s "skip over actual closed braces"). A raw token
+    /// index recorded before that happens can point at content that is no
+    /// longer an `Open` at all once rollback settles, and — because the
+    /// disappeared token shifts every ordinal after it — a survivor's own
+    /// ordinal can change too. Recomputing ordinals from the token indices
+    /// fixes both: an index whose token is no longer `Open` is dropped (its
+    /// group doesn't exist as a candidate anymore anyway), and a surviving
+    /// index gets the ordinal it actually has *now*, matching what
+    /// `expand_brace_sequences`'s own left-to-right Open-count will later
+    /// see. `flatten_tokens`, which runs after this, never removes or
+    /// reorders `Open` tokens, so that ordinal stays valid through it.
+    fn remap_escaped_group_opens_to_ordinals(&mut self) {
+        if self.escaped_group_opens.is_empty() {
+            return;
+        }
+        let mut by_index = core::mem::take(&mut self.escaped_group_opens);
+        // Not sorted on entry: nested escaped groups close LIFO (innermost
+        // first), which is the *opposite* of their token-index order (the
+        // innermost `{` was opened later, so it has the larger index) — so
+        // without this, the lookup below would need a linear scan.
+        by_index.sort_unstable();
+        let mut ordinal: u32 = 0;
+        for (idx, tok) in self.tokens.iter().enumerate() {
+            if !matches!(tok, Token::Open(_)) {
+                continue;
+            }
+            let idx = u32::try_from(idx).expect("int cast");
+            if by_index.binary_search(&idx).is_ok() {
+                self.escaped_group_opens.push(ordinal);
+            }
+            ordinal += 1;
+        }
+        // Ascending by construction (`idx` is scanned in increasing order),
+        // which `expand_brace_sequences` relies on for a binary-search
+        // lookup instead of a linear scan.
+        debug_assert!(self.escaped_group_opens.is_sorted());
+    }
+
+    /// Rewrites every simple `Open, Text, Close` group (i.e. a brace group
+    /// with no comma and no nesting — exactly the shape a `{x..y}` sequence
+    /// tokenizes to before this pass runs) whose text is a valid sequence
+    /// expression into `Open, Text, Comma, Text, ..., Close`: the same token
+    /// shape a literal comma list produces. Must run after `flatten_tokens`
+    /// (which merges adjacent `Text` tokens and computes `contains_nested`)
+    /// and before `Token::Eof` is pushed. Groups that aren't a sequence
+    /// expression (including malformed ones like `{1..}`) are left
+    /// untouched, so this can't change behavior for anything that isn't a
+    /// brace sequence.
+    fn expand_brace_sequences(&mut self) -> Result<(), AllocError> {
+        let mut i = 0;
+        // Must count every `Open` in encounter order (matching the ordinal
+        // numbering `tokenize_impl` assigned) to look `self.escaped_group_opens`
+        // up correctly — see the field doc comment.
+        let mut open_ordinal: u32 = 0;
+        while i < self.tokens.len() {
+            if !matches!(self.tokens[i], Token::Open(_)) {
+                i += 1;
+                continue;
+            }
+            let ordinal = open_ordinal;
+            open_ordinal += 1;
+
+            let is_simple_group = i + 2 < self.tokens.len()
+                && matches!(self.tokens[i + 1], Token::Text(_))
+                && matches!(self.tokens[i + 2], Token::Close);
+            if !is_simple_group || self.escaped_group_opens.binary_search(&ordinal).is_ok() {
+                i += 1;
+                continue;
+            }
+            let Token::Text(text) = &self.tokens[i + 1] else {
+                unreachable!()
+            };
+            let Some(variants) = parse_brace_sequence(text.slice()) else {
+                i += 1;
+                continue;
+            };
+
+            let mut replacement: Vec<Token> = Vec::with_capacity(variants.len() * 2 - 1);
+            for (idx, variant) in variants.iter().enumerate() {
+                if idx > 0 {
+                    replacement.push(Token::Comma);
+                }
+                replacement.push(Token::Text(SmolStr::from_slice(variant)?));
+            }
+            let replacement_len = replacement.len();
+            self.tokens.splice(i + 1..i + 2, replacement);
+            i += replacement_len + 2; // skip past Open + replacement + Close
+        }
+        Ok(())
     }
 
     fn flatten_tokens(&mut self) -> Result<(), AllocError> {
@@ -1448,5 +1832,270 @@ mod tests {
             let result = Lexer::tokenize(src).unwrap();
             assert_eq!(result.tokens, expected);
         }
+    }
+
+    fn seq(strs: &[&str]) -> Option<Vec<Vec<u8>>> {
+        Some(strs.iter().map(|s| s.as_bytes().to_vec()).collect())
+    }
+
+    #[test]
+    fn brace_sequence_parsing() {
+        // Verified against `bash 5.3.0`.
+        assert_eq!(
+            parse_brace_sequence(b"1..5"),
+            seq(&["1", "2", "3", "4", "5"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"5..1"),
+            seq(&["5", "4", "3", "2", "1"])
+        );
+        assert_eq!(parse_brace_sequence(b"1..1"), seq(&["1"]));
+        assert_eq!(
+            parse_brace_sequence(b"-3..3"),
+            seq(&["-3", "-2", "-1", "0", "1", "2", "3"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"3..-3"),
+            seq(&["3", "2", "1", "0", "-1", "-2", "-3"])
+        );
+
+        // Custom increment; sign of the increment is ignored, direction comes
+        // from the endpoints. Increment of 0 behaves like no increment.
+        assert_eq!(
+            parse_brace_sequence(b"0..10..2"),
+            seq(&["0", "2", "4", "6", "8", "10"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"10..0..2"),
+            seq(&["10", "8", "6", "4", "2", "0"])
+        );
+        assert_eq!(parse_brace_sequence(b"1..3..-1"), seq(&["1", "2", "3"]));
+        assert_eq!(
+            parse_brace_sequence(b"1..5..0"),
+            seq(&["1", "2", "3", "4", "5"])
+        );
+
+        // Zero-padding: triggers only when an operand's digit run (after an
+        // optional `-`) has length > 1 and starts with `0`; width is the
+        // longer operand's full text length (sign included).
+        assert_eq!(
+            parse_brace_sequence(b"01..10"),
+            seq(&["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"1..10"),
+            seq(&["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+        ); // no leading zero -> no padding
+        assert_eq!(parse_brace_sequence(b"0..3"), seq(&["0", "1", "2", "3"])); // bare "0" doesn't count as a leading zero
+        assert_eq!(
+            parse_brace_sequence(b"00..3"),
+            seq(&["00", "01", "02", "03"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"-5..05"),
+            seq(&[
+                "-5", "-4", "-3", "-2", "-1", "00", "01", "02", "03", "04", "05"
+            ])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"-05..5"),
+            seq(&[
+                "-05", "-04", "-03", "-02", "-01", "000", "001", "002", "003", "004", "005"
+            ])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"-1..-5"),
+            seq(&["-1", "-2", "-3", "-4", "-5"])
+        ); // same digit width, but no leading zero -> no padding
+
+        // Character sequences: raw codepoint stepping between the two
+        // endpoints (inclusive of non-letter bytes in between), no padding.
+        assert_eq!(
+            parse_brace_sequence(b"a..e"),
+            seq(&["a", "b", "c", "d", "e"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"e..a"),
+            seq(&["e", "d", "c", "b", "a"])
+        );
+        assert_eq!(parse_brace_sequence(b"a..a"), seq(&["a"]));
+        assert_eq!(
+            parse_brace_sequence(b"z..a..5"),
+            seq(&["z", "u", "p", "k", "f", "a"])
+        );
+        assert_eq!(
+            parse_brace_sequence(b"Z..a"),
+            seq(&["Z", "[", "\\", "]", "^", "_", "`", "a"])
+        );
+
+        // Not a sequence expression -> caller must leave the group literal.
+        assert_eq!(parse_brace_sequence(b"1.."), None);
+        assert_eq!(parse_brace_sequence(b"1..2.."), None);
+        assert_eq!(parse_brace_sequence(b"foo"), None);
+        assert_eq!(parse_brace_sequence(b"aa..cc"), None); // multi-char operands aren't a char sequence
+        assert_eq!(parse_brace_sequence(b"+01..3"), None); // leading `+` not supported (see doc comment)
+        assert_eq!(parse_brace_sequence(b""), None);
+
+        // Safety cap: an unreasonably large sequence is treated as
+        // not-a-sequence rather than eagerly materializing millions of
+        // tokens.
+        assert_eq!(parse_brace_sequence(b"1..99999999"), None);
+
+        // Non-dividing step: must stop at the last value that doesn't
+        // overshoot `end`, not loop forever trying to land on it exactly
+        // (verified against bash: `{0..5..2}` -> "0 2 4", not "0 2 4 6").
+        assert_eq!(parse_brace_sequence(b"0..5..2"), seq(&["0", "2", "4"]));
+        assert_eq!(parse_brace_sequence(b"5..0..2"), seq(&["5", "3", "1"]));
+        assert_eq!(parse_brace_sequence(b"a..d..2"), seq(&["a", "c"]));
+    }
+
+    #[test]
+    fn is_valid_brace_sequence_matches_parse_brace_sequence() {
+        for text in [
+            "1..5".as_bytes(),
+            b"5..1",
+            b"0..10..2",
+            b"01..10",
+            b"a..e",
+            b"z..a..5",
+            b"1..",
+            b"1..2..",
+            b"foo",
+            b"aa..cc",
+            b"+01..3",
+            b"",
+            b"1..99999999",
+            b"0..5..2",
+        ] {
+            assert_eq!(
+                is_valid_brace_sequence(text),
+                parse_brace_sequence(text).is_some(),
+                "mismatch for {:?}",
+                bstr::BStr::new(text)
+            );
+        }
+    }
+
+    #[test]
+    fn lexer_sequence_expansion() {
+        // `{1..3}` must tokenize exactly like the literal comma list
+        // `{1,2,3}` does, so the existing parser/expander handles both
+        // identically.
+        let from_range = Lexer::tokenize(b"{1..3}").unwrap();
+        let from_commas = Lexer::tokenize(b"{1,2,3}").unwrap();
+        assert_eq!(from_range.tokens, from_commas.tokens);
+
+        // A malformed sequence is left completely untouched.
+        let unclosed_range = Lexer::tokenize(b"{1..}").unwrap();
+        assert_eq!(
+            unclosed_range.tokens,
+            vec![
+                Token::Open(ExpansionVariants::default()),
+                Token::Text(SmolStr::from_slice(b"1..").unwrap()),
+                Token::Close,
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexer_escaped_dot_disqualifies_sequence() {
+        // Bash disqualifies sequence recognition if ANY byte inside the
+        // group is backslash-escaped, even one that isn't part of the `..`
+        // itself — verified against bash 5.3.0: `{\1..3}`, `{1..\3}`, and
+        // `{1\..3}` all stay fully literal (unlike unescaped `{1..3}`,
+        // which expands to "1 2 3").
+        for src in [&b"{1\\..3}"[..], b"{1..\\3}", b"{\\1..3}"] {
+            let result = Lexer::tokenize(src).unwrap();
+            assert_eq!(
+                result.tokens.len(),
+                4,
+                "expected [Open, Text, Close, Eof] for {:?}, got {:?}",
+                bstr::BStr::new(src),
+                result.tokens
+            );
+            assert!(
+                matches!(result.tokens[0], Token::Open(_)),
+                "{:?}",
+                bstr::BStr::new(src)
+            );
+            assert!(
+                matches!(result.tokens[1], Token::Text(_)),
+                "escaped group should stay a single literal Text token, not be split into a comma sequence: {:?}",
+                bstr::BStr::new(src)
+            );
+            assert_eq!(result.tokens[2], Token::Close);
+        }
+
+        // Sanity: the unescaped counterpart DOES expand, into
+        // Open, Text("1"), Comma, Text("2"), Comma, Text("3"), Close, Eof.
+        let unescaped = Lexer::tokenize(b"{1..3}").unwrap();
+        assert_eq!(unescaped.tokens.len(), 8);
+    }
+
+    #[test]
+    fn escaped_group_survives_rollback_of_an_outer_unclosed_brace() {
+        // Regression test: an escaped, *closed* group nested inside an
+        // *unclosed* outer group. Rollback converts the outer `{` back to
+        // literal text (and everything at its level up to the surviving
+        // inner group), which used to desync the escaped-group bookkeeping
+        // — either because a raw token index went stale once
+        // `flatten_tokens` shifted indices, or (the bug this test guards
+        // against) because assigning the inner group's ordinal *before*
+        // rollback didn't account for the outer `Open` disappearing and
+        // shifting every ordinal after it. Both are closed by recording
+        // token indices during the scan and remapping them to ordinals
+        // only after rollback has settled which `Open`s survive.
+        let src = b"{a,{1\\..3}";
+        let result = Lexer::tokenize(src).unwrap();
+
+        // The outer `{` and `,` roll back to literal text and merge with
+        // the leading "a"; the inner group survives as real Open/Text/Close
+        // tokens, and — because it's escaped — its Text stays a single
+        // literal chunk instead of being split into a comma sequence.
+        assert_eq!(
+            result.tokens,
+            vec![
+                Token::Text(SmolStr::from_slice(b"{a,").unwrap()),
+                Token::Open(ExpansionVariants::default()),
+                Token::Text(SmolStr::from_slice(b"1..3").unwrap()),
+                Token::Close,
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn remap_handles_out_of_order_nested_escaped_groups() {
+        // Coverage for `remap_escaped_group_opens_to_ordinals` with two
+        // *closed* escaped groups, one nested inside the other. Nested
+        // groups close LIFO (innermost first), which is the *opposite* of
+        // their token-index order (the innermost `{` opens later, so it has
+        // the larger index) — so the raw-index list this function remaps is
+        // `[inner_idx, outer_idx]` with `inner_idx > outer_idx`: descending,
+        // not sorted. (`Vec::contains` used to give the right answer here
+        // regardless of order, just via an O(n) scan per lookup instead of
+        // the O(log n) binary search sorting first enables — this was a
+        // perf finding, not a correctness one, but exercising it with a
+        // real sequence-shaped inner group is still worth locking in.)
+        let src = b"{a\\b{1\\..2}c}";
+        let result = Lexer::tokenize(src).unwrap();
+
+        // The inner group's de-escaped text ("1..2") looks like a valid
+        // sequence — if the escape record were ever missed, it would wrongly
+        // expand into `Text("1"), Comma, Text("2")`.
+        assert!(
+            !result.tokens.iter().any(|t| matches!(t, Token::Comma)),
+            "the escaped inner group should not have been expanded into a sequence: {:?}",
+            result.tokens
+        );
+        assert!(
+            result
+                .tokens
+                .iter()
+                .any(|t| matches!(t, Token::Text(s) if s.slice() == b"1..2")),
+            "expected the inner group's text to survive verbatim: {:?}",
+            result.tokens
+        );
     }
 }

@@ -2318,10 +2318,10 @@ unsafe extern "C" {
     /// directly.
     #[cfg(unix)]
     safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
-    /// Bun C++ shim over `QueryPerformanceCounter` (c-bindings.cpp). Out-params
-    /// are `&mut i64` so the pointer-validity precondition is in the type.
+    /// Bun C++ shim over `QueryPerformanceCounter` (c-bindings.cpp). Infallible
+    /// on Windows XP+; out-params are `&mut i64` so pointer validity is typed.
     #[cfg(windows)]
-    safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64) -> core::ffi::c_int;
+    safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
 impl Default for StackCheck {
     /// `cached_stack_end` defaults to `0`, so
@@ -5306,8 +5306,7 @@ impl Timespec {
             // (uv_hrtime), uSockets' sweep and WTF::MonotonicTime::now use.
             let mut sec: i64 = 0;
             let mut nsec: i64 = 0;
-            let rc = clock_gettime_monotonic(&mut sec, &mut nsec);
-            debug_assert!(rc == 0);
+            clock_gettime_monotonic(&mut sec, &mut nsec);
             Timespec { sec, nsec }
         }
     }

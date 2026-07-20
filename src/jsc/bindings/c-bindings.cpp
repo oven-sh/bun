@@ -233,7 +233,7 @@ extern "C" size_t Bun__memoryFootprint()
 #define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
-extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
+extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
     // C++11 thread-safe static init: Timespec::now() runs on multiple threads.
     // QueryPerformanceFrequency is documented to always succeed on Windows XP+.
@@ -242,18 +242,12 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
         QueryPerformanceFrequency(&f);
         return f;
     }();
-    if (!ticksPerSec.QuadPart) {
-        errno = ENOTSUP;
-        return -1;
-    }
 
     LARGE_INTEGER ticks;
     QueryPerformanceCounter(&ticks);
 
     *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);
     *tv_nsec = (int64_t)(((ticks.QuadPart % ticksPerSec.QuadPart) * NS_PER_SEC) / ticksPerSec.QuadPart);
-
-    return 0;
 }
 
 extern "C" void windows_enable_stdio_inheritance()

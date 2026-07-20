@@ -511,14 +511,11 @@ bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagna
 #[cfg(windows)]
 mod windows_ffi {
     // Bun C++ shim over `QueryPerformanceCounter` (src/bun.js/bindings/
-    // c-bindings.cpp).
+    // c-bindings.cpp). Infallible on Windows XP+.
     unsafe extern "C" {
         // safe: out-params are `&mut i64` (non-null, valid for write); C++ side
-        // only writes the slots and returns a status code — no preconditions.
-        pub(super) safe fn clock_gettime_monotonic(
-            sec: &mut i64,
-            nsec: &mut i64,
-        ) -> core::ffi::c_int;
+        // only writes the slots — no preconditions.
+        pub(super) safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
     }
 }
 
@@ -1098,8 +1095,7 @@ impl IoRequestLoop {
             // scope in `windows_ffi` since `extern` blocks can't live in `impl`.
             let mut sec: i64 = 0;
             let mut nsec: i64 = 0;
-            let rc = windows_ffi::clock_gettime_monotonic(&mut sec, &mut nsec);
-            debug_assert!(rc == 0);
+            windows_ffi::clock_gettime_monotonic(&mut sec, &mut nsec);
             timespec.tv_sec = sec.try_into().expect("infallible: size matches");
             timespec.tv_nsec = nsec.try_into().expect("infallible: size matches");
         }

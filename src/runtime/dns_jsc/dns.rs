@@ -4179,7 +4179,10 @@ impl Resolver {
         self.event_loop_timer
             .with_mut(|t| t.state = EventLoopTimerState::PENDING);
 
-        if let Ok(channel) = self.get_channel_or_error(vm.global()) {
+        // Not `get_channel()`: that can reset+re-init (and throw on init
+        // failure, which the timer dispatch cannot propagate). The timer only
+        // pokes timeouts on the existing channel.
+        if let Some(channel) = self.channel.get() {
             if self.any_requests_pending() {
                 // SAFETY: `channel` is the live c-ares channel owned by `self`.
                 c_ares::ares_process_fd(

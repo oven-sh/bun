@@ -11,6 +11,8 @@
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
+import { markBuildkiteStepReported } from "./utils.mjs";
 
 const { parseArgs } = require("node:util");
 
@@ -282,7 +284,7 @@ function annotate(html: string) {
   });
   // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
   // owns its failure annotation.
-  Bun.spawnSync(["buildkite-agent", "meta-data", "set", `reported-${process.env.BUILDKITE_JOB_ID}`, "1"]);
+  markBuildkiteStepReported();
 }
 
 if (instructionFailures > 0) {

@@ -129,17 +129,14 @@ On older Windows, fall back to timeBeginPeriod(1).
  
  #if defined(_DEBUG) && (defined(_MSC_VER) || defined(__MINGW64_VERSION_MAJOR))
  /* Our crt debug report handler allows us to temporarily disable asserts
-@@ -221,6 +230,56 @@ static void uv__init(void) {
+@@ -221,6 +230,53 @@ static void uv__init(void) {
  
    /* Initialize system wakeup detection */
    uv__init_detect_system_wakeup();
 +
-+  /* Probe high-resolution timer support. GetQueuedCompletionStatusEx's ms
-+   * timeout rounds up to the system tick (~15.6ms on an idle box), so a 1ms
-+   * uv_timer fires ~15ms late. On Win10 1803+ a high-res waitable timer can
-+   * post to the IOCP via NtAssociateWaitCompletionPacket, waking the poll at
-+   * sub-ms precision. Older Windows gets timeBeginPeriod(1), which raises the
-+   * system tick to 1ms for this process. */
++  /* Probe high-res waitable timer + wait-completion-packet support so
++   * uv__poll can wake at sub-ms precision (see the hrtimer arm there).
++   * Pre Win10 1803 falls back to raising the system tick to 1ms. */
 +  uv__have_hrtimer = 0;
 +  if (pNtCreateWaitCompletionPacket != NULL &&
 +      pNtAssociateWaitCompletionPacket != NULL &&
@@ -149,7 +146,7 @@ On older Windows, fall back to timeBeginPeriod(1).
 +        NULL,
 +        CREATE_WAITABLE_TIMER_MANUAL_RESET |
 +            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-+        TIMER_ALL_ACCESS);
++        SYNCHRONIZE | TIMER_QUERY_STATE | TIMER_MODIFY_STATE);
 +    if (h != NULL) {
 +      uv__have_hrtimer = 1;
 +      CloseHandle(h);
@@ -172,7 +169,7 @@ On older Windows, fall back to timeBeginPeriod(1).
 +      NULL,
 +      CREATE_WAITABLE_TIMER_MANUAL_RESET |
 +          CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-+      TIMER_ALL_ACCESS);
++      SYNCHRONIZE | TIMER_QUERY_STATE | TIMER_MODIFY_STATE);
 +  if (lfields->hrtimer == NULL)
 +    return;
 +  pkt = NULL;
@@ -186,7 +183,7 @@ On older Windows, fall back to timeBeginPeriod(1).
  }
  
  
-@@ -300,6 +359,8 @@ int uv_loop_init(uv_loop_t* loop) {
+@@ -300,6 +356,8 @@ int uv_loop_init(uv_loop_t* loop) {
    if (err)
      goto fail_async_init;
  
@@ -195,7 +192,7 @@ On older Windows, fall back to timeBeginPeriod(1).
    return 0;
  
  fail_async_init:
-@@ -367,6 +428,12 @@ void uv__loop_close(uv_loop_t* loop) {
+@@ -367,6 +425,12 @@ void uv__loop_close(uv_loop_t* loop) {
    loop->timer_heap = NULL;
  
    lfields = uv__get_internal_fields(loop);
@@ -208,16 +205,13 @@ On older Windows, fall back to timeBeginPeriod(1).
    uv_mutex_destroy(&lfields->loop_metrics.lock);
    uv__free(lfields);
    loop->internal_fields = NULL;
-@@ -463,6 +530,29 @@ static void uv__poll(uv_loop_t* loop, DWORD timeout) {
+@@ -463,6 +527,26 @@ static void uv__poll(uv_loop_t* loop, DWORD timeout) {
       */
      lfields->current_timeout = timeout;
  
-+    /* Arm the high-res waitable timer for the deadline and associate it with
-+     * this loop's IOCP. When it fires the kernel posts a completion with
-+     * lpOverlapped == NULL, which the dequeue loop below already treats as a
-+     * pure wakeup. GQCS itself waits with INFINITE so its own ms-granularity
-+     * timeout never applies. A stale packet from a previous arm (timer fired
-+     * after we dequeued real I/O) is harmless: it costs one empty iteration. */
++    /* Arm the high-res waitable timer and associate it with this loop's IOCP;
++     * it posts a NULL-overlapped completion (already treated as a pure wakeup
++     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait. */
 +    if (timeout != 0 && timeout != INFINITE && lfields->hrtimer != NULL) {
 +      LARGE_INTEGER due;
 +      due.QuadPart = -(LONGLONG) timeout * 10000;  /* relative, 100ns units */

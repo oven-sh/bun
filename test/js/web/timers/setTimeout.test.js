@@ -558,7 +558,11 @@ it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
   const { median, min } = JSON.parse(stdout);
   // Before: median ~15.6ms. After: median ~1-2ms. 8ms splits the two with
   // plenty of headroom for CI jitter. Also assert we never fire early.

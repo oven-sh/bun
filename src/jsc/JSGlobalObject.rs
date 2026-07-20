@@ -81,6 +81,16 @@ impl core::fmt::Debug for GlobalRef {
     }
 }
 
+/// "a" or "an" for the given noun. Deliberately treats only a/e/i/o as vowel
+/// onsets: "u"-initial type names seen here ("Uint8Array", "URL") take "a".
+#[inline]
+const fn indefinite_article_for(noun: &str) -> &'static str {
+    match noun.as_bytes() {
+        [b'a' | b'A' | b'e' | b'E' | b'i' | b'I' | b'o' | b'O', ..] => "an",
+        _ => "a",
+    }
+}
+
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
     /// call-site readability where mutation is not the intent.
@@ -282,7 +292,7 @@ impl JSGlobalObject {
         }
     }
 
-    /// "Expected {field} to be a {typename} for '{name}'."
+    /// "Expected {field} to be a/an {typename} for '{name}'."
     pub fn create_invalid_argument_type(
         &self,
         name_: &'static str,
@@ -291,7 +301,13 @@ impl JSGlobalObject {
     ) -> JSValue {
         self.err(
             JscError::INVALID_ARG_TYPE,
-            format_args!("Expected {} to be a {} for '{}'.", field, typename, name_),
+            format_args!(
+                "Expected {} to be {} {} for '{}'.",
+                field,
+                indefinite_article_for(typename),
+                typename,
+                name_
+            ),
         )
         .to_js()
     }
@@ -300,7 +316,7 @@ impl JSGlobalObject {
         Ok(value.into())
     }
 
-    /// "Expected {field} to be a {typename} for '{name}'."
+    /// "Expected {field} to be a/an {typename} for '{name}'."
     pub fn throw_invalid_argument_type(
         &self,
         name_: &'static str,

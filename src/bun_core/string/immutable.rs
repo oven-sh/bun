@@ -377,29 +377,8 @@ pub use crate::strings_impl::{
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
-/// memmem — libc on posix, scalar fallback on windows.
-#[cfg(not(windows))]
-pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
-    // libc memmem only reads within those bounds.
-    let p = unsafe {
-        libc::memmem(
-            haystack.as_ptr().cast(),
-            haystack.len(),
-            needle.as_ptr().cast(),
-            needle.len(),
-        )
-    };
-    if p.is_null() {
-        None
-    } else {
-        Some(p as usize - haystack.as_ptr() as usize)
-    }
-}
-#[cfg(windows)]
+/// memmem — `memchr::memmem` (via bstr): SIMD, guaranteed-linear, same on all platforms.
+#[inline]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     bstr::ByteSlice::find(haystack, needle)
 }

@@ -2569,7 +2569,7 @@ impl ExpectArrayContaining {
         if args.is_empty() || !args[0].js_type().is_array() {
             return Err(crate::throw_pretty_static!(
                 global_this,
-                "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n",
+                "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected an array\n",
             ));
         }
 

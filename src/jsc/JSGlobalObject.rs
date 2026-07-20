@@ -82,7 +82,7 @@ impl core::fmt::Debug for GlobalRef {
 }
 
 /// "a" or "an" for the given noun. Deliberately treats only a/e/i/o as vowel
-/// onsets: "u"-initial type names seen here ("Uint8Array", "URL") take "a".
+/// onsets so that "u"-initial type names like "Uint8Array"/"URL" take "a".
 #[inline]
 const fn indefinite_article_for(noun: &str) -> &'static str {
     match noun.as_bytes() {
@@ -90,6 +90,8 @@ const fn indefinite_article_for(noun: &str) -> &'static str {
         _ => "a",
     }
 }
+// The function returns one of exactly two literals, so len() distinguishes them
+// (`&str == &str` is not const-evaluable without `feature(const_trait_impl)`).
 const _: () = {
     assert!(indefinite_article_for("array").len() == 2);
     assert!(indefinite_article_for("element").len() == 2);

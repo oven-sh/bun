@@ -622,7 +622,10 @@ impl NodeHTTPResponse {
                 || js::on_data_get_cached(this_value).is_none())
         {
             let had_ref = self.body_read_ref.get().has;
-            if !flags.contains(Flags::UPGRADED) && !flags.contains(Flags::SOCKET_CLOSED) {
+            if !flags.contains(Flags::UPGRADED)
+                && !flags.contains(Flags::SOCKET_CLOSED)
+                && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            {
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
                     raw_response.clear_on_data();
@@ -2223,9 +2226,11 @@ impl NodeHTTPResponse {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
             let flags = self.flags.get();
-            // Only clear the uWS slot while still Pending: once Done, uWS nulled
-            // inStream after fin, so a set slot belongs to a pipelined request.
+            // Only clear the uWS slot while the body is still arriving: once fin
+            // was seen (Done, or buffered-LAST) a set slot is a pipelined
+            // request's. The state is forced to Done below regardless.
             if state == BodyReadState::Pending
+                && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
                 && !flags.contains(Flags::SOCKET_CLOSED)
                 && !flags.contains(Flags::UPGRADED)
             {
@@ -2261,7 +2266,8 @@ impl NodeHTTPResponse {
             // defer { if body_read_ref.has { unref } } — moved to tail of this branch.
             match self.body_read_state.get() {
                 BodyReadState::Pending => {
-                    if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
+                    if !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+                        && !flags.contains(Flags::REQUEST_HAS_COMPLETED)
                         && !flags.contains(Flags::SOCKET_CLOSED)
                         && !flags.contains(Flags::UPGRADED)
                     {

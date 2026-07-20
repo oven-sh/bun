@@ -847,9 +847,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 b"_default"
             };
-            let new_ref = self
-                .new_symbol(SymbolKind::Constant, name_str)
-                .expect("unreachable");
+            let new_ref = self.new_symbol(SymbolKind::Constant, name_str);
             shadow_ref.set(new_ref);
         }
 

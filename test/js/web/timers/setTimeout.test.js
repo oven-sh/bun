@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -403,6 +404,119 @@ it("setTimeout CPU usage #7790", async () => {
   expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
 });
 
+// The epoll_pwait(2) fallback (kernels <5.11, gVisor, seccomp-blocked
+// environments) used to truncate the ns-resolution timespec to ms, so any
+// sub-ms timer deadline became a 0 ms timeout and the loop busy-spun at
+// 100% CPU until the deadline passed. Force the fallback and assert
+// setInterval(1) spends most of the window asleep.
+// https://man7.org/linux/man-pages/man2/epoll_wait.2.html
+it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const wall0 = process.hrtime.bigint();
+       const cpu0 = process.cpuUsage();
+       let ticks = 0;
+       const id = setInterval(() => {
+         ticks++;
+         if (process.hrtime.bigint() - wall0 >= 300_000_000n) {
+           clearInterval(id);
+           const cpu = process.cpuUsage(cpu0);
+           const cpuUs = cpu.user + cpu.system;
+           const wallUs = Number((process.hrtime.bigint() - wall0) / 1000n);
+           console.log(JSON.stringify({ ticks, cpuUs, wallUs }));
+         }
+       }, 1);`,
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const { ticks, cpuUs, wallUs } = JSON.parse(stdout);
+  const cpuPercent = (cpuUs / wallUs) * 100;
+  // Busy-spinning puts cpuUs ~= wallUs (100%). Sleeping properly it is a
+  // small fraction (~5% release). 50% gives wide headroom for ASAN/debug.
+  expect(cpuPercent, `ticks=${ticks} cpuUs=${cpuUs} wallUs=${wallUs}`).toBeLessThan(50);
+  expect(ticks).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
+});
+
+// EINTR retry used to re-issue the full timeout (on both epoll_pwait and
+// epoll_pwait2), so a signal stream faster than the timer period could
+// delay the timer far past its deadline. We LD_PRELOAD a constructor that
+// installs a no-op SIGALRM handler and a 20 ms ITIMER_REAL (not via
+// process.on(), which wakes the loop via eventfd and masks the bug), and
+// assert a 200 ms setTimeout still fires roughly on time.
+// https://man7.org/linux/man-pages/man7/signal.7.html (epoll_*wait is never
+// restarted by SA_RESTART)
+describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
+  const src = `
+#include <signal.h>
+#include <string.h>
+#include <sys/time.h>
+static void noop(int s) { (void) s; }
+__attribute__((constructor)) static void arm(void) {
+    struct sigaction sa; memset(&sa, 0, sizeof sa);
+    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, 0);
+    struct itimerval itv;
+    itv.it_interval.tv_sec = 0; itv.it_interval.tv_usec = 20000;
+    itv.it_value = itv.it_interval;
+    setitimer(ITIMER_REAL, &itv, 0);
+}`;
+  let soPath = "";
+  let built = false;
+  if (isLinux) {
+    const dir = tempDirWithFiles("epoll-eintr", { "itimer.c": src });
+    soPath = path.join(dir, "itimer.so");
+    try {
+      const cc = spawnSync({
+        cmd: ["cc", "-shared", "-fPIC", "-O0", "-o", soPath, path.join(dir, "itimer.c")],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      built = cc.exitCode === 0;
+    } catch {}
+  }
+
+  it.skipIf(!built).each([
+    ["epoll_pwait2", {}],
+    ["epoll_pwait fallback", { BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1" }],
+  ])("%s: setTimeout fires on time under signal storm", async (_name, extraEnv) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const s = process.hrtime.bigint();
+         setTimeout(() => {
+           console.log(JSON.stringify({ ms: Number((process.hrtime.bigint() - s) / 1_000_000n) }));
+           process.exit(0);
+         }, 200);`,
+      ],
+      env: { ...bunEnv, ...extraEnv, LD_PRELOAD: soPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
+    const { ms } = JSON.parse(stdout);
+    // Without the fix this lands ~900-1000 ms; with it, ~200-210 ms.
+    expect(ms).toBeWithin(200, 500);
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
   expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
 });
@@ -528,4 +642,16 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(stderrLines).toBe("");
   expect(stdout).toBe("converted: ok\nsurvived\n");
   expect(exitCode).toBe(0);
+});
+
+it("timer heap clock is monotonic, not wall-clock", () => {
+  // The clock that schedules setTimeout/setInterval deadlines must be monotonic
+  // (boot-relative) on every platform so NTP steps / user clock changes can't
+  // stall or mass-fire timers. A wall-clock reading here would be ~= Date.now().
+  const t0 = timerInternals.timerClockMs();
+  const t1 = timerInternals.timerClockMs();
+  const wallNow = Date.now();
+  expect(t0).toBeGreaterThan(0);
+  expect(t1).toBeGreaterThanOrEqual(t0);
+  expect(t1).toBeLessThan(wallNow / 2);
 });

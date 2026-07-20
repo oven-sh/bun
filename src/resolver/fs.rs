@@ -1092,7 +1092,6 @@ impl RealFS {
                 bun_sys::WindowsOpenDirOptions {
                     iterable: true,
                     can_rename_or_delete: false,
-                    read_only: true,
                     ..Default::default()
                 },
             )
@@ -1444,7 +1443,6 @@ impl RealFS {
             bun_sys::WindowsOpenDirOptions {
                 iterable: true,
                 no_follow: false,
-                read_only: true,
                 ..Default::default()
             },
         );

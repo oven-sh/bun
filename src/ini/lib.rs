@@ -201,16 +201,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ScopeError
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScopeError {
-    #[error("no_value")]
-    NoValue,
-}
-
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,
@@ -1278,7 +1268,7 @@ mod draft {
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
                 npmrc_path,
-                bun_ast::ToSourceOpts { convert_bom: true },
+                bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(s) => s,
                 Err(err) => {

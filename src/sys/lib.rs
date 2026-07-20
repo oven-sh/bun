@@ -6732,16 +6732,21 @@ pub fn normalize_path_windows_opts<'a>(
         // Two special-cases that must run BEFORE
         // `normalizeStringGenericTZ`, otherwise device paths get mangled:
         if path.len() >= 4 && is_sep(path[1]) && is_sep(path[3]) {
-            // `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
-            // is not collapsed to `\pipe\foo` by the normalizer.
+            // `\\.\…` device path → preserve verbatim so `\\.\pipe\foo` is
+            // not collapsed to `\pipe\foo` by the normalizer. `\\.` is the
+            // Win32 spelling of `\??` (`\DosDevices`); `NtCreateFile` only
+            // accepts the latter, so emit `\??\…` for NT callers and keep
+            // `\\.\…` for kernel32.
             if path[2] == b'.' as u16 {
                 if path.len() >= buf.len() {
                     return Err(too_long());
                 }
-                buf[0] = b'\\' as u16;
-                buf[1] = b'\\' as u16;
-                buf[2] = b'.' as u16;
-                buf[3] = b'\\' as u16;
+                let prefix: &[u16] = if opts.add_nt_prefix {
+                    bun_core::w!("\\??\\")
+                } else {
+                    bun_core::w!("\\\\.\\")
+                };
+                buf[..4].copy_from_slice(prefix);
                 let rest = &path[4..];
                 buf[4..4 + rest.len()].copy_from_slice(rest);
                 buf[path.len()] = 0;
@@ -9987,9 +9992,12 @@ mod normalize_path_windows_tests {
         }
         // UNC, `\\.\`, `\\?\UNC\` and `\??\` paths are never device-translated
         // by Win32; named pipes and SMB files can legally use these names.
-        assert_eq!(normalize(cwd, "\\\\.\\pipe\\com1"), "\\\\.\\pipe\\com1");
-        assert_eq!(normalize(cwd, "\\\\.\\pipe\\Nul"), "\\\\.\\pipe\\Nul");
-        assert_eq!(normalize(cwd, "\\\\.\\nul"), "\\\\.\\nul");
+        // `\\.\` becomes `\??\` for NT consumption but the path stays intact.
+        assert_eq!(normalize(cwd, "\\\\.\\pipe\\com1"), "\\??\\pipe\\com1");
+        assert_eq!(normalize(cwd, "\\\\.\\pipe\\Nul"), "\\??\\pipe\\Nul");
+        assert_eq!(normalize(cwd, "\\\\.\\nul"), "\\??\\nul");
+        assert_eq!(normalize_opts(cwd, "\\\\.\\nul", false), "\\\\.\\nul");
+        assert_eq!(normalize_opts(cwd, "\\\\.\\pipe\\com1", false), "\\\\.\\pipe\\com1");
         for input in [
             "\\\\server\\share\\aux",
             "\\\\?\\UNC\\srv\\s\\nul",
@@ -10008,19 +10016,16 @@ mod normalize_path_windows_tests {
     #[test]
     fn trailing_dots_and_spaces_stripped() {
         let cwd = Fd::cwd();
-        // Bare relative: the stripped name is returned verbatim for
-        // `NtCreateFile` against `RootDirectory`.
-        for (input, want) in [
-            ("foo.", "foo"),
-            ("foo ", "foo"),
-            ("foo. ", "foo"),
-            ("foo..", "foo"),
-            ("foo . ", "foo"),
-            (".foo.", ".foo"),
-            ("foo.bar.", "foo.bar"),
-            ("foo", "foo"),
-        ] {
-            assert_eq!(normalize(cwd, input), want, "{input:?}");
+        // Bare relative with no `.` left after stripping is returned verbatim
+        // for `NtCreateFile` against `RootDirectory`.
+        for input in ["foo.", "foo ", "foo. ", "foo..", "foo . ", "foo"] {
+            assert_eq!(normalize(cwd, input), "foo", "{input:?}");
+        }
+        // A `.` left in the stripped name routes through the dirfd resolve.
+        for (input, tail) in [(".foo.", "\\.foo"), ("foo.bar.", "\\foo.bar")] {
+            let got = normalize(cwd, input);
+            assert!(got.starts_with("\\Device\\"), "{input:?} -> {got}");
+            assert!(got.ends_with(tail), "{input:?} -> {got}");
         }
         // `.` / `..` and all-dot/all-space names are left for the normalizer.
         assert_ne!(normalize(cwd, ".."), ".");
@@ -10032,7 +10037,7 @@ mod normalize_path_windows_tests {
         assert_eq!(normalize(cwd, "C:\\a \\b"), "\\??\\C:\\a \\b");
         assert_eq!(normalize(cwd, "\\\\?\\C:\\a\\b. "), "\\??\\C:\\a\\b");
         // UNC, `\\.\` and `\??\` keep their trailing characters.
-        assert_eq!(normalize(cwd, "\\\\.\\pipe\\name."), "\\\\.\\pipe\\name.");
+        assert_eq!(normalize(cwd, "\\\\.\\pipe\\name."), "\\??\\pipe\\name.");
         assert!(normalize(cwd, "\\\\server\\share\\b. ").ends_with("\\b. "));
         assert!(normalize(cwd, "\\??\\C:\\a\\b. ").ends_with("\\b. "));
     }

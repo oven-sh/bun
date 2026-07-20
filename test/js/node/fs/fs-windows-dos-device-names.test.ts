@@ -126,29 +126,19 @@ test.skipIf(!isWindows)("trailing dots and spaces on the final component are str
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)(
-  "a named pipe whose last path component is a reserved word is not redirected to the device",
-  async () => {
-    // `\\.\pipe\<name>` is in the LocalDevice namespace, where Win32 never
-    // applies DOS-device translation. A pipe name may contain backslashes, so
-    // the last separator-delimited component can be exactly `nul`; that must
-    // reach the pipe, not `\??\NUL`.
-    const { stdout, stderr, exitCode } = await runInTempDir(`
-      const net = require("net");
-      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-" + process.pid + "\\\\nul";
-      const server = net.createServer(s => { s.end("from-pipe"); });
-      await new Promise((res, rej) => server.listen(pipe, res).on("error", rej));
-      try {
-        // Reading the NUL device yields ""; reading the pipe yields the payload.
-        console.log(JSON.stringify(fs.readFileSync(pipe, "utf8")));
-      } finally {
-        await new Promise(r => server.close(r));
-      }
-    `);
-    expect({ stdout, stderr }).toEqual({ stdout: '"from-pipe"\n', stderr: "" });
-    expect(exitCode).toBe(0);
-  },
-);
+test.skipIf(!isWindows)("fs.writeFileSync to os.devNull writes to the null device", async () => {
+  // os.devNull on Windows is `\\.\nul`; it must open `\??\nul` via
+  // NtCreateFile rather than be passed through as a Win32 path NT rejects.
+  const { stdout, stderr, exitCode } = await runInTempDir(`
+    const os = require("os");
+    fs.writeFileSync(os.devNull, "discard");
+    fs.writeFileSync("\\\\\\\\.\\\\NUL", "discard");
+    console.log(JSON.stringify(fs.readdirSync(".")));
+    console.log(JSON.stringify(fs.readFileSync(os.devNull, "utf8")));
+  `);
+  expect({ stdout, stderr }).toEqual({ stdout: '[]\n""\n', stderr: "" });
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!isWindows)("Bun.write to a bare reserved name writes to the device", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`

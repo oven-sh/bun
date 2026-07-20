@@ -41,13 +41,12 @@ pub fn valkey_error_to_js(
     };
 
     let msg = message.as_ref();
-    if !msg.is_empty() {
-        return error_code.fmt(global, format_args!("{}", bstr::BStr::new(msg)));
+    let tag: &'static str = err.into();
+    if msg.is_empty() {
+        error_code.fmt(global, format_args!("Valkey error: {tag}"))
+    } else {
+        error_code.fmt(global, format_args!("{}: {tag}", bstr::BStr::new(msg)))
     }
-    error_code.fmt(
-        global,
-        format_args!("Valkey error: {}", <&'static str>::from(err)),
-    )
 }
 
 pub fn resp_value_to_js(this: RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {

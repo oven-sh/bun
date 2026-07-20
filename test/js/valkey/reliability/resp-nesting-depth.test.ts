@@ -297,7 +297,7 @@ describe("Valkey: RESP line-terminated replies (>512KB)", () => {
           () => null,
           (e: any) => e,
         );
-        expect(rejection?.message).toBe(body);
+        expect(rejection?.message).toBe(`${body}: ServerError`);
         // Client must survive and serve the next command.
         expect(await client.send("PING", [])).toBe("PONG");
       } finally {

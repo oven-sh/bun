@@ -16,7 +16,6 @@ import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes to errno", () => {
@@ -160,38 +159,43 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
 // NTFS accepts the Ex info class and so never exercises the fallback.
 const fat32 = (() => {
   if (!isWindows) return null;
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bun-rm-fat32-"));
+  const dir = tempDir("rm-fat32", {});
+  const tmp = String(dir);
   const vhd = path.join(tmp, "disk.vhd");
   const mount = path.join(tmp, "mnt");
   fs.mkdirSync(mount);
   // diskpart needs an elevated token; if we are not elevated the create/attach
-  // fails and we skip the test rather than reporting a spurious failure.
+  // fails and we skip. diskpart in stdin mode exits 0 even when individual
+  // commands fail, so the real gate is the `st_dev` check below.
   const script = [
-    `create vdisk file="${vhd}" maximum=64 type=fixed`,
+    `create vdisk file="${vhd}" maximum=64 type=expandable`,
     `select vdisk file="${vhd}"`,
     `attach vdisk`,
     `create partition primary`,
     `format fs=fat32 quick`,
     `assign mount="${mount}"`,
   ].join("\n");
-  const r = spawnSync("diskpart", [], { input: script, encoding: "utf8" });
-  const probe = path.join(mount, ".probe");
+  const r = spawnSync("diskpart", [], { input: script, encoding: "utf8", timeout: 60_000 });
+  const cleanup = () => {
+    const detach = [`select vdisk file="${vhd}"`, `detach vdisk`].join("\n");
+    spawnSync("diskpart", [], { input: detach, encoding: "utf8", timeout: 60_000 });
+    try {
+      dir[Symbol.dispose]();
+    } catch {}
+  };
   let ok = r.status === 0;
   if (ok) {
+    // `mount` was created on the host NTFS volume; `assign mount=` turns it
+    // into a volume mount point whose `st_dev` (volume serial) differs from
+    // its parent. Without this check a silent diskpart failure would leave
+    // `mount` on NTFS, where the Ex fast path deletes the readonly file and
+    // the test passes without exercising the fallback.
     try {
-      fs.writeFileSync(probe, "x");
-      fs.unlinkSync(probe);
+      ok = fs.statSync(mount).dev !== fs.statSync(tmp).dev;
     } catch {
       ok = false;
     }
   }
-  const cleanup = () => {
-    const detach = [`select vdisk file="${vhd}"`, `detach vdisk`].join("\n");
-    spawnSync("diskpart", [], { input: detach, encoding: "utf8" });
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    } catch {}
-  };
   if (!ok) {
     cleanup();
     return null;

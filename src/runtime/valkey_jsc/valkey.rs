@@ -12,7 +12,7 @@ use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
 use super::js_valkey::JSValkeyClient;
-use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
+use super::protocol_jsc::valkey_error_to_js;
 use super::command;
 use super::command::{Args, Command};
 
@@ -622,7 +622,9 @@ impl ValkeyClient {
         socket.close(uws::CloseCode::Normal);
         if is_semi_socket {
             self.status = Status::Disconnected;
-            let _ = self.on_close();
+            if let Err(e) = self.on_close() {
+                self.global_object().report_active_exception_as_unhandled(e);
+            }
         }
     }
 
@@ -631,49 +633,43 @@ impl ValkeyClient {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
-        // If manually closing, don't attempt to reconnect
-        if self.flags.is_manually_closed {
-            debug!("skip reconnecting since the connection is manually closed");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.parent().on_valkey_close()?;
-            return Ok(());
+        // Decide the outcome first. `fail()` / `reject_in_flight_commands()` may
+        // return Err, but the parent callback that releases connect()'s
+        // socket-ref must run regardless or the `JSValkeyClient` leaks.
+        let will_reconnect = !self.flags.is_manually_closed
+            && self.flags.enable_auto_reconnect
+            && {
+                self.retry_attempts += 1;
+                self.retry_attempts <= self.max_retries
+            };
+
+        let fail_result: JsResult<()> = if will_reconnect {
+            debug!(
+                "reconnect (attempt {}/{})",
+                self.retry_attempts, self.max_retries
+            );
+            self.flags.is_reconnecting = true;
+            self.handshake = Handshake::AwaitingHello;
+            self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)
+        } else {
+            let msg: &[u8] = if self.flags.is_manually_closed || !self.flags.enable_auto_reconnect {
+                debug!("skip reconnecting (manually closed or auto-reconnect disabled)");
+                b"Connection closed"
+            } else {
+                debug!("Max retries reached, giving up reconnection");
+                b"Max reconnection attempts reached"
+            };
+            self.fail(msg, RedisError::ConnectionClosed)
+        };
+
+        if will_reconnect {
+            self.parent().on_valkey_reconnect();
+            fail_result
+        } else {
+            let close_result = self.parent().on_valkey_close();
+            fail_result?;
+            close_result
         }
-
-        // If auto reconnect is disabled, just fail
-        if !self.flags.enable_auto_reconnect {
-            debug!("skip reconnecting since auto reconnect is disabled");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.parent().on_valkey_close()?;
-            return Ok(());
-        }
-
-        // Calculate reconnection delay with exponential backoff
-        self.retry_attempts += 1;
-        let delay_ms = self.get_reconnect_delay();
-
-        if delay_ms == 0 || self.retry_attempts > self.max_retries {
-            debug!("Max retries reached or retry strategy returned 0, giving up reconnection");
-            self.fail(
-                b"Max reconnection attempts reached",
-                RedisError::ConnectionClosed,
-            )?;
-            self.parent().on_valkey_close()?;
-            return Ok(());
-        }
-
-        debug!(
-            "reconnect in {}ms (attempt {}/{})",
-            delay_ms, self.retry_attempts, self.max_retries
-        );
-
-        self.flags.is_reconnecting = true;
-        self.handshake = Handshake::AwaitingHello;
-
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
-
-        // Signal reconnect timer should be started
-        self.parent().on_valkey_reconnect();
-        Ok(())
     }
 
     pub fn send_next_command(&mut self) {
@@ -922,11 +918,11 @@ impl ValkeyClient {
     fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
         debug!("Processing HELLO response");
 
+        if let Some(err) = value.as_server_error() {
+            self.fail(err, RedisError::AuthenticationFailed)?;
+            return Ok(());
+        }
         match value {
-            RESPValue::Error(err) => {
-                self.fail(err, RedisError::AuthenticationFailed)?;
-                Ok(())
-            }
             RESPValue::SimpleString(str_) => {
                 if str_.as_ref() == b"OK" {
                     return self.mark_connected(value);
@@ -990,11 +986,11 @@ impl ValkeyClient {
         if self.handshake == Handshake::SelectingDb {
             self.handshake = Handshake::Ready;
 
+            if let Some(err_str) = value.as_server_error() {
+                self.fail(err_str, RedisError::InvalidCommand)?;
+                return Ok(());
+            }
             return match value {
-                RESPValue::Error(err_str) => {
-                    self.fail(err_str, RedisError::InvalidCommand)?;
-                    Ok(())
-                }
                 RESPValue::SimpleString(ok_str) => {
                     if ok_str.as_ref() != b"OK" {
                         // SELECT returned something other than "OK"
@@ -1062,17 +1058,16 @@ impl ValkeyClient {
         if self.parent().is_subscriber() || request_is_subscribe {
             debug!("This client is a subscriber. Handling as subscriber...");
 
-            match value {
-                RESPValue::Error(err) => {
-                    if let Some(mut p) = pair_maybe.take() {
-                        let global_this = self.global_object();
-                        let js =
-                            valkey_error_to_js(&global_this, &**err, RedisError::ServerError);
-                        p.reject(&global_this, js)?;
-                    }
-                    self.fail(err, RedisError::ServerError)?;
-                    return Ok(());
+            if let Some(err) = value.as_server_error() {
+                if let Some(mut p) = pair_maybe.take() {
+                    let global_this = self.global_object();
+                    let js = valkey_error_to_js(&global_this, err, RedisError::ServerError);
+                    p.reject(&global_this, js)?;
                 }
+                self.fail(err, RedisError::ServerError)?;
+                return Ok(());
+            }
+            match value {
                 RESPValue::Push(push) => {
                     if let Some(kind) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                         self.handle_subscribe_response(push, kind, pair_maybe.as_mut())?;
@@ -1105,11 +1100,8 @@ impl ValkeyClient {
         let _exit = self.vm.enter_event_loop_scope();
 
         let value = core::mem::replace(value, RESPValue::Null);
-        if matches!(value, RESPValue::Error(_)) {
-            let js_err = match resp_value_to_js(value, &global_this) {
-                Ok(v) => v,
-                Err(err) => global_this.take_error(err),
-            };
+        if let Some(msg) = value.as_server_error() {
+            let js_err = valkey_error_to_js(&global_this, msg, RedisError::ServerError);
             pair.reject(&global_this, js_err)?;
         } else {
             pair.resolve(&global_this, value)?;

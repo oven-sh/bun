@@ -191,13 +191,9 @@ describe("ReadStream.prototype.setRawMode", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // On Windows, setRawMode on process.stdin requests UV_TTY_MODE_RAW_VT so
-  // the terminal supplies VT input sequences, but a tty.ReadStream on any
-  // other console fd (e.g. CONIN$) either failed outright ("not a TTY") or,
-  // via Source::set_raw_mode, would have used plain UV_TTY_MODE_RAW, which
-  // leaves ENABLE_VIRTUAL_TERMINAL_INPUT off and routes input through libuv's
-  // own INPUT_RECORD translator. The console input mode must be the same
-  // whichever fd the program raw-moded. bun:ffi has no Windows/arm64 backend.
+  // setRawMode on a CONIN$ tty.ReadStream must leave the console in the same
+  // UV_TTY_MODE_RAW_VT state (ENABLE_VIRTUAL_TERMINAL_INPUT) as process.stdin
+  // does. bun:ffi has no Windows/arm64 backend, hence the isArm64 skip.
   test.skipIf(!isWindows || isArm64)(
     "uses the same VT raw console mode for CONIN$ as for stdin on Windows",
     async () => {

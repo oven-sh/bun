@@ -56,12 +56,8 @@ Object.defineProperty(ReadStream, "prototype", {
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
 
-      // On Windows this calls uv_tty_set_mode (UV_TTY_MODE_RAW_VT) via
-      // Source__setRawModeTty; fd 0 resolves to the shared stdin uv_tty_t so
-      // the mode change is coordinated with any in-flight console read.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
+      // Windows: Source__setRawModeTty applies UV_TTY_MODE_RAW_VT for every
+      // console fd. POSIX: termios on the fd with per-stream saved state.
       if (process.platform === "win32") {
         const err = ttySetMode(this.fd, flag);
         if (err) {

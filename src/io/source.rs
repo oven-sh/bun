@@ -518,12 +518,8 @@ pub(crate) extern "C" fn Source__setRawModeTty(
     fd: c_int,
     raw: bool,
 ) -> c_int {
-    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control
-    // sequence processing on the TTY implementer side, rather than having libuv
-    // translate keypress events into control sequences, aligning behavior more
-    // closely with POSIX platforms. This is also required to support some
-    // control sequences at all on Windows, such as bracketed paste mode. The
-    // Node.js readline implementation handles differences between these modes.
+    // UV_TTY_MODE_RAW_VT: the terminal emits VT input sequences (bracketed
+    // paste etc.) instead of libuv translating INPUT_RECORDs. Matches POSIX.
     let mode = if raw {
         uv::TtyMode::Vt
     } else {
@@ -562,10 +558,8 @@ pub(crate) extern "C" fn Source__setRawModeTty(
     if unsafe { w::GetConsoleMode(src, &mut unused) } == 0 {
         return bun_sys::E::NOTTY as c_int;
     }
-    // `SetConsoleMode` on an input handle requires `GENERIC_READ|GENERIC_WRITE`
-    // and `DuplicateHandle` cannot add access the source lacks, so open a
-    // fresh CONIN$ handle. Console input mode is a property of the buffer, so
-    // the caller's read-only handle observes the new mode for its reads.
+    // `SetConsoleMode` needs `GENERIC_READ|GENERIC_WRITE`; `DuplicateHandle`
+    // can't add access, so open CONIN$ fresh. Mode is per buffer, not handle.
     // SAFETY: `CONIN_W` is a NUL-terminated static wide string.
     let conin = unsafe {
         w::CreateFileW(

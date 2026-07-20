@@ -739,10 +739,6 @@ where
             return;
         }
 
-        if ctx.server.is_none() {
-            ctx.render_missing_invalid_response(value);
-            return;
-        }
         if value.is_empty_or_undefined_or_null() || !value.is_cell() {
             ctx.render_missing_invalid_response(value);
             return;
@@ -1747,9 +1743,6 @@ where
             return;
         }
 
-        if self.resp.is_none() || self.server.is_none() {
-            return;
-        }
         // SAFETY: BACKREF
         let global_this = self.server().global_this();
         let resp = self.resp.expect("infallible: resp bound");

@@ -47,27 +47,36 @@ if (isWindows) {
   });
 
   // Store-installed CLIs (winget, Store python, pwsh) are IO_REPARSE_TAG_APPEXECLINK
-  // reparse points that fail CreateFileW with ERROR_CANT_ACCESS_FILE even though the
-  // entry exists and is executable. bun:ffi is unavailable on Windows arm64.
+  // reparse points. Only name-surrogate reparse tags (symlinks, mount points) should
+  // be followed; non-surrogate tags must be treated as existing. bun:ffi is
+  // unavailable on Windows arm64.
   test.skipIf(isArm64)("which resolves Windows app-execution aliases (#17328)", () => {
-    using dir = tempDir("which-appexeclink", {});
+    using dir = tempDir("which-appexeclink", { "real.exe": "" });
     const base = String(dir);
     const alias = join(base, "myalias.exe");
     const dangling = join(base, "dangling.exe");
+    const goodlink = join(base, "goodlink.exe");
 
     makeAppExecLink(alias);
     symlinkSync(join(base, "no-such-target.exe"), dangling, "file");
+    symlinkSync(join(base, "real.exe"), goodlink, "file");
 
     expect({
       which_bare: which("myalias", { PATH: base }),
       which_ext: which("myalias.exe", { PATH: base }),
+      which_dangling: which("dangling.exe", { PATH: base }),
+      which_goodlink: which("goodlink.exe", { PATH: base }),
       existsSync_alias: existsSync(alias),
       existsSync_dangling: existsSync(dangling),
+      existsSync_goodlink: existsSync(goodlink),
     }).toEqual({
       which_bare: alias,
       which_ext: alias,
+      which_dangling: null,
+      which_goodlink: goodlink,
       existsSync_alias: true,
       existsSync_dangling: false,
+      existsSync_goodlink: true,
     });
   });
 

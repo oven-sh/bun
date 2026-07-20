@@ -7378,7 +7378,22 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             return false;
         }
         if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
-            // Check if the underlying file exists by opening it.
+            // Only name-surrogate reparse points (symlinks, mount points) stand in for
+            // another path. Non-surrogate tags such as IO_REPARSE_TAG_APPEXECLINK are
+            // opaque: the entry exists as-is and following it can fail spuriously.
+            let mut fd: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+            // SAFETY: path is NUL-terminated UTF-16; fd is valid for write.
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut fd) };
+            if find != bun_windows_sys::INVALID_HANDLE_VALUE {
+                // SAFETY: valid find handle from FindFirstFileW.
+                unsafe {
+                    let _ = w::FindClose(find);
+                }
+                if !w::is_reparse_tag_name_surrogate(fd.dwReserved0) {
+                    return true;
+                }
+            }
+            // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
             let rc = unsafe {
                 w::CreateFileW(
@@ -7392,18 +7407,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                 )
             };
             if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-                // The reparse-point entry exists (GetFileAttributesW succeeded); only
-                // report "not found" for the errors that mean no target. App-execution
-                // aliases fail with CANT_ACCESS_FILE, which is not "does not exist".
-                return !matches!(
-                    w::Win32Error::get(),
-                    w::Win32Error::FILE_NOT_FOUND
-                        | w::Win32Error::PATH_NOT_FOUND
-                        | w::Win32Error::INVALID_NAME
-                        | w::Win32Error::INVALID_DRIVE
-                        | w::Win32Error::BAD_PATHNAME
-                        | w::Win32Error::FILENAME_EXCED_RANGE
-                );
+                return false;
             }
             // SAFETY: rc is a valid handle from CreateFileW.
             unsafe {

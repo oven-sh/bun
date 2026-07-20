@@ -363,9 +363,97 @@ pub struct JSValkeyClient {
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
     pub _secure: Cell<Option<*mut uws::SslCtx>>,
 
-    pub timer: JsCell<Timer::EventLoopTimer>,
-    pub reconnect_timer: JsCell<Timer::EventLoopTimer>,
+    pub timer: RefCountedTimer,
+    pub reconnect_timer: RefCountedTimer,
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
+}
+
+/// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
+/// [`JSValkeyClient`] while armed. `ref_held` mirrors the `ref_()` taken in
+/// [`arm`] so [`disarm`] and [`take_fire_ref`] release it exactly once even
+/// when the fire/close/reconnect paths re-enter each other.
+///
+/// [`EventLoopTimer`]: Timer::EventLoopTimer
+/// [`arm`]: Self::arm
+/// [`disarm`]: Self::disarm
+/// [`take_fire_ref`]: Self::take_fire_ref
+#[repr(C)]
+pub struct RefCountedTimer {
+    // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
+    // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
+    event_loop_timer: JsCell<Timer::EventLoopTimer>,
+    ref_held: Cell<bool>,
+}
+
+const _: () = assert!(core::mem::offset_of!(RefCountedTimer, event_loop_timer) == 0);
+
+impl RefCountedTimer {
+    fn new(tag: Timer::Tag) -> Self {
+        Self {
+            event_loop_timer: JsCell::new(Timer::EventLoopTimer::init_paused(tag)),
+            ref_held: Cell::new(false),
+        }
+    }
+
+    #[inline]
+    fn state(&self) -> Timer::State {
+        self.event_loop_timer.get().state
+    }
+
+    /// Insert into the VM timer heap to fire after `ms`, taking the keep-alive
+    /// ref if not already held. Disarms first if currently active.
+    fn arm(&self, owner: &JSValkeyClient, ms: u32) {
+        let _guard = owner.ref_scope();
+        if self.state() == Timer::State::ACTIVE {
+            self.disarm(owner);
+        }
+        if ms == 0 {
+            return;
+        }
+        let now = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
+            i64::from(ms),
+        );
+        self.event_loop_timer.with_mut(|t| {
+            t.next = Timer::Timespec {
+                sec: now.sec,
+                nsec: now.nsec,
+            }
+        });
+        let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
+        // SAFETY: `vm` is the live per-thread VM; the timer is an unlinked
+        // field of the boxed `JSValkeyClient` (stable address until disarmed).
+        unsafe { VirtualMachine::timer_insert(vm, self.event_loop_timer.as_ptr()) };
+        if !self.ref_held.replace(true) {
+            owner.ref_();
+        }
+    }
+
+    /// Remove from the VM timer heap and release the keep-alive ref if held.
+    fn disarm(&self, owner: &JSValkeyClient) {
+        if self.state() == Timer::State::ACTIVE {
+            let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
+            // SAFETY: `vm` is the live per-thread VM; the timer is currently
+            // linked into the heap (state == ACTIVE checked above).
+            unsafe { VirtualMachine::timer_remove(vm, self.event_loop_timer.as_ptr()) };
+        }
+        if self.ref_held.replace(false) {
+            // SAFETY: balanced with `arm`'s `ref_()`; `_guard`/caller's ref
+            // keeps `owner` live past this call.
+            unsafe { JSValkeyClient::deref(std::ptr::from_ref(owner).cast_mut()) };
+        }
+    }
+
+    /// Mark fired and hand the keep-alive ref (if held) to the callback scope.
+    /// Returns `None` when no ref was held, so a stray fire cannot over-release.
+    fn take_fire_ref(&self, owner: &JSValkeyClient) -> Option<ScopedRef<JSValkeyClient>> {
+        self.event_loop_timer
+            .with_mut(|t| t.state = Timer::State::FIRED);
+        self.ref_held.replace(false).then(|| {
+            // SAFETY: `arm`'s `ref_()` set `ref_held`; this scope consumes it.
+            unsafe { ScopedRef::adopt(owner.as_ctx_ptr()) }
+        })
+    }
 }
 
 bun_event_loop::impl_timer_owner!(JSValkeyClient;
@@ -734,12 +822,8 @@ impl JSValkeyClient {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: Cell::new(None),
-            timer: JsCell::new(Timer::EventLoopTimer::init_paused(
-                Timer::Tag::ValkeyConnectionTimeout,
-            )),
-            reconnect_timer: JsCell::new(Timer::EventLoopTimer::init_paused(
-                Timer::Tag::ValkeyConnectionReconnect,
-            )),
+            timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
+            reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
     }
 
@@ -858,12 +942,8 @@ impl JSValkeyClient {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: Cell::new(None),
-            timer: JsCell::new(Timer::EventLoopTimer::init_paused(
-                Timer::Tag::ValkeyConnectionTimeout,
-            )),
-            reconnect_timer: JsCell::new(Timer::EventLoopTimer::init_paused(
-                Timer::Tag::ValkeyConnectionReconnect,
-            )),
+            timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
+            reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
     }
 
@@ -1063,93 +1143,22 @@ impl JSValkeyClient {
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
     }
 
-    /// Safely add a timer with proper reference counting and event loop keepalive
-    fn add_timer(&self, timer: &JsCell<Timer::EventLoopTimer>, next_timeout_ms: u32) {
-        // `timer` is `&self.timer` or `&self.reconnect_timer`; `JsCell` gives
-        // us closure-scoped `&mut` without an open-coded raw deref.
-        let _guard = self.ref_scope();
-
-        // If the timer is already active, we need to remove it first
-        if timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(timer);
-        }
-
-        // Skip if timeout is zero
-        if next_timeout_ms == 0 {
-            return;
-        }
-
-        // Set up timer and add to event loop
-        let now = bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::AllowMockedTime,
-            i64::from(next_timeout_ms),
-        );
-        // `bun_event_loop::Timespec` is a local stub distinct from
-        // `bun_core::Timespec`; convert by fields until they are unified.
-        timer.with_mut(|t| {
-            t.next = Timer::Timespec {
-                sec: now.sec,
-                nsec: now.nsec,
-            }
-        });
-        // `vm.timer.insert(timer)` — `Timer::All` lives in `bun_runtime`;
-        // dispatched through `RuntimeHooks` (see VirtualMachine::timer_insert).
-        let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-        // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
-        // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
-        // until `remove_timer`/`stop_timers` unlinks it).
-        unsafe { VirtualMachine::timer_insert(vm, timer.as_ptr()) };
-        self.ref_();
-    }
-
-    /// Safely remove a timer with proper reference counting and event loop keepalive
-    fn remove_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) {
-        if timer.get().state == Timer::State::ACTIVE {
-            // Remove the timer from the event loop
-            let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-            // SAFETY: `vm` is the live per-thread VM; `timer` is currently
-            // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
-
-            // self.add_timer() adds a reference to 'self' when the timer is
-            // alive which is balanced here.
-            // SAFETY: balanced with add_timer's ref_(); count stays > 0 so
-            // `&self` remains valid past this call.
-            unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
-        }
-    }
-
     fn reset_connection_timeout(&self) {
-        let interval = self.client.get().get_timeout_interval();
-
-        // First remove existing timer if active
-        if self.timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(&self.timer);
-        }
-
-        // Add new timer if interval is non-zero
-        if interval > 0 {
-            self.add_timer(&self.timer, interval);
-        }
+        self.timer.arm(self, self.client.get().get_timeout_interval());
     }
 
     pub fn disable_connection_timeout(&self) {
-        if self.timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(&self.timer);
-        }
-        self.timer.with_mut(|t| t.state = Timer::State::CANCELLED);
+        self.timer.disarm(self);
+        self.timer
+            .event_loop_timer
+            .with_mut(|t| t.state = Timer::State::CANCELLED);
     }
 
     pub fn on_connection_timeout(&self) {
         debug!("onConnectionTimeout");
 
-        // Mark timer as fired
-        self.timer.with_mut(|t| t.state = Timer::State::FIRED);
-
         let _guard = self.ref_scope();
-        // SAFETY: adopts add_timer's keep-alive ref (remove_timer/stop_timers
-        // skip FIRED timers, so this scope is the only releaser).
-        let _timer_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _timer_ref = self.timer.take_fire_ref(self);
         if self.client.get().flags.failed {
             return;
         }
@@ -1197,14 +1206,8 @@ impl JSValkeyClient {
     pub fn on_reconnect_timer(&self) {
         debug!("Reconnect timer fired, attempting to reconnect");
 
-        // Mark timer as fired and store important values before doing any derefs
-        self.reconnect_timer
-            .with_mut(|t| t.state = Timer::State::FIRED);
-
         let _guard = self.ref_scope();
-        // SAFETY: adopts add_timer's keep-alive ref (remove_timer/stop_timers
-        // skip FIRED timers, so this scope is the only releaser).
-        let _timer_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _timer_ref = self.reconnect_timer.take_fire_ref(self);
 
         // Execute reconnection logic
         self.reconnect();
@@ -1387,15 +1390,8 @@ impl JSValkeyClient {
         // sole releaser. The caller holds its own scoped ref, so count > 0.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
 
-        // Schedule reconnection using our safe timer methods
-        if self.reconnect_timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(&self.reconnect_timer);
-        }
-
-        let delay_ms = self.client.get().get_reconnect_delay();
-        if delay_ms > 0 {
-            self.add_timer(&self.reconnect_timer, delay_ms);
-        }
+        self.reconnect_timer
+            .arm(self, self.client.get().get_reconnect_delay());
     }
 
     // Callback for when Valkey client closes
@@ -1542,13 +1538,8 @@ impl JSValkeyClient {
     }
 
     pub fn stop_timers(&self) {
-        // Use safe timer removal methods to ensure proper reference counting
-        if self.timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(&self.timer);
-        }
-        if self.reconnect_timer.get().state == Timer::State::ACTIVE {
-            self.remove_timer(&self.reconnect_timer);
-        }
+        self.timer.disarm(self);
+        self.reconnect_timer.disarm(self);
     }
 
     fn connect(&self) -> Result<(), crate::Error> {
@@ -1721,6 +1712,8 @@ impl JSValkeyClient {
             // SAFETY: last ref dropped — sole owner of `*this` (see above).
             let this_ref = unsafe { &*this };
             debug_assert!(this_ref.client.get().socket.is_closed());
+            debug_assert!(!this_ref.timer.ref_held.get());
+            debug_assert!(!this_ref.reconnect_timer.ref_held.get());
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
                 unsafe { boringssl::c::SSL_CTX_free(s) };

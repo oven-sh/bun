@@ -56,3 +56,28 @@ test("S3 file type option containing CR/LF or other control characters is not re
     expect(seen.headers.get("x-amz-acl")).toBeNull();
   }
 });
+
+test("Bun.write(s3file, response) with a locked or disturbed body rejects instead of crashing", async () => {
+  const client = new Bun.S3Client({
+    accessKeyId: "a",
+    secretAccessKey: "b",
+    bucket: "c",
+    // Never reached: both rejections happen synchronously before any request.
+    endpoint: "http://127.0.0.1:1",
+  });
+
+  const locked = new Response(new ReadableStream({ pull() {} }));
+  locked.body!.getReader(); // lock without disturbing
+  await expect(Bun.write(client.file("k"), locked)).rejects.toThrow("ReadableStream is locked");
+
+  // A disturbed body is rejected one layer earlier, synchronously.
+  const disturbed = new Response(
+    new ReadableStream({
+      pull(c) {
+        c.enqueue(new Uint8Array(1));
+      },
+    }),
+  );
+  await disturbed.body!.getReader().read();
+  expect(() => Bun.write(client.file("k"), disturbed)).toThrow("ReadableStream has already been used");
+});

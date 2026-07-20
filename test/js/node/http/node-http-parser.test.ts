@@ -217,6 +217,25 @@ describe("ConnectionsList", () => {
     expect(list.expired()).toEqual([]);
   });
 
+  test("idle() and expired() skip a close()d parser instead of crashing", () => {
+    const list = new ConnectionsList();
+    const alive = new HTTPParser();
+    const closed = new HTTPParser();
+    alive.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    closed.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    closed.close();
+
+    try {
+      // Both parsers are iterated; the close()d one must be skipped, not
+      // dereferenced. A freshly initialized parser is not idle (see above).
+      expect(list.idle()).toEqual([]);
+      expect(list.expired()).toEqual([]);
+      expect(list.all()).toEqual([alive, closed]);
+    } finally {
+      alive.close();
+    }
+  });
+
   test("works with HTTPParser", () => {
     const p1 = new HTTPParser();
     p1.name = "parser1";

@@ -763,6 +763,17 @@ pub fn upload_stream(
         )
         .to_js());
     }
+    // A merely-locked stream would otherwise end synchronously inside
+    // ResumableSink::init_exact_refs, firing resolve_thunk before
+    // task.callback_context is assigned below (null deref).
+    if readable_stream.is_locked(global_this) {
+        credentials.deref();
+        return Ok(bun_jsc::JSPromise::rejected_promise(
+            global_this,
+            bun_core::String::static_("ReadableStream is locked").to_error_instance(global_this),
+        )
+        .to_js());
+    }
 
     match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
@@ -904,6 +915,11 @@ pub fn upload_stream(
         }));
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
+    // Wire the task's callbacks BEFORE init_exact_refs: a stream that ends
+    // synchronously inside init reaches resolve_thunk through task.fail, which
+    // must not see a null callback_context.
+    task.callback_context = ctx_ptr.cast::<c_void>();
+    task.on_writable = Some(on_writable_thunk);
     // +1 because the ctx refs the sink
     ctx.sink = Some(ResumableSink::init_exact_refs(
         &global_static,
@@ -911,8 +927,6 @@ pub fn upload_stream(
         ctx_ptr,
         2,
     ));
-    task.callback_context = ctx_ptr.cast::<c_void>();
-    task.on_writable = Some(on_writable_thunk);
     task.continue_stream();
     Ok(ctx.end_promise.value())
 }

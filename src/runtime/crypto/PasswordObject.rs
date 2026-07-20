@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bun_core::ZigString;
 use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, WorkPoolTask,
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
@@ -836,14 +836,11 @@ pub(crate) fn js_password_object_verify(
         algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
             None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Err(JsError::Thrown);
+                return Err(global_object.throw_invalid_argument_type(
+                    "verify",
+                    "algorithm",
+                    UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+                ));
             }
         };
     }
@@ -917,14 +914,11 @@ pub(crate) fn js_password_object_verify_sync(
         algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
             None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Ok(JSValue::ZERO);
+                return Err(global_object.throw_invalid_argument_type(
+                    "verify",
+                    "algorithm",
+                    UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+                ));
             }
         };
     }

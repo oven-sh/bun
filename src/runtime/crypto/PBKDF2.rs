@@ -159,8 +159,8 @@ impl PBKDF2 {
                 );
             }
 
+            let slice = arg4.to_slice(global_this)?;
             'invalid: {
-                let slice = arg4.to_slice(global_this)?;
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
@@ -171,18 +171,12 @@ impl PBKDF2 {
                 }
             }
 
-            if !global_this.has_exception() {
-                let slice = arg4.to_slice(global_this)?;
-                let name = slice.slice();
-                return Err(global_this
-                    .err(
-                        bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
-                        format_args!("Invalid digest: {}", bstr::BStr::new(name)),
-                    )
-                    .throw());
-                // `slice` drops here.
-            }
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(global_this
+                .err(
+                    bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
+                    format_args!("Invalid digest: {}", bstr::BStr::new(slice.slice())),
+                )
+                .throw());
         };
 
         let mut out = PBKDF2 {

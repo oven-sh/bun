@@ -1125,6 +1125,9 @@ impl JSValkeyClient {
             let _ = self
                 .client_mut()
                 .fail_with_js_value(&self.global_object, err_js);
+            // Socket is already detached here, so close() above early-returns and
+            // on_valkey_close never fires; call the user's onclose directly.
+            self.call_onclose_handler(err_js);
             self.poll_ref.with_mut(|r| r.disable());
             return;
         }

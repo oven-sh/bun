@@ -45,11 +45,9 @@ if (isWindows) {
     expect(which(exe, { PATH: dir })).toBe(process.execPath);
   });
 
-  // Store-installed CLIs (winget, Store python, pwsh) under
-  // %LOCALAPPDATA%\Microsoft\WindowsApps are IO_REPARSE_TAG_APPEXECLINK reparse
-  // points. Opening one with CreateFileW (following) fails with
-  // ERROR_CANT_ACCESS_FILE, which is not "does not exist": the entry is there
-  // and CreateProcess can launch it. bun:ffi is unavailable on Windows arm64.
+  // Store-installed CLIs (winget, Store python, pwsh) are IO_REPARSE_TAG_APPEXECLINK
+  // reparse points that fail CreateFileW with ERROR_CANT_ACCESS_FILE even though the
+  // entry exists and is executable. bun:ffi is unavailable on Windows arm64.
   test.skipIf(isArm64)("which resolves Windows app-execution aliases (#17328)", () => {
     using dir = tempDir("which-appexeclink", {});
     const base = String(dir);

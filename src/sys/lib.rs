@@ -7392,11 +7392,9 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                 )
             };
             if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-                // The reparse-point entry itself exists (GetFileAttributesW succeeded).
-                // Only report "does not exist" when the follow genuinely found no
-                // target; any other failure (app-execution alias, access denied,
-                // sharing violation, unresolvable reparse data, ...) still means
-                // the path exists.
+                // The reparse-point entry exists (GetFileAttributesW succeeded); only
+                // report "not found" for the errors that mean no target. App-execution
+                // aliases fail with CANT_ACCESS_FILE, which is not "does not exist".
                 return !matches!(
                     w::Win32Error::get(),
                     w::Win32Error::FILE_NOT_FOUND

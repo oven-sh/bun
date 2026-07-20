@@ -6644,56 +6644,96 @@ pub fn normalize_path_windows_opts<'a>(
     opts: NormalizePathWindowsOpts,
 ) -> Maybe<&'a bun_core::WStr> {
     use bun_core::WStr;
+    use bun_paths::is_sep_any_t as is_sep;
     let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
 
     let mut path = path;
+
+    // `\\?\`, `\\.\`, `\??\` — namespaces Win32 does not apply DOS-path
+    // normalization to; exempt from the trailing-dot/space strip below.
+    let verbatim = path.len() >= 4
+        && is_sep(path[0])
+        && is_sep(path[3])
+        && ((is_sep(path[1]) && (path[2] == b'?' as u16 || path[2] == b'.' as u16))
+            || (path[1] == b'?' as u16 && path[2] == b'?' as u16));
+
+    // Locate the final path component: after the last separator, or after a
+    // leading `C:` when no separator is present.
+    let comp_start = path
+        .iter()
+        .rposition(|&c| is_sep(c))
+        .map(|i| i + 1)
+        .unwrap_or_else(|| {
+            if path.len() >= 2
+                && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
+                && path[1] == b':' as u16
+            {
+                2
+            } else {
+                0
+            }
+        });
+
+    // (a) Reserved DOS device names (`NUL`, `CON`, `PRN`, `AUX`, `COM1-9`,
+    // `LPT1-9`) name a device regardless of any directory prefix and
+    // case-insensitively; `NtCreateFile` does not know about them, so a bare
+    // `nul` otherwise creates a literal file that Explorer/cmd cannot remove.
+    if let Some(device) = bun_paths::windows_reserved_device_name_t(&path[comp_start..]) {
+        let prefix: &[u16] = if opts.add_nt_prefix {
+            bun_core::w!("\\??\\")
+        } else {
+            bun_core::w!("\\\\.\\")
+        };
+        let total = prefix.len() + device.len();
+        if buf.len() <= total {
+            return Err(too_long());
+        }
+        buf[..prefix.len()].copy_from_slice(prefix);
+        for (i, &b) in device.iter().enumerate() {
+            buf[prefix.len() + i] = b as u16;
+        }
+        buf[total] = 0;
+        return Ok(WStr::from_buf(&buf[..], total));
+    }
+
+    // (b) Win32 strips trailing `.` and ` ` from the final component; NT does
+    // not. Doing the strip here keeps both open paths agreeing on the same
+    // file and avoids creating names Explorer/cmd cannot address. Verbatim
+    // inputs keep their bytes. The strip only applies when the component has
+    // a non-`.`/` ` character to anchor on, so `.`/`..` reach the normalizer
+    // unchanged.
+    if !verbatim {
+        if let Some(last) = path[comp_start..]
+            .iter()
+            .rposition(|&c| c != b'.' as u16 && c != b' ' as u16)
+        {
+            path = &path[..comp_start + last + 1];
+        }
+    }
+
     if bun_paths::is_absolute_windows_wtf16(path) {
-        // Three special-cases that must run BEFORE
+        // Two special-cases that must run BEFORE
         // `normalizeStringGenericTZ`, otherwise device paths get mangled:
-        if path.len() >= 4 {
-            // (a) `…\nul` / `…\NUL` → literal NT object path `\??\NUL`.
-            const BS_NUL_LO: [u16; 4] = [b'\\' as u16, b'n' as u16, b'u' as u16, b'l' as u16];
-            const BS_NUL_UP: [u16; 4] = [b'\\' as u16, b'N' as u16, b'U' as u16, b'L' as u16];
-            let tail = &path[path.len() - 4..];
-            if tail == BS_NUL_LO || tail == BS_NUL_UP {
-                const NT_NUL: [u16; 7] = [
-                    b'\\' as u16,
-                    b'?' as u16,
-                    b'?' as u16,
-                    b'\\' as u16,
-                    b'N' as u16,
-                    b'U' as u16,
-                    b'L' as u16,
-                ];
-                if buf.len() <= NT_NUL.len() {
+        if path.len() >= 4 && is_sep(path[1]) && is_sep(path[3]) {
+            // `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
+            // is not collapsed to `\pipe\foo` by the normalizer.
+            if path[2] == b'.' as u16 {
+                if path.len() >= buf.len() {
                     return Err(too_long());
                 }
-                buf[..NT_NUL.len()].copy_from_slice(&NT_NUL);
-                buf[NT_NUL.len()] = 0;
-                return Ok(WStr::from_buf(&buf[..], NT_NUL.len()));
+                buf[0] = b'\\' as u16;
+                buf[1] = b'\\' as u16;
+                buf[2] = b'.' as u16;
+                buf[3] = b'\\' as u16;
+                let rest = &path[4..];
+                buf[4..4 + rest.len()].copy_from_slice(rest);
+                buf[path.len()] = 0;
+                return Ok(WStr::from_buf(&buf[..], path.len()));
             }
-            use bun_paths::is_sep_any_t as is_sep;
-            if is_sep(path[1]) && is_sep(path[3]) {
-                // (b) `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
-                // is not collapsed to `\pipe\foo` by the normalizer.
-                if path[2] == b'.' as u16 {
-                    if path.len() >= buf.len() {
-                        return Err(too_long());
-                    }
-                    buf[0] = b'\\' as u16;
-                    buf[1] = b'\\' as u16;
-                    buf[2] = b'.' as u16;
-                    buf[3] = b'\\' as u16;
-                    let rest = &path[4..];
-                    buf[4..4 + rest.len()].copy_from_slice(rest);
-                    buf[path.len()] = 0;
-                    return Ok(WStr::from_buf(&buf[..], path.len()));
-                }
-                // (c) `\??\…` / `\\?\…` already prefixed → strip the 4-u16
-                // prefix before re-normalizing to avoid a double `\??\`.
-                if path[2] == b'?' as u16 {
-                    path = &path[4..];
-                }
+            // `\??\…` / `\\?\…` already prefixed → strip the 4-u16
+            // prefix before re-normalizing to avoid a double `\??\`.
+            if path[2] == b'?' as u16 {
+                path = &path[4..];
             }
         }
         if opts.add_nt_prefix {
@@ -9888,6 +9928,62 @@ mod normalize_path_windows_tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn dos_device_names_resolve_to_nt_device() {
+        let cwd = Fd::cwd();
+        // Bare, mixed case, relative, absolute, forward-slash, drive-relative,
+        // `\\?\`-prefixed (the prefix does not suppress device recognition
+        // here; node:fs hands every absolute path through with that prefix).
+        for input in [
+            "nul", "NUL", "Nul", "nUl", "nul.", "nul ", "nul. ", "C:nul", "sub\\nul", "sub/nul",
+            "./nul", "C:\\a\\Nul", "C:\\a\\nul ", "\\\\?\\C:\\a\\nul", "\\\\?\\C:\\a\\NUL",
+        ] {
+            assert_eq!(normalize(cwd, input), "\\??\\NUL", "{input:?}");
+            assert_eq!(normalize_opts(cwd, input, false), "\\\\.\\NUL", "{input:?}");
+        }
+        assert_eq!(normalize(cwd, "con"), "\\??\\CON");
+        assert_eq!(normalize(cwd, "pRn"), "\\??\\PRN");
+        assert_eq!(normalize(cwd, "Aux"), "\\??\\AUX");
+        assert_eq!(normalize(cwd, "com1"), "\\??\\COM1");
+        assert_eq!(normalize(cwd, "LPT9"), "\\??\\LPT9");
+        assert_eq!(normalize(cwd, "\\\\.\\nul"), "\\??\\NUL");
+        // Near-misses take the ordinary file path.
+        for input in ["nul.txt", "nula", "null", "com0", "com10", "nul\\x"] {
+            let got = normalize(cwd, input);
+            assert!(!got.starts_with("\\??\\NUL"), "{input:?} -> {got}");
+            assert!(!got.starts_with("\\??\\COM"), "{input:?} -> {got}");
+        }
+    }
+
+    #[test]
+    fn trailing_dots_and_spaces_stripped() {
+        let cwd = Fd::cwd();
+        // Bare relative: the stripped name is returned verbatim for
+        // `NtCreateFile` against `RootDirectory`.
+        for (input, want) in [
+            ("foo.", "foo"),
+            ("foo ", "foo"),
+            ("foo. ", "foo"),
+            ("foo..", "foo"),
+            ("foo . ", "foo"),
+            (".foo.", ".foo"),
+            ("foo.bar.", "foo.bar"),
+            ("foo", "foo"),
+        ] {
+            assert_eq!(normalize(cwd, input), want, "{input:?}");
+        }
+        // `.` / `..` and all-dot/all-space names are left for the normalizer.
+        assert_ne!(normalize(cwd, ".."), ".");
+        assert!(normalize(cwd, ".").starts_with("\\Device\\"));
+        assert_eq!(normalize(cwd, "sub\\.."), normalize(cwd, "."));
+        // Absolute: only the final component is touched.
+        assert_eq!(normalize(cwd, "C:\\a\\b. "), "\\??\\C:\\a\\b");
+        assert_eq!(normalize(cwd, "C:\\a \\b"), "\\??\\C:\\a \\b");
+        // Verbatim prefixes keep their trailing characters.
+        assert_eq!(normalize(cwd, "\\\\?\\C:\\a\\b. "), "\\??\\C:\\a\\b. ");
+        assert_eq!(normalize(cwd, "\\\\.\\pipe\\name."), "\\\\.\\pipe\\name.");
     }
 
     #[test]

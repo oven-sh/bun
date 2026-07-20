@@ -165,9 +165,19 @@ const commands: ReadonlyArray<readonly [name: string, length: number]> = [
   ["renamenx", 2],
 ];
 
-const reserved = new Set(["connected", "onconnect", "onclose", "bufferedAmount", "connect", "close", "send", "duplicate"]);
+const reserved = new Set([
+  "connected",
+  "onconnect",
+  "onclose",
+  "bufferedAmount",
+  "connect",
+  "close",
+  "send",
+  "duplicate",
+]);
 for (const [name] of commands) {
-  if (reserved.has(name)) throw new Error(`valkey.classes.ts: command '${name}' collides with a reserved prototype slot`);
+  if (reserved.has(name))
+    throw new Error(`valkey.classes.ts: command '${name}' collides with a reserved prototype slot`);
 }
 
 const commandProto = Object.fromEntries(commands.map(([name, length]) => [name, { fn: name, length }]));

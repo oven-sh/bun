@@ -52,7 +52,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -60,7 +62,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -68,7 +72,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -76,7 +82,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E\w+|offline queue is disabled/i,
+        );
       }
     });
 

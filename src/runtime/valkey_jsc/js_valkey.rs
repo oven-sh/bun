@@ -14,10 +14,10 @@ use bun_jsc::{
 use bun_ptr::{AsCtxPtr, BackRef, ScopedRef};
 use bun_uws as uws;
 
-use super::protocol_jsc;
-use super::valkey;
 use super::command;
 use super::command::Command;
+use super::protocol_jsc;
+use super::valkey;
 use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 
@@ -376,11 +376,10 @@ fn parse_valkey_url(
             let mut cursor = &mut fallback_url_buf[..];
             let start_len = cursor.len();
             // No NUL terminator needed here — we immediately re-parse via fromUTF8.
-            if write!(&mut cursor, "valkey://").is_err() || cursor.write_all(url_byte_slice).is_err()
+            if write!(&mut cursor, "valkey://").is_err()
+                || cursor.write_all(url_byte_slice).is_err()
             {
-                return Err(
-                    global_object.throw_invalid_arguments(format_args!("URL is too long."))
-                );
+                return Err(global_object.throw_invalid_arguments(format_args!("URL is too long.")));
             }
             let written = start_len - cursor.len();
             break 'get_url_slice &fallback_url_buf[..written];
@@ -424,9 +423,9 @@ fn parse_valkey_url(
                     }
                     list.push_str(core::str::from_utf8(k).unwrap_or("?"));
                 }
-                return Err(global_object.throw(format_args!(
-                    "Expected url protocol to be one of {list}",
-                )));
+                return Err(
+                    global_object.throw(format_args!("Expected url protocol to be one of {list}",))
+                );
             }
         }
     } else {
@@ -1586,8 +1585,8 @@ impl JSValkeyClient {
         memory_cost += client.read_buffer.byte_list.capacity() as usize;
 
         // Add queue sizes
-        memory_cost += client.in_flight.readable_length()
-            * core::mem::size_of::<super::command::Promise>();
+        memory_cost +=
+            client.in_flight.readable_length() * core::mem::size_of::<super::command::Promise>();
         for command in client.queue.iter() {
             memory_cost += command.serialized_data.len();
         }
@@ -1858,12 +1857,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`
     pub const ON_HANDSHAKE: Option<
-        fn(
-            &JSValkeyClient,
-            SocketType<SSL>,
-            i32,
-            uws::us_bun_verify_error_t,
-        ) -> JsResult<()>,
+        fn(&JSValkeyClient, SocketType<SSL>, i32, uws::us_bun_verify_error_t) -> JsResult<()>,
     > = if SSL { Some(Self::on_handshake_) } else { None };
 
     pub fn on_close(

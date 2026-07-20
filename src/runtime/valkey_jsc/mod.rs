@@ -6,10 +6,10 @@
 //! methods in [`js_valkey_functions`]. RESP wire-format parsing is in the
 //! lower `bun_valkey` crate; this module owns the JSC-touching half.
 
-pub mod valkey;
+pub mod command;
 pub mod js_valkey;
 pub mod js_valkey_functions;
-pub mod command;
 pub mod protocol_jsc;
+pub mod valkey;
 
 pub use js_valkey::JSValkeyClient;

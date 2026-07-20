@@ -6,10 +6,10 @@ use bun_jsc::{
     JsResult,
 };
 
+use super::command::{Args as CommandArgs, Command, Meta as CommandMeta};
 use super::js_valkey::JSValkeyClient;
 use super::protocol_jsc as protocol;
 use super::valkey;
-use super::command::{Args as CommandArgs, Command, Meta as CommandMeta};
 use bun_valkey::valkey_protocol::RedisError;
 
 type Slice = bun_jsc::ZigStringSlice;
@@ -209,7 +209,14 @@ macro_rules! cmd_noargs {
 
 macro_rules! cmd_key {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
-        cmd_key!($fn_name, $name, $command, $arg0_name, $state, CommandMeta::default());
+        cmd_key!(
+            $fn_name,
+            $name,
+            $command,
+            $arg0_name,
+            $state,
+            CommandMeta::default()
+        );
     };
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
@@ -250,7 +257,12 @@ macro_rules! cmd_key_varargs {
             let arguments = frame.arguments();
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
             args.push(key);
-            args.extend(collect_varargs(global, &arguments[1..], $name, "additional arguments")?);
+            args.extend(collect_varargs(
+                global,
+                &arguments[1..],
+                $name,
+                "additional arguments",
+            )?);
             send_cmd(
                 this,
                 global,
@@ -264,7 +276,15 @@ macro_rules! cmd_key_varargs {
 
 macro_rules! cmd_key_value {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
-        cmd_key_value!($fn_name, $name, $command, $arg0_name, $arg1_name, $state, CommandMeta::default());
+        cmd_key_value!(
+            $fn_name,
+            $name,
+            $command,
+            $arg0_name,
+            $arg1_name,
+            $state,
+            CommandMeta::default()
+        );
     };
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
@@ -292,7 +312,16 @@ macro_rules! cmd_key_value {
 
 macro_rules! cmd_key_value_value2 {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
-        cmd_key_value_value2!($fn_name, $name, $command, $arg0_name, $arg1_name, $arg2_name, $state, CommandMeta::default());
+        cmd_key_value_value2!(
+            $fn_name,
+            $name,
+            $command,
+            $arg0_name,
+            $arg1_name,
+            $arg2_name,
+            $state,
+            CommandMeta::default()
+        );
     };
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
@@ -402,7 +431,12 @@ impl JSValkeyClient {
         args.push(value);
 
         if args_view.len() > 2 {
-            args.extend(collect_varargs(global, &args_view[2..], "set", "arguments")?);
+            args.extend(collect_varargs(
+                global,
+                &args_view[2..],
+                "set",
+                "arguments",
+            )?);
         }
 
         send_cmd(
@@ -496,7 +530,12 @@ impl JSValkeyClient {
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        args.push(require_arg(global, frame.argument(0), "srandmember", "key")?);
+        args.push(require_arg(
+            global,
+            frame.argument(0),
+            "srandmember",
+            "key",
+        )?);
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
@@ -780,13 +819,7 @@ impl JSValkeyClient {
     }
 
     cmd_key_varargs!(hdel, "hdel", "HDEL", "key", NotSubscriber);
-    cmd_key_varargs!(
-        hrandfield,
-        "hrandfield",
-        "HRANDFIELD",
-        "key",
-        NotSubscriber
-    );
+    cmd_key_varargs!(hrandfield, "hrandfield", "HRANDFIELD", "key", NotSubscriber);
     cmd_key_varargs!(hscan, "hscan", "HSCAN", "key", NotSubscriber);
     cmd_strings_varargs!(hgetdel, "hgetdel", "HGETDEL", NotSubscriber);
     cmd_strings_varargs!(hgetex, "hgetex", "HGETEX", NotSubscriber);
@@ -894,13 +927,7 @@ impl JSValkeyClient {
         "timestamp",
         NotSubscriber
     );
-    cmd_key!(
-        expiretime,
-        "expiretime",
-        "EXPIRETIME",
-        "key",
-        NotSubscriber
-    );
+    cmd_key!(expiretime, "expiretime", "EXPIRETIME", "key", NotSubscriber);
     cmd_key!(getdel, "getdel", "GETDEL", "key", NotSubscriber);
     cmd_strings_varargs!(getex, "getex", "GETEX", NotSubscriber);
     cmd_key!(hgetall, "hgetall", "HGETALL", "key", NotSubscriber);
@@ -1165,14 +1192,7 @@ impl JSValkeyClient {
         "end",
         NotSubscriber
     );
-    cmd_key_value!(
-        hstrlen,
-        "hstrlen",
-        "HSTRLEN",
-        "key",
-        "field",
-        NotSubscriber
-    );
+    cmd_key_value!(hstrlen, "hstrlen", "HSTRLEN", "key", "field", NotSubscriber);
     cmd_key_varargs!(zrank, "zrank", "ZRANK", "key", NotSubscriber);
     cmd_strings_varargs!(zrangestore, "zrangestore", "ZRANGESTORE", NotSubscriber);
     cmd_key_varargs!(zrem, "zrem", "ZREM", "key", NotSubscriber);
@@ -1307,10 +1327,11 @@ impl JSValkeyClient {
             Ok(p) => p,
             Err(err) => {
                 for ch in &inserted_channels {
-                    let _ = this
-                        .subscription_ctx
-                        .get()
-                        .remove_receive_handler(global, *ch, handler_callback)?;
+                    let _ = this.subscription_ctx.get().remove_receive_handler(
+                        global,
+                        *ch,
+                        handler_callback,
+                    )?;
                 }
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", err);
             }

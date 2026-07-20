@@ -11,10 +11,10 @@ use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
-use super::js_valkey::JSValkeyClient;
-use super::protocol_jsc::valkey_error_to_js;
 use super::command;
 use super::command::{Args, Command};
+use super::js_valkey::JSValkeyClient;
+use super::protocol_jsc::valkey_error_to_js;
 use crate::webcore::{AutoFlusher, HasAutoFlusher};
 
 /// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
@@ -329,8 +329,7 @@ impl ValkeyClient {
     /// Clean up resources used by the Valkey client
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
     pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
-        let mut pending =
-            core::mem::replace(&mut self.in_flight, command::PromiseQueue::init());
+        let mut pending = core::mem::replace(&mut self.in_flight, command::PromiseQueue::init());
         let mut commands = core::mem::replace(&mut self.queue, command::EntryQueue::init());
 
         if let Some(global_this) = global_object_or_finalizing {
@@ -507,10 +506,7 @@ impl ValkeyClient {
                 message: Box::<[u8]>::from(message),
                 err,
                 global_this: GlobalRef::from(vm.global()),
-                in_flight: core::mem::replace(
-                    &mut self.in_flight,
-                    command::PromiseQueue::init(),
-                ),
+                in_flight: core::mem::replace(&mut self.in_flight, command::PromiseQueue::init()),
                 queue: command::EntryQueue::init(),
             });
             deferred_failure.enqueue();
@@ -1434,4 +1430,3 @@ impl bun_io::Write for WriteBufWriter<'_> {
             .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
-

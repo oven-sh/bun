@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, isLinux } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
 // The c-ares channel used by dns.resolve* / dns.reverse / Bun.dns reads the
 // system nameserver list once at creation and never again, so after a network

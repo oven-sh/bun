@@ -4852,7 +4852,9 @@ impl Resolver {
         const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         match first.family {
             // SAFETY: AF_INET ⇒ addr union holds a 4-byte in_addr.
-            f if f == netc::AF_INET => unsafe { *first.addr_ptr().cast::<[u8; 4]>() == V4_LOOPBACK },
+            f if f == netc::AF_INET => unsafe {
+                *first.addr_ptr().cast::<[u8; 4]>() == V4_LOOPBACK
+            },
             // SAFETY: AF_INET6 ⇒ addr union holds a 16-byte in6_addr.
             f if f == netc::AF_INET6 => unsafe {
                 *first.addr_ptr().cast::<[u8; 16]>() == V6_LOOPBACK

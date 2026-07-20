@@ -412,11 +412,7 @@ export const dnsConfigGeneration: () => number = $newCppFunction(
   0,
 );
 
-export const dnsConfigChanged: () => void = $newCppFunction(
-  "InternalForTesting.cpp",
-  "jsFunction_dnsConfigChanged",
-  0,
-);
+export const dnsConfigChanged: () => void = $newCppFunction("InternalForTesting.cpp", "jsFunction_dnsConfigChanged", 0);
 
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newRustFunction("event_loop.rs", "getActiveTasks", 0);

@@ -274,7 +274,9 @@ mod windows {
         let mut handle: HANDLE = core::ptr::null_mut();
         // SAFETY: FFI; `handle` is a stack out-param, callback has `system` ABI.
         // Handle is intentionally leaked; the watch lives for the process.
-        let _ = unsafe { NotifyIpInterfaceChange(AF_UNSPEC, on_change, core::ptr::null_mut(), 0, &mut handle) };
+        let _ = unsafe {
+            NotifyIpInterfaceChange(AF_UNSPEC, on_change, core::ptr::null_mut(), 0, &mut handle)
+        };
     }
 }
 

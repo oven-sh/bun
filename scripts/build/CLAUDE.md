@@ -164,7 +164,7 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Smoke test** — `<exe> --revision` catches load-time failures.
 
-Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
+Split CI modes: `rust-only` (lolhtml+rust-argon2+codegen+cargo → libbun_rust.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
 
 ### Phase 3 — Execute
 

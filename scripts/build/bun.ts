@@ -31,6 +31,7 @@ import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
+import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -126,7 +127,7 @@ function systemLibs(cfg: Config): string[] {
  * Optional fields are present only when the mode produces them:
  *   full:      exe, strippedExe?, dsym?, rustObjects, objects, deps, codegen
  *   cpp-only:  archive, objects, deps, codegen
- *   rust-only: rustObjects, deps (lolhtml), codegen
+ *   rust-only: rustObjects, deps (lolhtml, rust-argon2), codegen
  *   link-only: exe, strippedExe?, dsym?
  */
 export interface BunOutput {
@@ -192,7 +193,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
-  // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
+  // includes (tinycc, lolhtml, rust-argon2) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
@@ -223,12 +224,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       codegenInputs: codegen.rustInputs,
       codegenOrderOnly: codegen.rustOrderOnly,
       rustSources: sources.rust,
-      // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
-      // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
-      // not built into a separate archive — cargo needs `vendor/lolhtml/` on
-      // disk before it resolves the manifest. The `.ref` stamp's content is
-      // the pinned commit, so a bump re-invokes cargo.
-      vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
+      // lol-html and rust-argon2 are consumed by cargo as path deps out of
+      // `vendor/` (lol_html directly from `bun_runtime`/`bun_bundler`;
+      // rust-argon2 via the root `[patch.crates-io]`), not built into
+      // separate archives — cargo needs both on disk before it resolves the
+      // manifest. Each `.ref` stamp's content is the pinned commit (plus
+      // patch contents), so a bump or patch edit re-invokes cargo.
+      vendorStamps: [...(depsByName.get("lolhtml")?.outputs ?? []), ...(depsByName.get("rust-argon2")?.outputs ?? [])],
     });
   }
 
@@ -449,7 +451,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
 
     // depLibs explicit in the phony: deps with no provided includes (tinycc,
-    // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
+    // lolhtml, rust-argon2) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
     n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
     n.default(["bun"]);
@@ -534,13 +536,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * set via --os/--arch overrides (cargo `--target <triple>`).
  *
  * Needs:
- *   - lolhtml FETCHED (path dep of `bun_runtime`/`bun_bundler`) — not built separately
+ *   - lolhtml + rust-argon2 FETCHED (cargo path deps) — not built separately
  *   - codegen (Rust `include!`s/`include_bytes!`s the same generated set)
  *   - cargo build → libbun_rust.a
  *
  * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
- * what's depended on — lolhtml's configure/build rules are emitted but
- * unused (only its `.ref` fetch stamp is depended on by emitRust).
+ * what's depended on — the lolhtml / rust-argon2 configure/build rules are
+ * emitted but unused (only their `.ref` fetch stamps are depended on by
+ * emitRust).
  *
  * Cross-compilation: see `rustCanCrossFromLinux()` in rust.ts for which
  * targets share a linux runner vs need a native agent.
@@ -551,10 +554,13 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // Only dep: lolhtml, fetched as a cargo path dependency. resolveDep
-  // emits its fetch; emitRust depends on the fetch stamp via vendorStamps.
+  // Only deps: lolhtml and rust-argon2, both fetched as cargo path
+  // dependencies. resolveDep emits each fetch; emitRust depends on the
+  // fetch stamps via vendorStamps.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
+  assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
@@ -565,13 +571,13 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
   });
 
   n.phony("bun", rustObjects);
   n.default(["bun"]);
 
-  return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
+  return { deps: [lolhtmlDep, rustArgon2Dep], codegen, rustObjects, objects: [] };
 }
 
 /**

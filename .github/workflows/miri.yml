@@ -26,6 +26,8 @@ on:
       - "scripts/rust-miri.ts"
       - "Cargo.toml"
       - "Cargo.lock"
+      # Applied onto vendor/rust-argon2 before cargo resolves the workspace.
+      - "patches/rust-argon2/**"
       - "rust-toolchain.toml"
       - ".github/workflows/miri.yml"
       - ".github/actions/setup-bun/**"
@@ -59,8 +61,8 @@ jobs:
 
       - name: Setup system deps
         # cmake/ninja/clang for `--configure-only` (cargo can't resolve the
-        # workspace until vendor/lolhtml exists and bun_core/build.rs has
-        # build_options.rs).
+        # workspace until vendor/lolhtml and vendor/rust-argon2 exist and
+        # bun_core/build.rs has build_options.rs).
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
@@ -77,7 +79,7 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun scripts/build.ts --configure-only
-          ninja -C build/debug clone-lolhtml
+          ninja -C build/debug clone-lolhtml clone-rust-argon2
 
       - name: cargo miri test
         env:

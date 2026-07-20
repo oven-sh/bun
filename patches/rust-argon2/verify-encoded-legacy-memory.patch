@@ -1,0 +1,150 @@
+--- a/src/context.rs
++++ b/src/context.rs
+@@ -37,6 +37,26 @@
+ impl<'a> Context<'a> {
+     /// Attempts to create a new context.
+     pub fn new(config: Config<'a>, pwd: &'a [u8], salt: &'a [u8]) -> Result<Context<'a>> {
++        Self::new_impl(config, pwd, salt, false)
++    }
++
++    /// Bun patch: `new` with the `mem_cost >= 8 * lanes` floor relaxed to
++    /// `>= 1`, so hashes from earlier Bun releases (Zig stdlib argon2)
++    /// verify. H0 still gets the raw `mem_cost`; the block count is clamped.
++    pub fn new_legacy_memory(
++        config: Config<'a>,
++        pwd: &'a [u8],
++        salt: &'a [u8],
++    ) -> Result<Context<'a>> {
++        Self::new_impl(config, pwd, salt, true)
++    }
++
++    fn new_impl(
++        config: Config<'a>,
++        pwd: &'a [u8],
++        salt: &'a [u8],
++        legacy_memory: bool,
++    ) -> Result<Context<'a>> {
+         if config.lanes < common::MIN_LANES {
+             return Err(Error::LanesTooFew);
+         } else if config.lanes > common::MAX_LANES {
+@@ -44,11 +64,14 @@
+         }
+ 
+         let lanes = config.lanes;
+-        if config.mem_cost < common::MIN_MEMORY {
++        // Bun patch: `new_legacy_memory` lowers the floor from
++        // `MIN_MEMORY` / `8 * lanes` to `1`; `new` keeps upstream's checks.
++        let min_memory = if legacy_memory { 1 } else { common::MIN_MEMORY };
++        if config.mem_cost < min_memory {
+             return Err(Error::MemoryTooLittle);
+         } else if config.mem_cost > common::MAX_MEMORY {
+             return Err(Error::MemoryTooMuch);
+-        } else if config.mem_cost < 8 * lanes {
++        } else if !legacy_memory && config.mem_cost < 8 * lanes {
+             return Err(Error::MemoryTooLittle);
+         }
+ 
+@@ -173,6 +196,33 @@
+             Err(Error::MemoryTooLittle)
+         );
+     }
++
++    // Bun patch: `new_legacy_memory` accepts `1 <= mem_cost < 8 * lanes`
++    // and clamps `memory_blocks` to `2 * SYNC_POINTS * lanes`, just as
++    // `new` already does for in-range values. Only `mem_cost == 0` errors.
++    #[test]
++    fn new_legacy_memory_clamps_low_mem_cost() {
++        let config = Config {
++            lanes: 4,
++            mem_cost: 31,
++            ..Default::default()
++        };
++        let context = Context::new_legacy_memory(config, &[0u8; 8], &[0u8; 8]).unwrap();
++        assert_eq!(context.config.mem_cost, 31);
++        assert_eq!(context.memory_blocks, 32);
++    }
++
++    #[test]
++    fn new_legacy_memory_with_zero_mem_cost_returns_correct_error() {
++        let config = Config {
++            mem_cost: 0,
++            ..Default::default()
++        };
++        assert_eq!(
++            Context::new_legacy_memory(config, &[0u8; 8], &[0u8; 8]),
++            Err(Error::MemoryTooLittle)
++        );
++    }
+ 
+     #[test]
+     fn new_with_too_small_time_cost_returns_correct_error() {
+--- a/src/argon2.rs
++++ b/src/argon2.rs
+@@ -224,6 +224,47 @@
+     Ok(constant_time_eq(hash, &calculated_hash))
+ }
+ 
++/// Bun patch: `verify_encoded`, but accepts `1 <= mem_cost < 8 * lanes`, as
++/// produced by earlier Bun releases (Zig stdlib argon2). Hashing still uses
++/// upstream's `Context::new`. Applied by patches/rust-argon2/*.patch in bun.
++pub fn verify_encoded_legacy_memory(encoded: &str, pwd: &[u8]) -> Result<bool> {
++    let decoded = encoding::decode_string(encoded)?;
++    let threads = if cfg!(feature = "crossbeam-utils") {
++        decoded.parallelism
++    } else {
++        1
++    };
++    let config = Config {
++        variant: decoded.variant,
++        version: decoded.version,
++        mem_cost: decoded.mem_cost,
++        time_cost: decoded.time_cost,
++        lanes: decoded.parallelism,
++        thread_mode: ThreadMode::from_threads(threads),
++        secret: &[],
++        ad: &[],
++        hash_length: decoded.hash.len() as u32,
++    };
++    verify_raw_legacy_memory(pwd, &decoded.salt, &decoded.hash, &config)
++}
++
++/// Bun patch: `verify_raw` via `Context::new_legacy_memory`, so a
++/// `mem_cost` in `1..8*lanes` is accepted. See `verify_encoded_legacy_memory`.
++pub fn verify_raw_legacy_memory(
++    pwd: &[u8],
++    salt: &[u8],
++    hash: &[u8],
++    config: &Config,
++) -> Result<bool> {
++    let config = Config {
++        hash_length: hash.len() as u32,
++        ..config.clone()
++    };
++    let context = Context::new_legacy_memory(config, pwd, salt)?;
++    let calculated_hash = run(&context);
++    Ok(constant_time_eq(hash, &calculated_hash))
++}
++
+ fn run(context: &Context) -> Vec<u8> {
+     let mut memory = Memory::new(context.config.lanes, context.lane_length);
+     core::initialize(context, &mut memory);
+@@ -275,4 +316,19 @@
+         let res = verify_encoded(hash, b"password").unwrap();
+         assert!(res);
+     }
++
++    // Bun patch: a real hash produced by Bun's earlier Zig stdlib argon2 with
++    // `m=5,t=1,p=1`. The upstream entry point must keep rejecting it, and the
++    // legacy entry point must verify it (and still reject a wrong password).
++    #[test]
++    fn verify_encoded_legacy_memory_accepts_low_mem_cost() {
++        let hash = "$argon2id$v=19$m=5,t=1,p=1$JJA3TrXOzpimHbQVvHUgXa412Kmo29q8zBHEWptN2h4$\
++                    GvYy9WOUF64dYFsCjuUcqY90bCKxlV0j4BH/GCzpWa4";
++        assert_eq!(
++            verify_encoded(hash, b"mypw"),
++            Err(crate::Error::MemoryTooLittle)
++        );
++        assert_eq!(verify_encoded_legacy_memory(hash, b"mypw"), Ok(true));
++        assert_eq!(verify_encoded_legacy_memory(hash, b"wrong"), Ok(false));
++    }
+ }

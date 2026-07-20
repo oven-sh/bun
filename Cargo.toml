@@ -447,3 +447,12 @@ bun_transpiler = { path = "src/transpiler" }
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
+
+[patch.crates-io]
+# Upstream 3.0.0 fetched at build time by `scripts/build/deps/rust-argon2.ts`
+# into the gitignored `vendor/rust-argon2/`, with
+# `patches/rust-argon2/verify-encoded-legacy-memory.patch` applied: it adds a
+# `verify_encoded_legacy_memory` entry point that accepts `mem_cost < 8 * lanes`
+# so hashes from earlier Bun releases (Zig stdlib argon2 allowed any
+# `memoryCost >= 1`) stay verifiable. Upstream entry points are unchanged.
+rust-argon2 = { path = "vendor/rust-argon2" }

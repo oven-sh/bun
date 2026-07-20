@@ -29,6 +29,7 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
+import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
@@ -61,6 +62,9 @@ export const allDeps: readonly Dependency[] = [
   highway,
   libuv,
   lolhtml,
+  // Like lolhtml: fetch-only, compiled inside the workspace cargo build via
+  // the `[patch.crates-io]` path override in the root Cargo.toml.
+  rustArgon2,
   lshpack,
   lsqpack,
   mimalloc,
@@ -96,6 +100,7 @@ export {
   mimalloc,
   nodejsHeaders,
   picohttpparser,
+  rustArgon2,
   sqlite,
   tinycc,
   webkit,

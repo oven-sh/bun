@@ -1,4 +1,5 @@
 import { $, which } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isArm64, isIntelMacOS, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { chmodSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
@@ -71,14 +72,14 @@ if (isWindows) {
   });
 
   function makeAppExecLink(target: string) {
-    const { dlopen, ptr } = require("bun:ffi");
     const k32 = dlopen("kernel32.dll", {
-      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "ptr" },
-      DeviceIoControl: { args: ["ptr", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
-      CloseHandle: { args: ["ptr"], returns: "i32" },
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+      DeviceIoControl: { args: ["u64", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+      CloseHandle: { args: ["u64"], returns: "i32" },
       GetLastError: { args: [], returns: "u32" },
     });
 
+    const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
     const GENERIC_WRITE = 0x40000000;
     const SHARE_ALL = 0x7;
     const CREATE_NEW = 1;
@@ -97,7 +98,7 @@ if (isWindows) {
       FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
       null,
     );
-    if (h === null || h === -1) throw new Error(`CreateFileW failed: ${k32.symbols.GetLastError()}`);
+    if (h === INVALID_HANDLE_VALUE) throw new Error(`CreateFileW failed: ${k32.symbols.GetLastError()}`);
 
     const strings = ["Bun.Test_1.0.0.0_x64__fake", "Bun.Test_fake!App", "C:\\Windows\\System32\\cmd.exe", "0"];
     const strbuf = Buffer.concat(strings.map(s => Buffer.from(s + "\0", "utf16le")));

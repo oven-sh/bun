@@ -150,9 +150,11 @@ async function command(sock: net.Socket, messages: Transform, body: Buffer) {
 
 function snapshot() {
   Bun.gc(true);
-  const t = heapStats().objectTypeCounts;
+  const hs = heapStats();
+  const t = hs.objectTypeCounts;
   return {
     rss: process.memoryUsage.rss(),
+    heapSize: hs.heapSize,
     Timeout: t.Timeout || 0,
     Promise: t.Promise || 0,
     AsyncGenerator: t.AsyncGenerator || 0,
@@ -172,10 +174,10 @@ describe.each([
 
     try {
       const body = Buffer.alloc(256, 0x61);
-      const ITER = isDebug || isASAN ? 2_000 : 5_000;
+      const ITER = isDebug || isASAN ? 1_500 : 5_000;
 
-      // Run the workload twice. Round 1 absorbs JIT, root-CA load and allocator
-      // pool growth; round 2 is steady-state. We assert on round-2 vs round-1.
+      // Round 0 absorbs JIT tier-up, root-CA load and allocator pool growth;
+      // rounds 1 and 2 are steady-state. We assert on round-2 vs round-1.
       const round = async () => {
         for (let i = 0; i < ITER; i++) {
           const reply = await command(sock, messages, body);
@@ -185,6 +187,7 @@ describe.each([
         return snapshot();
       };
 
+      await round(); // warmup; JIT tier-up is not reliably done after one round
       const after1 = await round();
       const after2 = await round();
 
@@ -196,14 +199,16 @@ describe.each([
       expect(after2.AsyncGenerator - after1.AsyncGenerator).toBeLessThanOrEqual(2);
       expect(after2.Promise - after1.Promise).toBeLessThanOrEqual(10);
       expect(after2.Function - after1.Function).toBeLessThanOrEqual(20);
+      // JS heap must be flat once warm. ±1 MB covers scavenger jitter.
+      expect(after2.heapSize - after1.heapSize).toBeLessThan(1024 * 1024);
 
       // The Transform must not have accumulated listeners (onData removes its
       // pair on .return(); a missed cleanup would grow this by ITER).
       expect(messages.listenerCount("data")).toBe(0);
       expect(messages.listenerCount("error")).toBeLessThanOrEqual(1);
 
-      // RSS round-2 vs round-1: weak signal (mimalloc segment noise) but
-      // catches anything egregious that heapStats can't see.
+      // RSS at steady state: weak signal (mimalloc segment noise) but catches
+      // anything egregious that heapStats can't see.
       const rssBound = isASAN || isDebug ? 32 * 1024 * 1024 : 8 * 1024 * 1024;
       expect(after2.rss - after1.rss).toBeLessThan(rssBound);
     } finally {

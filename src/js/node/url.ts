@@ -25,7 +25,7 @@
 
 "use strict";
 
-const { URL, URLSearchParams } = globalThis;
+const { URL, URLSearchParams, URLPattern } = globalThis;
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
@@ -942,6 +942,104 @@ const enum Char {
   ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
 }
 
+const path = require("node:path");
+const isWindows = process.platform === "win32";
+
+// Mirrors the pre-encode table in node's src/node_url.cc EncodePathChars();
+// the URL parser then applies the WHATWG path percent-encode set to the rest.
+const encodePathCharsRe = /[\0\t\n\r "#%?[\\\]^|~]/g;
+const encodePathCharsMap = {
+  __proto__: null,
+  "\0": "%00",
+  "\t": "%09",
+  "\n": "%0A",
+  "\r": "%0D",
+  " ": "%20",
+  '"': "%22",
+  "#": "%23",
+  "%": "%25",
+  "?": "%3F",
+  "[": "%5B",
+  "\\": "%5C",
+  "]": "%5D",
+  "^": "%5E",
+  "|": "%7C",
+  "~": "%7E",
+};
+
+function encodeWindowsPathChar(ch: string) {
+  return ch === "\\" ? "/" : encodePathCharsMap[ch];
+}
+function encodePosixPathChar(ch: string) {
+  return encodePathCharsMap[ch];
+}
+
+// Equivalent of node's bindingUrl.pathToFileURL (src/node_url.cc).
+function createFileURL(filepath: string, windows: boolean, hostname?: string) {
+  let outURL: URL;
+  try {
+    outURL = new URL(
+      "file://" + filepath.replace(encodePathCharsRe, windows ? encodeWindowsPathChar : encodePosixPathChar),
+    );
+  } catch {
+    throw $ERR_INVALID_URL(filepath);
+  }
+  if (hostname !== undefined) {
+    // The WHATWG hostname setter is silent on failure; node throws when ada's
+    // set_hostname() fails. Probe with the parser, which does throw.
+    try {
+      new URL("file://" + hostname + "/");
+    } catch {
+      throw $ERR_INVALID_URL(filepath, hostname);
+    }
+    outURL.hostname = hostname;
+  }
+  return outURL;
+}
+
+function pathToFileURL(filepath: string, options?: { windows?: boolean } | null) {
+  validateString(filepath, "path");
+  const windows = options?.windows ?? isWindows;
+  const isUNC = windows && filepath.startsWith("\\\\");
+  let resolved = isUNC ? filepath : windows ? path.win32.resolve(filepath) : path.posix.resolve(filepath);
+  if (isUNC || (windows && resolved.startsWith("\\\\"))) {
+    // UNC path format: \\server\share\resource
+    // "\\?\UNC\" extended UNC path prefix is ignored.
+    const isExtendedUNC = resolved.startsWith("\\\\?\\UNC\\");
+    const prefixLength = isExtendedUNC ? 8 : 2;
+    const hostnameEndIndex = resolved.indexOf("\\", prefixLength);
+    if (hostnameEndIndex === -1) {
+      throw $ERR_INVALID_ARG_VALUE("path", resolved, "Missing UNC resource path");
+    }
+    if (hostnameEndIndex === 2) {
+      throw $ERR_INVALID_ARG_VALUE("path", resolved, "Empty UNC servername");
+    }
+    const hostname = resolved.slice(prefixLength, hostnameEndIndex);
+    return createFileURL(resolved.slice(hostnameEndIndex), true, hostname);
+  }
+  // path.resolve strips trailing slashes so we must add them back
+  const filePathLast = filepath.charCodeAt(filepath.length - 1);
+  if (
+    (filePathLast === Char.FORWARD_SLASH || (windows && filePathLast === Char.BACKWARD_SLASH)) &&
+    resolved[resolved.length - 1] !== path.sep
+  ) {
+    resolved += "/";
+  }
+  return createFileURL(resolved, windows);
+}
+
+function fileURLToPath(url: string | URL) {
+  try {
+    return Bun.fileURLToPath(url as any);
+  } catch (err: any) {
+    // node attaches the parsed URL as err.input on this code (lib/internal/errors.js).
+    if (err?.code === "ERR_INVALID_FILE_URL_PATH") {
+      err.input = typeof url === "string" ? new URL(url) : url;
+    }
+    throw err;
+  }
+}
+
 export default {
   parse: urlParse,
   resolve: urlResolve,
@@ -950,8 +1048,9 @@ export default {
   Url,
   URLSearchParams,
   URL,
-  pathToFileURL: Bun.pathToFileURL,
-  fileURLToPath: Bun.fileURLToPath,
+  URLPattern,
+  pathToFileURL,
+  fileURLToPath,
   urlToHttpOptions,
   domainToASCII,
   domainToUnicode,

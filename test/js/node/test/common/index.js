@@ -88,8 +88,8 @@ const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
 
 const hasQuic = hasCrypto && !!process.config.variables.openssl_quic;
 
-function parseTestFlags(filename = process.argv[1]) {
-  // The copyright notice is relatively big and the flags could come afterwards.
+function parseTestMetadata(filename = process.argv[1]) {
+  // The copyright notice is relatively big and the metadata could come afterwards.
   const bytesToRead = 1500;
   const buffer = Buffer.allocUnsafe(bytesToRead);
   const fd = fs.openSync(filename, 'r');
@@ -97,28 +97,40 @@ function parseTestFlags(filename = process.argv[1]) {
   fs.closeSync(fd);
   const source = buffer.toString('utf8', 0, bytesRead);
 
-  const flags = [];
   const flagStart = source.search(/\/\/ Flags:\s+--/) + 10;
-
-  const isNodeTest = source.includes('node:test');
-  if (isNodeTest) {
-    flags.push('test');
+  let flags = [];
+  if (flagStart !== 9) {
+    let flagEnd = source.indexOf('\n', flagStart);
+    // Normalize different EOL.
+    if (source[flagEnd - 1] === '\r') {
+      flagEnd--;
+    }
+    flags = source
+      .substring(flagStart, flagEnd)
+      .split(/\s+/)
+      .filter(Boolean);
   }
 
-  if (flagStart === 9) {
-    return flags;
-  }
-  let flagEnd = source.indexOf('\n', flagStart);
-  // Normalize different EOL.
-  if (source[flagEnd - 1] === '\r') {
-    flagEnd--;
+  // Bun: node:test files re-spawn as `bun test <file>` when a flag needs it.
+  if (source.includes('node:test')) {
+    flags = flags.concat('test');
   }
 
-  return source
-    .substring(flagStart, flagEnd)
-    .split(/\s+/)
-    .filter(Boolean)
-    .concat(flags);
+  const envStart = source.search(/\/\/ Env:\s+/) + 8;
+  let envs = {};
+  if (envStart !== 7) {
+    let envEnd = source.indexOf('\n', envStart);
+    if (source[envEnd - 1] === '\r') {
+      envEnd--;
+    }
+    const envArray = source
+      .substring(envStart, envEnd)
+      .split(/\s+/)
+      .filter(Boolean);
+    envs = Object.fromEntries(envArray.map((env) => env.split('=')));
+  }
+
+  return { flags, envs };
 }
 
 // Check for flags. Skip this for workers (both, the `cluster` module and
@@ -131,8 +143,17 @@ if (process.argv.length === 2 &&
     hasCrypto &&
     require('cluster').isPrimary &&
     fs.existsSync(process.argv[1])) {
-  const flags = parseTestFlags();
+  const { flags, envs } = parseTestMetadata();
+  const envsTriggerSpawn = Object.keys(envs).some((key) => process.env[key] !== envs[key]);
+  let flagsTriggerSpawn = false;
   for (const flag of flags) {
+    if (flag === "--expose-internals" && process.versions.bun) {
+      // Bun accepts the flag but it does not expose internals, so install the
+      // shim even in a re-spawned child that already has it in execArgv.
+      process.env.SKIP_FLAG_CHECK = "1";
+      installBunExposeInternalsRequireInterceptor();
+      break;
+    }
     if (!process.execArgv.includes(flag) &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
@@ -163,11 +184,6 @@ if (process.argv.length === 2 &&
         };
         break;
       }
-      if (flag === "--expose-internals" && process.versions.bun) {
-        process.env.SKIP_FLAG_CHECK = "1";
-        installBunExposeInternalsRequireInterceptor();
-        break;
-      }
       if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
         // node:sqlite is always available in Bun; the Node experimental gate
         // does not exist, so don't re-spawn just to pass the flag through.
@@ -177,19 +193,33 @@ if (process.argv.length === 2 &&
         process.env.SKIP_FLAG_CHECK = "1";
         break;
       }
-      console.log(
-        'NOTE: The test started as a child_process using these flags:',
-        inspect(flags),
-        'Use NODE_SKIP_FLAG_CHECK to run the test with the original flags.',
-      );
-      const args = [...flags, ...process.execArgv, ...process.argv.slice(1)];
-      const options = { encoding: 'utf8', stdio: 'inherit' };
-      const result = spawnSync(process.execPath, args, options);
-      if (result.signal) {
-        process.kill(process.pid, result.signal);
-      } else {
-        process.exit(result.status);
-      }
+      flagsTriggerSpawn = true;
+      break;
+    }
+  }
+
+  if (flagsTriggerSpawn || envsTriggerSpawn) {
+    console.log(
+      'NOTE: The test started as a child_process using these flags:',
+      inspect(flags),
+      'And these environment variables:',
+      inspect(envs),
+      'Use NODE_SKIP_FLAG_CHECK to run the test with the original flags.',
+    );
+    const args = [...flags, ...process.execArgv, ...process.argv.slice(1)];
+    const options = {
+      encoding: 'utf8',
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ...envs,
+      },
+    };
+    const result = spawnSync(process.execPath, args, options);
+    if (result.signal) {
+      process.kill(process.pid, result.signal);
+    } else {
+      process.exit(result.status);
     }
   }
 }
@@ -203,7 +233,7 @@ if (process.versions.bun &&
     isMainThread &&
     !require('cluster').isPrimary &&
     fs.existsSync(process.argv[1]) &&
-    parseTestFlags().includes('--expose-internals')) {
+    parseTestMetadata().flags.includes('--expose-internals')) {
   installBunExposeInternalsRequireInterceptor();
 }
 
@@ -1164,7 +1194,7 @@ const common = {
   nodeProcessAborted,
   openSSLIsBoringSSL,
   PIPE,
-  parseTestFlags,
+  parseTestMetadata,
   platformTimeout,
   printSkipMessage,
   pwdCommand,
@@ -1426,6 +1456,12 @@ function installBunExposeInternalsShim() {
                 return require("node:http").maxHeaderSize;
               case "--insecure-http-parser":
                 return false;
+              case "--test-isolation": {
+                // Present in execArgv when a `// Flags:` respawn passed it
+                // through; node's default is "process".
+                const arg = process.execArgv.find(a => a.startsWith("--test-isolation="));
+                return arg ? arg.slice("--test-isolation=".length) : "process";
+              }
               default:
                 return undefined;
             }

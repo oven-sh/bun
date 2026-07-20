@@ -104,11 +104,11 @@ pub mod js_bindings {
         {
             // Under ASAN the POSIX handler is not installed (`reset_on_posix`
             // early-returns so ASAN keeps SIGSEGV): exercise the classifier
-            // directly with a fault address one page below the current SP.
+            // directly with a fault address just below the current SP.
             if Environment::ENABLE_ASAN {
                 let probe = 0u8;
                 let sp = core::hint::black_box(&probe) as *const u8 as usize;
-                let addr = sp.saturating_sub(bun_alloc::page_size());
+                let addr = sp.saturating_sub(128);
                 crash_handler::crash_handler(
                     crash_handler::posix_fault_reason(libc::SIGSEGV, addr, sp),
                     crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),

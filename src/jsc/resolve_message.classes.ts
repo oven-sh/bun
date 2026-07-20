@@ -6,6 +6,8 @@ export default [
     construct: true,
     finalize: true,
     configurable: false,
+    // Error.prototype in the chain: userland checks `err instanceof Error`.
+    prototypeBase: "Error",
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -17,6 +19,15 @@ export default [
       code: {
         getter: "getCode",
         cache: true,
+      },
+      requireStack: {
+        getter: "getRequireStack",
+        cache: true,
+      },
+      stack: {
+        getter: "getStack",
+        cache: true,
+        writable: true,
       },
       name: {
         value: "ResolveMessage",

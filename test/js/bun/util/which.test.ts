@@ -1,7 +1,7 @@
 import { $, which } from "bun";
 import { expect, test } from "bun:test";
-import { isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
-import { chmodSync, mkdirSync, realpathSync, rmdirSync, rmSync } from "node:fs";
+import { isArm64, isIntelMacOS, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -44,6 +44,79 @@ if (isWindows) {
     expect(which(exe, { PATH: dir + ";C:\\Windows\\system32" })).toBe(process.execPath);
     expect(which(exe, { PATH: dir })).toBe(process.execPath);
   });
+
+  // Store-installed CLIs (winget, Store python, pwsh) under
+  // %LOCALAPPDATA%\Microsoft\WindowsApps are IO_REPARSE_TAG_APPEXECLINK reparse
+  // points. Opening one with CreateFileW (following) fails with
+  // ERROR_CANT_ACCESS_FILE, which is not "does not exist": the entry is there
+  // and CreateProcess can launch it. bun:ffi is unavailable on Windows arm64.
+  test.skipIf(isArm64)("which resolves Windows app-execution aliases (#17328)", () => {
+    using dir = tempDir("which-appexeclink", {});
+    const base = String(dir);
+    const alias = join(base, "myalias.exe");
+    const dangling = join(base, "dangling.exe");
+
+    makeAppExecLink(alias);
+    symlinkSync(join(base, "no-such-target.exe"), dangling, "file");
+
+    expect({
+      which_bare: which("myalias", { PATH: base }),
+      which_ext: which("myalias.exe", { PATH: base }),
+      existsSync_alias: existsSync(alias),
+      existsSync_dangling: existsSync(dangling),
+    }).toEqual({
+      which_bare: alias,
+      which_ext: alias,
+      existsSync_alias: true,
+      existsSync_dangling: false,
+    });
+  });
+
+  function makeAppExecLink(target: string) {
+    const { dlopen, ptr } = require("bun:ffi");
+    const k32 = dlopen("kernel32.dll", {
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "ptr" },
+      DeviceIoControl: { args: ["ptr", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+      CloseHandle: { args: ["ptr"], returns: "i32" },
+      GetLastError: { args: [], returns: "u32" },
+    });
+
+    const GENERIC_WRITE = 0x40000000;
+    const SHARE_ALL = 0x7;
+    const CREATE_NEW = 1;
+    const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    const FSCTL_SET_REPARSE_POINT = 0x000900a4;
+    const IO_REPARSE_TAG_APPEXECLINK = 0x8000001b;
+
+    const wpath = Buffer.from(target + "\0", "utf16le");
+    const h = k32.symbols.CreateFileW(
+      ptr(wpath),
+      GENERIC_WRITE,
+      SHARE_ALL,
+      null,
+      CREATE_NEW,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+      null,
+    );
+    if (h === null || h === -1) throw new Error(`CreateFileW failed: ${k32.symbols.GetLastError()}`);
+
+    const strings = ["Bun.Test_1.0.0.0_x64__fake", "Bun.Test_fake!App", "C:\\Windows\\System32\\cmd.exe", "0"];
+    const strbuf = Buffer.concat(strings.map(s => Buffer.from(s + "\0", "utf16le")));
+    const dataLen = 4 + strbuf.length;
+    const buf = Buffer.alloc(8 + dataLen);
+    buf.writeUInt32LE(IO_REPARSE_TAG_APPEXECLINK, 0);
+    buf.writeUInt16LE(dataLen, 4);
+    buf.writeUInt16LE(0, 6);
+    buf.writeUInt32LE(3, 8);
+    strbuf.copy(buf, 12);
+
+    const bytesReturned = Buffer.alloc(4);
+    const ok = k32.symbols.DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, ptr(buf), buf.length, null, 0, ptr(bytesReturned), null);
+    const err = k32.symbols.GetLastError();
+    k32.symbols.CloseHandle(h);
+    if (!ok) throw new Error(`DeviceIoControl(FSCTL_SET_REPARSE_POINT) failed: ${err}`);
+  }
 } else {
   test("which", () => {
     {

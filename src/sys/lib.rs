@@ -7392,7 +7392,20 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                 )
             };
             if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-                return false;
+                // The reparse-point entry itself exists (GetFileAttributesW succeeded).
+                // Only report "does not exist" when the follow genuinely found no
+                // target; any other failure (app-execution alias, access denied,
+                // sharing violation, unresolvable reparse data, ...) still means
+                // the path exists.
+                return !matches!(
+                    w::Win32Error::get(),
+                    w::Win32Error::FILE_NOT_FOUND
+                        | w::Win32Error::PATH_NOT_FOUND
+                        | w::Win32Error::INVALID_NAME
+                        | w::Win32Error::INVALID_DRIVE
+                        | w::Win32Error::BAD_PATHNAME
+                        | w::Win32Error::FILENAME_EXCED_RANGE
+                );
             }
             // SAFETY: rc is a valid handle from CreateFileW.
             unsafe {

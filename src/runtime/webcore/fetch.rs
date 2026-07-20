@@ -2090,10 +2090,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !is_s3
                 && matches!(&body, HTTPRequestBody::AnyBlob(_))
                 && !body.get_any_blob().is_some_and(|b| {
-                    bun_core::strings::has_prefix_comptime(
-                        b.content_type(),
-                        b"multipart/form-data",
-                    )
+                    bun_core::strings::has_prefix_comptime(b.content_type(), b"multipart/form-data")
                 }) =>
         {
             let s = body.slice();

@@ -444,24 +444,13 @@ mod _impl {
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
         let top_level_dir: &[u8] = fs.top_level_dir;
-        match Syscall::chdir(slice) {
-            bun_sys::Result::Ok(()) => {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        match Syscall::chdir_getcwd(slice, &mut cwd_buf[..]) {
+            bun_sys::Result::Ok(into_cwd_len) => {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                let into_cwd_len = match Syscall::getcwd(&mut buf[..]) {
-                    bun_sys::Result::Ok(r) => r,
-                    bun_sys::Result::Err(err) => {
-                        // roll back to the previous top_level_dir
-                        let mut rollback = PathBuffer::uninit();
-                        let _ = Syscall::chdir(bun_paths::resolve_path::z(
-                            fs.top_level_dir,
-                            &mut rollback,
-                        ));
-                        return Err(global_object.throw_value(err.to_js(global_object)));
-                    }
-                };
-                fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
+                fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&cwd_buf[..into_cwd_len]);
                 fs.top_level_dir_buf[into_cwd_len] = 0;
                 // SAFETY: `top_level_dir_buf` is a process-lifetime field of
                 // the FileSystem singleton, so the detached borrow never
@@ -494,7 +483,11 @@ mod _impl {
                 str_.transfer_to_js(global_object)
             }
             bun_sys::Result::Err(e) => {
-                let e = e.with_path_dest(top_level_dir, slice.as_bytes());
+                let e = if e.syscall == bun_sys::Tag::chdir {
+                    e.with_path_dest(top_level_dir, slice.as_bytes())
+                } else {
+                    e
+                };
                 Err(global_object.throw_value(e.to_js(global_object)))
             }
         }

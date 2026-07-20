@@ -3078,6 +3078,10 @@ mod posix_impl {
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         Ok(())
     }
+    pub fn chdir_getcwd(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        chdir(path)?;
+        getcwd(buf)
+    }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
         Ok(())
@@ -4487,16 +4491,60 @@ mod windows_impl {
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
-        // `SetCurrentDirectoryW(toWDirPath(..))`.
+    // SetCurrentDirectoryW + GetCurrentDirectoryW + (when the cwd starts with
+    // a drive letter) SetEnvironmentVariableW("=X:", cwd). Leaves the resolved
+    // wide cwd NUL-terminated in `wbuf` and returns its length.
+    fn chdir_impl(path: &ZStr, wbuf: &mut WPathBuffer) -> Maybe<usize> {
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
-        let mut wbuf = WPathBuffer::default();
-        let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_paths::string_paths::to_w_dir_path(wbuf, path.as_bytes());
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
         }
+        // `SetCurrentDirectoryW` does not update the hidden per-drive `=X:`
+        // env var. Mirror libuv's `uv_chdir`: re-read the resolved cwd and, if
+        // it begins with a drive letter, write it to `=X:`.
+        let n = unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
+        if n == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::getcwd));
+        }
+        if n as usize >= wbuf.len() {
+            return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
+        }
+        let mut len = n as usize;
+        if len > 3 && (wbuf[len - 1] == b'\\' as u16 || wbuf[len - 1] == b'/' as u16) {
+            len -= 1;
+        }
+        wbuf[len] = 0;
+        if len >= 2 && wbuf[1] == b':' as u16 {
+            let d = wbuf[0];
+            let drive = if (b'A' as u16..=b'Z' as u16).contains(&d) {
+                Some(d)
+            } else if (b'a' as u16..=b'z' as u16).contains(&d) {
+                Some(d - (b'a' as u16) + (b'A' as u16))
+            } else {
+                None
+            };
+            if let Some(drive) = drive {
+                let name: [u16; 4] = [b'=' as u16, drive, b':' as u16, 0];
+                unsafe {
+                    w::kernel32::SetEnvironmentVariableW(name.as_ptr(), wbuf.as_ptr());
+                }
+            }
+        }
+        Ok(len)
+    }
+    pub fn chdir(path: &ZStr) -> Maybe<()> {
+        let mut wbuf = WPathBuffer::default();
+        chdir_impl(path, &mut wbuf)?;
         Ok(())
+    }
+    /// `chdir` followed by `getcwd` into `buf`, sharing the one
+    /// `GetCurrentDirectoryW` call that `chdir` already makes.
+    pub fn chdir_getcwd(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        let mut wbuf = WPathBuffer::default();
+        let len = chdir_impl(path, &mut wbuf)?;
+        Ok(bun_paths::string_paths::from_w_path(buf, &wbuf[..len]).len())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         let mut buf = bun_core::PathBuffer::default();

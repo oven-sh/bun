@@ -217,6 +217,13 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     expect(sent).toBe(true);
   });
 
+  // These two tests terminate via SIG_DFL (not via a test hook that calls
+  // suppress_core_dumps_if_necessary()), so on the --coredump-upload CI lane
+  // the runner would flag leaked core files as a hard failure. ulimit -c 0 in
+  // a shell wrapper is inherited by the bun child; the whole describe is
+  // isPosix-gated so /bin/sh is available.
+  const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
   // The above goes via the internal test hook, which under ASAN calls the
   // handler directly because ASAN owns the fault signals. This case raises the
   // signal for real to prove the sigaction registration itself; ASAN builds
@@ -225,7 +232,12 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     "raised %s produces a crash report",
     async signal => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `process.kill(process.pid, "${signal}")`, "--debug-crash-handler-use-trace-string"],
+        cmd: noCoreCmd([
+          bunExe(),
+          "-e",
+          `process.kill(process.pid, "${signal}")`,
+          "--debug-crash-handler-use-trace-string",
+        ]),
         env: noReportEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -249,7 +261,7 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "process.abort()"],
+      cmd: noCoreCmd([bunExe(), "-e", "process.abort()"]),
       env: mergeWindowEnvs([
         bunEnv,
         {

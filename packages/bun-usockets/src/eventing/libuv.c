@@ -131,9 +131,25 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
                !(wp->poll_type & POLL_TYPE_POLLING_IN)) {
       /* allow_half_open already delivered EOF (readable polling was stopped
        * and the poll left writable-only in loop.c). AFD keeps signalling
-       * DISCONNECT level-triggered, so drop it instead of re-dispatching EOF
-       * on every tick; otherwise the writable/EOF handlers bounce the poll
-       * between 0 and WRITABLE and us_loop_pump never goes idle. */
+       * DISCONNECT level-triggered, so drop the repeated FIN instead of
+       * re-dispatching EOF on every tick (the writable/EOF handlers would
+       * otherwise bounce the poll between 0 and WRITABLE forever). But
+       * UV_DISCONNECT also carries AFD_POLL_ABORT (RST) via the
+       * win-poll-abort-with-disconnect patch, which must surface like
+       * epoll's unmaskable EPOLLERR: discriminate with the same SO_ERROR +
+       * zero-byte-send probe as the paused-socket arm above, and mark
+       * fin_deferred so the sweep timer escalates a later reset now that
+       * DISCONNECT is disarmed. */
+      struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
+      if (!sock->flags.is_closed &&
+          (us_socket_get_error(sock) != 0 ||
+           us_internal_libuv_peer_reset_probe(us_poll_fd(wp)))) {
+        error = 1;
+        events |= UV_READABLE;
+      } else if (!sock->fin_deferred) {
+        sock->fin_deferred = 1;
+        sock->group->loop->data.fin_deferred_count++;
+      }
     } else {
       events |= UV_READABLE;
     }

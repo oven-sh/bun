@@ -103,8 +103,12 @@ test.concurrent.skipIf(isWindows || !cc)(
     await loadAddonWithValidator(
       "napi-define-properties-exception-check",
       definePropertiesSource,
-      `const m = require("./addon.node");\nconsole.log("loaded", Object.getOwnPropertyNames(m).sort().join(","));\n`,
-      "loaded a,exports,g,m,s\n",
+      // Assert only what the addon defined; the exports object may carry loader-added own
+      // properties (Bun currently passes the module object here, Node passes module.exports).
+      `const m = require("./addon.node");\n` +
+        `const own = Object.getOwnPropertyNames(m);\n` +
+        `console.log("loaded", ["a","g","m","s"].filter(k => own.includes(k)).join(","));\n`,
+      "loaded a,g,m,s\n",
     );
   },
 );

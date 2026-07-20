@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Surface darwin tart-host infra failures as Buildkite annotations.
+#
+# darwin arm64 test agents (agent tag tart=true) wrap jobs in an agent-level
+# `command` hook that boots an ephemeral tart guest and runs runner.node.mjs
+# inside it over SSH. If the guest fails to boot (macOS 2-VM-per-host cap hit,
+# tart clone race, vmnet bring-up hang), the hook exits 1 before the runner
+# starts, so no annotation is posted and the red job is only discoverable by
+# opening the raw log.
+#
+# This repository pre-exit hook runs on the host after the command hook and
+# inspects the `tart run` log(s) the hook leaves in /tmp. A guest that booted
+# and was cleanly stopped writes only `Stopping VM...`; anything else is tart
+# reporting why it exited, which is the infra error to surface.
+#
+# Repository hooks run on every agent, so early-exit unless the agent is
+# tagged tart=true and the command failed. Windows agents look for
+# pre-exit.{bat,ps1} and ignore this file. Never exits non-zero.
+
+set -uo pipefail
+
+[ "${BUILDKITE_AGENT_META_DATA_TART:-}" = "true" ] || exit 0
+[ "${BUILDKITE_COMMAND_EXIT_STATUS:-0}" = "0" ] && exit 0
+
+error=""
+for log in "/tmp/bk-${BUILDKITE_JOB_ID:-}.log" "/tmp/sc-${BUILDKITE_JOB_ID:-}.log"; do
+  [ -s "$log" ] || continue
+  body=$(grep -v '^Stopping VM\.\.\.' "$log" 2>/dev/null || true)
+  [ -n "$body" ] && error+="${error:+$'\n'}${log##*/}: ${body}"
+done
+
+[ -n "$error" ] || exit 0
+
+label="${BUILDKITE_LABEL:-${BUILDKITE_STEP_KEY:-job}}"
+job_url="${BUILDKITE_BUILD_URL:-}#${BUILDKITE_JOB_ID:-}"
+
+printf '<details><summary><code>tart guest boot</code> failed on <a href="%s">%s</a></summary>\n\n```terminal\n%s\n```\n\n</details>\n\n' \
+  "$job_url" "$label" "$error" \
+  | buildkite-agent annotate --append --style error --context tart-guest-boot --priority 5 2>&1 \
+  || echo "pre-exit: buildkite-agent annotate failed (non-fatal)"
+
+exit 0

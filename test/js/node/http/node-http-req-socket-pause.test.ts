@@ -75,12 +75,11 @@ it("body reading from 'pause' still delivers every byte and 'end'", async () => 
 });
 
 it("req.socket emits 'pause' on every body-bearing keep-alive request, not just the first", async () => {
-  // The readStop from request 1's last body chunk left the shared socket's
-  // Readable flowing=false; without a readStart at message-complete (Node's
-  // parserOnMessageComplete), request 2's readStop is a no-op on the event.
   const pauses: string[] = [];
+  const sockets: unknown[] = [];
   const ended = Promise.withResolvers<void>();
   const server = createServer((req, res) => {
+    sockets.push(req.socket);
     req.connection!.once("pause", () => {
       pauses.push(req.url!);
       res.end("ok");
@@ -105,6 +104,8 @@ it("req.socket emits 'pause' on every body-bearing keep-alive request, not just 
     }
     await ended.promise;
     agent.destroy();
+    expect(sockets.length).toBe(2);
+    expect(sockets[0]).toBe(sockets[1]);
     expect(pauses).toEqual(["/a", "/b"]);
   } finally {
     server.closeAllConnections();

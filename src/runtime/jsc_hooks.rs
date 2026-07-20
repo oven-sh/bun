@@ -2750,13 +2750,13 @@ fn transpile_source_code_inner(
                         AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
                             let len = bytes.len();
                             if len == 0 {
-                                (core::ptr::null_mut(), 0)
+                                (core::ptr::null(), 0)
                             } else {
                                 // C++ side becomes the owner.
-                                (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
+                                (bun_core::heap::into_raw(bytes).cast::<u8>().cast_const(), len)
                             }
                         }
-                        _ => (core::ptr::null_mut(), 0),
+                        _ => (core::ptr::null(), 0),
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code: bun_core::String::clone_latin1(&source.contents),
@@ -3768,14 +3768,14 @@ export default db;
                     },
                     source_code_needs_deref: false,
                     bytecode_cache: if bytecode_len > 0 {
-                        file.bytecode.cast::<u8>()
+                        file.bytecode.as_ptr()
                     } else {
-                        core::ptr::null_mut()
+                        core::ptr::null()
                     },
                     bytecode_cache_size: bytecode_len,
                     module_info: if module_info_len > 0 {
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                            ::create_from_cached_record(&*file.module_info)
+                            ::create_from_cached_record(file.module_info)
                             .map(bun_core::heap::into_raw)
                             .unwrap_or(core::ptr::null_mut())
                             .cast::<c_void>()

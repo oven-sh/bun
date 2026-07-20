@@ -128,7 +128,9 @@ Ref<SourceProvider> SourceProvider::create(
 
             auto origin = getSourceOrigin();
 
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
+            // CachedBytecode::create takes span<uint8_t> but JSC only ever reads it
+            // (span() returns span<const uint8_t>; Decoder caches into a side map).
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(const_cast<uint8_t*>(resolvedSource.bytecode_cache), resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

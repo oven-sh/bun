@@ -187,11 +187,9 @@ pub enum BodyReadState {
 }
 
 unsafe extern "C" {
-    // `socket` is the opaque uSockets handle from `AnyResponse::socket()`; C++
-    // only reads its ext slot. `ctx` is this NodeHTTPResponse's own heap address
-    // so a pipelined response resolves to its own JS wrapper (not the
-    // connection's in-flight `currentResponseObject`). Module-private — the sole
-    // callers below pass a live handle, so no caller-side precondition remains.
+    // `socket` is the uSockets handle (ext slot read only); `ctx` is this
+    // NodeHTTPResponse's heap address so a pipelined response resolves to its
+    // own wrapper, not the connection's in-flight `currentResponseObject`.
     safe fn Bun__getNodeHTTPResponseThisValue(
         is_ssl: bool,
         socket: *mut c_void,
@@ -432,7 +430,7 @@ impl NodeHTTPResponse {
         Bun__getNodeHTTPResponseThisValue(
             any_response_is_ssl(&raw),
             raw.socket().cast(),
-            (self as *const Self).cast_mut().cast(),
+            self.as_ctx_ptr().cast(),
         )
     }
 

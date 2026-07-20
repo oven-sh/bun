@@ -703,11 +703,9 @@ static WebCore::JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket, voi
     if (!ctx || (current && current->m_ctx == ctx)) {
         return current;
     }
-    /* A pipelined request's NodeHTTPResponse is not the connection's
-     * currentResponseObject yet (the in-flight response still owns that slot),
-     * so look it up in the queued list by its native ctx. Returning the wrong
-     * wrapper here would read cached slots (ondata, onabort) off the in-flight
-     * response and drop the pipelined request's body. */
+    /* A pipelined request isn't currentResponseObject yet; find it in the
+     * queued list by native ctx so cached ondata/onabort slots are read off
+     * its own wrapper, not the in-flight response's. */
     Locker locker { serverSocket->m_pipelinedResponsesLock };
     for (auto& entry : serverSocket->m_pipelinedResponses) {
         auto* res = entry.get();

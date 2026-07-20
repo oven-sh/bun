@@ -4394,9 +4394,13 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     // Read `cmd` without entering JS, so this frame needs no throw scope. A
     // throw scope here obliges the caller to perform an exception check, and
     // the caller is Rust, which has no way to do that -- every IPC message
-    // then trips the exception-check validator. `message` is a value we just
-    // deserialized off the channel, so it carries `cmd` as a plain own
-    // property; there is no getter for getDirect to miss.
+    // then trips the exception-check validator.
+    //
+    // `message` is a value we just deserialized off the channel, so `cmd` is
+    // always a plain own property; a getter or a proxy trap cannot reach here.
+    // Unlike node's `message.cmd`, getDirect ignores the prototype chain, so a
+    // polluted `Object.prototype.cmd` cannot reroute a caller's messages to
+    // "internalMessage".
     auto& names = WebCore::builtinNames(vm);
     auto ident = vm.propertyNames->message;
     JSValue message = JSValue::decode(value);

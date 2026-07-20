@@ -36,6 +36,7 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
+var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
@@ -1680,6 +1681,11 @@ const INTERNAL_IPC_PREFIX = "NODE_";
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;
+  // Own property only, matching the child end in Process__emitMessageEvent.
+  // Node reads `message.cmd` through the prototype chain here; a deserialized
+  // message never carries `cmd` there, and refusing to look means a polluted
+  // Object.prototype.cmd cannot reroute a caller's messages.
+  if (!ObjectHasOwn(message, "cmd")) return false;
   const cmd = message.cmd;
   if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
   return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
@@ -1689,7 +1695,7 @@ function isInternalIpcMessage(message) {
 // subprocess's `.stdin` carries no `fd`, but it is a WriteStream over a
 // FileSink that knows the pipe's write end.
 function streamFdOf(item): number | undefined {
-  const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
+  const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number") return itemFd;
 
   const handle = item._handle;

@@ -241,6 +241,44 @@ describe("FormData", () => {
     }
   }
 
+  // https://github.com/oven-sh/bun/issues/33012
+  describe("multipart file part honors an explicit Content-Type", () => {
+    const boundary = "----formdataboundary";
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+    // "RIFF" + 4-byte size + "WEBPVP8 ": no entry in the magic-byte sniff table.
+    const webp = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0, 0, 0, 0]), Buffer.from("WEBPVP8 ")]);
+
+    function buildBody(contentType: string | null, filename: string, content: Uint8Array): Uint8Array {
+      const head =
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+        (contentType === null ? "" : `Content-Type: ${contentType}\r\n`) +
+        `\r\n`;
+      return Buffer.concat([Buffer.from(head, "latin1"), content, Buffer.from(`\r\n--${boundary}--\r\n`, "latin1")]);
+    }
+
+    function parse(C: typeof Response | typeof Request, body: Uint8Array) {
+      const source =
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+      return source.formData();
+    }
+
+    for (const C of [Response, Request] as const) {
+      it(`keeps the declared type for an extensionless filename (${C.name})`, async () => {
+        const form = await parse(C, buildBody("image/webp", "banner", webp));
+        const file = form.get("file");
+        expect(file).toBeInstanceOf(File);
+        expect((file as File).name).toBe("banner");
+        expect((file as File).type).toBe("image/webp");
+      });
+
+      it(`prefers the declared type over the filename extension (${C.name})`, async () => {
+        const form = await parse(C, buildBody("image/webp", "banner.txt", webp));
+        expect((form.get("file") as File).type).toBe("image/webp");
+      });
+    }
+  });
+
   it("decodes a part with Content-Transfer-Encoding: base64", async () => {
     const raw = crypto.getRandomValues(new Uint8Array(256));
     const body =

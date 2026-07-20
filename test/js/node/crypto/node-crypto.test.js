@@ -1130,6 +1130,33 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
   });
 
+  // The raw-* export path allocates the output Buffer through JSUint8Array::create, which can
+  // throw. validateExceptionChecks=1 aborts the child if the throw scope isn't released before
+  // the allocation.
+  it("raw key export checks for a pending exception after Buffer allocation", async () => {
+    const src = `
+      const crypto = require("node:crypto");
+      const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+      const pub = publicKey.export({ format: "raw-public" });
+      const priv = privateKey.export({ format: "raw-private" });
+      const fromPriv = privateKey.export({ format: "raw-public" });
+      console.log(pub.length, priv.length, fromPriv.length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "32 32 32\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {
     const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
     const label = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);

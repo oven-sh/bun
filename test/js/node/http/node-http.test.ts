@@ -2804,6 +2804,61 @@ describe("pipelined POST bodies behind an async handler", () => {
       "/b": "xyz",
     });
   });
+
+  it("resuming the first request after its fin was buffered during pause", async () => {
+    // /a pauses on its data chunk; its fin is buffered while paused. Resuming
+    // /a after /b is dispatched must not re-arm onData with /a's ctx.
+    const results: Record<string, string> = {};
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const held: http.ServerResponse[] = [];
+    let resumeA: () => void;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", c => {
+        body += c;
+        if (req.url === "/a") {
+          req.pause();
+          resumeA = () => req.resume();
+        }
+      });
+      req.on("end", () => {
+        results[req.url!] = body;
+        res.setHeader("Content-Length", "1");
+        if (req.url === "/b") {
+          res.end("x");
+          resolve();
+        } else {
+          held.push(res);
+        }
+      });
+      if (req.url === "/b") queueMicrotask(() => resumeA?.());
+    });
+    server.on("clientError", (err, sock) => {
+      sock.destroy();
+      reject(err);
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1", () =>
+        socket.write(
+          "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n" +
+            "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nxyz",
+        ),
+      );
+      socket.on("error", reject);
+      socket.resume();
+      await promise;
+      expect(results).toEqual({ "/a": "abc", "/b": "xyz" });
+      for (const res of held) res.end("x");
+      socket.removeAllListeners("error");
+      socket.destroy();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });
 
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {

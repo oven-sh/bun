@@ -1359,21 +1359,24 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
-            // This request's body is already fully delivered: re-arming onData
-            // would overwrite a pipelined request's userData on the shared
-            // HttpResponseData and route that request's body chunks here.
-            || self.body_read_state.get() != BodyReadState::Pending
         {
             return Ok(JSValue::FALSE);
         }
-        self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
-
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]
         {
             self.pause_socket();
         }
+        // Only re-arm onData while this request's body is still arriving: once
+        // it is done (or there is none) the write would overwrite a pipelined
+        // request's userData on the shared HttpResponseData.
+        if self.body_read_state.get() != BodyReadState::Pending
+            || flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            return Ok(JSValue::TRUE);
+        }
+        self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
+        raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
         Ok(JSValue::TRUE)
     }
 
@@ -1428,16 +1431,19 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
-            // This request's body is already fully delivered: re-arming onData /
-            // onTimeout would overwrite a pipelined request's userData on the
-            // shared HttpResponseData and route that request's body chunks here.
-            || self.body_read_state.get() != BodyReadState::Pending
         {
             return JSValue::FALSE;
         }
-        self.set_on_aborted_handler();
-        raw.on_data(on_data_shim, self.as_ctx_ptr());
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
+        // Only re-arm onData/onTimeout while this body is still arriving: once
+        // done (or fin was buffered) the write would overwrite a pipelined
+        // request's userData on the shared HttpResponseData.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.set_on_aborted_handler();
+            raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
         let mut result: JSValue = JSValue::TRUE;
 
         if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_object) {
@@ -2205,18 +2211,24 @@ impl NodeHTTPResponse {
 
     fn clear_on_data_callback(&self, this_value: JSValue, global_object: &JSGlobalObject) {
         scoped_log!(NodeHTTPResponse, "clearOnDataCallback");
-        if self.body_read_state.get() != BodyReadState::None {
+        let state = self.body_read_state.get();
+        if state != BodyReadState::None {
             if !this_value.is_empty() {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
             let flags = self.flags.get();
-            if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
+            // Only clear the uWS slot while still Pending: once Done, uWS nulled
+            // inStream after fin, so a set slot belongs to a pipelined request.
+            if state == BodyReadState::Pending
+                && !flags.contains(Flags::SOCKET_CLOSED)
+                && !flags.contains(Flags::UPGRADED)
+            {
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
                     raw_response.clear_on_data();
                 }
             }
-            if self.body_read_state.get() != BodyReadState::Done {
+            if state != BodyReadState::Done {
                 self.body_read_state.set(BodyReadState::Done);
             }
         }
@@ -2242,7 +2254,7 @@ impl NodeHTTPResponse {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             // defer { if body_read_ref.has { unref } } — moved to tail of this branch.
             match self.body_read_state.get() {
-                BodyReadState::Pending | BodyReadState::Done => {
+                BodyReadState::Pending => {
                     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
                         && !flags.contains(Flags::SOCKET_CLOSED)
                         && !flags.contains(Flags::UPGRADED)
@@ -2254,7 +2266,9 @@ impl NodeHTTPResponse {
                     }
                     self.body_read_state.set(BodyReadState::Done);
                 }
-                BodyReadState::None => {}
+                // Done: uWS nulled inStream after fin; a set slot now belongs
+                // to a pipelined request, so leave it alone.
+                BodyReadState::Done | BodyReadState::None => {}
             }
             if self.body_read_ref.get().has {
                 self.body_read_ref

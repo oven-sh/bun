@@ -532,11 +532,9 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
 });
 
 it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async () => {
-  // Windows' default clock tick is ~15.6ms; without a high-resolution timer
-  // driving the IOCP wait (or timeBeginPeriod), setTimeout(cb, 1) fires ~15ms
-  // late on an idle box. Run in a subprocess so no other in-process work has
-  // raised the resolution, and take the median so a single scheduler hiccup
-  // on a busy CI runner does not fail the assertion.
+  // Subprocess so no other in-process work has raised the Windows tick
+  // resolution; median of 50 so a single scheduler hiccup on a busy CI
+  // runner does not fail the assertion.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

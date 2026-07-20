@@ -1820,6 +1820,19 @@ pub(super) fn generate_symbol_for_function(
         ));
     }
 
+    if threadsafe {
+        for arg in abi_types.iter() {
+            if matches!(arg, ABIType::NapiEnv | ABIType::NapiValue) {
+                return Ok(Some(
+                    ZigString::static_(
+                        b"Threadsafe callbacks cannot accept napi_env or napi_value arguments",
+                    )
+                    .to_error_instance(global),
+                ));
+            }
+        }
+    }
+
     *function = Function::default();
     function.base_name = None;
     function.arg_types = abi_types;

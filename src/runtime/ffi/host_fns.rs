@@ -129,6 +129,16 @@ pub fn generate_symbol_for_function(
         ))));
     }
 
+    if threadsafe {
+        for arg in abi_types.iter() {
+            if matches!(arg, ABIType::NapiEnv | ABIType::NapiValue) {
+                return Ok(Some(global.create_error_instance(format_args!(
+                    "Threadsafe callbacks cannot accept napi_env or napi_value arguments"
+                ))));
+            }
+        }
+    }
+
     // `Function` has a `Drop` impl, so functional-record-update
     // (`..Default::default()`) is rejected (E0509). Reset to default and assign
     // the parsed fields individually instead.

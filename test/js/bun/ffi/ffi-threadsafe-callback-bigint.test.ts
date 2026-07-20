@@ -20,6 +20,17 @@ test.skipIf(isFFIUnavailable)("threadsafe JSCallback with a non-void return type
   );
 });
 
+// A napi_env/napi_value is only valid on the JS thread that created it, so
+// a threadsafe callback (invoked from an arbitrary OS thread) receiving one
+// is inherently unsafe.
+test.skipIf(isFFIUnavailable)("threadsafe JSCallback with napi_env / napi_value args is rejected", () => {
+  for (const t of ["napi_env", "napi_value"]) {
+    expect(() => new JSCallback(() => {}, { args: [t], threadsafe: true })).toThrow(
+      "Threadsafe callbacks cannot accept napi_env or napi_value arguments",
+    );
+  }
+});
+
 // A threadsafe JSCallback with int64_t / uint64_t arguments used to convert
 // those arguments to JSBigInt inside the TCC-generated trampoline, *before*
 // posting to the JS thread. When the callback was invoked from a real OS

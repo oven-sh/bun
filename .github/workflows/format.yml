@@ -40,7 +40,7 @@ jobs:
           # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
           # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't
           # need just to run rustfmt). Keep this in sync with `channel` there.
-          RUSTUP_TOOLCHAIN: nightly-2026-07-15
+          RUSTUP_TOOLCHAIN: nightly-2026-07-20
         run: |
           # Without pipefail, `cmd | sed` always reports sed's exit status, so a
           # failing formatter is invisible to the `wait $PID` checks below.

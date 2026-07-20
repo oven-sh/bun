@@ -416,11 +416,11 @@ function Socket(type, listener) {
     }
     receiveBlockList = options.receiveBlockList;
     if (receiveBlockList && !isBlockList(receiveBlockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.receiveBlockList", "net.BlockList", receiveBlockList);
+      throw $ERR_INVALID_ARG_TYPE("options.receiveBlockList", ["net.BlockList"], receiveBlockList);
     }
     sendBlockList = options.sendBlockList;
     if (sendBlockList && !isBlockList(sendBlockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.sendBlockList", "net.BlockList", sendBlockList);
+      throw $ERR_INVALID_ARG_TYPE("options.sendBlockList", ["net.BlockList"], sendBlockList);
     }
   }
 

@@ -1664,3 +1664,20 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
     }
   });
 });
+
+it("Readable/Writable/Duplex.toWeb() validation error matches Node.js", () => {
+  // Node renders dotted type names via its "other" category: "an stream.X",
+  // not "of type stream.X".
+  for (const [cls, name, kind] of [
+    [Readable, "streamReadable", "stream.Readable"],
+    [Writable, "streamWritable", "stream.Writable"],
+    [Duplex, "duplex", "stream.Duplex"],
+  ]) {
+    expect(() => cls.toWeb({})).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "${name}" argument must be an ${kind}. Received an instance of Object`,
+      }),
+    );
+  }
+});

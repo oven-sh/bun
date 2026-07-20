@@ -105,3 +105,18 @@ function getInterface() {
 
   return "::%lo";
 }
+
+test("createSocket receiveBlockList/sendBlockList validation error matches Node.js", () => {
+  expect(() => dgram.createSocket({ type: "udp4", receiveBlockList: {} })).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options.receiveBlockList" property must be an net.BlockList. Received an instance of Object',
+    }),
+  );
+  expect(() => dgram.createSocket({ type: "udp4", sendBlockList: {} })).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options.sendBlockList" property must be an net.BlockList. Received an instance of Object',
+    }),
+  );
+});

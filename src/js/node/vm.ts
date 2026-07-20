@@ -191,7 +191,7 @@ class Module {
     if (context !== undefined) {
       validateObject(context, "context");
       if (!isContext(context)) {
-        throw $ERR_INVALID_ARG_TYPE("options.context", "vm.Context", context);
+        throw $ERR_INVALID_ARG_TYPE("options.context", ["vm.Context"], context);
       }
     }
 

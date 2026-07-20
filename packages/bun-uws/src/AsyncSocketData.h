@@ -19,53 +19,112 @@
 #ifndef UWS_ASYNCSOCKETDATA_H
 #define UWS_ASYNCSOCKETDATA_H
 
-#include <string>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
 
 namespace uWS {
 
+/* Contiguous write-behind buffer with a moving head cursor. erase() is a
+ * pointer bump; append()/resize() reuse the drained head gap via one memmove
+ * before ever growing. The previous std::string shape front-erased + shrank to
+ * fit every ~1/32 drained, so a drain of N bytes moved ~60N bytes and briefly
+ * held 2x the live data during each realloc. */
 struct BackPressure {
-    std::string buffer;
-    unsigned int pendingRemoval = 0;
-    BackPressure(BackPressure &&other) {
-        buffer = std::move(other.buffer);
-        pendingRemoval = other.pendingRemoval;
-    }
     BackPressure() = default;
-    void append(const char *data, size_t length) {
-        buffer.append(data, length);
+    BackPressure(BackPressure &&other) noexcept
+        : buf(other.buf), head(other.head), tail(other.tail), cap(other.cap) {
+        other.buf = nullptr;
+        other.head = other.tail = other.cap = 0;
     }
-    void erase(unsigned int length) {
-        pendingRemoval += length;
-        /* Always erase a minimum of 1/32th the current backpressure */
-        if (pendingRemoval > (buffer.length() >> 5)) {
-            buffer.erase(0, pendingRemoval);
-            buffer.shrink_to_fit();
-            pendingRemoval = 0;
+    BackPressure(const BackPressure &) = delete;
+    BackPressure &operator=(const BackPressure &) = delete;
+    ~BackPressure() { std::free(buf); }
+
+    /* Unsent bytes. data() points at length() contiguous bytes. */
+    size_t length() const { return tail - head; }
+    size_t size() const { return length(); }
+    const char *data() const { return buf + head; }
+    /* Allocation footprint for memoryCost / GC reporting. */
+    size_t totalLength() const { return cap; }
+
+    void append(const char *src, size_t n) {
+        if (!n) return;
+        ensureTailRoom(n);
+        std::memcpy(buf + tail, src, n);
+        tail += n;
+    }
+
+    void erase(size_t n) {
+        head += n;
+        if (head >= tail) {
+            /* Fully drained: next append writes at offset 0 with no memmove. */
+            head = tail = 0;
+            release();
         }
     }
-    size_t length() {
-        return buffer.length() - pendingRemoval;
-    }
+
     void clear() {
-        pendingRemoval = 0;
-        buffer.clear();
-        buffer.shrink_to_fit();
+        head = tail = 0;
+        release();
     }
-    void reserve(size_t length) {
-        buffer.reserve(length + pendingRemoval);
+
+    /* Make room for at least n live bytes without later realloc. */
+    void reserve(size_t n) {
+        if (n > length()) ensureTailRoom(n - length());
     }
-    void resize(size_t length) {
-        buffer.resize(length + pendingRemoval);
+
+    /* Grow to n live bytes; caller writes into data() + old length(). */
+    void resize(size_t n) {
+        size_t live = length();
+        if (n > live) {
+            ensureTailRoom(n - live);
+            tail += n - live;
+        } else {
+            tail = head + n;
+        }
     }
-    const char *data() {
-        return buffer.data() + pendingRemoval;
+
+private:
+    static constexpr size_t MIN_CAPACITY = 4096;
+
+    char *buf = nullptr;
+    size_t head = 0;
+    size_t tail = 0;
+    size_t cap = 0;
+
+    /* Ensure [tail, tail+n) is writable. Prefers compacting into the drained
+     * head gap over growing so steady-state producer/consumer never reallocs. */
+    void ensureTailRoom(size_t n) {
+        if (tail + n <= cap) return;
+
+        size_t live = tail - head;
+        if (head && live + n <= cap) {
+            std::memmove(buf, buf + head, live);
+            head = 0;
+            tail = live;
+            return;
+        }
+
+        size_t newCap = std::max(std::max(cap * 2, live + n), MIN_CAPACITY);
+        if (head == 0) {
+            /* realloc may extend in place (mimalloc, glibc mremap). */
+            buf = (char *) std::realloc(buf, newCap);
+        } else {
+            char *nb = (char *) std::malloc(newCap);
+            if (live) std::memcpy(nb, buf + head, live);
+            std::free(buf);
+            buf = nb;
+            head = 0;
+            tail = live;
+        }
+        cap = newCap;
     }
-    size_t size() {
-        return length();
-    }
-    /* The total length, incuding pending removal */
-    size_t totalLength() {
-        return buffer.length();
+
+    void release() {
+        std::free(buf);
+        buf = nullptr;
+        cap = 0;
     }
 };
 

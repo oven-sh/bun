@@ -546,7 +546,9 @@ pub(crate) extern "C" fn Source__setRawModeTty(
 
     use bun_sys::windows as w;
     const ENABLE_WINDOW_INPUT: u32 = 0x0008;
-    const CONIN_W: [u16; 7] = [b'C' as _, b'O' as _, b'N' as _, b'I' as _, b'N' as _, b'$' as _, 0];
+    const CONIN_W: [u16; 7] = [
+        b'C' as _, b'O' as _, b'N' as _, b'I' as _, b'N' as _, b'$' as _, 0,
+    ];
 
     let src = Fd::from_uv(fd).native();
     if src == w::INVALID_HANDLE_VALUE {

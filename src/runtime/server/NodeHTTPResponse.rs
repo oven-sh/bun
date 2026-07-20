@@ -649,15 +649,21 @@ impl NodeHTTPResponse {
             return false;
         }
 
+        // The body is fully received once either body_read_state left Pending
+        // or its fin was captured during a pause (the LAST flag is set without
+        // transitioning body_read_state).
+        let body_pending = self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
         // until the body's fin chunk (the actual tunnel start).
         if flags.contains(Flags::TUNNELED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return body_pending;
         }
 
         if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return body_pending;
         }
 
         true

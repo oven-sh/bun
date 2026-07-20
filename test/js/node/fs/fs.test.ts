@@ -578,6 +578,52 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
   }
 });
 
+// On Windows `fs.writeFileSync(path, ...)` opens via bun_sys::openat
+// (NtCreateFile), so this exercises the O_CREAT/O_EXCL/O_TRUNC -> create
+// disposition mapping in openat_windows_impl directly. On POSIX it is the
+// plain openat(2) flag behavior. Every row matches Node.
+describe("writeFileSync numeric open-flag matrix", () => {
+  const { O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND } = constants;
+
+  type Outcome = "ZZ23456789" | "ZZ" | "0123456789ZZ" | "ENOENT" | "EEXIST";
+  const cases: [number, string, { exists: Outcome; missing: Outcome }][] = [
+    // access | disposition flags ...           label                          over existing   over missing
+    [O_WRONLY, "WRONLY", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT, "WRONLY|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_WRONLY | O_TRUNC, "WRONLY|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_TRUNC, "WRONLY|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL, "WRONLY|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, "WRONLY|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR, "RDWR", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT, "RDWR|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_RDWR | O_TRUNC, "RDWR|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT | O_TRUNC, "RDWR|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL, "RDWR|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL | O_TRUNC, "RDWR|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND, "WRONLY|APPEND", { exists: "0123456789ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND, "WRONLY|CREAT|APPEND", { exists: "0123456789ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND | O_TRUNC, "WRONLY|APPEND|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND | O_TRUNC, "WRONLY|CREAT|APPEND|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+  ];
+
+  function probe(flag: number, seeded: boolean): string {
+    using dir = tempDir("wf-flag-matrix", seeded ? { "f.txt": "0123456789" } : {});
+    const p = join(String(dir), "f.txt");
+    try {
+      writeFileSync(p, "ZZ", { flag });
+      return readFileSync(p, "utf8");
+    } catch (e: any) {
+      return e.code;
+    }
+  }
+
+  for (const [flag, name, expected] of cases) {
+    it(`${name} (O_${name.replace(/\|/g, " | O_")})`, () => {
+      expect({ exists: probe(flag, true), missing: probe(flag, false) }).toEqual(expected);
+    });
+  }
+});
+
 describe("writeFile with a non-truncating flag", () => {
   const flags = ["r+", "rs+", constants.O_RDWR];
 
@@ -661,19 +707,6 @@ describe("writeFile with a non-truncating flag", () => {
     const path = join(tmpdirSync(), "truncating.txt");
     writeFileSync(path, "0123456789");
     writeFileSync(path, "ZZ", { flag });
-    expect(readFileSync(path, "utf8")).toBe("ZZ");
-  });
-
-  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
-  // open rather than afterwards. Skipped on Windows: openat() there picks its
-  // NtCreateFile disposition from O_WRONLY and ignores O_TRUNC, so this already
-  // yields "0123456789ZZ" on main. Separate bug, separate fix.
-  it.skipIf(isWindows)("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
-    const path = join(tmpdirSync(), "append-truncating.txt");
-    writeFileSync(path, "0123456789");
-    writeFileSync(path, "ZZ", {
-      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
-    });
     expect(readFileSync(path, "utf8")).toBe("ZZ");
   });
 });

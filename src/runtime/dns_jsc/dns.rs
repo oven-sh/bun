@@ -1287,10 +1287,7 @@ pub mod get_addr_info_request {
             });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self =
-                LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe {
-                    &*addrinfo
-                })));
+            *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
         }
     }
 
@@ -1604,7 +1601,7 @@ impl GetAddrInfoRequest {
             let result_any = if addrinfo.is_null() {
                 GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
             } else {
-                let list = GetAddrInfoResult::to_list(&*addrinfo).unwrap_or_default();
+                let list = GetAddrInfoResult::to_list(&*addrinfo);
                 libuv::uv_freeaddrinfo(addrinfo.cast());
                 GetAddrInfoResultAny::List(list)
             };

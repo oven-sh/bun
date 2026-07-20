@@ -2423,7 +2423,7 @@ fn transpile_source_code_inner(
                             bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
-                            contents: bun_ptr::Cow::Borrowed(code),
+                            contents: std::borrow::Cow::Borrowed(code),
                             ..Default::default()
                         };
                         virtual_source = Some(&fallback_source);
@@ -4008,7 +4008,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_paths::fs::Path::init(path_text),
-                        contents: bun_ptr::Cow::Borrowed(contents),
+                        contents: std::borrow::Cow::Borrowed(contents),
                         ..Default::default()
                     });
                     virtual_source = virtual_source_to_use.as_ref();

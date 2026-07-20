@@ -7,28 +7,13 @@ use bun_alloc::AllocError;
 
 use super::vec_ext::VecExt;
 
-/// Managed `ArrayList` using an arbitrary allocator.
-/// Prefer using a concrete type, like `ArrayListDefault`.
-pub type ArrayList<T> = ArrayListAlignedIn<T>;
-
 /// Managed `ArrayList` using the default allocator. No overhead compared to an unmanaged
 /// `ArrayList`.
 pub type ArrayListDefault<T> = ArrayListAlignedIn<T>;
 
-/// Managed `ArrayList` using a specific kind of allocator.
-pub type ArrayListIn<T> = ArrayListAlignedIn<T>;
-
-/// Managed `ArrayListAligned` using an arbitrary allocator.
-// Rust `Vec<T>` uses `align_of::<T>()` and has no over-alignment knob. A call site that needs
-// over-alignment must wrap `T` in a `#[repr(align(N))]` newtype instead.
-pub type ArrayListAligned<T> = ArrayListAlignedIn<T>;
-
-/// Managed `ArrayListAligned` using the default allocator.
-pub type ArrayListAlignedDefault<T> = ArrayListAlignedIn<T>;
-
-/// Managed `ArrayListAligned` using a specific kind of allocator.
+/// Managed `ArrayList` wrapper around `Vec<T>`.
 ///
-/// NOTE: dropping this type (and the aliases above) runs `Drop` on each of the items.
+/// NOTE: dropping this type runs `Drop` on each of the items.
 #[derive(Default)]
 pub struct ArrayListAlignedIn<T> {
     unmanaged: Unmanaged<T>,
@@ -36,7 +21,7 @@ pub struct ArrayListAlignedIn<T> {
 
 pub(crate) type Unmanaged<T> = Vec<T>;
 
-pub type Slice<T> = Box<[T]>;
+type Slice<T> = Box<[T]>;
 
 impl<T> ArrayListAlignedIn<T> {
     pub fn items(&self) -> &[T] {

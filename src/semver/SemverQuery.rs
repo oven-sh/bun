@@ -329,7 +329,6 @@ impl List {
             range: *range,
             next: None,
         });
-        tail.range = *range;
 
         let tail_ptr = NonNull::from(&mut *tail);
 
@@ -988,7 +987,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         break 'possibly_hyphenate false;
                     }
 
-                    if !(i < input.len() && matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*')) {
+                    if !matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*') {
                         break 'possibly_hyphenate false;
                     }
 

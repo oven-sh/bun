@@ -7242,7 +7242,6 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     }
 
     let nonblock = (flags & O::NONBLOCK) != 0;
-    let overwrite = (flags & O::WRONLY) != 0 && (flags & O::APPEND) == 0;
 
     let mut access_mask: u32 = w::READ_CONTROL | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
@@ -7255,22 +7254,17 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         access_mask |= w::GENERIC_READ;
     }
 
-    let disposition: u32 = 'blk: {
-        if (flags & O::CREAT) != 0 {
-            if (flags & O::EXCL) != 0 {
-                break 'blk w::FILE_CREATE;
-            }
-            break 'blk if overwrite {
-                w::FILE_OVERWRITE_IF
-            } else {
-                w::FILE_OPEN_IF
-            };
-        }
-        if overwrite {
-            w::FILE_OVERWRITE
-        } else {
-            w::FILE_OPEN
-        }
+    // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
+    // read/write access mode only affects `access_mask` above.
+    let creat = (flags & O::CREAT) != 0;
+    let excl = (flags & O::EXCL) != 0;
+    let truncate = (flags & O::TRUNC) != 0;
+    let disposition: u32 = match (creat, excl, truncate) {
+        (true, true, _) => w::FILE_CREATE,
+        (true, false, true) => w::FILE_OVERWRITE_IF,
+        (true, false, false) => w::FILE_OPEN_IF,
+        (false, _, true) => w::FILE_OVERWRITE,
+        (false, _, false) => w::FILE_OPEN,
     };
 
     let blocking_flag: u32 = if !nonblock {

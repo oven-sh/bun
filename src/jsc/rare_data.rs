@@ -348,7 +348,6 @@ impl Default for RareData {
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-/// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
 #[derive(Default)]
 pub struct PathBuf {
     pub small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,

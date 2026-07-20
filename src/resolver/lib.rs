@@ -859,7 +859,10 @@ pub mod fs {
                 // local. Close it once we've captured the absolute path so we
                 // don't leak a directory HANDLE per tmpfile.
                 scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
-                let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
+                let flags = bun_sys::O::CREAT
+                    | bun_sys::O::WRONLY
+                    | bun_sys::O::TRUNC
+                    | bun_sys::O::CLOEXEC;
                 self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
                 let mut buf = bun_paths::PathBuffer::uninit();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;

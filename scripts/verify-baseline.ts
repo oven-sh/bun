@@ -280,6 +280,9 @@ function annotate(html: string) {
   Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
     stdin: new Blob([html]),
   });
+  // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
+  // owns its failure annotation.
+  Bun.spawnSync(["buildkite-agent", "meta-data", "set", `reported-${process.env.BUILDKITE_JOB_ID}`, "1"]);
 }
 
 if (instructionFailures > 0) {

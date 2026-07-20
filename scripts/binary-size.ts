@@ -236,6 +236,9 @@ for (const r of rows) {
 
 if (failed) {
   console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
+  // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
+  // owns its failure annotation.
+  Bun.spawnSync(["buildkite-agent", "meta-data", "set", `reported-${process.env.BUILDKITE_JOB_ID}`, "1"]);
   process.exit(1);
 }
 

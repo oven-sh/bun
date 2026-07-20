@@ -1278,10 +1278,14 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   });
 
   // An inline terminal must not keep the event loop alive after its subprocess
-  // exits: on_process_exit drives the reader to EOF and unrefs both polls, so a
-  // script that never calls terminal.close() still exits. Regression for #33882
-  // which deferred the reader's EOF to a later poll tick. POSIX-only: Windows
-  // delivers EOF via close_pseudoconsole off-thread and was not affected.
+  // exits: on POSIX on_process_exit drives the reader to EOF and unrefs both
+  // polls (drain_and_close_slave_fd); on Windows it unrefs only the writer
+  // (unref_after_inline_child_exit) and the reader stays ref'd until conhost
+  // self-exits and delivers EOF, so a script that never calls terminal.close()
+  // still exits. Regression for #33882 which deferred the reader's EOF to a
+  // later poll tick. POSIX-only assertions: on Windows EOF arrives
+  // asynchronously once conhost self-exits, so the exit callback may not have
+  // fired by the time child.exited resolves.
   test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1321,6 +1325,66 @@ describe.concurrent("Bun.spawn with terminal option", () => {
       stderr: expect.any(String),
       exitCode: 0,
     });
+  });
+
+  // On Windows, Subprocess::on_process_exit used to fire ClosePseudoConsole
+  // immediately; that routes teardown through conhost's PtySignalInputThread,
+  // which on Server 2019 races the ConsoleIoThread still processing the
+  // child's last WriteConsole and can drop the final render. The inline
+  // pseudoconsole now releases its ConDrv \Reference handle at spawn time so
+  // conhost exits via its IoThread (sequentially after the last write) and the
+  // reader sees every byte before EOF.
+  test("inline terminal: fast-exiting child's output is delivered before exit callback", async () => {
+    let output = "";
+    let outputAtExit = "";
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('LAST-FRAME', () => process.exit(0))"],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          outputAtExit = output;
+          eof.resolve();
+        },
+      },
+    });
+    try {
+      await proc.exited;
+      await eof.promise;
+      // The exit callback fires on reader EOF: on Windows that is conhost closing
+      // the output pipe from its IoThread; on POSIX it is drain_and_close_slave_fd.
+      expect(outputAtExit).toContain("LAST-FRAME");
+      // After EOF conhost has exited; resize() must keep its no-throw contract
+      // (ResizePseudoConsole would fail on the broken signal pipe).
+      expect(() => proc.terminal!.resize(100, 40)).not.toThrow();
+    } finally {
+      proc.terminal?.close();
+    }
+  });
+
+  // Cross-platform loop-exit check: after an inline terminal's child exits,
+  // nothing else in the inner script refs the event loop. POSIX drains to EOF
+  // synchronously; on Windows the reader stays ref'd only until conhost
+  // self-exits and delivers EOF. Either way the inner process must not hang.
+  test("process exits after inline-terminal child exits without terminal.close()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await Bun.spawn([process.execPath, "-e", "process.stdout.write('ok')"], {
+           env: process.env,
+           terminal: { data() {}, exit() {} },
+         }).exited;`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
   });
 
   // https://github.com/oven-sh/bun/issues/33187

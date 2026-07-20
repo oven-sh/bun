@@ -71,8 +71,27 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
+  // The HMR runtime reads this symbol-keyed callback off `globalThis` (which is
+  // `window` inside happy-dom's script context) and passes its internal hooks.
+  let hmrEventHookInstalled = false;
+  let pendingHotUpdateAcks = 0;
+  let hmrScriptQueued = false;
+  const sendHmrAck = () => {
+    if (pendingHotUpdateAcks === 0) return;
+    pendingHotUpdateAcks--;
+    process.send({ type: "received-hmr-event", args: [] });
+  };
+  window[Symbol.for("bun testing api, may change at any time")] = internal => {
     window.internal = internal;
+    if (typeof internal.onEvent === "function") {
+      hmrEventHookInstalled = true;
+      // Ack a hot update only once the new module code has actually run. Node's
+      // Blob.arrayBuffer() resolves on a later macrotask than the WS listener's
+      // setImmediate, so acking from the WS listener would race the eval.
+      // Full reloads are not acked here; the new window acks from the
+      // `[Bun] Hot-module-reloading socket connected` handler after loadPage.
+      internal.onEvent("bun:afterUpdate", sendHmrAck);
+    }
   };
 
   const original_window_fetch = window.fetch;
@@ -91,7 +110,17 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "u".charCodeAt(0) || data[0] === "e".charCodeAt(0)) {
+        if (data[0] === "u".charCodeAt(0) && hmrEventHookInstalled) {
+          // JS updates queue a script tag and ack via bun:afterUpdate once it
+          // evals; everything else (CSS, reloads, route reloads) acks here on
+          // the next tick when no script was queued.
+          pendingHotUpdateAcks++;
+          hmrScriptQueued = false;
+          isUpdating = setImmediate(() => {
+            isUpdating = null;
+            if (!hmrScriptQueued) sendHmrAck();
+          });
+        } else if (data[0] === "e".charCodeAt(0) || data[0] === "u".charCodeAt(0)) {
           isUpdating = setImmediate(() => {
             process.send({ type: "received-hmr-event", args: [] });
             isUpdating = null;
@@ -147,6 +176,7 @@ function createWindow(windowUrl) {
     value: function (element) {
       if (element instanceof ScriptTag) {
         assert(element.src.startsWith("blob:"));
+        hmrScriptQueued = true;
         const blob = objectURLRegistry.get(element.src);
         assert(blob);
         // Capture the window this script was appended to. Rapid HMR reloads

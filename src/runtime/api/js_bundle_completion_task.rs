@@ -41,7 +41,6 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
@@ -668,12 +667,6 @@ impl JSBundleCompletionTask {
                             global_this,
                             result,
                         );
-                        if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
-                            // SAFETY: `as_` returned a live `*mut BuildArtifact`
-                            // owned by the JS wrapper; the borrow lasts only for
-                            // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
-                        }
                         to_assign_on_sourcemap = JSValue::ZERO;
                     }
 

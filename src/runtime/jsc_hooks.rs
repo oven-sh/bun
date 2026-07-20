@@ -1850,7 +1850,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {

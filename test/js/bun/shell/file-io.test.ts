@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import * as fs from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -47,6 +49,82 @@ describe("IOWriter file output redirection", () => {
 
   describe("special file types", () => {
     TestBuilder.command`echo "disappear" > /dev/null`.exitCode(0).stdout("").runAsTest("write to /dev/null");
+
+    // A FIFO opened by path for `>` must take the pollable path; once the pipe
+    // buffer fills, write(2) returns EAGAIN and the writer has to poll for
+    // writability instead of treating the fd as an EAGAIN-free regular file.
+    test.concurrent.skipIf(!isPosix)("redirect to a FIFO whose reader drains slowly applies backpressure", async () => {
+      const payloadLen = 200 * 1024;
+      using dir = tempDir("shell-fifo-redirect", {
+        "fixture.ts": /* ts */ `
+          import { $ } from "bun";
+          import * as fs from "node:fs";
+          const fifo = process.env.FIFO!;
+          // Reader (nonblocking so open succeeds with no writer yet).
+          const rfd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          // Writer used to pre-fill the pipe buffer so the shell's first
+          // write is guaranteed to hit EAGAIN regardless of drain timing.
+          const wfd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          const fill = Buffer.alloc(4096, "y");
+          try { while (true) fs.writeSync(wfd, fill); } catch {}
+
+          const big = Buffer.alloc(${payloadLen}, "z").toString();
+          let shell: Awaited<ReturnType<typeof $>> | undefined;
+          const pending = $\`echo \${big} > \${fifo}\`.quiet().nothrow().then(r => (shell = r));
+
+          const buf = Buffer.alloc(65536);
+          let zs = 0;
+          while (!shell) {
+            let n = 0;
+            try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; }
+            for (let i = 0; i < n; i++) if (buf[i] === 0x7a) zs++;
+            await new Promise<void>(r => setImmediate(r));
+          }
+          await pending;
+          fs.closeSync(wfd);
+          // Drain whatever is left now that all writers are closed.
+          while (true) {
+            let n = 0;
+            try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; n = 0; }
+            if (n === 0) break;
+            for (let i = 0; i < n; i++) if (buf[i] === 0x7a) zs++;
+          }
+          fs.closeSync(rfd);
+          console.log(JSON.stringify({ exitCode: shell!.exitCode, zs }));
+        `,
+      });
+      const fifo = join(String(dir), "out.fifo");
+      await using mk = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
+      await mk.exited;
+
+      // Hold a read end in the parent so the FIFO survives a child abort
+      // without the tempDir teardown racing an open writer.
+      const holder = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "fixture.ts"],
+          cwd: String(dir),
+          env: { ...bunEnv, FIFO: fifo },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+        } catch {
+          parsed = stdout;
+        }
+        // echo appends "\n" (0x0a, not 'z'), so the 'z' count equals payloadLen.
+        expect({ parsed, stderr, exitCode }).toEqual({
+          parsed: { exitCode: 0, zs: payloadLen },
+          stderr: expect.any(String),
+          exitCode: 0,
+        });
+      } finally {
+        fs.closeSync(holder);
+      }
+    });
   });
 
   describe("writer queue and bump behavior", () => {

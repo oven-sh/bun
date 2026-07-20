@@ -196,11 +196,22 @@ describe("bun:jsc", () => {
     // sampled regardless of how fast the optimized code runs.
     const sampleInterval = 50;
 
-    // fib(26) keeps each call long enough (~400k recursive calls) to collect
-    // samples at a 50us interval while staying within the per-test timeout on
-    // slow debug builds; fib(30) takes >4s per call there.
+    // Keep the JS thread busy for a fixed wall-clock window so the sampler
+    // thread is guaranteed time to fire regardless of how fast the JIT makes
+    // fib() or how slowly the sampler thread wakes after start()/pause(). A
+    // single fib(n) call has no such lower bound: once JIT-compiled, fib(26)
+    // can complete inside one 50us sample interval on fast release hardware.
+    const work = () => {
+      const start = performance.now();
+      let acc = 0;
+      do {
+        acc += fib(18);
+      } while (performance.now() - start < 10);
+      return acc;
+    };
+
     // First profile call
-    const result1 = profile(() => fib(26), sampleInterval);
+    const result1 = profile(work, sampleInterval);
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -208,14 +219,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(() => fib(26), sampleInterval);
+    const result2 = profile(work, sampleInterval);
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(() => fib(26), sampleInterval);
+    const result3 = profile(work, sampleInterval);
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();

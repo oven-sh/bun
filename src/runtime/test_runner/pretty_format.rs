@@ -1658,7 +1658,7 @@ impl<'a> Formatter<'a> {
                         let build = unsafe { &*build };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
                             .is_err()
                         {
                             self.failed = true;

@@ -246,7 +246,6 @@ pub mod options {
     /// `OutputFile.init` argument struct.
     pub use super::output_file::Options as OutputFileInit;
     pub use super::output_file::OptionsData as OutputFileData;
-    pub use super::output_file::Value as OutputValue;
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;

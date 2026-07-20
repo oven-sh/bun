@@ -1278,7 +1278,7 @@ mod draft {
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
                 npmrc_path,
-                bun_ast::ToSourceOpts { convert_bom: true },
+                bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(s) => s,
                 Err(err) => {

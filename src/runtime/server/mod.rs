@@ -2078,7 +2078,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The packed `AnyServer` is a pure function of the (now-stable) heap
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
-        // `TaggedPointer::init`.
+        // `TaggedPtr::init`.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
         unsafe {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
@@ -3688,7 +3688,7 @@ impl AnyServer {
             AnyServerTag::DebugHTTPSServer => 1021,
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
-        bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
+        bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
     }
 
     /// Shared borrow of the process-static VM. Routes through

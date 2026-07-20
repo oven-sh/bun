@@ -1521,7 +1521,7 @@ impl Store {
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) struct Pollable {
-    repr: bun_collections::TaggedPointer,
+    repr: bun_collections::TaggedPtr,
 }
 
 impl Pollable {
@@ -1533,7 +1533,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
+            repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
         }
     }
 
@@ -1541,7 +1541,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::from(val),
+            repr: bun_collections::TaggedPtr::from(val),
         }
     }
 

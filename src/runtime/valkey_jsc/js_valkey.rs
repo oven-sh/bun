@@ -237,7 +237,7 @@ impl SubscriptionCtx {
         let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
-                channel_name.to_bun_string(global_object).unwrap_or_default()
+                bun_core::OwnedString::new(channel_name.to_bun_string(global_object)?)
             );
             return Ok(());
         };

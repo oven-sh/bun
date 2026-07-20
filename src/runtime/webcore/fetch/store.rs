@@ -169,9 +169,9 @@ impl FetchStore {
             return Ok(None);
         }
         if !value.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "fetch: 'store' must be an object"
-            )));
+            return Err(
+                global.throw_invalid_arguments(format_args!("fetch: 'store' must be an object"))
+            );
         }
         let Some(ty) = value.get(global, "type")? else {
             return Ok(None);

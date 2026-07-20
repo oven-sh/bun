@@ -1,8 +1,8 @@
 import { define } from "../../codegen/class-definitions";
 
-// [jsName, arity] — arity is the minimum arg count the Rust impl enforces
-// (see js_valkey_functions.rs): cmd_noargs→0, cmd_key/cmd_key_varargs→1,
-// cmd_key_value→2, cmd_key_value_value2→3, cmd_strings_varargs→0.
+// [jsName, length] — `length` is the JS-visible `function.length` (count of
+// required positional params per the Redis command docs, before the first
+// optional/rest). It is NOT the Rust-side validation minimum.
 const commands: ReadonlyArray<readonly [name: string, length: number]> = [
   ["get", 1],
   ["getBuffer", 1],
@@ -164,6 +164,11 @@ const commands: ReadonlyArray<readonly [name: string, length: number]> = [
   ["rename", 2],
   ["renamenx", 2],
 ];
+
+const reserved = new Set(["connected", "onconnect", "onclose", "bufferedAmount", "connect", "close", "send", "duplicate"]);
+for (const [name] of commands) {
+  if (reserved.has(name)) throw new Error(`valkey.classes.ts: command '${name}' collides with a reserved prototype slot`);
+}
 
 const commandProto = Object.fromEntries(commands.map(([name, length]) => [name, { fn: name, length }]));
 

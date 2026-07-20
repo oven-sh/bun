@@ -131,6 +131,28 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     return m![1];
   }
 
+  // Source-map VLQ, matching bun_base64::VLQ::encode (standard base64 alphabet,
+  // low bit = sign, bit 5 = continuation).
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function vlq(value: number): string {
+    let v = value >= 0 ? value << 1 : (Math.abs(value) << 1) | 1;
+    // coerce to u32 so the >>> below matches the Rust `u32` shift
+    v = v >>> 0;
+    let out = "";
+    do {
+      let digit = v & 31;
+      v >>>= 5;
+      if (v !== 0) digit |= 32;
+      out += B64[digit];
+    } while (v !== 0);
+    return out;
+  }
+  function u64AsTwoVlqs(v: bigint): string {
+    const hi = Number((v >> 32n) & 0xffff_ffffn) | 0;
+    const lo = Number(v & 0xffff_ffffn) | 0;
+    return vlq(hi) + vlq(lo);
+  }
+
   test("version char is '3'/'4' and a fault context encodes pc + registers", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -151,24 +173,21 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     // payload = <platform><cmd><version><sha7>... ; version char is at index 2.
     expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
 
-    // Strip any trailing `/view` so the suffix assertions see only the
-    // encoded body.
     const body = payload.replace(/\/view$/, "");
 
-    // Reason code '2' (SegmentationFault) precedes the fault address. After
-    // the two-VLQ fault address the v3 block begins: one StackLine for the
-    // fault pc (always present, so never `_` here), then VLQ(4)='I' for the
-    // four synthetic registers, then eight VLQs of register halves.
-    // v1/v2 would end immediately after the fault-address VLQs.
-    const reasonIdx = body.lastIndexOf("2A");
-    expect(reasonIdx, `no segfault reason in payload=${body}`).toBeGreaterThan(0);
-    const afterReason = body.slice(reasonIdx);
-    // Reason char '2' + write_u64_as_two_vlqs(0xDEADBEEF) is at most 9 bytes
-    // ('2' + VLQ(0)=1 + VLQ(i32)<=7). v3 must have substantially more after
-    // it: a StackLine (>=1 byte) + 'I' + 8 VLQs (>=8 bytes).
-    expect(afterReason.length, `v3 register block missing; tail=${afterReason}`).toBeGreaterThanOrEqual(9 + 1 + 1 + 8);
-    // Register count VLQ(4)='I' must appear in the tail.
-    expect(afterReason).toContain("I");
+    // The fixture passes regs = [0x1111, 0x2222, 0x3333, 0xDEADBEEF00000000].
+    // Expected v3 tail: VLQ(4) count, then four 2-VLQ register values.
+    const sentinels = [0x1111n, 0x2222n, 0x3333n, 0xdead_beef_0000_0000n];
+    const regTail = vlq(sentinels.length) + sentinels.map(u64AsTwoVlqs).join("");
+    expect(body.endsWith(regTail), `want suffix ${regTail}, payload=${body}`).toBe(true);
+
+    // Between the reason payload and the register tail sits the
+    // StackLine-encoded pc (ASLR-adjusted), which the body must still carry.
+    const reason = "2" + u64AsTwoVlqs(0xdead_beefn);
+    const before = body.slice(0, -regTail.length);
+    expect(before.lastIndexOf(reason), `reason '${reason}' not in payload=${body}`).toBeGreaterThan(0);
+    const pcStackLine = before.slice(before.lastIndexOf(reason) + reason.length);
+    expect(pcStackLine.length, `no pc StackLine; payload=${body}`).toBeGreaterThan(0);
 
     expect(exitCode).not.toBe(0);
   });
@@ -191,10 +210,8 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
 
     const body = payload.replace(/\/view$/, "");
-    // OutOfMemory reason code is '9' with no trailing data. v3 leaves
-    // non-fault reasons byte-identical to v1 so Panic ('0', base64 to EOS)
-    // and ZigError ('8', identifier to EOS) stay decodable: the body must
-    // end exactly at '9', no `_A` suffix.
+    // Non-fault reasons stay byte-identical to v1 (so '0'/'8' remain
+    // end-of-string terminated): body ends at reason '9', no `_A` suffix.
     expect(body.endsWith("A9"), `payload=${body}`).toBe(true);
     expect(body.endsWith("_A"), `payload=${body}`).toBe(false);
 

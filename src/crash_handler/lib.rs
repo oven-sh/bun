@@ -671,10 +671,9 @@ mod draft {
             }
         }
 
-        /// True for hardware faults delivered via a signal/exception handler
-        /// (reason codes '2'..'7'). These are the only variants that ever carry
-        /// a `FaultRegisters` context and whose reason payload is
-        /// self-delimiting, so the v3/v4 register block is appended for them.
+        /// Hardware faults (reason codes '2'..'7'): the only variants with a
+        /// `FaultRegisters` context and a self-delimiting reason payload, so
+        /// the v3/v4 register block is appended for them only.
         const fn is_fault(&self) -> bool {
             matches!(
                 self,
@@ -2608,14 +2607,9 @@ mod draft {
     ///
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
-    /// '3' - same as '1' plus, for hardware-fault reasons '2'..'7' only, a
-    ///       trailing register block after the reason payload: one
-    ///       `StackLine`-encoded fault pc, a VLQ register count, then
-    ///       count * 2-VLQ register values. Reasons '0'/'1'/'8'/'9' are
-    ///       byte-identical to v1, so a decoder that only knows '1'/'2' can
-    ///       treat '3' as '1': the fault reasons' payloads are self-delimiting
-    ///       and the appended block is additive; the non-fault reasons are
-    ///       unchanged.
+    /// '3' - '1' plus a trailing register block (StackLine pc, VLQ count,
+    ///       count * 2-VLQ regs) for fault reasons '2'..'7' only; other
+    ///       reasons are byte-identical to '1'.
     /// '4' - same as '3' but this build is known to be a canary build
     const VERSION_CHAR: &str = if Environment::IS_CANARY { "4" } else { "3" };
 
@@ -2937,12 +2931,9 @@ mod draft {
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
         }
 
-        // v3/v4 register block. Only emitted for hardware-fault reasons
-        // ('2'..'7'), whose payloads are self-delimiting (fixed VLQ count or
-        // empty). Reasons '0' (Panic: base64 to end-of-string) and '8'
-        // (ZigError: identifier to end-of-string) are left byte-identical to
-        // v1/v2 so a decoder can still read the payload to end-of-string; they
-        // never carry a fault context anyway. '1'/'9' likewise never do.
+        // v3/v4 register block: fault reasons only ('2'..'7', self-delimiting
+        // payloads). '0'/'8' read payload to end-of-string so appending here
+        // would make them ambiguous; '0'/'1'/'8'/'9' never carry a context.
         if opts.reason.is_fault() {
             match opts.regs {
                 None => {

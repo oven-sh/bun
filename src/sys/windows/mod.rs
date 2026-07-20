@@ -5253,8 +5253,7 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 #[cfg(test)]
 mod tests {
     use super::{
-        E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _,
-        system_volume_device,
+        E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _, system_volume_device,
     };
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.

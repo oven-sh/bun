@@ -349,6 +349,61 @@ describe.concurrent("socket", () => {
     }
   }, 60_000);
 
+  it("socket.timeout does not fire early for values >= 14400s (long-wheel wrap)", async () => {
+    // The long-timeout wheel has 240 one-minute slots. 14400s = 240 minutes used to wrap
+    // to the current slot and fire on the next sweep. Run in a fresh process so the
+    // group's tick counters start at zero and the wrap is deterministic.
+    const fixture = /* js */ `
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open() {}, data() {} },
+      });
+      let longFired = false;
+      let ticks = 0;
+      const a = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open() {}, data() {}, close() {}, error() {},
+          timeout() { longFired = true; },
+        },
+      });
+      const b = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open() {}, data() {}, close() {}, error() {},
+          timeout(s) {
+            ticks++;
+            a.timeout(14400);
+            if (ticks >= 2) {
+              console.log(longFired ? "EARLY" : "OK");
+              process.exit(longFired ? 1 : 0);
+            }
+            s.timeout(1);
+          },
+        },
+      });
+      a.timeout(14400);
+      b.timeout(1);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  }, 60_000);
+
   it("should allow large amounts of data to be sent and received", async () => {
     expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
   }, 60_000);

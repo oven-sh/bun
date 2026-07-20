@@ -119,6 +119,9 @@ void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int
 
 __attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
     if (minutes) {
+        /* The long-timeout wheel has 240 one-minute slots; >= 240 would wrap to the
+         * current slot and fire on the next sweep. Clamp to the last representable slot. */
+        if (minutes > 239) minutes = 239;
         s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
     } else {
         s->long_timeout = 255;
@@ -127,6 +130,7 @@ __attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s
 
 void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) {
     if (minutes) {
+        if (minutes > 239) minutes = 239;
         c->long_timeout = ((unsigned int)c->group->long_timestamp + minutes) % 240;
     } else {
         c->long_timeout = 255;

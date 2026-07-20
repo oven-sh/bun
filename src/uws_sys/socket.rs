@@ -460,19 +460,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Splits >240s onto the minute-granularity long-timeout wheel.
+    /// Splits >240s onto the minute-granularity long-timeout wheel. Rounds up
+    /// so the long timer never fires earlier than requested; the C layer clamps
+    /// the minute count to the 240-slot wheel's maximum (239).
     pub fn set_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
             connected s => if seconds > 240 {
                 s.set_timeout(0);
-                s.set_long_timeout(seconds / 60);
+                s.set_long_timeout(seconds.div_ceil(60));
             } else {
                 s.set_timeout(seconds);
                 s.set_long_timeout(0);
             },
             connecting c => if seconds > 240 {
                 c.timeout(0);
-                c.long_timeout(seconds / 60);
+                c.long_timeout(seconds.div_ceil(60));
             } else {
                 c.timeout(seconds);
                 c.long_timeout(0);

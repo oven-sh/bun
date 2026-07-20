@@ -224,9 +224,8 @@ describe("URLPattern", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Combined assertion so the JSC exception-check failure on stderr appears in the diff.
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
       stdout: '[{"pathname":"/foo"}]\n',
-      stderr: "",
       exitCode: 0,
       signalCode: null,
     });

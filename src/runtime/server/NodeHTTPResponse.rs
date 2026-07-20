@@ -1351,6 +1351,9 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
+            // Body already delivered: re-arming onData would overwrite a
+            // pipelined request's userData on the shared HttpResponseData.
+            || self.body_read_state.get() != BodyReadState::Pending
         {
             return Ok(JSValue::FALSE);
         }

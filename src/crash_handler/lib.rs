@@ -1678,7 +1678,11 @@ mod draft {
             let mut stackaddr: *mut c_void = core::ptr::null_mut();
             let mut stacksize: libc::size_t = 0;
             let mut guardsize: libc::size_t = 0;
-            let ok = libc::pthread_attr_getstack(&raw const attr, &raw mut stackaddr, &raw mut stacksize) == 0
+            let ok = libc::pthread_attr_getstack(
+                &raw const attr,
+                &raw mut stackaddr,
+                &raw mut stacksize,
+            ) == 0
                 && libc::pthread_attr_getguardsize(&raw const attr, &raw mut guardsize) == 0;
             libc::pthread_attr_destroy(&raw mut attr);
             if !ok {

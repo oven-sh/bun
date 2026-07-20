@@ -693,21 +693,35 @@ static JSNodeHTTPServerSocket* getNodeHTTPServerSocket(us_socket_t* socket)
 }
 
 template<bool SSL>
-static WebCore::JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket)
+static WebCore::JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket, void* ctx)
 {
     auto* serverSocket = getNodeHTTPServerSocket<SSL>(socket);
     if (!serverSocket) {
         return nullptr;
     }
-    return serverSocket->currentResponseObject.get();
+    auto* current = serverSocket->currentResponseObject.get();
+    if (!ctx || (current && current->m_ctx == ctx)) {
+        return current;
+    }
+    /* A pipelined request isn't currentResponseObject yet; find it in the
+     * queued list by native ctx so cached ondata/onabort slots are read off
+     * its own wrapper, not the in-flight response's. */
+    Locker locker { serverSocket->m_pipelinedResponsesLock };
+    for (auto& entry : serverSocket->m_pipelinedResponses) {
+        auto* res = entry.get();
+        if (res && res->m_ctx == ctx) {
+            return res;
+        }
+    }
+    return current;
 }
 
-extern "C" JSC::EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
+extern "C" JSC::EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket, void* ctx)
 {
     if (is_ssl) {
-        return JSValue::encode(getNodeHTTPResponse<true>(socket));
+        return JSValue::encode(getNodeHTTPResponse<true>(socket, ctx));
     }
-    return JSValue::encode(getNodeHTTPResponse<false>(socket));
+    return JSValue::encode(getNodeHTTPResponse<false>(socket, ctx));
 }
 
 extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl, us_socket_t* socket)

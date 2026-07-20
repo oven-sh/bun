@@ -36,7 +36,7 @@ describe("fetch store", () => {
     expect(data.request.method).toBe("GET");
     expect(data.request.url).toContain("/hello");
     expect(data.response.status).toBe(200);
-    expect(data.response.headers["content-type"]).toBe("application/json");
+    expect(data.response.headers).toContainEqual(["content-type", "application/json"]);
     expect(typeof data.response.body).toBe("string");
     expect(JSON.parse(data.response.body)).toEqual({ n: 1, path: "/hello" });
   });
@@ -105,6 +105,38 @@ describe("fetch store", () => {
       })
     ).text();
     expect({ a, b, hits }).toEqual({ a: "1", b: "1", hits: 1 });
+  });
+
+  test("dir: repeated response headers (Set-Cookie) survive JSON round-trip", async () => {
+    using cacheDir = tempDir("fetch-store-setcookie", {});
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        hits++;
+        return new Response("ok", {
+          headers: [
+            ["set-cookie", "a=1"],
+            ["set-cookie", "b=2"],
+          ],
+        });
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const url = `http://localhost:${server.port}/cookies`;
+
+    await (await fetch(url, { store })).text();
+    const r2 = await fetch(url, { store });
+    expect(r2.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
+    expect(hits).toBe(1);
+
+    const files = readdirSync(String(cacheDir)).filter(f => f.endsWith(".json"));
+    const data = JSON.parse(readFileSync(join(String(cacheDir), files[0]), "utf8"));
+    const cookies = data.response.headers.filter((h: [string, string]) => h[0] === "set-cookie");
+    expect(cookies).toEqual([
+      ["set-cookie", "a=1"],
+      ["set-cookie", "b=2"],
+    ]);
   });
 
   test("dir: binary body is base64 encoded", async () => {

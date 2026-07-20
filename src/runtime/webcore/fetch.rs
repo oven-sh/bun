@@ -1898,7 +1898,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         compress = None;
     }
 
-    if url.is_s3() {
+    let is_s3 = url.is_s3();
+    if is_s3 {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
         let env_creds = s3_credentials_from_env(
@@ -2081,10 +2082,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Record/replay store: key the request now that method/url/headers/body
     // are finalised, and either short-circuit on a hit or carry the key into
     // the tasklet so the response can be persisted once fully buffered.
-    // Streamed / sendfile bodies are unhashable, so the store is bypassed for
-    // them entirely (a false hit would replay the wrong body's response).
+    // s3:// is bypassed (the signing block above has already rewritten `url`
+    // to https:// and installed per-second SigV4 headers, which would give a
+    // fresh key on every call). Streamed bodies are bypassed too (unhashable).
     let store_request: Option<(FetchStore, store::StoredRequest)> = match fetch_store {
-        Some(store_) if !url.is_s3() && matches!(&body, HTTPRequestBody::AnyBlob(_)) => {
+        Some(store_) if !is_s3 && matches!(&body, HTTPRequestBody::AnyBlob(_)) => {
             let s = body.slice();
             let body_bytes = if s.is_empty() { None } else { Some(s) };
             let empty_headers;

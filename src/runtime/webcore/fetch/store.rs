@@ -318,24 +318,28 @@ fn write_json_body(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
 }
 
 fn write_json_headers(out: &mut Vec<u8>, headers: &[(Box<[u8]>, Box<[u8]>)]) {
-    out.push(b'{');
+    // Array of [name, value] pairs (same shape as `new Headers([...])`) so
+    // repeated names like Set-Cookie survive JSON.parse / jq / formatters.
+    out.push(b'[');
     for (i, (name, value)) in headers.iter().enumerate() {
         if i > 0 {
             out.push(b',');
         }
+        out.push(b'[');
         let _ = write!(
             out,
             "{}",
             format_json_string_utf8(name, JSONFormatterUTF8Options::default())
         );
-        out.push(b':');
+        out.push(b',');
         let _ = write!(
             out,
             "{}",
             format_json_string_utf8(value, JSONFormatterUTF8Options::default())
         );
+        out.push(b']');
     }
-    out.push(b'}');
+    out.push(b']');
 }
 
 fn write_dir_entry(dir: &[u8], req: &StoredRequest, resp: &StoredResponse) -> bun_sys::Result<()> {
@@ -414,15 +418,33 @@ fn parse_stored_json(bytes: &[u8]) -> Option<StoredResponse> {
 
     let mut headers: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     if let Some(h) = response.get(b"headers") {
-        h.for_each_property(|k, _loc, v| {
-            let k = k.to_vec().into_boxed_slice();
-            let v = v
-                .as_string(&bump)
-                .unwrap_or(b"")
-                .to_vec()
-                .into_boxed_slice();
-            headers.push((k, v));
-        });
+        if let Some(mut arr) = h.as_array() {
+            while let Some(pair) = arr.next() {
+                let Some(mut it) = pair.as_array() else {
+                    continue;
+                };
+                let k = it
+                    .next()
+                    .and_then(|e| e.as_string(&bump))
+                    .unwrap_or(b"")
+                    .to_vec()
+                    .into_boxed_slice();
+                let v = it
+                    .next()
+                    .and_then(|e| e.as_string(&bump))
+                    .unwrap_or(b"")
+                    .to_vec()
+                    .into_boxed_slice();
+                headers.push((k, v));
+            }
+        } else {
+            h.for_each_property(|k, _loc, v| {
+                headers.push((
+                    k.to_vec().into_boxed_slice(),
+                    v.as_string(&bump).unwrap_or(b"").to_vec().into_boxed_slice(),
+                ));
+            });
+        }
     }
 
     let body: Vec<u8> = match response.get(b"body") {

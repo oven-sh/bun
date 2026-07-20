@@ -218,7 +218,7 @@ To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.
 ```ts
 Bun.serve({
   fetch(req) {
-    // parse `Range` header
+    // parse `Range` (this example handles "start-end" and open-ended "start-", not suffix "-N" ranges)
     const [start = 0, end = Infinity] = req.headers
       .get("Range") // "bytes=0-100"
       .split("=") // ["bytes", "0-100"]

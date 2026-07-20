@@ -459,12 +459,14 @@ impl Listener {
                     &mut errno,
                 )
             }),
+            #[cfg(windows)]
             UnixOrHost::Fd(fd) => {
+                // libuv CRT-fd <-> SOCKET mapping is not wired up here yet.
                 let err = jsc::SystemError {
                     errno: bun_sys::SystemErrno::EINVAL as c_int,
                     code: bun_core::String::static_("EINVAL"),
                     message: bun_core::String::static_(
-                        "Bun does not support listening on a file descriptor.",
+                        "Bun does not support listening on a file descriptor on Windows.",
                     ),
                     syscall: bun_core::String::static_("listen"),
                     fd: fd.uv(),
@@ -474,6 +476,17 @@ impl Listener {
                 };
                 return Err(global.throw_value(err.to_error_instance(global)));
             }
+            #[cfg(not(windows))]
+            UnixOrHost::Fd(fd) => this_ref.group.with_mut(|g| {
+                g.listen_fd(
+                    kind,
+                    secure_ctx_ptr,
+                    fd.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
+                    socket_flags,
+                    size_of::<*mut c_void>() as c_int,
+                    &mut errno,
+                )
+            }),
         };
         if listen_socket.is_null() {
             // Note: reshaped for borrowck — extract hostname bytes for error formatting

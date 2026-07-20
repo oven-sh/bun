@@ -2861,30 +2861,35 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(i32),
         }
         let (addr, http1, options) = {
             let cfg = &this_ref.get().config;
-            let addr = match &cfg.address {
-                server_config::Address::Tcp { port, hostname } => {
-                    let mut host: *const c_char = core::ptr::null();
-                    if let Some(existing) = hostname.as_deref() {
-                        let bytes = existing.as_bytes();
-                        if bytes.len() > 2 && bytes[0] == b'[' {
-                            // strip "[" and "]" from IPv6 literal
-                            let inner = &bytes[1..bytes.len() - 1];
-                            host_buff[..inner.len()].copy_from_slice(inner);
-                            host_buff[inner.len()] = 0;
-                            host = host_buff.as_ptr().cast::<c_char>();
-                        } else {
-                            host = existing.as_ptr();
+            let addr = if let Some(fd) = cfg.listen_fd {
+                Addr::Fd(fd)
+            } else {
+                match &cfg.address {
+                    server_config::Address::Tcp { port, hostname } => {
+                        let mut host: *const c_char = core::ptr::null();
+                        if let Some(existing) = hostname.as_deref() {
+                            let bytes = existing.as_bytes();
+                            if bytes.len() > 2 && bytes[0] == b'[' {
+                                // strip "[" and "]" from IPv6 literal
+                                let inner = &bytes[1..bytes.len() - 1];
+                                host_buff[..inner.len()].copy_from_slice(inner);
+                                host_buff[inner.len()] = 0;
+                                host = host_buff.as_ptr().cast::<c_char>();
+                            } else {
+                                host = existing.as_ptr();
+                            }
                         }
+                        Addr::Tcp { port: *port, host }
                     }
-                    Addr::Tcp { port: *port, host }
+                    server_config::Address::Unix(unix) => Addr::Unix {
+                        ptr: unix.as_ptr().cast(),
+                        len: unix.as_bytes().len(),
+                    },
                 }
-                server_config::Address::Unix(unix) => Addr::Unix {
-                    ptr: unix.as_ptr().cast(),
-                    len: unix.as_bytes().len(),
-                },
             };
             (addr, cfg.http1, cfg.get_usockets_options())
         };
@@ -3003,6 +3008,38 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         z,
                         options,
                     );
+                }
+            }
+            Addr::Fd(fd) => {
+                // Adopted-descriptor listen (node:http `listen({fd})`). No
+                // HTTP/3 companion socket is created for an adopted fd.
+                #[cfg(windows)]
+                {
+                    // Matches Listener.rs: the CRT-fd <-> SOCKET mapping is
+                    // not wired up, so refuse instead of adopting garbage.
+                    let _ = (fd, http1);
+                    let _ = global.throw_invalid_arguments(format_args!(
+                        "listening on a file descriptor is not supported on Windows"
+                    ));
+                }
+                #[cfg(not(windows))]
+                if http1 {
+                    // SAFETY: app is a live uws handle owned by this server. No
+                    // `&*this` is live across this call.
+                    unsafe {
+                        (*app).listen_fd(
+                            Some(trampoline::on_listen::<SSL, DEBUG>),
+                            this.cast::<c_void>(),
+                            fd,
+                            options,
+                        );
+                    }
+                } else {
+                    // ServerConfig rejects fd+http3-only; a no-listener server
+                    // must never start silently if that invariant regresses.
+                    let _ = global.throw_invalid_arguments(format_args!(
+                        "fd cannot be used with an http3-only server"
+                    ));
                 }
             }
         }

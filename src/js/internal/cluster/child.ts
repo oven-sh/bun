@@ -2,7 +2,6 @@ const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
 
 const FunctionPrototype = Function.prototype;
@@ -12,6 +11,8 @@ const ObjectAssign = Object.assign;
 const cluster = new EventEmitter();
 const handles = new Map();
 const indexes = new Map();
+const callbacks = new Map();
+let seq = 0;
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
@@ -52,8 +53,15 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
-    if (message.act === "newconn") onconnection(message, handle);
+    if (message.ack !== undefined && callbacks.has(message.ack)) {
+      const callback = callbacks.get(message.ack);
+      callbacks.delete(message.ack);
+      callback(message, handle);
+    } else if (message.act === "newconn") onconnection(message, handle);
     else if (message.act === "disconnect") worker._disconnect(true);
+    // Node re-emits every NODE_CLUSTER message on the process as
+    // 'internalMessage' after the cluster's own handler has run.
+    process.emit("internalMessage", message, handle);
   }
 };
 
@@ -228,8 +236,15 @@ function onconnection(message, handle) {
 }
 
 function send(message, cb?) {
-  return sendHelper(message, null, cb);
+  // Node routes cluster messages through process.send (so user monkey-patches
+  // observe them); replies are matched to `cb` by seq in onmessage.
+  if (!process.connected || typeof process.send !== "function") return false;
+  message = { cmd: "NODE_CLUSTER", ...message, seq };
+  if (cb) callbacks.set(seq, cb);
+  seq += 1;
+  return process.send(message);
 }
+cluster._sendInternal = send;
 
 // Extend generic Worker with methods specific to worker processes.
 Worker.prototype.disconnect = function () {

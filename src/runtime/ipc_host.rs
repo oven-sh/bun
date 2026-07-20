@@ -158,13 +158,23 @@ pub(crate) fn do_send(
         }
     }
 
-    let status = ipc_data.serialize_and_send(
-        global_object,
-        message,
-        IsInternal::External,
-        callback,
-        zig_handle,
-    );
+    // Node routes cluster-protocol messages (cmd: "NODE_CLUSTER") through
+    // process.send and dispatches them by cmd prefix on the peer; mark them
+    // wire-internal so they reach the cluster handler, not 'message'.
+    let mut is_internal = IsInternal::External;
+    if matches!(from, FromEnum::Process) && message.is_object() {
+        if let Some(cmd) = message.get(global_object, "cmd")? {
+            if cmd.is_string()
+                && bun_core::OwnedString::new(cmd.to_bun_string(global_object)?)
+                    .eql_comptime(b"NODE_CLUSTER")
+            {
+                is_internal = IsInternal::Internal;
+            }
+        }
+    }
+
+    let status =
+        ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
     if status == SerializeAndSendResult::Failure {
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));

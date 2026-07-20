@@ -75,7 +75,9 @@ export default class RoundRobinHandle {
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      send(err.errno, null);
+      // Bun listen errors carry a positive errno; the cluster protocol (and
+      // getSystemErrorName in checkBindError consumers) expects libuv's negative.
+      send(typeof err.errno === "number" && err.errno !== 0 ? -Math.abs(err.errno) : -1, null);
     });
   }
 

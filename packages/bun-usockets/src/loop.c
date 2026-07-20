@@ -24,6 +24,7 @@
 #include <time.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
+#include <fcntl.h>
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
@@ -691,13 +692,22 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_controllen = CMSG_LEN(sizeof(int));
                         msg.msg_control = cmsg_buf;
 
+                        #if defined(MSG_CMSG_CLOEXEC)
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags | MSG_CMSG_CLOEXEC);
+                        #else
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        #endif
 
                         // Extract file descriptor if present
                         if (length > 0 && msg.msg_controllen > 0) {
                             struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
                             if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
                                 int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                                #if !defined(MSG_CMSG_CLOEXEC)
+                                /* Darwin lacks MSG_CMSG_CLOEXEC: a spawn from another
+                                 * thread must not inherit a received (listen) socket. */
+                                fcntl(fd, F_SETFD, FD_CLOEXEC);
+                                #endif
                                 s = us_dispatch_fd(s, fd);
                                 if (!s || us_socket_is_closed(s)) {
                                     break;

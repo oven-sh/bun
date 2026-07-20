@@ -226,6 +226,12 @@ export function parseHandle(target, serialized, fd) {
     case "net.Socket": {
       throw new Error("TODO case net.Socket");
     }
+    case "net.Native": {
+      // A listen/stream descriptor shared verbatim (cluster fd adoption);
+      // the receiver decides how to wrap it.
+      emit(target, serialized.message, { fd });
+      return;
+    }
     case "dgram.Native": {
       // A non-reading UDP handle (cluster-shared dgram socket): wrap the
       // received descriptor so the cluster child can adopt it.

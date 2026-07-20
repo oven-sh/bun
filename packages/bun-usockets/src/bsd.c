@@ -1500,6 +1500,33 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
 #endif
 }
 
+/* Prepares an externally created, already-bound stream fd (inherited or
+ * SCM_RIGHTS-passed) for adoption as a listen socket, matching uv_tcp_open +
+ * listen(): listen() is a no-op when the fd is already listening. */
+LIBUS_SOCKET_DESCRIPTOR bsd_prepare_adopted_listen_socket(LIBUS_SOCKET_DESCRIPTOR fd, int *error) {
+    int sock_type = 0;
+    socklen_t type_len = sizeof(sock_type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &sock_type, &type_len) != 0) {
+        /* Node surfaces EINVAL for any fd it cannot adopt (bad fd, tty, pipe):
+         * guessHandleType() -> createServerHandle() returns UV_EINVAL. */
+        *error = EINVAL;
+        return LIBUS_SOCKET_ERROR;
+    }
+    if (sock_type != SOCK_STREAM) {
+        *error = EINVAL;
+        return LIBUS_SOCKET_ERROR;
+    }
+    int result;
+    do
+        result = listen(fd, 511);
+    while (IS_EINTR(result));
+    if (result != 0) {
+        *error = LIBUS_ERR;
+        return LIBUS_SOCKET_ERROR;
+    }
+    return bsd_set_nonblocking(apple_no_sigpipe(fd));
+}
+
 /* Prepares an externally created UDP fd for adoption, matching uv_udp_open:
  * nonblock + SO_REUSEADDR only. Recv-path options (IP_RECVERR, PKTINFO,
  * SIO_UDP_CONNRESET) are NOT applied — mutating the caller's fd is observable. */

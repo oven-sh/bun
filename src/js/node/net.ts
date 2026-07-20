@@ -3295,6 +3295,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
+  this.listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3513,6 +3514,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  // Invalidate the previous call's pending cluster reply, matching Node's
+  // Server.prototype.listen `_listeningId++`.
+  this.listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3575,6 +3580,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  nextTickListening,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
@@ -3665,7 +3671,13 @@ Server.prototype[kRealListen] = function (
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  if (nextTickListening) {
+    // Cluster-worker path: Node emits 'listening' on nextTick, ahead of any
+    // setImmediate scheduled from the same IPC reply.
+    process.nextTick(emitListeningNextTick, this);
+  } else {
+    setTimeout(emitListeningNextTick, 1, this);
+  }
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -3764,25 +3776,44 @@ function listenInCluster(
     backlog,
     ...options,
   };
+  const listeningId = server.listeningId;
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    // A later listen() invalidated this reply; release the handle so the
+    // primary drops its round-robin entry (Node's listeningId check).
+    if (listeningId !== server.listeningId) {
+      handle?.close?.();
+      return;
+    }
     err = checkBindError(err, port, handle);
     if (err) {
-      throw new ExceptionWithHostPort(err, "bind", address, port);
+      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      server.emit("error", ex);
+      return;
     }
-    server[kRealListen](
-      path,
-      port,
-      hostname,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      tls,
-      contexts,
-      onListen,
-      fd,
-    );
+    try {
+      server[kRealListen](
+        path,
+        port,
+        hostname,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        tls,
+        contexts,
+        onListen,
+        fd,
+        true,
+      );
+    } catch (err) {
+      const isUnix = path != null;
+      process.nextTick(
+        emitErrorNextTick,
+        server,
+        formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+      );
+    }
   });
 }
 

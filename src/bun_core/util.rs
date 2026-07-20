@@ -3777,8 +3777,7 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
-// the xxhash64 entry point that ETag/bundler need.
+// `bun.hash` one-shot Wyhash / XxHash64 wrappers over `bun_hash`.
 pub mod hash {
     pub use bun_hash::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.

@@ -8,7 +8,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { createGzip, gzipSync } from "node:zlib";
@@ -137,7 +137,7 @@ function makeEntries(): Entry[] {
 // the BUN_INSTALL_STREAMING_MIN_SIZE gate.
 // -------------------------------------------------------------------
 
-async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number, delayMs: number = 0) {
+async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number) {
   let tarballHits = 0;
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
@@ -176,8 +176,7 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
         }
         res.write(tgz.subarray(i, Math.min(i + chunkBytes, tgz.length)));
         i += chunkBytes;
-        if (delayMs > 0) setTimeout(step, delayMs);
-        else setImmediate(step);
+        setImmediate(step);
       };
       step();
       return;
@@ -327,35 +326,117 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  // 8 KB paced chunks so the drain reliably yields between them; without
-  // batching each of the ~290 chunks re-wakes a worker, with batching the
-  // schedule count is bounded by ceil(size / threshold) + 1.
-  test.each([
-    ["default", 256 * 1024, {}],
-    ["override", 128 * 1024, { BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(128 * 1024) }],
-  ] as const)("drain schedules are coalesced across many small HTTP chunks (%s)", async (_, threshold, env) => {
-    await using reg = await makeRegistry(tgz, shasum, integrity, 8 * 1024, 2);
+  test("drain threshold holds off extraction until enough bytes arrive", async () => {
+    // Below the threshold no drain is scheduled, so nothing lands in the
+    // extraction temp dir; crossing it schedules one drain that writes
+    // package.json while later entries stay absent until the body resumes.
+    const threshold = 1024 * 1024;
+    const belowThreshold = 512 * 1024;
+    const aboveThreshold = threshold + 128 * 1024;
+    expect(aboveThreshold).toBeLessThan(tgz.length);
 
-    using dir = tempDir("streaming-extract-coalesce", {
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { "stream-pkg": "1.0.0" },
-      }),
-      "bunfig.toml": `[install]\nregistry = "${reg.url}"\n`,
+    const phase1 = Promise.withResolvers<void>();
+    const gate1 = Promise.withResolvers<void>();
+    const phase2 = Promise.withResolvers<void>();
+    const gate2 = Promise.withResolvers<void>();
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/stream-pkg")) {
+          return Response.json({
+            name: "stream-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "stream-pkg",
+                version: "1.0.0",
+                dist: { shasum, integrity, tarball: `${server.url}stream-pkg/-/stream-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("stream-pkg-1.0.0.tgz")) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                for (let i = 0; i < belowThreshold; i += 8 * 1024) {
+                  c.write(tgz.subarray(i, i + 8 * 1024));
+                  await c.flush();
+                }
+                phase1.resolve();
+                await gate1.promise;
+                for (let i = belowThreshold; i < aboveThreshold; i += 8 * 1024) {
+                  c.write(tgz.subarray(i, i + 8 * 1024));
+                  await c.flush();
+                }
+                phase2.resolve();
+                await gate2.promise;
+                c.write(tgz.subarray(aboveThreshold));
+                await c.flush();
+                c.close();
+              },
+            }),
+            { headers: { "content-type": "application/octet-stream" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
     });
 
-    const { stderr, exitCode } = await runInstall(String(dir), env);
+    using dir = tempDir("streaming-extract-threshold", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+    });
+    const tmp = join(String(dir), "bun-tmp");
+    const cache = join(String(dir), "bun-cache");
+    mkdirSync(tmp, { recursive: true });
+    mkdirSync(cache, { recursive: true });
+
+    const findExtracted = (name: string) => {
+      for (const d of readdirSync(tmp, { withFileTypes: true })) {
+        if (d.isDirectory() && existsSync(join(tmp, d.name, name))) return join(tmp, d.name, name);
+      }
+      return null;
+    };
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        BUN_INSTALL_CACHE_DIR: cache,
+        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(threshold),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Phase 1: server has sent < threshold. No drain has been scheduled,
+    // so nothing is extracted yet.
+    await phase1.promise;
+    await Bun.sleep(250);
+    expect(findExtracted("package.json")).toBeNull();
+
+    // Phase 2: send past the threshold. The first drain runs and writes
+    // package.json; the last data entry is still missing bytes.
+    gate1.resolve();
+    await phase2.promise;
+    let extractedPkgJson: string | null = null;
+    for (let i = 0; i < 1000 && !(extractedPkgJson = findExtracted("package.json")); i++) await Bun.sleep(10);
+    expect(extractedPkgJson).not.toBeNull();
+    expect(findExtracted(join("data", "chunk-47.bin"))).toBeNull();
+
+    // Finish.
+    gate2.resolve();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
     expect(stderr).toContain("Streamed ");
-    expect(exitCode).toBe(0);
-
-    const m = stderr.match(/(\d+) drain schedules/);
-    expect(m).not.toBeNull();
-    const schedules = parseInt(m![1], 10);
-    const upperBound = Math.ceil(tgz.length / threshold) + 4;
-    expect(schedules).toBeGreaterThan(0);
-    expect(schedules).toBeLessThanOrEqual(upperBound);
+    expect({ stdout, exitCode }).toMatchObject({ exitCode: 0 });
 
     const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
     for (const { path, body } of entries) {

@@ -20,7 +20,7 @@
 
 use core::ffi::{c_int, c_void};
 use core::mem::ManuallyDrop;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
 #[cfg(windows)]
@@ -90,11 +90,6 @@ pub struct TarballStream {
     /// running. `on_chunk` sets it before scheduling; `drain` clears it when
     /// it runs out of input and decides to yield.
     draining: AtomicBool,
-
-    /// Times `schedule_drain` pushed `drain_task` onto the thread pool (each
-    /// push is a `ThreadPool::notify` → futex wake on the HTTP thread).
-    /// Printed under `--verbose` so tests can bound it.
-    drain_schedules: AtomicU32,
 
     // ---------------------------------------------------------------------
     // Drain-side state (touched only by one drain task at a time)
@@ -243,7 +238,6 @@ impl TarballStream {
             http_err: None,
             status_code: 0,
             draining: AtomicBool::new(false),
-            drain_schedules: AtomicU32::new(0),
             reading: Vec::new(),
             read_pos: 0,
             archive: None,
@@ -330,7 +324,6 @@ impl TarballStream {
             if (*this).draining.swap(true, Ordering::AcqRel) {
                 return;
             }
-            (*this).drain_schedules.fetch_add(1, Ordering::Relaxed);
             // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
@@ -1182,11 +1175,10 @@ impl TarballStream {
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(
-                    "[{}] Streamed {} tarball → {} entries, {} drain schedules<r>",
+                    "[{}] Streamed {} tarball → {} entries<r>",
                     bstr::BStr::new(name),
                     bun_fmt::size(self.bytes_received, Default::default()),
                     self.entry_count,
-                    self.drain_schedules.load(Ordering::Relaxed),
                 );
                 Output::flush();
             }

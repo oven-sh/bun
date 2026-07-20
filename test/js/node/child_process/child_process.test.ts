@@ -478,6 +478,41 @@ describe("spawn()", () => {
         for (const p of [p1, p2, p3]) p?.kill();
       }
     });
+
+    // Same bug class as the process.stdout fix above, at a sibling site, and
+    // knowingly left open: O_NONBLOCK is set on the parent's write end of
+    // p3's stdin so the parent's FileSink can write asynchronously, and it
+    // rides the dup2 into the child because the flag lives on the shared open
+    // file description. A child that does not retry on EAGAIN therefore dies
+    // once its write outgrows the socketpair buffer -- `cat` reports
+    // "write error: Resource temporarily unavailable".
+    //
+    // Clearing the flag is not a fix: the parent shares that description, so
+    // it would make the parent's writer block, and posix_spawn offers no
+    // post-fork hook to clear it only for the child. A real fix needs the
+    // child to get its own description, i.e. a blocking relay pipe.
+    //
+    // The test above passes only because 6-byte writes never fill the buffer.
+    it.skipIf(isWindows).todo("a child inheriting another subprocess's stdin survives a large write", async () => {
+      const dir = tmpdirSync();
+      const bigPath = path.join(dir, "big.txt");
+      await write(bigPath, Buffer.alloc(4 * 1024 * 1024, "x"));
+
+      let writer;
+      // p3's stdout is never drained, so it stops reading and the write end
+      // handed to the writer fills up.
+      const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
+      try {
+        writer = spawn("cat", [bigPath], { stdio: ["ignore", p3.stdin, "pipe"] });
+        let stderr = "";
+        writer.stderr.setEncoding("utf8");
+        writer.stderr.on("data", chunk => (stderr += chunk));
+        const [code] = await once(writer, "close");
+        expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+      } finally {
+        for (const p of [writer, p3]) p?.kill();
+      }
+    });
   });
 
   it.skipIf(isWindows)(

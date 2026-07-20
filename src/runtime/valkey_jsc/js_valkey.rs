@@ -1259,9 +1259,7 @@ impl JSValkeyClient {
         }
 
         let delay_ms = self.client.get().get_reconnect_delay();
-        if delay_ms > 0 {
-            self.add_timer(&self.reconnect_timer, delay_ms);
-        }
+        self.add_timer(&self.reconnect_timer, delay_ms);
     }
 
     // Callback for when Valkey client closes
@@ -1850,7 +1848,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _socket: SocketType<SSL>,
         _code: i32,
         _reason: Option<*mut c_void>,
-    ) {
+    ) -> JsResult<()> {
         debug!("Socket closed.");
         let _guard = this.ref_scope();
         // Ensure the socket pointer is updated.
@@ -1860,16 +1858,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
+        this.client_mut().on_close()
     }
 
-    pub fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
-        let _ = this;
-        let _ = socket;
-
+    pub fn on_end(_this: &JSValkeyClient, _socket: SocketType<SSL>) -> JsResult<()> {
         // Half-opened sockets are not allowed.
         // usockets will always call onClose after onEnd in this case so we don't need to do
         // anything here
+        Ok(())
     }
 
     pub fn on_connect_error(
@@ -1888,26 +1884,28 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().on_close()
     }
 
-    pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
+    pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
         debug!("Socket timed out.");
 
         this.client_mut().socket = Self::_socket(socket);
+        Ok(())
     }
 
-    pub fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
+    pub fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) -> JsResult<()> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Self::_socket(socket);
 
         let _guard = this.ref_scope();
-        let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
-        this.update_poll_ref();
+        let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        this.client_mut().on_data(data)
     }
 
-    pub fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {
+    pub fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
         this.client_mut().socket = Self::_socket(socket);
         let _guard = this.ref_scope();
+        let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
         this.client_mut().on_writable();
-        this.update_poll_ref();
+        Ok(())
     }
 }
 

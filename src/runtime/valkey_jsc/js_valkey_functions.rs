@@ -1676,9 +1676,10 @@ impl JSValkeyClient {
             Ok(p) => p,
             Err(err) => {
                 for ch in &inserted_channels {
-                    this._subscription_ctx
+                    let _ = this
+                        ._subscription_ctx
                         .get()
-                        .clear_receive_handlers(global, *ch)?;
+                        .remove_receive_handler(global, *ch, handler_callback)?;
                 }
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", err);
             }

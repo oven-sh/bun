@@ -781,12 +781,9 @@ describe("Should be compatible with node.js", () => {
   });
 });
 
-// Windows: after the CONNECT-tunnel socket receives FIN (allow_half_open leaves
-// the poll writable-only), AFD's level-triggered UV_DISCONNECT used to bounce
-// the poll between 0 and WRITABLE forever, posting an onDrain task every tick.
-// That was masked while us_loop_pump skipped unref'd handles; once it polls
-// them, the process never exits. test-http-server-unconsume-consume.js is the
-// node/parallel version, but a 20s runner timeout is a poor signal.
+// Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
+// UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
+// WRITABLE forever (pins the poll_cb allow_half_open arm).
 test("CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes", async () => {
   await using proc = Bun.spawn({
     cmd: [

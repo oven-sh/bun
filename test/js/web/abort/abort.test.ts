@@ -88,10 +88,9 @@ describe("AbortSignal", () => {
     expect(ac.reason.code).toBe(23);
   });
 
-  // #33334: awaiting the abort event with nothing else ref'd used to hang the
-  // whole test file on Windows (uv_run skipped its body with active_handles=0
-  // so uv__run_timers never ran). Run in a subprocess so a regression is an
-  // attributable failure instead of a file-level timeout.
+  // #33334: with nothing else ref'd, uv_run() skipped its body on Windows so
+  // uv__run_timers never ran and the whole file hung. Subprocess so a
+  // regression is an attributable failure, not a file-level timeout.
   test("awaiting AbortSignal.timeout(n) abort event with nothing else ref'd does not hang (#33334)", async () => {
     using dir = tempDir("abort-33334", {
       "timeout.test.ts": `import { expect, test } from "bun:test";

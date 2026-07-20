@@ -754,11 +754,9 @@ describe("should not hang", () => {
 });
 
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: uv_unref() drops the uv_process_t from active_handles; with
-  // nothing else ref'd, uv_run() used to skip its body and never dequeue the
-  // IOCP exit packet, so these children busy-spun forever with exited never
-  // resolving. us_loop_pump now forces one non-blocking iteration, matching
-  // POSIX's us_loop_run_bun_tick.
+  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
+  // body and never dequeue the IOCP exit packet, so these children busy-spun
+  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],

@@ -521,12 +521,7 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
         return String();
     }
 
-    auto* jsExecutable = function->jsExecutable();
-    if (!jsExecutable) {
-        return String();
-    }
-
-    return Zig::sourceURL(jsExecutable->source());
+    return Zig::sourceURL(function->jsExecutable()->source());
 }
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
@@ -539,12 +534,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        auto* jsExecutable = uncheckedDowncast<JSC::FunctionExecutable>(executable);
-        if (!jsExecutable) {
-            return String();
-        }
-
-        return jsExecutable->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
     }
 
     return String();

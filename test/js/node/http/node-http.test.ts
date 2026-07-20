@@ -2798,10 +2798,10 @@ describe("pipelined POST bodies behind an async handler", () => {
   });
 
   it("GET then POST", async () => {
-    await check(
-      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nxyz",
-      { "/a": "", "/b": "xyz" },
-    );
+    await check("GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nxyz", {
+      "/a": "",
+      "/b": "xyz",
+    });
   });
 });
 

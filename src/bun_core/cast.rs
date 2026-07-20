@@ -356,9 +356,10 @@ mod tests {
         assert_eq!(v, u32::from_ne_bytes([1, 2, 3, 4]));
     }
 
-    // `#[repr(align(2))]` guarantees an even base address so the alignment
-    // branch of `try_cast_slice` is deterministic in both tests below.
-    #[repr(align(2))]
+    // `#[repr(C, align(2))]` guarantees an even base address *and* field offset
+    // 0, so `&a.0` is spec-2-aligned and the alignment branch of
+    // `try_cast_slice` is deterministic in both tests below.
+    #[repr(C, align(2))]
     struct Aligned2<const N: usize>([u8; N]);
 
     #[test]

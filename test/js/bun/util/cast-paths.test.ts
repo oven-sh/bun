@@ -1,7 +1,9 @@
 // Smoke coverage for runtime paths backed by `bun_core::cast` (the in-tree
-// safe-transmute helpers). Each case exercises a distinct cast shape so a
+// safe-transmute helpers). Each case exercises a `cast_slice` call site so a
 // regression in the slice-reinterpretation logic surfaces as a concrete value
-// mismatch rather than a hard-to-localize downstream failure.
+// mismatch rather than a hard-to-localize downstream failure. `bytes_of`,
+// `cast_ref`, and `pod_read_unaligned` are covered by the cargo unit tests in
+// `src/bun_core/cast.rs`.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -37,24 +39,4 @@ test("Float16Array inspection reads element values through the u8/f16 slice cast
   expect(stdout).toContain(" -3");
   expect(stdout).toContain(" 1.5");
   expect(exitCode).toBe(0);
-});
-
-// Unaligned integer read via `pod_read_unaligned` (fmt.rs `parse_hex_to_int`,
-// used by `bun pm hash` / lockfile digests).
-test("hex digest parsing reads unaligned integers correctly", () => {
-  const h = new Bun.CryptoHasher("sha1");
-  h.update("abc");
-  expect(h.digest("hex")).toBe("a9993e364706816aba3e25717850c26c9cd0d89d");
-});
-
-// `bytes_of` on a `#[repr(C)]` struct for hashing (SocketContext.rs /
-// PackageManagerTask.rs pattern): `Bun.hash` of a typed array views the
-// backing bytes and must produce a stable, length-sensitive result.
-test("Bun.hash over typed-array bytes is stable and length-sensitive", () => {
-  const a = new Uint32Array([1, 2, 3, 4]);
-  const b = new Uint32Array([1, 2, 3, 4]);
-  const c = new Uint32Array([1, 2, 3, 5]);
-  expect(Bun.hash(a)).toBe(Bun.hash(b));
-  expect(Bun.hash(a)).not.toBe(Bun.hash(c));
-  expect(Bun.hash(new Uint8Array(a.buffer))).toBe(Bun.hash(a));
 });

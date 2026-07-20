@@ -566,12 +566,17 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
+                // JSProcessEnvMap is a JSNonFinalObject, so indexed putDirectMayBeIndex
+                // routes through the method-table defineOwnProperty with a throw scope;
+                // a top scope keeps exception-check validation balanced.
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 auto env = Bun::createProcessEnvMapObject(globalObject);
                 size_t i = 0;
                 for (auto k : map) {
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    scope.assertNoException();
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {

@@ -680,11 +680,7 @@ impl JSValkeyClient {
                 let field_slice = field_name.to_utf8();
                 args.push(field_slice);
 
-                let value_str = object_iter.value.to_bun_string(global)?;
-                args.push(value_str.to_utf8());
-                // `to_utf8()` already bumped
-                // (or copied) the ref the slice needs, so release ours now.
-                value_str.deref();
+                args.push(object_iter.value.to_slice(global)?);
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
@@ -698,18 +694,14 @@ impl JSValkeyClient {
             args.ensure_total_capacity(1 + iter.len as usize);
 
             while let Some(field_js) = iter.next()? {
-                let field_str = field_js.to_bun_string(global)?;
-                args.push(field_str.to_utf8());
-                field_str.deref();
+                args.push(field_js.to_slice(global)?);
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
                 };
-                let value_str = value_js.to_bun_string(global)?;
-                args.push(value_str.to_utf8());
-                value_str.deref();
+                args.push(value_js.to_slice(global)?);
             }
         } else {
             // Pattern 2: Variadic - hset(key, field, value, ...)
@@ -733,9 +725,7 @@ impl JSValkeyClient {
 
             let mut i: u32 = 1;
             while i < args_count {
-                let arg_str = frame.argument(i as usize).to_bun_string(global)?;
-                args.push(arg_str.to_utf8());
-                arg_str.deref();
+                args.push(frame.argument(i as usize).to_slice(global)?);
                 i += 1;
             }
         }

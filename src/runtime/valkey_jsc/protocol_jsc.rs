@@ -81,11 +81,9 @@ pub fn resp_value_to_js_with_options(
 ) -> JsResult<JSValue> {
     match this {
         RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, options),
-        RESPValue::Error(str) => Ok(valkey_error_to_js(
-            global,
-            &*str,
-            RedisError::ServerError,
-        )),
+        RESPValue::Error(str) | RESPValue::BlobError(str) => {
+            Ok(valkey_error_to_js(global, &*str, RedisError::ServerError))
+        }
         RESPValue::Integer(int) => Ok(JSValue::js_number(int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {
@@ -94,19 +92,14 @@ pub fn resp_value_to_js_with_options(
                 Ok(JSValue::NULL)
             }
         }
-        RESPValue::Array(array) => {
-            JSValue::create_array_from_iter(global, array.into_iter(), |item| {
+        RESPValue::Array(items) | RESPValue::Set(items) => {
+            JSValue::create_array_from_iter(global, items.into_iter(), |item| {
                 resp_value_to_js_with_options(item, global, options)
             })
         }
         RESPValue::Null => Ok(JSValue::NULL),
         RESPValue::Double(d) => Ok(JSValue::js_number(d)),
         RESPValue::Boolean(b) => Ok(JSValue::from(b)),
-        RESPValue::BlobError(str) => Ok(valkey_error_to_js(
-            global,
-            &*str,
-            RedisError::ServerError,
-        )),
         RESPValue::VerbatimString(verbatim) => {
             valkey_str_to_js_value(global, verbatim.content, options)
         }
@@ -123,9 +116,6 @@ pub fn resp_value_to_js_with_options(
             }
             Ok(js_obj)
         }
-        RESPValue::Set(set) => JSValue::create_array_from_iter(global, set.into_iter(), |item| {
-            resp_value_to_js_with_options(item, global, options)
-        }),
         RESPValue::Attribute(attribute) => {
             // For now, we just return the value and ignore attributes
             // In the future, we could attach the attributes as a hidden property
@@ -147,6 +137,6 @@ pub fn resp_value_to_js_with_options(
 
             Ok(js_obj)
         }
-        RESPValue::BigNumber(str) => bun_string_jsc::create_utf8_for_js(global, &str),
+        RESPValue::BigNumber(str) => valkey_str_to_js_value(global, str, options),
     }
 }

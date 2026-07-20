@@ -73,3 +73,42 @@ it("body reading from 'pause' still delivers every byte and 'end'", async () => 
     server.close();
   }
 });
+
+it("req.socket emits 'pause' on every body-bearing keep-alive request, not just the first", async () => {
+  // The readStop from request 1's last body chunk left the shared socket's
+  // Readable flowing=false; without a readStart at message-complete (Node's
+  // parserOnMessageComplete), request 2's readStop is a no-op on the event.
+  const pauses: string[] = [];
+  const ended = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    req.connection!.on("pause", () => {
+      pauses.push(req.url!);
+      res.end("ok");
+      if (req.url === "/b") ended.resolve();
+    });
+    res.writeHead(200);
+    res.flushHeaders();
+  });
+  try {
+    await once(server.listen(0), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const agent = new (require("node:http").Agent)({ keepAlive: true, maxSockets: 1 });
+    for (const path of ["/a", "/b"]) {
+      await new Promise<void>((resolve, reject) => {
+        const post = request({ method: "POST", port, path, agent }, res => {
+          res.resume();
+          res.on("end", resolve);
+        });
+        post.on("error", reject);
+        post.end(Buffer.alloc(128 * 1024, "X"));
+      });
+    }
+    await ended.promise;
+    agent.destroy();
+    expect(pauses).toContain("/a");
+    expect(pauses).toContain("/b");
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});

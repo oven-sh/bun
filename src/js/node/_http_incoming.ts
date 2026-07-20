@@ -428,14 +428,20 @@ function onDataIncomingMessage(
   socket?._unrefTimer?.();
 
   if (chunk && !this._dumped) {
-    // Like Node's parserOnBody: pause the connection once the buffer fills.
-    // Skipped for upgrade (the listener owns socket flow) and once writable
-    // has ended (socketHandle.end() resumed the poll so kqueue sees EV_EOF).
-    if (!this.push(chunk) && !this.upgrade && !socket?.writableEnded) readStop(socket);
+    if (!this.push(chunk)) {
+      // Like Node's parserOnBody: pause the connection once the buffer fills.
+      // Upgrade-with-body routes through its own handle so the socket's flow
+      // state stays with the upgrade listener; _read() balances it.
+      if (this.upgrade) this[kHandle]?.pause();
+      else if (!socket?.writableEnded) readStop(socket);
+    }
   }
 
   if (isLast) {
     emitEOFIncomingMessage(this);
+    // Like Node's parserOnMessageComplete: any readStop above left the shared
+    // socket's flowing=false, which would swallow the next request's 'pause'.
+    if (!this.upgrade) readStart(socket);
   }
 }
 

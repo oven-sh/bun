@@ -220,10 +220,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
+        // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
+        // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
+        // re-add), without which macOS 26 does not deliver the peer's close.
+        if (thisObject->socket && !thisObject->upgraded) {
+            us_socket_pause(thisObject->socket);
+        }
         auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        // Undo onNodeHTTPRequest's body-buffering pause after the shutdown so
-        // the unread body drains and kqueue's one-shot EVFILT_WRITE (which
-        // delivers EV_EOF on SHUT_WR) is not deleted by a W -> R|W -> R step.
+        // Undo the pause above after the shutdown so the unread body drains
+        // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
+        // SHUT_WR) is not deleted by a W -> R|W -> R step.
         if (thisObject->socket && !thisObject->upgraded) {
             us_socket_resume(thisObject->socket);
         }

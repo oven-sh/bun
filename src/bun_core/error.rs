@@ -29,8 +29,6 @@ pub enum Error {
     Alloc(#[from] bun_alloc::AllocError),
 }
 
-impl std::error::Error for Error {}
-
 impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {

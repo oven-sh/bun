@@ -1037,7 +1037,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         true,
         false,
         |arena, log, source| {
-            let root = match YAML::parse(source, log, arena) {
+            let root = match YAML::parse_allowing_self_references(source, log, arena) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),

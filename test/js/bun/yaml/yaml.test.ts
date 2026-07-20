@@ -626,6 +626,26 @@ parent: &ref
         expect(result.b.k).toBe(1);
         expect(result.b.extra).toBe(2);
       });
+
+      test("the yaml module loader still rejects self-referential anchors", async () => {
+        // Only Bun.YAML.parse opts into cyclic Expr graphs; the bundler's yaml
+        // loader and pnpm-lock migration walk the Expr tree without a seen-set
+        // and must keep seeing a diagnosable parse error.
+        using dir = tempDir("yaml-cyclic-loader", {
+          "cycle.yaml": "&a\nself: *a\n",
+          "index.ts": `import data from "./cycle.yaml"; console.log(data);`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("Unresolved alias");
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      });
     });
 
     test("handles multiple documents", () => {

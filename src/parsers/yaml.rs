@@ -23,14 +23,40 @@ use bun_core::{self, StackCheck};
 pub struct YAML;
 
 impl YAML {
+    /// Parse a YAML document. Self-referential anchors (`&a {self: *a}`) are
+    /// rejected with `Unresolved alias` so the returned `Expr` graph is
+    /// acyclic; callers that walk it without a seen-set (bundler printer,
+    /// `Expr::deep_clone`) stay safe.
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<Expr, YamlParseError> {
+        Self::parse_impl(source, log, bump, false)
+    }
+
+    /// Parse a YAML document with self-referential anchors resolved. The
+    /// returned `Expr` graph may contain cycles; the caller must be able to
+    /// walk a cyclic graph (as `Bun.YAML.parse`'s `to_js` does via
+    /// `seen_objects`).
+    pub fn parse_allowing_self_references(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+    ) -> Result<Expr, YamlParseError> {
+        Self::parse_impl(source, log, bump, true)
+    }
+
+    fn parse_impl(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        allow_self_referential_aliases: bool,
+    ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
 
         let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
+        parser.allow_self_referential_aliases = allow_self_referential_aliases;
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -2353,6 +2379,10 @@ pub struct Parser<'i, Enc: Encoding> {
     pub merge_props_budget: usize,
     pub alias_expansion_budget: usize,
 
+    /// When false (the default), self-referential anchors are not
+    /// pre-registered and `*a` inside `&a {...}` keeps failing with
+    /// `UnresolvedAlias`, guaranteeing an acyclic `Expr` graph.
+    pub allow_self_referential_aliases: bool,
     /// Collection nodes whose anchor is registered but whose body is still
     /// being parsed. An alias that resolves to one of these is a
     /// self-reference (`&a {self: *a}`). A merge key that resolves to one is
@@ -2397,6 +2427,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            allow_self_referential_aliases: false,
             open_anchors: Vec::new(),
             self_referential: Vec::new(),
         }
@@ -3859,6 +3890,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         kind: AnchorPlaceholder,
         loc: Loc,
     ) -> Result<Option<Expr>, ParseError> {
+        if !self.allow_self_referential_aliases {
+            return Ok(None);
+        }
         let Some(anchor) = anchor else {
             return Ok(None);
         };

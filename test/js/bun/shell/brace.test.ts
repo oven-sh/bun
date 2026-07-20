@@ -29,11 +29,12 @@ describe("$.braces", () => {
   });
 
   test("nested sibling product", () => {
-    expect($.braces(`{{d,e}{g,h}}`)).toEqual(["dg", "dh", "eg", "eh"]);
+    // The outer `{...}` has no comma of its own, so it is literal (bash 5.2).
+    expect($.braces(`{{d,e}{g,h}}`)).toEqual(["{dg}", "{dh}", "{eg}", "{eh}"]);
   });
 
   test("nested sibling product with surrounding text", () => {
-    expect($.braces(`pre{{a,b}{c,d}}post`)).toEqual(["preacpost", "preadpost", "prebcpost", "prebdpost"]);
+    expect($.braces(`pre{{a,b}{c,d}}post`)).toEqual(["pre{ac}post", "pre{ad}post", "pre{bc}post", "pre{bd}post"]);
   });
 
   test("nested sibling product mixed with variants", () => {
@@ -41,10 +42,20 @@ describe("$.braces", () => {
   });
 
   test("nested sibling product triple", () => {
-    expect($.braces(`{{a,b}{c,d}{e,f}}`)).toEqual(["ace", "acf", "ade", "adf", "bce", "bcf", "bde", "bdf"]);
+    expect($.braces(`{{a,b}{c,d}{e,f}}`)).toEqual([
+      "{ace}",
+      "{acf}",
+      "{ade}",
+      "{adf}",
+      "{bce}",
+      "{bcf}",
+      "{bde}",
+      "{bdf}",
+    ]);
   });
 
   test("very deeply nested", () => {
+    // The innermost `{17}` has no comma, so it is literal (bash 5.2).
     const result = $.braces(`{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`);
     expect(result).toEqual([
       "1",
@@ -63,7 +74,7 @@ describe("$.braces", () => {
       "14",
       "15",
       "16",
-      "17",
+      "{17}",
     ]);
   });
 
@@ -141,13 +152,16 @@ describe("$.braces input bounds", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const pattern = Buffer.alloc(50000, "{").toString() + Buffer.alloc(50000, "}").toString();
+        `const deep = Buffer.alloc(100000, "{,").toString() + Buffer.alloc(50000, "}").toString();
 try {
-  Bun.$.braces(pattern);
+  Bun.$.braces(deep);
   console.log("expanded");
 } catch (e) {
   console.log("rejected: " + e.message);
 }
+// The same shape with no commas is one literal word, not a brace expansion.
+const literal = Buffer.alloc(50000, "{").toString() + Buffer.alloc(50000, "}").toString();
+console.log(JSON.stringify(Bun.$.braces(literal)) === JSON.stringify([literal]));
 // A reasonable pattern still expands normally.
 console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
       ],
@@ -160,8 +174,74 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
 
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "rejected: Too many braces in brace expansion
+      true
       ["echo a","echo b"]"
     `);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A `{...}` group with no unquoted comma of its own is not a brace expansion
+// in bash: it is literal text. The brace lexer used to tokenize `{}` / `{x}`
+// as Open/Close regardless, so when one appeared inside an outer expanding
+// group the nested expander saw a zero-variant expansion and stopped without
+// returning to the parent, dropping the rest of the word.
+describe("comma-less brace group is literal (bash 5.2)", () => {
+  const cases: [string, string[]][] = [
+    // Regressions: the `{}` (and the tail after it) was truncated.
+    ["x{a,{}}y", ["xay", "x{}y"]],
+    ["p{q{},r}s", ["pq{}s", "prs"]],
+    ["{a,b{}}z", ["az", "b{}z"]],
+    ["{a,{}}z", ["az", "{}z"]],
+    ["a{{,}}b", ["a{}b", "a{}b"]],
+    // `{foo}` with no comma is literal at any depth.
+    ["{a,{b}}", ["a", "{b}"]],
+    ["{a{b,c}}", ["{ab}", "{ac}"]],
+    // A comma outside every `{...}` does not make one expand.
+    ["{foo},x", ["{foo},x"]],
+    ["{a},{b}", ["{a},{b}"]],
+    // Controls that were already correct.
+    ["a{b,{c,d}}e", ["abe", "ace", "ade"]],
+    ["{a,b}", ["a", "b"]],
+  ];
+
+  for (const [input, expected] of cases) {
+    test(`$.braces(${JSON.stringify(input)})`, () => {
+      expect($.braces(input)).toEqual(expected);
+    });
+  }
+
+  test("shell: literal {} inside an expanding group keeps the tail", async () => {
+    // Run in a subprocess so the pre-fix index-out-of-bounds panic on
+    // `}{,` / `{foo},x` is observed as a non-zero exit instead of killing
+    // the test runner.
+    const script = `
+      const { $ } = require("bun");
+      $.nothrow();
+      const cases = ${JSON.stringify(cases)};
+      for (const [input, expected] of cases) {
+        const { stdout } = await $\`printf '[%s]' \${{ raw: input }}\`.quiet();
+        console.log(JSON.stringify([input, stdout.toString()]));
+      }
+      const { stdout } = await $\`printf '[%s]' }{,\`.quiet();
+      console.log(JSON.stringify(["}{,", stdout.toString()]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .map(l => JSON.parse(l));
+    expect(lines).toEqual([
+      ...cases.map(([input, expected]) => [input, expected.map(s => `[${s}]`).join("")]),
+      ["}{,", "[}{,]"],
+    ]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

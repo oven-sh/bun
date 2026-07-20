@@ -318,24 +318,32 @@ impl Expansion {
             return;
         }
         let count = count as usize;
-        let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
-
-        let arena = bun_alloc::Arena::new();
-        if let Err(e) = braces::expand(
-            &arena,
-            &mut lexer_output.tokens[..],
-            &mut expanded[..],
-            lexer_output.contains_nested,
-        ) {
-            if matches!(e, braces::ParserError::TooManyBraces) {
-                let msg = "too many braces in brace expansion".to_string();
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                return;
+        let expanded: Vec<Vec<u8>> = if count == 0 {
+            // None of the `{...}` groups formed a brace expansion (no top-level
+            // comma, or unbalanced); emit the word unchanged. `expand` would
+            // index into `out[0]` of an empty slice here.
+            vec![core::mem::take(&mut me.current_out)]
+        } else {
+            let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
+            let arena = bun_alloc::Arena::new();
+            if let Err(e) = braces::expand(
+                &arena,
+                &mut lexer_output.tokens[..],
+                &mut expanded[..],
+                lexer_output.contains_nested,
+            ) {
+                if matches!(e, braces::ParserError::TooManyBraces) {
+                    let msg = "too many braces in brace expansion".to_string();
+                    me.state =
+                        ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                    return;
+                }
+                // An unexpected token from brace expansion is a parser bug.
+                panic!("unexpected error from Braces.expand: {e:?}");
             }
-            // An unexpected token from brace expansion is a parser bug.
-            panic!("unexpected error from Braces.expand: {e:?}");
-        }
-        drop(arena);
+            drop(arena);
+            expanded
+        };
 
         // Push each variant as its own word; word boundaries are recorded
         // via `bounds`.

@@ -1,5 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -43,6 +44,54 @@ describe("heapStats() mimalloc integration", () => {
     for (const [, sz] of main.blocks.slice(0, 50)) {
       expect(pageSizes.has(sz)).toBe(true);
     }
+  });
+
+  // `pages.current` must account for pages allocated by every thread's theap, not just the
+  // caller's: the increment lands in the allocating thread's theap, while a cross-thread free
+  // of an abandoned page decrements heap->stats directly. Summing only the caller's theap
+  // underreports by the pages other threads allocated (and can go negative under churn).
+  test("pages.current agrees with the live heap dump across threads", async () => {
+    using dir = tempDir("heapStats-mimalloc-pages", {
+      "check.js": `
+        import { heapStats } from "bun:jsc";
+        const code = \`
+          const hold = [];
+          for (let i = 0; i < 50000; i++) hold.push({ a: i, b: "str_" + i });
+          self.postMessage("ready");
+          self.onmessage = () => {};
+        \`;
+        const url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+        const w = new Worker(url);
+        await new Promise(r => { w.onmessage = r; });
+        const s = heapStats({ dump: true });
+        let dump = 0;
+        for (const h of s.mimallocDump.heaps) dump += h.pages.length;
+        const stat = s.mimalloc.pages.current;
+        const binSum = s.mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+        const theaps = s.mimalloc.theaps?.current ?? 0;
+        console.log(JSON.stringify({ stat, dump, binSum, theaps }));
+        w.terminate();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { stat, dump, binSum, theaps } = JSON.parse(stdout);
+    // A Worker allocates on its own thread and must create at least one theap; without that
+    // precondition the assertion below would be vacuous.
+    expect(theaps).toBeGreaterThan(0);
+    // The live heap walk is ground truth. A small slack covers the few pages that can change
+    // between the two reads; before the fix the counter sat tens of pages below the walk here.
+    expect(stat).toBeGreaterThanOrEqual(0);
+    expect({ stat, dump }).toSatisfy(v => v.stat >= v.dump - 5);
+    expect({ binSum, dump }).toSatisfy(v => v.binSum >= v.dump - 5);
+    expect(exitCode).toBe(0);
   });
 
   test("dump reflects new heaps and allocations", () => {

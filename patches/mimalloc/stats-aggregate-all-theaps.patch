@@ -1,0 +1,20 @@
+--- a/src/stats.c
++++ b/src/stats.c
+@@ -619,6 +619,17 @@
+ static bool mi_cdecl mi_heap_aggregate_visitor(mi_heap_t* heap, void* arg) {
+   mi_stats_t* stats = (mi_stats_t*)arg;
+   mi_stats_add_into(stats, mi_heap_get_stats(heap));
++  // Fold in every thread's theap, not just the caller's: the NULL-theap path in
++  // `_mi_arenas_page_free` decrements `heap->stats.pages` for a page whose +1 may still
++  // sit in another thread's unmerged theap, so summing only `heap->stats` underreports.
++  // `mi_heap_get_stats` above already merged (and zeroed) the caller's theap, so including
++  // it again is a no-op. Lock order `subproc->heaps_lock` -> `heap->theaps_lock` matches
++  // `mi_prof_set_all_theaps` and the fork-prepare path.
++  mi_lock(&heap->theaps_lock) {
++    for (mi_theap_t* t = heap->theaps; t != NULL; t = t->hnext) {
++      mi_stats_add_into(stats, &t->stats);
++    }
++  }
+   return true;
+ }
+ 

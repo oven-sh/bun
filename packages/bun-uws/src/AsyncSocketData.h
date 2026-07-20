@@ -107,17 +107,20 @@ private:
         }
 
         size_t newCap = std::max(std::max(cap * 2, live + n), MIN_CAPACITY);
+        char *nb;
         if (head == 0) {
             /* realloc may extend in place (mimalloc, glibc mremap). */
-            buf = (char *) std::realloc(buf, newCap);
+            nb = (char *) std::realloc(buf, newCap);
+            if (!nb) std::abort();
         } else {
-            char *nb = (char *) std::malloc(newCap);
+            nb = (char *) std::malloc(newCap);
+            if (!nb) std::abort();
             if (live) std::memcpy(nb, buf + head, live);
             std::free(buf);
-            buf = nb;
             head = 0;
             tail = live;
         }
+        buf = nb;
         cap = newCap;
     }
 

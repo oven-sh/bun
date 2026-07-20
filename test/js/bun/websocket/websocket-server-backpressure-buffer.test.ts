@@ -20,8 +20,9 @@ function patternBuffer(len: number, seed: number): Buffer {
 // socket and any frame bytes that arrived after the handshake headers.
 async function pausedClient(port: number): Promise<{ sock: net.Socket; initial: Buffer }> {
   const sock = net.connect(port, "127.0.0.1");
-  sock.on("error", () => {});
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+  sock.on("error", reject);
+  sock.once("close", () => reject(new Error("socket closed before upgrade completed")));
   let buf = Buffer.alloc(0);
   const onData = (d: Buffer) => {
     buf = buf.length ? Buffer.concat([buf, d]) : d;
@@ -47,6 +48,8 @@ async function pausedClient(port: number): Promise<{ sock: net.Socket; initial: 
     );
   });
   const initial = await promise;
+  sock.off("error", reject);
+  sock.on("error", () => {});
   return { sock, initial };
 }
 
@@ -62,7 +65,6 @@ describe("BackPressure buffer", () => {
     let bufferedAfterSend = 0;
     let drainSawDecrease = true;
     let prev = Infinity;
-    let serverWs: import("bun").ServerWebSocket<unknown> | undefined;
     const sentSignal = Promise.withResolvers<void>();
     const drained = Promise.withResolvers<void>();
     await using server = Bun.serve({
@@ -75,7 +77,6 @@ describe("BackPressure buffer", () => {
         maxBackpressure: SIZE * 2,
         idleTimeout: 0,
         open(ws) {
-          serverWs = ws;
           ws.sendBinary(payload);
           bufferedAfterSend = ws.getBufferedAmount();
           sentSignal.resolve();

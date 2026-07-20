@@ -2160,12 +2160,9 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // `symlinked_path` is always a package *directory*;
-            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
-            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
-            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
-            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`),
-            // then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
+            // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
+            // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
+            // resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
@@ -2360,12 +2357,10 @@ impl<'a> PackageInstall<'a> {
                                     .as_mut_slice()
                             };
 
-                            if cfg!(debug_assertions) {
-                                debug_assert!(bun_core::is_slice_in_buffer(
-                                    self.cache_dir_subpath.as_bytes(),
-                                    buf
-                                ));
-                            }
+                            debug_assert!(bun_core::is_slice_in_buffer(
+                                self.cache_dir_subpath.as_bytes(),
+                                buf
+                            ));
 
                             let subpath_len =
                                 strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())

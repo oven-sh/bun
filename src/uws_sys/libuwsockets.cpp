@@ -479,6 +479,31 @@ extern "C"
     }
   }
 
+  void uws_app_listen_fd(int ssl, uws_app_t *app, int32_t fd, int32_t options,
+                         uws_listen_handler handler, void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->listen_fd(
+          (LIBUS_SOCKET_DESCRIPTOR)fd, options,
+          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          {
+            handler((struct us_listen_socket_t *)listen_socket, user_data);
+          });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->listen_fd(
+          (LIBUS_SOCKET_DESCRIPTOR)fd, options,
+          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          {
+            handler((struct us_listen_socket_t *)listen_socket, user_data);
+          });
+    }
+  }
+
   /* callback, path to unix domain socket */
   void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, size_t pathlen, uws_listen_domain_handler handler, void *user_data)
   {
@@ -1265,6 +1290,16 @@ extern "C"
     }
   }
 
+  void uws_res_mark_wrote_date_header(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_DATE_HEADER;
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_DATE_HEADER;
+    }
+  }
+
   void uws_res_write_mark(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1415,6 +1450,35 @@ extern "C"
       }
     return uwsRes->write(stringViewFromC(data, *length), length);
   }
+  size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first) nonnull_fn_decl;
+
+  size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->tryWriteBody(stringViewFromC(data, length), is_first);
+    }
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->tryWriteBody(stringViewFromC(data, length), is_first);
+  }
+
+  void uws_res_spill_body(int ssl, uws_res_r res, const char *data, size_t length) nonnull_fn_decl;
+
+  void uws_res_spill_body(int ssl, uws_res_r res, const char *data, size_t length)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->spillBodyTail(stringViewFromC(data, length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->spillBodyTail(stringViewFromC(data, length));
+    }
+  }
+
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)
   {

@@ -315,6 +315,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
+            // Upstream enabled Temporal by default; keep it off in Bun until
+            // the remaining integration work lands. BUN_JSC_useTemporal=1
+            // re-enables it for opt-in testing.
+            JSC::Options::useTemporal() = false;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -3324,7 +3328,8 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        vm.dateCache.resetIfNecessarySlow();
+        WTF::timeZoneDidChange();
+        vm.dateCache.clearForTimeZoneChange();
         return true;
     }
 
@@ -4155,7 +4160,17 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    vm.derefSuppressingSaferCPPChecking();
+    // The two refs that exist when this runs at event-loop top level are
+    // Zig__GlobalObject__create's manual ref and the boot-scope JSLockHolder.
+    // When process.exit() is called from inside a JS callback, every nested
+    // JSLockHolder still on the native stack (e.g. JSEventListener::handleEvent)
+    // holds a RefPtr<VM>, so a fixed two derefs leave the count > 0 and ~VM
+    // (and with it Heap::lastChanceToFinalize, which clears all marks and
+    // sweeps every cell) is skipped. Those holders never destruct because this
+    // path never returns, so release on their behalf.
+    for (uint32_t n = vm.refCount(); n > 1; --n)
+        vm.derefSuppressingSaferCPPChecking();
+    // refCount 1 -> 0 runs ~VM; `vm` is dead past this line.
     vm.derefSuppressingSaferCPPChecking();
     runLoop->threadWillExit();
 }

@@ -13,12 +13,12 @@ const ObjectAssign = Object.assign;
 const cluster = new EventEmitter();
 const handles = new Map();
 const indexes = new Map();
+const callbacks = new Map();
+let seq = 0;
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
 const kInternalSendOptions = { __proto__: null, "$internal": true };
-let seq = 0;
-const callbacks = new Map();
 
 function makeConnectionHandle(fd) {
   let closed = false;
@@ -65,8 +65,21 @@ cluster._setupWorker = function () {
     }
   });
 
-  onInternalMessage(worker, onmessage);
+  // Node's cluster handler is itself an 'internalMessage' listener, so user
+  // listeners compose exactly like in node: process.on() runs after the
+  // cluster's dispatch, process.prependListener() runs before it.
+  process.on("internalMessage", onmessage);
+  onInternalMessage(worker, emitInternalMessage);
   send({ act: "online" });
+
+  function emitInternalMessage(message, handle) {
+    // Materialize a wire-passed connection fd before any listener sees it so
+    // prepended user listeners observe the same handle onconnection gets.
+    if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
+      handle = makeConnectionHandle(message["$fd"]);
+    }
+    process.emit("internalMessage", message, handle);
+  }
 
   function onmessage(message, handle) {
     const ack = message.ack;
@@ -77,16 +90,6 @@ cluster._setupWorker = function () {
         callback.$call(this, message, handle);
         return;
       }
-    }
-    if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
-      handle = makeConnectionHandle(message["$fd"]);
-    }
-    try {
-      process.emit("internalMessage", message, handle);
-    } catch (e) {
-      process.nextTick(() => {
-        throw e;
-      });
     }
     if (message.act === "newconn") {
       onconnection(message, handle);
@@ -295,6 +298,7 @@ function send(message, cb?) {
   seq += 1;
   return process.send(wire, undefined, kInternalSendOptions);
 }
+cluster._sendInternal = send;
 
 // Extend generic Worker with methods specific to worker processes.
 Worker.prototype.disconnect = function () {

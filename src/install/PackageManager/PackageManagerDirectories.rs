@@ -923,9 +923,7 @@ pub fn path_for_cached_npm_path<'a>(
     let cache_path_len = cache_path.as_bytes().len();
     // reshaped for borrowck — drop borrow before mutating buffer
 
-    if cfg!(debug_assertions) {
-        debug_assert!(cache_path_buf[package_name.len()] == b'@');
-    }
+    debug_assert!(cache_path_buf[package_name.len()] == b'@');
 
     cache_path_buf[package_name.len()] = SEP;
 

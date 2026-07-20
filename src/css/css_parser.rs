@@ -9,7 +9,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 use bun_ast::Log;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-use bun_collections::{ArrayHashMap, MapEntry, VecExt};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
@@ -2369,6 +2369,7 @@ impl CssRef {
     }
 }
 
+#[derive(Default)]
 pub struct LocalEntry {
     pub ref_: CssRef,
     pub loc: bun_ast::Loc,
@@ -2378,7 +2379,7 @@ pub struct LocalEntry {
 /// ref. We use this ref as a layer of indirection during the bundling stage
 /// because we don't know the final generated class names for local scope
 /// until print time.
-pub type LocalScope = ArrayHashMap<Box<[u8]>, LocalEntry>;
+pub type LocalScope = StringArrayHashMap<LocalEntry>;
 /// Local symbol renaming results go here
 pub type LocalsResultsMap = ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
@@ -3400,13 +3401,11 @@ impl<'a> Parser<'a> {
         // don't call this if css modules is not enabled!
         debug_assert!(self.flags.css_modules());
         debug_assert!(self.extra.is_some());
-        if cfg!(debug_assertions) {
-            // tag should only have one bit set, or none
-            debug_assert!(tag.bits().count_ones() <= 1);
-        }
+        // tag should only have one bit set, or none
+        debug_assert!(tag.bits().count_ones() <= 1);
 
         let extra = self.extra.as_deref_mut().unwrap();
-        // Split borrows so the vacant arm can grow `symbols` while
+        // Split borrows so the miss arm can grow `symbols` while
         // `local_scope` is borrowed by the entry.
         let symbols = &mut extra.symbols;
         let local_scope = &mut extra.local_scope;
@@ -3419,29 +3418,28 @@ impl<'a> Parser<'a> {
         // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
         let name_static: &'static [u8] = unsafe { src_str(name) };
 
-        let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
-            MapEntry::Vacant(v) => {
-                let inner_index = u32::try_from(symbols.len()).unwrap();
-                symbols.push(bun_ast::Symbol {
-                    kind: bun_ast::SymbolKind::LocalCss,
-                    original_name: name_static.into(),
-                    ..Default::default()
-                });
-                v.insert(LocalEntry {
-                    ref_: CssRef::new(inner_index, tag),
-                    loc,
-                })
+        // Borrowed probe so a repeated class/id name doesn't box a fresh key
+        // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
+        let gop = local_scope.get_or_put(name).expect("unreachable");
+        let entry = gop.value_ptr;
+        if gop.found_existing {
+            let prev_tag = entry.ref_.tag();
+            if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
+                entry.loc = loc;
+                entry.ref_.set_tag(prev_tag | tag);
             }
-            MapEntry::Occupied(o) => {
-                let e = o.into_mut();
-                let prev_tag = e.ref_.tag();
-                if !prev_tag.contains(CssRefTag::CLASS) && tag.contains(CssRefTag::CLASS) {
-                    e.loc = loc;
-                    e.ref_.set_tag(prev_tag | tag);
-                }
-                e
-            }
-        };
+        } else {
+            let inner_index = u32::try_from(symbols.len()).unwrap();
+            symbols.push(bun_ast::Symbol {
+                kind: bun_ast::SymbolKind::LocalCss,
+                original_name: name_static.into(),
+                ..Default::default()
+            });
+            *entry = LocalEntry {
+                ref_: CssRef::new(inner_index, tag),
+                loc,
+            };
+        }
 
         entry.ref_.to_real_ref(source_index)
     }
@@ -4252,7 +4250,9 @@ impl ParserState {
     pub fn source_location(&self) -> SourceLocation {
         SourceLocation {
             line: self.current_line_number,
-            column: u32::try_from(self.position - self.current_line_start_position + 1)
+            // `current_line_start_position` is maintained with wrapping arithmetic
+            // (see `consume_4byte_intro`), so the inverse must wrap as well.
+            column: u32::try_from(self.position.wrapping_sub(self.current_line_start_position) + 1)
                 .expect("int cast"),
         }
     }
@@ -4557,7 +4557,9 @@ impl<'a> Tokenizer<'a> {
     pub fn current_source_location(&self) -> SourceLocation {
         SourceLocation {
             line: self.current_line_number,
-            column: u32::try_from((self.position - self.current_line_start_position) + 1)
+            // `current_line_start_position` is maintained with wrapping arithmetic
+            // (see `consume_4byte_intro`), so the inverse must wrap as well.
+            column: u32::try_from(self.position.wrapping_sub(self.current_line_start_position) + 1)
                 .expect("int cast"),
         }
     }
@@ -5437,10 +5439,13 @@ impl<'a> Tokenizer<'a> {
     /// for a 4-byte sequence (0xF0..=0xF7).
     pub fn consume_4byte_intro(&mut self) {
         debug_assert!(self.next_byte_unchecked() & 0xF0 == 0xF0);
-        // This takes two UTF-16 characters to represent, so we actually have
-        // an undercount.
-        self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
         self.position += 1;
+        // 4 UTF-8 bytes encode 2 UTF-16 units (undercount). Input here is
+        // unvalidated bytes, so only apply the -1 when a continuation byte
+        // follows; a stray 0xF0..0xFF must not underflow the column math.
+        if self.next_byte().is_some_and(|b| b & 0xC0 == 0x80) {
+            self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
+        }
     }
 
     pub fn is_ident_start(&self) -> bool {
@@ -5492,7 +5497,11 @@ impl<'a> Tokenizer<'a> {
         debug_assert!(byte != b'\r' && byte != b'\n' && byte != FORM_FEED_BYTE);
         self.position += 1;
         if byte & 0xF0 == 0xF0 {
-            self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
+            // See `consume_4byte_intro`: input is unvalidated bytes, so only
+            // apply the UTF-16 undercount when a continuation byte follows.
+            if self.next_byte().is_some_and(|b| b & 0xC0 == 0x80) {
+                self.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
+            }
         } else if byte & 0xC0 == 0x80 {
             self.current_line_start_position = self.current_line_start_position.wrapping_add(1);
         }

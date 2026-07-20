@@ -1826,6 +1826,13 @@ function nodeToBun(
     if (allowStreamWrap && isPumpableStdioStream(item)) return { [kWrappedStdioStream]: item };
     throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
+  // A handle-like object (Bun SocketListener, or a net.Server/Socket exposing
+  // one via _handle) shares its descriptor with the child, matching Node's
+  // getHandleWrapType path for `stdio: [..., server._handle, ...]`.
+  if (typeof item === "object" && item !== null) {
+    const fd = typeof item.fd === "number" ? item.fd : item._handle?.fd;
+    if (typeof fd === "number" && fd >= 0) return fd;
+  }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
     throw new Error(`Invalid stdio option[${index}] "${item}"`);

@@ -399,38 +399,6 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
-struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
-        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-        LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    apple_no_sigpipe(fd);
-    bsd_set_nonblocking(fd);
-    if (listen(fd, backlog > 0 ? backlog : 512)) {
-        int listen_err = LIBUS_ERR; /* WSAGetLastError() on Windows, errno on POSIX */
-        if (!bsd_socket_listen_error_is_benign(fd)) {
-            *error = listen_err;
-            return 0;
-        }
-    }
-
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
-    int poll_rc = us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE);
-    if (poll_rc != 0) {
-        us_poll_free(p, group->loop);
-        *error = poll_rc < 0 ? -poll_rc : poll_rc;
-        return 0;
-    }
-
-    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
-    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
-
-    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
-        ls->deferred_accept = bsd_set_defer_accept(fd);
-    }
-
-    return ls;
-}
-
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {
@@ -452,6 +420,43 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    return ls;
+}
+
+struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR adopted_fd, int options, int socket_ext_size, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_prepare_adopted_listen_socket(adopted_fd, error);
+    if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
+        errno = *error;
+        return 0;
+    }
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    int poll_rc = us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE);
+    if (poll_rc != 0) {
+        /* The caller still owns the adopted fd on failure; don't close it. */
+#ifdef LIBUS_USE_LIBUV
+        /* libuv returns negative uv codes without setting errno. */
+        int saved_errno = poll_rc < 0 ? -poll_rc : poll_rc;
+#else
+        /* epoll/kqueue return raw syscall results; the code is in errno. */
+        int saved_errno = errno;
+#endif
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(listen_socket_fd);
+    }
 
     return ls;
 }

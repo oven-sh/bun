@@ -3354,7 +3354,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
-  this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
+  this.listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3581,6 +3581,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  // Invalidate the previous call's pending cluster reply, matching Node's
+  // Server.prototype.listen `_listeningId++`.
+  this.listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3659,6 +3663,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  nextTickListening,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
@@ -3752,7 +3757,13 @@ Server.prototype[kRealListen] = function (
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  if (nextTickListening) {
+    // Cluster-worker path: Node emits 'listening' on nextTick, ahead of any
+    // setImmediate scheduled from the same IPC reply.
+    process.nextTick(emitListeningNextTick, this);
+  } else {
+    setTimeout(emitListeningNextTick, 1, this);
+  }
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -3833,9 +3844,9 @@ function listenInCluster(
     port >= 0 &&
     isIP(address) === 0
   ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
+    const lookupListeningId = server.listeningId;
     require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
+      if (lookupListeningId !== server.listeningId) return;
       if (err) {
         setTimeout(emitErrorNextTick, 1, server, err);
         return;
@@ -3894,10 +3905,12 @@ function listenInCluster(
     ...options,
     sharedOnly: tls ? true : undefined,
   };
-  const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
+  const listeningId = server.listeningId;
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
-    if (listeningId !== server[kClusterListeningId]) {
-      handle?.close();
+    // A later listen() invalidated this reply; release the handle so the
+    // primary drops its round-robin entry (Node's listeningId check).
+    if (listeningId !== server.listeningId) {
+      handle?.close?.();
       return;
     }
     err = checkBindError(err, port, handle);
@@ -3926,6 +3939,7 @@ function listenInCluster(
           contexts,
           onListen,
           sharedFd,
+          true,
         );
         handle.adopted = true;
         if (path && (readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
@@ -3954,7 +3968,6 @@ function listenInCluster(
   });
 }
 
-const kClusterListeningId = Symbol("kClusterListeningId");
 const kClusterHandle = Symbol("kClusterHandle");
 const kClusterFauxListen = Symbol("kClusterFauxListen");
 const { kClusterOwner } = require("internal/shared");
@@ -3969,7 +3982,9 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  // Cluster-worker path: Node emits 'listening' on nextTick, ahead of any
+  // setImmediate scheduled from the same IPC reply.
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {

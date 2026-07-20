@@ -6363,6 +6363,17 @@ pub fn dlopen_error(filename: &[u8]) -> Box<[u8]> {
     }
     #[cfg(windows)]
     {
+        dlopen_error_windows(bun_windows_sys::kernel32::GetLastError(), filename)
+    }
+}
+
+/// Windows arm of [`dlopen_error`] taking a pre-captured `GetLastError()`
+/// value (mirrors `uv__dlerror(lib, filename, errorno)`), so callers that
+/// must run code between `LoadLibraryExW` and formatting can capture the
+/// error first and nothing in between can clobber the last-error slot.
+#[cfg(windows)]
+pub fn dlopen_error_windows(err: u32, filename: &[u8]) -> Box<[u8]> {
+    {
         use bun_windows_sys::kernel32;
         use std::io::Write as _;
         const FORMAT_MESSAGE_ALLOCATE_BUFFER: u32 = 0x0000_0100;
@@ -6373,7 +6384,6 @@ pub fn dlopen_error(filename: &[u8]) -> Box<[u8]> {
         const ERROR_RESOURCE_TYPE_NOT_FOUND: u32 = 1813;
         const ERROR_MUI_FILE_NOT_FOUND: u32 = 15100;
 
-        let err = kernel32::GetLastError();
         let format = |lang: u32, buf: &mut *mut u16| -> u32 {
             // SAFETY: with ALLOCATE_BUFFER, lpBuffer receives an LPWSTR* and the
             // system allocates the result (freed via LocalFree below).
@@ -6426,12 +6436,21 @@ pub fn dlopen_error(filename: &[u8]) -> Box<[u8]> {
 }
 
 /// C-ABI `dlopen_error()` for `process.dlopen` (`BunProcess.cpp`) so both
-/// `bun:ffi` and `process.dlopen` share one error formatter. Caller owns the
-/// returned `BunString`.
+/// `bun:ffi` and `process.dlopen` share one error formatter. `errorno` is
+/// `GetLastError()` captured immediately after `LoadLibraryExW` (ignored on
+/// POSIX, which reads `dlerror()`). Caller owns the returned `BunString`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__dlerror(filename: &bun_core::String) -> bun_core::String {
-    let filename = filename.to_utf8();
-    bun_core::String::clone_utf8(&dlopen_error(filename.slice()))
+pub extern "C" fn Bun__dlerror(errorno: u32, filename: &bun_core::String) -> bun_core::String {
+    #[cfg(windows)]
+    {
+        let filename = filename.to_utf8();
+        bun_core::String::clone_utf8(&dlopen_error_windows(errorno, filename.slice()))
+    }
+    #[cfg(unix)]
+    {
+        let _ = (errorno, filename);
+        bun_core::String::clone_utf8(&dlopen_error(b""))
+    }
 }
 
 /// `dlsym(handle, name)`.

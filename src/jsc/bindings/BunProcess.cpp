@@ -315,7 +315,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
-extern "C" BunString Bun__dlerror(BunString* filename);
+extern "C" BunString Bun__dlerror(uint32_t errorno, BunString* filename);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -533,35 +533,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CrashHandler__setDlOpenAction(utf8.data());
 #if OS(WINDOWS)
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+    // Capture immediately (libuv does the same) so nothing below can clobber the last-error slot.
+    DWORD errorno = handle ? 0 : GetLastError();
 #else
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
+    uint32_t errorno = 0;
 #endif
     CrashHandler__setDlOpenAction(nullptr);
 
-#if !OS(WINDOWS)
     tryToDeleteIfNecessary();
-#endif
-    // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
 
     if (!handle) {
-        BunString err = Bun__dlerror(&filename_str);
+        BunString err = Bun__dlerror(errorno, &filename_str);
 #if OS(WINDOWS)
         // Node.js (src/node_binding.cc) appends the filename after uv_dlerror() on Windows.
         WTF::String msg = makeString(err.toWTFString(), filename);
-        // Since we're relying on LastError(), we have to delete after checking for errors
-        tryToDeleteIfNecessary();
 #else
         WTF::String msg = err.toWTFString();
 #endif
         err.deref();
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
-
-#if OS(WINDOWS)
-    tryToDeleteIfNecessary();
-#endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor(s).

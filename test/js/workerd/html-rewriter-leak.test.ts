@@ -47,13 +47,13 @@ test("onEndTag callbacks are released after the rewrite", () => {
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only
 // unprotected the held JSValues and leaked the struct memory.
 //
-// RSS is a high-water mark across the allocator's committed segments. mimalloc
-// hands a ~30 MB segment back to the OS on its own schedule, so a single
-// `Bun.gc(true); rss()` sample lands on either side of that release — the
-// 4-vCPU Windows CI lane saw `after` at the peak and `before` in the trough
-// for a +31 MB "delta" with nothing retained. Per-window *peak* RSS is the
-// stable observable: a leak raises it every pass (~50 MB over 3), while freed
-// memory leaves it flat regardless of when the decommit fires.
+// `process.memoryUsage.rss()` is a point sample; mimalloc hands a ~30 MB
+// segment back to the OS on its own cadence between passes, so two point
+// samples can straddle that release and read as a +31 MB "delta" with nothing
+// retained (observed on the 4-vCPU Windows lane). `resourceUsage().maxRSS` is
+// the kernel's monotone peak (VmHWM / PeakWorkingSetSize), so it never dips:
+// flat when freed memory is reused, strictly rising (~50 MB over 3 passes)
+// when it leaks.
 //
 // Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
 // allocation tracking adds enough RSS noise to drown the signal. CI has no
@@ -72,23 +72,23 @@ test.skipIf(isDebug)(
       }
 
       const N = 4000;
+      const samples = [];
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
-        return process.memoryUsage.rss();
+        samples.push(process.memoryUsage.rss());
       }
 
-      function peakOver(passes) {
-        let peak = 0;
-        for (let i = 0; i < passes; i++) peak = Math.max(peak, pass());
-        return peak;
-      }
+      // ru_maxrss is KB on Linux/Windows, bytes on macOS; normalize to bytes.
+      const maxRSS = () => process.resourceUsage().maxRSS * (process.platform === "darwin" ? 1 : 1024);
 
-      const before = peakOver(3);
-      const after = peakOver(3);
+      for (let i = 0; i < 3; i++) pass();
+      const before = maxRSS();
+      for (let i = 0; i < 3; i++) pass();
+      const after = maxRSS();
 
       process.stdout.write(
-        JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
+        JSON.stringify({ samples, before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
       );
     `;
 
@@ -117,6 +117,8 @@ test.skipIf(isDebug)(
       .trim();
     expect(filteredStderr).toBe("");
 
+    // Logged so a future red carries the per-pass trace without a repro.
+    console.log(stdout.trim());
     const { deltaMB } = JSON.parse(stdout.trim());
 
     // Unfixed: ~50 MB over 3 measured passes. Fixed: <1 MB.

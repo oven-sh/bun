@@ -1438,11 +1438,11 @@ impl JSValkeyClient {
 
         // Populate `_secure` first, then handle the failure branch outside the
         // borrow of `self.client.tls`.
+        let mut tls_err = uws::create_bun_socket_error_t::none;
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
             // Reuse across reconnect — the SSL_CTX is the only thing the
             // old `_socket_ctx` cache existed to preserve.
             if self._secure.get().is_none() {
-                let mut err = uws::create_bun_socket_error_t::none;
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
@@ -1454,7 +1454,7 @@ impl JSValkeyClient {
                 // SAFETY: `get_or_create` returns a +1-ref `SSL_CTX*` (or null).
                 self._secure.set(
                     cache
-                        .get_or_create(custom, &mut err)
+                        .get_or_create(custom, &mut tls_err)
                         .and_then(|p| unsafe { boringssl::c::OwnedSslCtx::from_raw(p) }),
                 );
             }
@@ -1464,14 +1464,27 @@ impl JSValkeyClient {
         };
         if tls_ctx_failed {
             self.client_mut().flags.enable_auto_reconnect = false;
-            self.client_fail(
-                b"Failed to create TLS context",
-                protocol::RedisError::ConnectionClosed,
-            )?;
+            let mut msg_buf = [0u8; 96];
+            let written = {
+                use std::io::Write;
+                let mut cur = &mut msg_buf[..];
+                let start = cur.len();
+                let _ = write!(&mut cur, "Failed to create TLS context ({:?})", tls_err);
+                start - cur.len()
+            };
+            // JS-side failures here are reported, not `?`-propagated: callers
+            // treat `Err` from `connect()` as a socket-connect syscall failure.
+            if let Err(e) =
+                self.client_fail(&msg_buf[..written], protocol::RedisError::ConnectionClosed)
+            {
+                self.global_object.report_active_exception_as_unhandled(e);
+            }
             // `on_valkey_close()` consumes the socket ref; hand it over so it
             // isn't released twice.
             socket_ref.forget();
-            self.on_valkey_close()?;
+            if let Err(e) = self.on_valkey_close() {
+                self.global_object.report_active_exception_as_unhandled(e);
+            }
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
         }

@@ -782,29 +782,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
-    // Reject non-URL-friendly names before any registry routing. npm rejects
-    // these at parse time (validate-npm-package-name); accepting them lets a
-    // percent-encoded `/` bypass `[install.scopes]` and reach the default
-    // registry while the server decodes it back to the scoped name.
-    if version.tag.is_npm() {
-        let name_str = this.lockfile.str(&name);
-        if !strings::is_npm_package_name_ignore_length(name_str) {
-            if let Some(fail) = fail_fn {
-                fail(this, dependency, id, crate::Error::InvalidPackageName);
-            } else {
-                this.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Invalid package name \"{}\" (package names may only contain URL-friendly characters)",
-                        bstr::BStr::new(name_str),
-                    ),
-                );
-            }
-            return Ok(());
-        }
-    }
-
     match version.tag {
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
@@ -1032,6 +1009,28 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // and `name_str` is still read afterwards on the
                         // fall-through path.
                         let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
+
+                        // Non-URL-safe bytes (`%`, `?`, `#`, `\`, ...) let the
+                        // registry resolve a different path than scope routing
+                        // saw (e.g. `@priv%2fx` bypasses `[install.scopes]`).
+                        if !strings::is_url_safe_package_name(&name_str) {
+                            if dependency.behavior.is_required() {
+                                if let Some(fail) = fail_fn {
+                                    fail(this, dependency, id, crate::Error::InvalidPackageName);
+                                } else {
+                                    this.log_mut().add_error_fmt(
+                                        None,
+                                        bun_ast::Loc::EMPTY,
+                                        format_args!(
+                                            "Invalid package name \"{}\" (package names may only contain URL-friendly characters)",
+                                            bstr::BStr::new(&name_str),
+                                        ),
+                                    );
+                                }
+                            }
+                            return Ok(());
+                        }
+
                         let task_id = Task::Id::for_manifest(&name_str);
 
                         if cfg!(debug_assertions) {

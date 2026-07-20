@@ -8961,8 +8961,9 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
   const err = await stderr.text();
   await stdout.text();
 
-  // The manifest request must be refused with a clear error...
-  expect(err).toContain("is not on registry");
+  // The manifest request must be refused with a clear error (the name is
+  // rejected as non-URL-safe before the URL join)...
+  expect(err).toContain("Invalid package name");
   // ...and no request (carrying the registry Authorization header) may reach
   // a host other than the configured registry.
   expect(received).toEqual([]);
@@ -8970,19 +8971,16 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
 });
 
 describe("rejects percent-encoded dependency names that would bypass [install.scopes]", () => {
-  // A dependency named `@priv%2fx` has no literal `/`, so scope routing would
-  // match it against no `[install.scopes]` entry and fall through to the
-  // default registry. That registry receives `GET /@priv%2fx`, which the npm
-  // namespace decodes back to `@priv/x`, so the default registry serves the
-  // scoped packument for a name the scope pin was meant to redirect. npm's
-  // validate-npm-package-name rejects non-URL-friendly names at parse time;
-  // bun must do the same before any registry request.
+  // `@priv%2fx` has no literal `/`, so scope routing would fall through to the
+  // default registry, which decodes it back to `@priv/x`. Match npm's
+  // validate-npm-package-name error gate and reject before any request.
   for (const [label, depName, alias] of [
     ["root dependency key", "@priv%2fx", "@priv%2fx"],
     ["npm: alias target", "npm:@priv%2fx@*", "innocent"],
-    // uppercase %2F and the raw `?` URL metacharacter must be rejected too.
     ["uppercase %2F", "@priv%2Fx", "@priv%2Fx"],
     ["raw ? metacharacter", "@priv/x?", "@priv/x?"],
+    ["raw # metacharacter", "@priv/x#y", "@priv/x#y"],
+    ["backslash", "@priv\\x", "@priv\\x"],
   ] as const) {
     test(label, async () => {
       const defaultHits: string[] = [];
@@ -9042,12 +9040,20 @@ registry = "http://localhost:${defaultReg.port}/"
     });
   }
 
-  test("literal @scope/name still routes to the pinned registry", async () => {
+  test("literal @scope/name and legacy npm chars still route to the pinned registry", async () => {
     const defaultHits: string[] = [];
     using defaultReg = Bun.serve({
       port: 0,
       fetch(req) {
         defaultHits.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    const scopedHits: string[] = [];
+    using scopedReg = Bun.serve({
+      port: 0,
+      fetch(req) {
+        scopedHits.push(new URL(req.url).pathname);
         return new Response("{}", { status: 404 });
       },
     });
@@ -9060,7 +9066,7 @@ registry = "http://localhost:${defaultReg.port}/"
 cache = false
 registry = "http://localhost:${defaultReg.port}/"
 [install.scopes]
-"@priv" = { url = "http://localhost:${port}/" }
+"@priv" = { url = "http://localhost:${scopedReg.port}/" }
 `,
       ),
       write(
@@ -9068,7 +9074,7 @@ registry = "http://localhost:${defaultReg.port}/"
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
-          dependencies: { "@priv/x": "*" },
+          dependencies: { "@priv/x": "*", "@priv/pkg~1": "*" },
         }),
       ),
     ]);
@@ -9086,11 +9092,12 @@ registry = "http://localhost:${defaultReg.port}/"
     await stdout.text();
     await exited;
 
-    // Control: a well-formed scoped name must not be rejected by the new
-    // validator; it is routed to the pinned registry (which 404s here because
-    // verdaccio has no @priv/x) and must never touch the default registry.
+    // Control: well-formed scoped names, including legacy chars npm only
+    // warns about (`~`), must not be rejected and must route to the pinned
+    // registry only.
     expect(err).not.toContain("Invalid package name");
     expect(defaultHits).toEqual([]);
+    expect(scopedHits.sort()).toEqual(["/@priv%2fpkg~1", "/@priv%2fx"]);
   });
 });
 

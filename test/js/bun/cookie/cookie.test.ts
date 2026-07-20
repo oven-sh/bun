@@ -55,6 +55,71 @@ describe("Bun.Cookie validation tests", () => {
     });
   });
 
+  describe("maxAge validation", () => {
+    // RFC 6265 Max-Age is delta-seconds (["-"] *DIGIT), so anything that can't be
+    // serialized as a plain integer must be rejected instead of put on the wire.
+    test.each([Infinity, -Infinity, NaN, 1.5, -1.5, -1.5e21, 1e300, 2 ** 53, -(2 ** 53)])(
+      "throws for maxAge: %p in every entry point",
+      bad => {
+        expect(() => new Bun.Cookie("name", "value", { maxAge: bad })).toThrow("maxAge must be a safe integer");
+        expect(() => new Bun.Cookie({ name: "name", value: "value", maxAge: bad })).toThrow(
+          "maxAge must be a safe integer",
+        );
+        expect(() => Bun.Cookie.from("name", "value", { maxAge: bad })).toThrow("maxAge must be a safe integer");
+        expect(() => new Bun.CookieMap().set("name", "value", { maxAge: bad })).toThrow(
+          "maxAge must be a safe integer",
+        );
+
+        const cookie = new Bun.Cookie("name", "value");
+        expect(() => {
+          cookie.maxAge = bad;
+        }).toThrow("maxAge must be a safe integer");
+        expect(cookie.maxAge).toBeUndefined();
+        expect(cookie.toString()).toBe("name=value; Path=/; SameSite=Lax");
+      },
+    );
+
+    test("throws a RangeError", () => {
+      expect(() => new Bun.Cookie("name", "value", { maxAge: Infinity })).toThrow(RangeError);
+    });
+
+    test.each([
+      [0, "Max-Age=0"],
+      [-1, "Max-Age=-1"],
+      [3600, "Max-Age=3600"],
+      [Number.MAX_SAFE_INTEGER, "Max-Age=9007199254740991"],
+      [Number.MIN_SAFE_INTEGER, "Max-Age=-9007199254740991"],
+    ])("serializes maxAge: %p as plain digits", (maxAge, expected) => {
+      const cookie = new Bun.Cookie("name", "value", { maxAge });
+      expect(cookie.maxAge).toBe(maxAge);
+      expect(cookie.toString()).toBe(`name=value; Path=/; ${expected}; SameSite=Lax`);
+    });
+
+    test("undefined and null mean no Max-Age", () => {
+      expect(new Bun.Cookie("name", "value", { maxAge: undefined }).maxAge).toBeUndefined();
+      // @ts-expect-error null is accepted at runtime
+      expect(new Bun.Cookie("name", "value", { maxAge: null }).maxAge).toBeUndefined();
+
+      const cookie = new Bun.Cookie("name", "value", { maxAge: 5 });
+      cookie.maxAge = undefined;
+      expect(cookie.maxAge).toBeUndefined();
+      expect(cookie.toString()).toBe("name=value; Path=/; SameSite=Lax");
+    });
+
+    test("coerces non-numbers with ToNumber, same as the maxAge setter", () => {
+      // @ts-expect-error the setter has always coerced strings; the constructor now matches it
+      expect(new Bun.Cookie("name", "value", { maxAge: "60" }).maxAge).toBe(60);
+      const cookie = new Bun.Cookie("name", "value");
+      // @ts-expect-error
+      cookie.maxAge = "60";
+      expect(cookie.maxAge).toBe(60);
+      // @ts-expect-error
+      expect(() => new Bun.Cookie("name", "value", { maxAge: "not a number" })).toThrow(
+        "maxAge must be a safe integer",
+      );
+    });
+  });
+
   describe("Cookie.from validation", () => {
     test("throws for NaN Date in Cookie.from", () => {
       const invalidDate = new Date("invalid date");

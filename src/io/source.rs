@@ -558,7 +558,6 @@ pub(crate) extern "C" fn Source__setRawModeTty(
 
     // fd 0 is not a console but `fd` is (piped stdin + CONIN$ reopen). There
     // is no libuv mode cache on the input buffer in this case.
-    const ENABLE_WINDOW_INPUT: u32 = 0x0008;
     const CONIN_W: [u16; 7] = [
         b'C' as _, b'O' as _, b'N' as _, b'I' as _, b'N' as _, b'$' as _, 0,
     ];
@@ -579,7 +578,7 @@ pub(crate) extern "C" fn Source__setRawModeTty(
     }
     // Same masks and fallback as libuv `uv_tty_set_mode` (src/win/tty.c).
     let (flags, try_flags) = match mode {
-        uv::TtyMode::Vt => (ENABLE_WINDOW_INPUT, w::ENABLE_VIRTUAL_TERMINAL_INPUT),
+        uv::TtyMode::Vt => (w::ENABLE_WINDOW_INPUT, w::ENABLE_VIRTUAL_TERMINAL_INPUT),
         _ => (
             w::ENABLE_ECHO_INPUT | w::ENABLE_LINE_INPUT | w::ENABLE_PROCESSED_INPUT,
             0,

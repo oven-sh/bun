@@ -973,102 +973,103 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 );
 
 // Windows: --no-orphans self-assigns to a kill-on-close Job Object. Children
-// inherit Job membership, so when Bun is TerminateProcess'd the kernel closes
-// the Job handle and terminates every descendant. No sh supervisor layer —
-// the test kills Bun directly and observes the grandchild.
-async function spawnTreeWindows(noOrphans: boolean) {
-  const env: Record<string, string> = { ...bunEnv };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+// inherit Job membership (nested jobs, Win8+), so when Bun is
+// TerminateProcess'd the kernel closes the Job handle and terminates every
+// descendant.
+//
+// libuv's uv_spawn already maintains its own kill-on-close job, but with
+// JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK so only processes libuv explicitly
+// assigns are covered — anything spawned *by* those children (cmd.exe →
+// tool, npm script → compiler, etc.) breaks away silently and survives. The
+// --no-orphans job omits SILENT_BREAKAWAY so membership is inherited
+// recursively.
+//
+// Tree under test: test → bun → cmd.exe → leaf bun. cmd.exe is the non-libuv
+// link: it spawns the leaf via plain CreateProcess, so the leaf escapes
+// libuv's job but not the --no-orphans job. The leaf writes its pid to a file
+// so the test can observe it after cmd.exe's stdout pipe is torn down.
+async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>) {
+  // No `cwd` anywhere in the chain: the leaf must not hold an open handle on
+  // the tempDir (CWD lock) or the negative test's cleanup races the rm.
+  const dir = tempDir("no-orphans-win", {
+    "leaf.js": `
+      require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+      setInterval(()=>{}, 1000);
+    `,
+    "outer.js": `
+      Bun.spawn({
+        cmd: ["cmd.exe", "/d", "/c", process.env.BAT],
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+      setInterval(()=>{}, 1000);
+    `,
+    // .bat avoids cmd /c's quote-stripping rules around a quoted exe + arg.
+    "run.bat": `@"${bunExe()}" "%~dp0leaf.js"\r\n`,
+  });
+  const pidfile = `${dir}\\leaf.pid`;
+  const env: Record<string, string> = { ...bunEnv, ...extraEnv, PIDFILE: pidfile, BAT: `${dir}\\run.bat` };
+  if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   const bun = Bun.spawn({
-    cmd: [bunExe(), ...(noOrphans ? ["--no-orphans"] : []), `${String(fixture)}/child.js`],
+    cmd: [bunExe(), ...argv, `${dir}\\outer.js`],
     env,
-    cwd: String(fixture),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "ignore",
   });
-  const reader = bun.stdout.getReader();
-  const decoder = new TextDecoder();
-  let line = "";
-  while (!line.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    line += decoder.decode(value, { stream: true });
+  const deadline = Date.now() + 15000;
+  let leafPid = 0;
+  while (leafPid === 0 && Date.now() < deadline) {
+    try {
+      const t = await Bun.file(pidfile).text();
+      if (t.length > 0) leafPid = Number(t.trim());
+    } catch {}
+    if (leafPid === 0) await sleep(25);
   }
-  reader.releaseLock();
-  const [bunPid, , grandchildPid] = line.trim().split(" ").map(Number);
-  expect(bunPid).toBe(bun.pid);
-  expect(grandchildPid).toBeGreaterThan(0);
-  return { bun, grandchildPid };
+  return {
+    bun,
+    leafPid,
+    async reap() {
+      if (leafPid > 0 && isAlive(leafPid)) {
+        try { process.kill(leafPid, "SIGKILL"); } catch {}
+        await waitUntilDead(leafPid, 2000);
+      }
+      dir[Symbol.dispose]();
+    },
+  };
 }
 
 test.concurrent.skipIf(!isWindows)(
-  "windows: without --no-orphans, grandchild survives TerminateProcess on Bun",
+  "windows: without --no-orphans, a cmd.exe-spawned descendant survives TerminateProcess on Bun",
   async () => {
-    const { bun, grandchildPid } = await spawnTreeWindows(false);
-    expect(isAlive(grandchildPid)).toBe(true);
-    bun.kill("SIGKILL");
-    await bun.exited;
-    const died = await waitUntilDead(grandchildPid, 1000);
-    reap(grandchildPid);
-    expect(died).toBe(false);
-  },
-);
-
-test.concurrent.skipIf(!isWindows)(
-  "windows: --no-orphans reaps grandchild when Bun is TerminateProcess'd",
-  async () => {
-    const { bun, grandchildPid } = await spawnTreeWindows(true);
-    expect(isAlive(grandchildPid)).toBe(true);
-    bun.kill("SIGKILL");
-    await bun.exited;
-    const died = await waitUntilDead(grandchildPid, 10000);
-    reap(grandchildPid);
-    expect(died).toBe(true);
-  },
-);
-
-// The inner Bun and its child are both Bun (and so both self-assign to a Job
-// via env-var inheritance). This grandchild is a non-Bun process that never
-// creates its own Job — proves Job membership is inherited across spawn.
-test.concurrent.skipIf(!isWindows)(
-  "windows: --no-orphans reaps a non-Bun grandchild when Bun is TerminateProcess'd",
-  async () => {
-    using dir = tempDir("no-orphans-win-nonbun", {
-      "child.js": `
-        const gc = Bun.spawn({
-          cmd: ["cmd.exe", "/c", "echo r& ping -n 120 127.0.0.1 > NUL"],
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-        await gc.stdout.getReader().read();
-        console.log(process.pid, process.ppid, gc.pid);
-        setInterval(()=>{}, 1000);
-      `,
-    });
-    const env: Record<string, string> = { ...bunEnv };
-    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-    const bun = Bun.spawn({
-      cmd: [bunExe(), "--no-orphans", "child.js"],
-      env,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const reader = bun.stdout.getReader();
-    const decoder = new TextDecoder();
-    let line = "";
-    while (!line.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      line += decoder.decode(value, { stream: true });
+    const { bun, leafPid, reap } = await spawnTreeWindows([], {});
+    try {
+      expect(leafPid).toBeGreaterThan(0);
+      expect(isAlive(leafPid)).toBe(true);
+      bun.kill("SIGKILL");
+      await bun.exited;
+      // Must NOT die: poll for death and expect the poll to time out.
+      const died = await waitUntilDead(leafPid, 1000);
+      expect(died).toBe(false);
+    } finally {
+      await reap();
     }
-    reader.releaseLock();
-    const [, , grandchildPid] = line.trim().split(" ").map(Number);
-    expect(grandchildPid).toBeGreaterThan(0);
-    expect(isAlive(grandchildPid)).toBe(true);
-    bun.kill("SIGKILL");
-    await bun.exited;
-    const died = await waitUntilDead(grandchildPid, 10000);
-    reap(grandchildPid);
-    expect(died).toBe(true);
   },
 );
+
+describe.concurrent.each([
+  { via: "--no-orphans", argv: ["--no-orphans"], env: {} },
+  { via: "BUN_FEATURE_FLAG_NO_ORPHANS=1", argv: [], env: { BUN_FEATURE_FLAG_NO_ORPHANS: "1" } },
+])("windows: $via reaps a cmd.exe-spawned descendant when Bun is TerminateProcess'd", ({ argv, env }) => {
+  test.concurrent.skipIf(!isWindows)("leaf dies", async () => {
+    const { bun, leafPid, reap } = await spawnTreeWindows(argv, env);
+    try {
+      expect(leafPid).toBeGreaterThan(0);
+      expect(isAlive(leafPid)).toBe(true);
+      bun.kill("SIGKILL");
+      await bun.exited;
+      const died = await waitUntilDead(leafPid, 10000);
+      expect(died).toBe(true);
+    } finally {
+      await reap();
+    }
+  });
+});

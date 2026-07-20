@@ -7242,7 +7242,6 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     }
 
     let nonblock = (flags & O::NONBLOCK) != 0;
-    let overwrite = (flags & O::WRONLY) != 0 && (flags & O::APPEND) == 0;
 
     let mut access_mask: u32 = w::READ_CONTROL | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
@@ -7255,22 +7254,17 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         access_mask |= w::GENERIC_READ;
     }
 
-    let disposition: u32 = 'blk: {
-        if (flags & O::CREAT) != 0 {
-            if (flags & O::EXCL) != 0 {
-                break 'blk w::FILE_CREATE;
-            }
-            break 'blk if overwrite {
-                w::FILE_OVERWRITE_IF
-            } else {
-                w::FILE_OPEN_IF
-            };
-        }
-        if overwrite {
-            w::FILE_OVERWRITE
-        } else {
-            w::FILE_OPEN
-        }
+    // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
+    // read/write access mode only affects `access_mask` above.
+    let creat = (flags & O::CREAT) != 0;
+    let excl = (flags & O::EXCL) != 0;
+    let truncate = (flags & O::TRUNC) != 0;
+    let disposition: u32 = match (creat, excl, truncate) {
+        (true, true, _) => w::FILE_CREATE,
+        (true, false, true) => w::FILE_OVERWRITE_IF,
+        (true, false, false) => w::FILE_OPEN_IF,
+        (false, _, true) => w::FILE_OVERWRITE,
+        (false, _, false) => w::FILE_OPEN,
     };
 
     let blocking_flag: u32 = if !nonblock {
@@ -9794,6 +9788,80 @@ mod owned_handle_tests {
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod openat_windows_disposition_tests {
+    use super::*;
+
+    fn tmp_path(name: &str) -> Vec<u8> {
+        let mut p = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
+        p.push(b'\\');
+        p.extend_from_slice(name.as_bytes());
+        p
+    }
+
+    fn seed(path: &[u8], len: usize) {
+        let fd = openat_a(Fd::cwd(), path, O::WRONLY | O::CREAT | O::TRUNC, 0o666).expect("seed");
+        write(fd, &vec![b'A'; len]).expect("write");
+        let _ = close(fd);
+    }
+
+    fn size_after_open(path: &[u8], flags: i32) -> u64 {
+        let fd = openat_a(Fd::cwd(), path, flags, 0o666).expect("open");
+        let size = get_file_size(fd).expect("size");
+        let _ = close(fd);
+        size
+    }
+
+    fn rm(path: &[u8]) {
+        let _ = std::fs::remove_file(std::str::from_utf8(path).unwrap());
+    }
+
+    #[test]
+    fn rdwr_trunc_truncates() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let p = tmp_path("bun_sys_openat_rdwr_trunc");
+        seed(&p, 20);
+        assert_eq!(size_after_open(&p, O::RDWR | O::CREAT | O::TRUNC), 0);
+        rm(&p);
+    }
+
+    #[test]
+    fn wronly_creat_preserves() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let p = tmp_path("bun_sys_openat_wronly_creat");
+        seed(&p, 20);
+        assert_eq!(size_after_open(&p, O::WRONLY | O::CREAT), 20);
+        rm(&p);
+    }
+
+    #[test]
+    fn wronly_no_creat_preserves() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let p = tmp_path("bun_sys_openat_wronly_nocreat");
+        seed(&p, 20);
+        assert_eq!(size_after_open(&p, O::WRONLY), 20);
+        rm(&p);
+    }
+
+    #[test]
+    fn wronly_trunc_truncates() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let p = tmp_path("bun_sys_openat_wronly_trunc");
+        seed(&p, 20);
+        assert_eq!(size_after_open(&p, O::WRONLY | O::CREAT | O::TRUNC), 0);
+        rm(&p);
+    }
+
+    #[test]
+    fn rdwr_creat_preserves() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let p = tmp_path("bun_sys_openat_rdwr_creat");
+        seed(&p, 20);
+        assert_eq!(size_after_open(&p, O::RDWR | O::CREAT), 20);
+        rm(&p);
     }
 }
 

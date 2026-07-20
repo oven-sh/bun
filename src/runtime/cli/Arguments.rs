@@ -317,6 +317,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // `node --interactive` compat: `Command::which()` routes it to the REPL;
+    // declared (hidden) so `Arguments.parse` under the run table accepts it.
+    parse_param!("--interactive"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -771,8 +774,15 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
-        let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
-        let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
+        // An absolute --cwd needs no base; a relative one still requires a
+        // live cwd (an exe-dir base would silently chdir somewhere else).
+        let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+            b"/"
+        } else {
+            let len = bun_sys::getcwd(&mut *outbuf)?;
+            &outbuf[..len]
+        };
+        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
         // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
         // slice into a threadlocal buffer, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
@@ -785,8 +795,24 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             );
             Global::exit(1);
         }
-        Box::<[u8]>::from(out_z.as_bytes())
+        // Store the post-chdir physical path (mirrors process.chdir) so
+        // process.cwd(), path.resolve, and the resolver agree on one form.
+        let mut phys = PathBuffer::uninit();
+        match bun_core::getcwd(&mut phys) {
+            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
+            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
+        }
+    } else if matches!(
+        cmd,
+        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+    ) {
+        // A deleted cwd must not abort the runtime (Node boots and lets
+        // `process.cwd()` throw later); fall back to the executable's dir.
+        let mut temp = PathBuffer::uninit();
+        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
     } else {
+        // Everything else (install/test/build/...) must not silently act on
+        // whatever project happens to live above the executable.
         let mut temp = PathBuffer::uninit();
         let len = bun_sys::getcwd(&mut *temp)?;
         Box::<[u8]>::from(&temp[..len])

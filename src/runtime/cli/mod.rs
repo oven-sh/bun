@@ -961,13 +961,25 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
+        let mut interactive = false;
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
+            // Node compat: `--interactive` opens the REPL, but only when no
+            // script follows (node runs the script and ignores the flag).
+            if first_arg_name == b"--interactive" {
+                interactive = true;
+            }
             match iter.next() {
                 Some(n) => first_arg_name = n,
-                None => return Tag::AutoCommand,
+                None => {
+                    return if interactive {
+                        Tag::ReplCommand
+                    } else {
+                        Tag::AutoCommand
+                    };
+                }
             }
         }
 

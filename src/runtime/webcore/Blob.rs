@@ -4732,12 +4732,10 @@ pub fn write_file_with_source_destination(
     let destination_type = destination_store.data.tag();
 
     // TODO: make sure this invariant isn't being broken elsewhere, then upgrade to allow_assert
-    if cfg!(debug_assertions) {
-        debug_assert!(
-            destination_type != store::DataTag::Bytes,
-            "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
-        );
-    }
+    debug_assert!(
+        destination_type != store::DataTag::Bytes,
+        "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
+    );
 
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(ctx, destination_blob, options);

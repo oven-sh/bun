@@ -17,7 +17,7 @@ async function run(src: string, extraEnv: Record<string, string> = {}) {
   expect({ stdout: stdout.trim(), exitCode }, stderr).toEqual({ stdout: "PASS", exitCode: 0 });
 }
 
-test("dns resolver re-initializes after a config-change signal", async () => {
+test.concurrent("dns resolver re-initializes after a config-change signal", async () => {
   await run(`
     const dns = require("node:dns");
     const { dnsConfigChanged, dnsConfigGeneration } = require("bun:internal-for-testing");
@@ -48,7 +48,7 @@ test("dns resolver re-initializes after a config-change signal", async () => {
   `);
 });
 
-test("config-change signal does not override user-set servers", async () => {
+test.concurrent("config-change signal does not override user-set servers", async () => {
   await run(`
     const dns = require("node:dns");
     const { dnsConfigChanged } = require("bun:internal-for-testing");
@@ -77,7 +77,7 @@ test("config-change signal does not override user-set servers", async () => {
   `);
 });
 
-test.skipIf(!isLinux)("inotify watcher fires on resolv.conf change", async () => {
+test.concurrent.skipIf(!isLinux)("inotify watcher fires on resolv.conf change", async () => {
   using dir = tempDir("dns-config-watch", {
     "resolv.conf": "nameserver 127.0.0.1\n",
   });

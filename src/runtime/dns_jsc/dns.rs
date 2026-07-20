@@ -5829,39 +5829,38 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let channel = self.get_channel_or_error(global_this)?;
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             return Err(global_this.throw_not_enough_arguments("setLocalAddress", 1, 0));
         }
 
-        let first_af = self.set_channel_local_address(channel, global_this, arguments[0])?;
-
-        if arguments.len() < 2 || arguments[1].is_undefined() {
-            return Ok(JSValue::UNDEFINED);
+        // Coerce and stash all arguments before touching the channel:
+        // `get_channel()` can destroy the current channel on a config-change
+        // generation bump, and the coercions below can re-enter it via user
+        // `toString`, so holding a raw `*mut Channel` across them is a UAF.
+        let first_af = self.stash_local_address(global_this, arguments[0])?;
+        if arguments.len() >= 2 && !arguments[1].is_undefined() {
+            let second_af = self.stash_local_address(global_this, arguments[1])?;
+            if first_af == second_af {
+                return match first_af {
+                    x if x == c_ares::AF::INET => Err(global_this
+                        .throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
+                    x if x == c_ares::AF::INET6 => Err(global_this
+                        .throw_invalid_arguments(format_args!("Cannot specify two IPv6 addresses."))),
+                    _ => unreachable!(),
+                };
+            }
         }
 
-        let second_af = self.set_channel_local_address(channel, global_this, arguments[1])?;
-
-        if first_af != second_af {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        match first_af {
-            x if x == c_ares::AF::INET => Err(global_this
-                .throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
-            x if x == c_ares::AF::INET6 => Err(global_this
-                .throw_invalid_arguments(format_args!("Cannot specify two IPv6 addresses."))),
-            _ => unreachable!(),
-        }
+        let _ = self.get_channel_or_error(global_this)?;
+        self.replay_local_address();
+        Ok(JSValue::UNDEFINED)
     }
 
-    fn set_channel_local_address(
-        &self,
-        channel: *mut c_ares::Channel,
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<c_int> {
+    /// Parse one `setLocalAddress` argument and stash it on `self.local_ip4`/
+    /// `local_ip6`. Runs JS coercions; must not be called while a raw
+    /// `*mut Channel` is held.
+    fn stash_local_address(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<c_int> {
         let str_ = value.to_slice(global_this)?;
         // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
@@ -5880,10 +5879,8 @@ impl Resolver {
             )
         } == 1
         {
-            let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
-            self.local_ip4.set(ip);
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
+            self.local_ip4
+                .set(u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]));
             return Ok(c_ares::AF::INET);
         }
 
@@ -5897,8 +5894,6 @@ impl Resolver {
         } == 1
         {
             self.local_ip6.set(addr);
-            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
-            unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
             return Ok(c_ares::AF::INET6);
         }
 
@@ -5912,23 +5907,11 @@ impl Resolver {
     }
 
     fn set_channel_servers(
-        channel: *mut c_ares::Channel,
+        &self,
+        is_global: bool,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
-        if channel != Self::get_channel_from_vm(global_this)?
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
-        {
-            return Err(global_this
-                .err(
-                    jsc::Error::DNS_SET_SERVERS_FAILED,
-                    format_args!("Failed to set servers: there are pending queries"),
-                )
-                .throw());
-        }
-
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             return Err(global_this.throw_not_enough_arguments("setServers", 1, 0));
@@ -5939,20 +5922,11 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
         }
 
+        // Build the full server list from JS before touching the channel:
+        // `get_channel()` can destroy the current channel on a config-change
+        // generation bump, and the per-element coercions below can re-enter it
+        // via user getters/toString.
         let mut triples_iterator = argument.array_iterator(global_this)?;
-
-        if triples_iterator.len == 0 {
-            // SAFETY: FFI; channel is a live initialized ares_channel; null clears the server list.
-            let r = unsafe { c_ares::ares_set_servers_ports(channel, ptr::null_mut()) };
-            if r != c_ares::ARES_SUCCESS {
-                let err = c_ares::Error::get(r).unwrap();
-                return Err(global_this.throw_value(global_this.create_error_instance(
-                    format_args!("ares_set_servers_ports error: {}", err.label()),
-                )));
-            }
-            return Ok(JSValue::UNDEFINED);
-        }
-
         let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
             Vec::with_capacity(triples_iterator.len as usize);
 
@@ -6026,9 +6000,29 @@ impl Resolver {
             entries[i - 1].next = next;
         }
 
+        // All JS coercions done; now fetch the channel. No user JS runs past
+        // this point so the raw pointer stays valid.
+        let channel = self.get_channel_or_error(global_this)?;
+
+        // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
+        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+        if !is_global && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
+            return Err(global_this
+                .err(
+                    jsc::Error::DNS_SET_SERVERS_FAILED,
+                    format_args!("Failed to set servers: there are pending queries"),
+                )
+                .throw());
+        }
+
+        let head = if entries.is_empty() {
+            ptr::null_mut()
+        } else {
+            entries.as_mut_ptr()
+        };
         // SAFETY: FFI; channel is live; entries form a valid singly-linked list (next ptrs set above)
         // and remain alive for the duration of the call (c-ares copies them internally).
-        let r = unsafe { c_ares::ares_set_servers_ports(channel, entries.as_mut_ptr()) };
+        let r = unsafe { c_ares::ares_set_servers_ports(channel, head) };
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
             return Err(
@@ -6039,6 +6033,7 @@ impl Resolver {
             );
         }
 
+        self.is_servers_default.set(false);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -6047,14 +6042,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let resolver = global_resolver(global_this);
-        let rv = Self::set_channel_servers(
-            resolver.get_channel_or_error(global_this)?,
-            global_this,
-            callframe,
-        )?;
-        resolver.is_servers_default.set(false);
-        Ok(rv)
+        global_resolver(global_this).set_channel_servers(true, global_this, callframe)
     }
 
     #[host_fn(method)]
@@ -6063,13 +6051,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let rv = Self::set_channel_servers(
-            self.get_channel_or_error(global_this)?,
-            global_this,
-            callframe,
-        )?;
-        self.is_servers_default.set(false);
-        Ok(rv)
+        self.set_channel_servers(false, global_this, callframe)
     }
 
     // FFI shim emitted by `export_host_fn!` below (JS2Native link name).

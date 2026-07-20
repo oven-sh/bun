@@ -588,22 +588,22 @@ describe("writeFileSync numeric open-flag matrix", () => {
   type Outcome = "ZZ23456789" | "ZZ" | "0123456789ZZ" | "ENOENT" | "EEXIST";
   const cases: [number, string, { exists: Outcome; missing: Outcome }][] = [
     // access | disposition flags ...           label                          over existing   over missing
-    [O_WRONLY,                                 "WRONLY",                     { exists: "ZZ23456789",   missing: "ENOENT" }],
-    [O_WRONLY | O_CREAT,                       "WRONLY|CREAT",               { exists: "ZZ23456789",   missing: "ZZ"     }],
-    [O_WRONLY | O_TRUNC,                       "WRONLY|TRUNC",               { exists: "ZZ",           missing: "ENOENT" }],
-    [O_WRONLY | O_CREAT | O_TRUNC,             "WRONLY|CREAT|TRUNC",         { exists: "ZZ",           missing: "ZZ"     }],
-    [O_WRONLY | O_CREAT | O_EXCL,              "WRONLY|CREAT|EXCL",          { exists: "EEXIST",       missing: "ZZ"     }],
-    [O_WRONLY | O_CREAT | O_EXCL | O_TRUNC,    "WRONLY|CREAT|EXCL|TRUNC",    { exists: "EEXIST",       missing: "ZZ"     }],
-    [O_RDWR,                                   "RDWR",                       { exists: "ZZ23456789",   missing: "ENOENT" }],
-    [O_RDWR | O_CREAT,                         "RDWR|CREAT",                 { exists: "ZZ23456789",   missing: "ZZ"     }],
-    [O_RDWR | O_TRUNC,                         "RDWR|TRUNC",                 { exists: "ZZ",           missing: "ENOENT" }],
-    [O_RDWR | O_CREAT | O_TRUNC,               "RDWR|CREAT|TRUNC",           { exists: "ZZ",           missing: "ZZ"     }],
-    [O_RDWR | O_CREAT | O_EXCL,                "RDWR|CREAT|EXCL",            { exists: "EEXIST",       missing: "ZZ"     }],
-    [O_RDWR | O_CREAT | O_EXCL | O_TRUNC,      "RDWR|CREAT|EXCL|TRUNC",      { exists: "EEXIST",       missing: "ZZ"     }],
-    [O_WRONLY | O_APPEND,                      "WRONLY|APPEND",              { exists: "0123456789ZZ", missing: "ENOENT" }],
-    [O_WRONLY | O_CREAT | O_APPEND,            "WRONLY|CREAT|APPEND",        { exists: "0123456789ZZ", missing: "ZZ"     }],
-    [O_WRONLY | O_APPEND | O_TRUNC,            "WRONLY|APPEND|TRUNC",        { exists: "ZZ",           missing: "ENOENT" }],
-    [O_WRONLY | O_CREAT | O_APPEND | O_TRUNC,  "WRONLY|CREAT|APPEND|TRUNC",  { exists: "ZZ",           missing: "ZZ"     }],
+    [O_WRONLY, "WRONLY", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT, "WRONLY|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_WRONLY | O_TRUNC, "WRONLY|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_TRUNC, "WRONLY|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL, "WRONLY|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, "WRONLY|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR, "RDWR", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT, "RDWR|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_RDWR | O_TRUNC, "RDWR|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT | O_TRUNC, "RDWR|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL, "RDWR|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL | O_TRUNC, "RDWR|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND, "WRONLY|APPEND", { exists: "0123456789ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND, "WRONLY|CREAT|APPEND", { exists: "0123456789ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND | O_TRUNC, "WRONLY|APPEND|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND | O_TRUNC, "WRONLY|CREAT|APPEND|TRUNC", { exists: "ZZ", missing: "ZZ" }],
   ];
 
   function probe(flag: number, seeded: boolean): string {

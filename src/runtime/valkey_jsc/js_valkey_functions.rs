@@ -18,6 +18,7 @@ type Slice = bun_jsc::ZigStringSlice;
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
+#[inline]
 fn require_not_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()> {
     if this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
@@ -34,6 +35,7 @@ fn require_not_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResul
     Ok(())
 }
 
+#[inline]
 fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()> {
     if !this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
@@ -66,6 +68,17 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, true)
 }
 
+/// `from_js` + throw-on-`None` for the common `"string or buffer"` case.
+fn require_arg(
+    global: &JSGlobalObject,
+    value: JSValue,
+    method: &'static str,
+    label: &'static str,
+) -> JsResult<JSArgument> {
+    from_js(global, value)?
+        .ok_or_else(|| global.throw_invalid_argument_type(method, label, "string or buffer"))
+}
+
 /// Convert a trailing varargs slice to `JSArgument`s with a single policy:
 /// `undefined`/`null`/unsupported values THROW (never silently skip or truncate).
 fn collect_varargs(
@@ -87,7 +100,11 @@ fn collect_varargs(
 /// Return a rejected `Promise` wrapping the Redis error as a
 /// `JsResult<JSValue>` for host functions.
 #[inline]
-fn send_err_to_js(global: &JSGlobalObject, message: &str, err: RedisError) -> JsResult<JSValue> {
+fn send_err_to_js(
+    global: &JSGlobalObject,
+    message: impl AsRef<[u8]>,
+    err: RedisError,
+) -> JsResult<JSValue> {
     let err_value = protocol::valkey_error_to_js(global, message, err);
     Ok(JSPromise::rejected_promise(global, err_value).to_js())
 }
@@ -103,12 +120,10 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
 ///
-/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
-/// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
-/// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
-/// `unsubscribe`, …) duplicated this 15-line block
-/// byte-identically; the only per-caller variation is the args slice, the
-/// `meta` flags, and the error-message prefix.
+/// All `cmd_*!` macros and the hand-written methods route through here; the
+/// only per-caller variation is the args slice and the `meta` flags. The
+/// error message is derived from `command` so it can never disagree with the
+/// command actually sent.
 #[inline]
 fn send_cmd(
     this: &JSValkeyClient,
@@ -116,7 +131,6 @@ fn send_cmd(
     command: &[u8],
     args: CommandArgs<'_>,
     meta: CommandMeta,
-    err_msg: &str,
 ) -> JsResult<JSValue> {
     match this.send(
         global,
@@ -127,7 +141,11 @@ fn send_cmd(
         },
     ) {
         Ok(p) => Ok(promise_to_js(p)),
-        Err(err) => send_err_to_js(global, err_msg, err),
+        Err(err) => send_err_to_js(
+            global,
+            format!("Failed to send {} command", bstr::BStr::new(command)),
+            err,
+        ),
     }
 }
 
@@ -142,6 +160,8 @@ pub(crate) mod compile {
     pub(crate) enum ClientStateRequirement {
         /// The client must not be a subscriber (not in subscription mode).
         NotSubscriber,
+        /// The client must be in subscriber mode.
+        Subscriber,
         /// We don't care about the client state (subscriber or not).
         DontCare,
     }
@@ -153,6 +173,9 @@ pub(crate) mod compile {
         match REQ {
             ClientStateRequirement::NotSubscriber => {
                 require_not_subscriber(this, js_client_prototype_function_name)
+            }
+            ClientStateRequirement::Subscriber => {
+                require_subscriber(this, js_client_prototype_function_name)
             }
             ClientStateRequirement::DontCare => Ok(()),
         }
@@ -1302,7 +1325,7 @@ impl JSValkeyClient {
     );
     cmd_key_varargs!(zrevrank, "zrevrank", "ZREVRANK", "key", NotSubscriber);
     cmd_strings_varargs!(psubscribe, "psubscribe", "PSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(punsubscribe, "punsubscribe", "PUNSUBSCRIBE", DontCare);
+    cmd_strings_varargs!(punsubscribe, "punsubscribe", "PUNSUBSCRIBE", Subscriber);
     cmd_strings_varargs!(pubsub, "pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, "copy", "COPY", NotSubscriber);
     cmd_key_varargs!(unlink, "unlink", "UNLINK", "key", NotSubscriber);
@@ -1445,7 +1468,10 @@ impl JSValkeyClient {
         let _guard = this.ref_scope();
 
         // Check if we're in subscription mode
-        require_subscriber(this, "unsubscribe")?;
+        compile::test_correct_state::<{ compile::ClientStateRequirement::Subscriber }>(
+            this,
+            "unsubscribe",
+        )?;
 
         let args_view = frame.arguments();
 

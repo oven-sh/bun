@@ -1225,7 +1225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_dispatchInProcessInspectorMessage, (JSGlobal
     if (auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger()))
         debugger->runWhilePausedCallback = inProcessRunWhilePaused;
 
-    return takeBufferedInspectorMessages(lexicalGlobalObject, channel);
+    RELEASE_AND_RETURN(scope, takeBufferedInspectorMessages(lexicalGlobalObject, channel));
 }
 
 // Returns any inspector messages that arrived outside a synchronous
@@ -1241,7 +1241,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_drainInProcessInspectorMessages, (JSGlobalOb
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr)));
     auto& channel = inProcessInspectorChannel();
     channel.drainPosted = false;
-    return takeBufferedInspectorMessages(lexicalGlobalObject, channel);
+    RELEASE_AND_RETURN(scope, takeBufferedInspectorMessages(lexicalGlobalObject, channel));
 }
 
 // A fully-disconnected Session stops receiving messages. The frontend is only
@@ -1337,7 +1337,10 @@ extern "C" bool Debugger__isWaitingForDebugger(uint32_t scriptId);
 // thread, for NodeRuntime.enable in internal/inspector/cdp.ts.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsWaitingForDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(Debugger__isWaitingForDebugger(callFrame->argument(0).toUInt32(globalObject))));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    uint32_t scriptId = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(Debugger__isWaitingForDebugger(scriptId)));
 }
 
 // Whether this context's inspector still takes new CDP clients. False once the
@@ -1346,7 +1349,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsWaitingForDebugger, (JSGlobalObject * globa
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsAcceptingInspectorConnections);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAcceptingInspectorConnections, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     uint32_t scriptId = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(scriptId == 0 || notAcceptingConnectionsContext.load() != scriptId));
 }
 

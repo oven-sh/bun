@@ -1045,6 +1045,34 @@ describe.concurrent(() => {
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
   });
 
+  it("dlopen rejects over-length paths with ERR_DLOPEN_FAILED", async () => {
+    // Spawn so an unfixed build crashing doesn't take the whole suite down.
+    // On Windows the path is widened into a 32767-unit WPathBuffer; an
+    // over-length path must come back as an error, not a Rust panic across
+    // the extern "C" boundary. POSIX already surfaces dlerror() here.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          process.dlopen({ exports: {} }, Buffer.alloc(40000, "x").toString());
+          console.log("FAIL: did not throw");
+        } catch (e) {
+          console.log("CODE:" + e.code);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "CODE:ERR_DLOPEN_FAILED",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("dlopen accepts file: URLs", () => {
     const mod = { exports: {} };
     try {

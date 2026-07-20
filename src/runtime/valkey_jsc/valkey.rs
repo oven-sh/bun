@@ -276,12 +276,6 @@ pub struct ValkeyClient {
     pub vm: &'static VirtualMachine,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum SubscribeHandled {
-    Handled,
-    Fallthrough,
-}
-
 pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
@@ -863,87 +857,55 @@ impl ValkeyClient {
         Ok(())
     }
 
-    /// Try handling this response as a subscriber-state response.
-    /// Returns `handled` if we handled it, `fallthrough` if we did not.
+    /// Handle a subscriber-state push response whose kind is a recognised
+    /// `SubscriptionPushMessage`.
     fn handle_subscribe_response(
         &mut self,
-        value: &mut RESPValue,
+        push: &mut protocol::Push,
+        kind: protocol::SubscriptionPushMessage,
         pair: Option<&mut command::Promise>,
-    ) -> JsResult<SubscribeHandled> {
-        // Resolve the promise with the potentially transformed value
+    ) -> JsResult<()> {
         let global_this = self.global_object();
 
-        debug!("Handling a subscribe response: {}", value);
+        debug!("Handling a subscribe response: {:?}", kind);
         // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
         // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
         let _exit = self.vm.enter_event_loop_scope();
 
-        match value {
-            RESPValue::Error(_) => {
-                if let Some(p) = pair {
-                    match resp_value_to_js(value, &global_this) {
-                        Ok(v) => p.reject(&global_this, v)?,
-                        Err(e) => p.promise.reject(&global_this, Err(e))?,
-                    }
-                }
-                Ok(SubscribeHandled::Handled)
+        let p = self.parent();
+        let sub_count = p
+            ._subscription_ctx
+            .get()
+            .channels_subscribed_to_count(&global_this)?;
+
+        match kind {
+            protocol::SubscriptionPushMessage::Message => {
+                self.on_valkey_message(&mut push.data);
+                Ok(())
             }
-            RESPValue::Push(push) => {
-                let p = self.parent();
-                let sub_count = p
-                    ._subscription_ctx
-                    .get()
-                    .channels_subscribed_to_count(&global_this)?;
+            protocol::SubscriptionPushMessage::Subscribe => {
+                p.add_subscription();
+                self.on_valkey_subscribe();
 
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                    match msg_type {
-                        protocol::SubscriptionPushMessage::Message => {
-                            self.on_valkey_message(&mut push.data);
-                            Ok(SubscribeHandled::Handled)
-                        }
-                        protocol::SubscriptionPushMessage::Subscribe => {
-                            p.add_subscription();
-                            self.on_valkey_subscribe();
-
-                            // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
-                            // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
-                            if let Some(req_pair) = pair {
-                                req_pair.promise.resolve(
-                                    &global_this,
-                                    JSValue::js_number(f64::from(sub_count)),
-                                )?;
-                            }
-                            Ok(SubscribeHandled::Handled)
-                        }
-                        protocol::SubscriptionPushMessage::Unsubscribe => {
-                            self.on_valkey_unsubscribe();
-                            self.parent().remove_subscription();
-
-                            // For UNSUBSCRIBE responses, only resolve the promise if we have one
-                            // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
-                            if let Some(req_pair) = pair {
-                                req_pair
-                                    .promise
-                                    .resolve(&global_this, JSValue::UNDEFINED)?;
-                            }
-                            Ok(SubscribeHandled::Handled)
-                        }
-                    }
-                } else {
-                    // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
-                    // then this is an unexpected path.
-                    bun_core::hint::cold();
-                    self.fail(
-                        b"Push message is not a subscription message.",
-                        RedisError::InvalidResponseType,
-                    )?;
-                    Ok(SubscribeHandled::Handled)
+                // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
+                // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
+                if let Some(req_pair) = pair {
+                    req_pair
+                        .promise
+                        .resolve(&global_this, JSValue::js_number(f64::from(sub_count)))?;
                 }
+                Ok(())
             }
-            _ => {
-                // This may be a regular command response. Let's pass it down
-                // to the next handler.
-                Ok(SubscribeHandled::Fallthrough)
+            protocol::SubscriptionPushMessage::Unsubscribe => {
+                self.on_valkey_unsubscribe();
+                self.parent().remove_subscription();
+
+                // For UNSUBSCRIBE responses, only resolve the promise if we have one
+                // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
+                if let Some(req_pair) = pair {
+                    req_pair.promise.resolve(&global_this, JSValue::UNDEFINED)?;
+                }
+                Ok(())
             }
         }
     }
@@ -1008,7 +970,7 @@ impl ValkeyClient {
     /// Handle Valkey protocol response
     fn handle_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
         // Special handling for the initial HELLO response
-        if !self.flags.is_authenticated {
+        if self.handshake == Handshake::AwaitingHello {
             self.handle_hello_response(value)?;
 
             // We've handled the HELLO response without consuming anything from the command queue
@@ -1016,8 +978,8 @@ impl ValkeyClient {
         }
 
         // Handle initial SELECT response
-        if self.flags.is_selecting_db_internal {
-            self.flags.is_selecting_db_internal = false;
+        if self.handshake == Handshake::SelectingDb {
+            self.handshake = Handshake::Ready;
 
             return match value {
                 RESPValue::Error(err_str) => {
@@ -1098,24 +1060,26 @@ impl ValkeyClient {
 
             match value {
                 RESPValue::Error(err) => {
+                    if let Some(mut p) = pair_maybe.take() {
+                        let global_this = self.global_object();
+                        let js =
+                            valkey_error_to_js(&global_this, &**err, RedisError::ServerError);
+                        p.reject(&global_this, js)?;
+                    }
                     self.fail(err, RedisError::ServerError)?;
                     return Ok(());
                 }
                 RESPValue::Push(push) => {
-                    if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
-                        if self.handle_subscribe_response(value, pair_maybe.as_mut())?
-                            == SubscribeHandled::Handled
-                        {
-                            return Ok(());
-                        }
-                    } else {
-                        bun_core::hint::cold();
-                        self.fail(
-                            b"Unexpected push message kind without promise",
-                            RedisError::InvalidResponseType,
-                        )?;
+                    if let Some(kind) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
+                        self.handle_subscribe_response(push, kind, pair_maybe.as_mut())?;
                         return Ok(());
                     }
+                    bun_core::hint::cold();
+                    self.fail(
+                        b"Unexpected push message kind without promise",
+                        RedisError::InvalidResponseType,
+                    )?;
+                    return Ok(());
                 }
                 _ => {
                     // In the else case, we fall through to the regular
@@ -1215,7 +1179,6 @@ impl ValkeyClient {
                 self.fail(b"Failed to write SELECT command", RedisError::OutOfMemory)?;
                 return Ok(());
             }
-            self.flags.is_selecting_db_internal = true;
         }
         Ok(())
     }
@@ -1229,12 +1192,11 @@ impl ValkeyClient {
         // A fresh socket has opened, so reset per-connection state. Without
         // this, `send()` would permanently reject with "Connection has failed"
         // after a previous connection exhausted retries (#29925), and the
-        // new HELLO response would be dropped because `is_authenticated` was
-        // still set from a prior successful handshake — blocking the client
+        // new HELLO response would be dropped because the handshake was still
+        // `Ready` from a prior successful connection — blocking the client
         // from ever transitioning back to `.connected`.
         self.flags.failed = false;
-        self.flags.is_authenticated = false;
-        self.flags.is_selecting_db_internal = false;
+        self.handshake = Handshake::AwaitingHello;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete
@@ -1253,7 +1215,19 @@ impl ValkeyClient {
     /// Test whether we are ready to run "normal" RESP commands, such as
     /// get/set, pub/sub, etc.
     fn connection_ready(&self) -> bool {
-        self.flags.is_authenticated && !self.flags.is_selecting_db_internal
+        self.handshake == Handshake::Ready
+    }
+
+    fn mark_connected(&mut self, hello: &mut RESPValue) -> JsResult<()> {
+        self.status = Status::Connected;
+        self.handshake = if self.database > 0 {
+            Handshake::SelectingDb
+        } else {
+            Handshake::Ready
+        };
+        self.flags.is_reconnecting = false;
+        self.retry_attempts = 0;
+        self.on_valkey_connect(hello)
     }
 
     /// Process queued commands in the offline queue

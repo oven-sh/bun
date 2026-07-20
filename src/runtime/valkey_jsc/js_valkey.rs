@@ -610,6 +610,7 @@ impl JSValkeyClient {
                 in_flight: command::promise::Queue::init(),
                 queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
+                handshake: valkey::Handshake::default(),
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
@@ -700,14 +701,13 @@ impl JSValkeyClient {
                 in_flight: command::promise::Queue::init(),
                 queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
+                handshake: valkey::Handshake::default(),
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
                 tls: client.tls.clone(),
                 database: client.database,
                 flags: valkey::ConnectionFlags {
-                    // Because this starts in the disconnected state, we need to reset some flags.
-                    is_authenticated: false,
                     // If the user manually closed the connection, then duplicating a closed client
                     // means the new client remains finalized.
                     is_manually_closed: client.flags.is_manually_closed,
@@ -1813,7 +1813,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     // through to the authenticated state after a rejected
                     // handshake.
                     this.global_object.clear_exception();
-                    this.client_mut().flags.is_authenticated = false;
+                    this.client_mut().handshake = valkey::Handshake::AwaitingHello;
                     this.client_mut().flags.is_manually_closed = true;
                     this.client_mut().close();
                     return Ok(());
@@ -1823,7 +1823,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     fn fail_handshake(this: &JSValkeyClient, err_value: JSValue) -> JsResult<()> {
-        this.client_mut().flags.is_authenticated = false;
+        this.client_mut().handshake = valkey::Handshake::AwaitingHello;
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;
         let this_br = BackRef::new(this);

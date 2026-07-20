@@ -1024,11 +1024,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     };
     const bunResult = await run(bunExe());
     expect(bunResult.stderr).toBe("");
-    expect(bunResult.stdout).toEqual([
-      "exports_has_own_exports=0",
-      "own_names=marker",
-      "self_referential=false",
-    ]);
+    expect(bunResult.stdout).toEqual(["exports_has_own_exports=0", "own_names=marker", "self_referential=false"]);
     expect(bunResult.exitCode).toBe(0);
     expect(await run(await nodeExeMatchingAbi())).toEqual(bunResult);
   });

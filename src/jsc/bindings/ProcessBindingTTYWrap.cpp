@@ -195,13 +195,22 @@ JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* g
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 #if OS(WINDOWS)
-    ASSERT(callFrame->argumentCount() == 2);
-    int fd = callFrame->argument(0).asInt32();
-    bool raw = callFrame->argument(1).asBoolean();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue fd = callFrame->argument(0);
+    if (!fd.isNumber()) {
+        throwTypeError(globalObject, scope, "fd must be a number"_s);
+        return {};
+    }
+    int fdToUse = fd.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool raw = callFrame->argument(1).toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
-    return JSValue::encode(jsNumber(Source__setRawModeTty(global->uvLoop(), fd, raw)));
+    return JSValue::encode(jsNumber(Source__setRawModeTty(global->uvLoop(), fdToUse, raw)));
 #else
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

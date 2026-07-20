@@ -4267,6 +4267,7 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
     Ok(out)
 }
 pub use bun_windows_sys::externs::GetConsoleMode;
+pub use bun_windows_sys::externs::GetNumberOfConsoleInputEvents;
 pub use bun_windows_sys::externs::SetConsoleMode;
 
 #[derive(Default)]

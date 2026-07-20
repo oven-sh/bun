@@ -248,6 +248,17 @@ describe("ReadStream.prototype.setRawMode", () => {
             stream.setRawMode(false);
             const coninNormalMode = mode();
 
+            // libuv caches the last-requested mode on the stdin uv_tty_t and
+            // short-circuits on a repeat; the CONIN$ path must keep it in sync.
+            process.stdin.setRawMode(true);
+            stream.setRawMode(false);
+            process.stdin.setRawMode(true);
+            const stdinReRawMode = mode();
+            process.stdin.setRawMode(false);
+
+            let outErr;
+            new tty.ReadStream(1).on("error", e => (outErr = String(e))).setRawMode(true);
+
             process.stdout.write(
               "RESULT " +
                 JSON.stringify({
@@ -258,6 +269,8 @@ describe("ReadStream.prototype.setRawMode", () => {
                   stdinNormalMode,
                   coninNormalMode,
                   coninIsRaw,
+                  stdinReRawMode,
+                  outErr,
                   ...(err ? { err } : {}),
                 }),
             );
@@ -298,6 +311,8 @@ describe("ReadStream.prototype.setRawMode", () => {
         stdinNormalMode: result.stdinNormalMode,
         coninNormalMode: result.stdinNormalMode,
         coninIsRaw: true,
+        stdinReRawMode: result.stdinRawMode,
+        outErr: expect.stringContaining("setRawMode failed with errno:"),
       });
       expect(result.fd).not.toBe(0);
       expect(result.stdinRawMode & ENABLE_VIRTUAL_TERMINAL_INPUT).toBe(ENABLE_VIRTUAL_TERMINAL_INPUT);

@@ -498,26 +498,29 @@ pub mod stdin_tty {
 /// (reading it from the VM directly would be a T6 dependency); the C++ caller
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 ///
-/// fd 0 resolves to the process-static `stdin_tty` singleton, so the mode
-/// change goes through `uv_tty_set_mode` and is coordinated with any
-/// in-flight libuv console read on that handle.
+/// Console input mode is a property of the input buffer, not the handle, so
+/// every console-input fd routes the actual mode change through
+/// `uv_tty_set_mode` on the process-static `stdin_tty` singleton. That keeps
+/// libuv's cached `tty.rd.mode.mode` (which `uv_tty_set_mode` short-circuits
+/// on) coherent with the real console state and coordinates the mode flip
+/// with any in-flight libuv console read on stdin.
 ///
-/// Other console fds have no libuv reader (fs.ReadStream reads via
-/// `uv_fs_read`), and a transient `uv_tty_t` on them is unsafe:
-/// `uv__tty_close` `_close()`s the caller's fd, and `SetConsoleMode` needs
+/// A transient `uv_tty_t` on the caller's fd instead is unsafe:
+/// `uv__tty_close` `_close()`s it, and `SetConsoleMode` needs
 /// `GENERIC_READ | GENERIC_WRITE` which an `O_RDONLY` CONIN$ handle lacks
-/// (and `DuplicateHandle` cannot add access the source does not have). So the
-/// fd is checked to be a console input handle and the same console-mode masks
-/// `uv_tty_set_mode` would apply for `UV_TTY_MODE_RAW_VT` /
-/// `UV_TTY_MODE_NORMAL` are written on a fresh CONIN$ handle. Console input
-/// mode is a property of the input buffer, not the handle, so the mode
-/// observed on fd 0 and on any CONIN$ handle is the same afterwards.
+/// (and `DuplicateHandle` cannot add access the source does not have). So for
+/// fd != 0 the fd is only used to gate that it is a console-input handle, and
+/// when fd 0 itself is not a console the same masks `uv_tty_set_mode` would
+/// apply are written on a fresh RW CONIN$ handle, which has no libuv cache to
+/// desynchronise.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Source__setRawModeTty(
     uv_loop: *mut uv::Loop,
     fd: c_int,
     raw: bool,
 ) -> c_int {
+    use bun_sys::windows as w;
+
     // UV_TTY_MODE_RAW_VT: the terminal emits VT input sequences (bracketed
     // paste etc.) instead of libuv translating INPUT_RECORDs. Matches POSIX.
     let mode = if raw {
@@ -526,11 +529,21 @@ pub(crate) extern "C" fn Source__setRawModeTty(
         uv::TtyMode::Normal
     };
 
-    if fd == 0 {
-        let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
-            bun_sys::Result::Ok(tty) => tty,
-            bun_sys::Result::Err(e) => return e.errno as c_int,
-        };
+    if fd != 0 {
+        let src = Fd::from_uv(fd).native();
+        if src == w::INVALID_HANDLE_VALUE {
+            return bun_sys::E::BADF as c_int;
+        }
+        // `GetNumberOfConsoleInputEvents` only succeeds on console input
+        // handles; `GetConsoleMode` alone would also accept screen buffers.
+        let mut unused: u32 = 0;
+        // SAFETY: `src` is a live handle (`uv_get_osfhandle(fd)` for an open fd).
+        if unsafe { w::GetNumberOfConsoleInputEvents(src, &mut unused) } == 0 {
+            return bun_sys::E::NOTTY as c_int;
+        }
+    }
+
+    if let bun_sys::Result::Ok(mut tty) = Source::open_tty(uv_loop, Fd::stdin()) {
         return match Source::tty_mut(&mut tty)
             .set_mode(mode)
             .to_error(bun_sys::Tag::uv_tty_set_mode)
@@ -539,27 +552,16 @@ pub(crate) extern "C" fn Source__setRawModeTty(
             None => 0,
         };
     }
+    if fd == 0 {
+        return bun_sys::E::NOTTY as c_int;
+    }
 
-    use bun_sys::windows as w;
+    // fd 0 is not a console but `fd` is (piped stdin + CONIN$ reopen). There
+    // is no libuv mode cache on the input buffer in this case.
     const ENABLE_WINDOW_INPUT: u32 = 0x0008;
     const CONIN_W: [u16; 7] = [
         b'C' as _, b'O' as _, b'N' as _, b'I' as _, b'N' as _, b'$' as _, 0,
     ];
-
-    let src = Fd::from_uv(fd).native();
-    if src == w::INVALID_HANDLE_VALUE {
-        return bun_sys::E::BADF as c_int;
-    }
-    // Reject non-console-input fds with ENOTTY before touching the process
-    // console. `GetConsoleMode` only needs `GENERIC_READ`, which an O_RDONLY
-    // CONIN$ handle has.
-    let mut unused: u32 = 0;
-    // SAFETY: `src` is a live handle (`uv_get_osfhandle(fd)` for an open fd).
-    if unsafe { w::GetConsoleMode(src, &mut unused) } == 0 {
-        return bun_sys::E::NOTTY as c_int;
-    }
-    // `SetConsoleMode` needs `GENERIC_READ|GENERIC_WRITE`; `DuplicateHandle`
-    // can't add access, so open CONIN$ fresh. Mode is per buffer, not handle.
     // SAFETY: `CONIN_W` is a NUL-terminated static wide string.
     let conin = unsafe {
         w::CreateFileW(

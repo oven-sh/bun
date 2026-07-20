@@ -226,9 +226,7 @@ impl MutableString {
 
             let _ = has_needed_gap;
 
-            if cfg!(debug_assertions) {
-                debug_assert!(js_lexer::is_identifier(&mutable.list));
-            }
+            debug_assert!(js_lexer::is_identifier(&mutable.list));
 
             return Ok(mutable.to_owned_slice());
         }

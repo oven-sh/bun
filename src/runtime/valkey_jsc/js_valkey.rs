@@ -167,9 +167,7 @@ impl SubscriptionCtx {
         }
 
         // Existing is guaranteed to be an array of callbacks.
-        if cfg!(debug_assertions) {
-            debug_assert!(existing.is_array());
-        }
+        debug_assert!(existing.is_array());
 
         // TODO(markovejnovic): I can't find a better way to do this... I generate a new array,
         // filtering out the callback we want to remove. This is woefully inefficient for large
@@ -277,9 +275,7 @@ impl SubscriptionCtx {
             return Ok(());
         };
 
-        if cfg!(debug_assertions) {
-            debug_assert!(callbacks.is_array());
-        }
+        debug_assert!(callbacks.is_array());
 
         // Callback runs on the JS thread; VM is alive for the duration.
         let vm = VirtualMachine::get();
@@ -295,9 +291,7 @@ impl SubscriptionCtx {
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
         while let Some(callback) = iter.next()? {
-            if cfg!(debug_assertions) {
-                debug_assert!(callback.is_callable());
-            }
+            debug_assert!(callback.is_callable());
             // `event_loop_mut()` is the safe accessor for the VM-owned
             // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
             vm.event_loop_mut()

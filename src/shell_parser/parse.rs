@@ -1157,9 +1157,7 @@ impl<'bump> Parser<'bump> {
 
     fn expect_if_clause_text_token(&mut self, if_clause_token: IfClauseTok) -> Token {
         let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        if cfg!(debug_assertions) {
-            debug_assert!(self.peek().tag() == TokenTag::Text);
-        }
+        debug_assert!(self.peek().tag() == TokenTag::Text);
         if let Token::Text(range) = self.peek() {
             if self.delimits(self.peek_n(1)) && self.text(range) == tagname {
                 let tok = self.advance();

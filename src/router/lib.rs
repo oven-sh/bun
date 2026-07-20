@@ -959,9 +959,7 @@ impl TinyPtr {
 
         let right = in_.as_ptr() as usize + in_.len();
         let end = parent.as_ptr() as usize + parent.len();
-        if cfg!(debug_assertions) {
-            debug_assert!(end < right);
-        }
+        debug_assert!(end < right);
 
         let length = end.max(right) - right;
         let offset =

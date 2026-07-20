@@ -138,9 +138,7 @@ impl Query {
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let mut node = self;
         loop {
             if !node
@@ -271,9 +269,7 @@ impl List {
     }
 
     pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
         // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
@@ -466,9 +462,7 @@ impl Group {
             && range.left.op == RangeOp::Eql
             && !range.has_right()
         {
-            if cfg!(debug_assertions) {
-                debug_assert!(self.tail.is_none());
-            }
+            debug_assert!(self.tail.is_none());
             return Some(range.left.version);
         }
 

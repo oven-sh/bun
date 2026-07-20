@@ -785,13 +785,11 @@ impl<'a> URL<'a> {
                 b'@' => {
                     // we found a password, everything before this point in the slice is a password
                     self.password = &str[0..i];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            str[i..].len() < 2
-                                || u16::from_le_bytes([str[i], str[i + 1]])
-                                    != u16::from_le_bytes(*b"//")
-                        );
-                    }
+                    debug_assert!(
+                        str[i..].len() < 2
+                            || u16::from_le_bytes([str[i], str[i + 1]])
+                                != u16::from_le_bytes(*b"//")
+                    );
                     return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no password
@@ -1331,9 +1329,7 @@ impl<'a> Iterator<'a> {
             .position(|p| p.name_hash == hash)
         {
             let real_i = current_i + next_index + self.i;
-            if cfg!(debug_assertions) {
-                debug_assert!(!self.visited.is_set(real_i));
-            }
+            debug_assert!(!self.visited.is_set(real_i));
 
             self.visited.set(real_i);
             target[target_i] = self.map.str(remainder[current_i + next_index].value);

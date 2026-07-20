@@ -1156,12 +1156,10 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(!strings::contains_char(
-                                    result.tag.build.slice(sliced_string.buf),
-                                    b'-'
-                                ));
-                            }
+                            debug_assert!(!strings::contains_char(
+                                result.tag.build.slice(sliced_string.buf),
+                                b'-'
+                            ));
                             state = State::None;
                         }
                     }

@@ -2085,12 +2085,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Record/replay store: key the request now that method/url/headers/body
     // are finalised, and either short-circuit on a hit or carry the key into
     // the tasklet so the response can be persisted once fully buffered.
-    // Bypassed for s3:// (SigV4 installs per-second headers), streamed bodies
-    // (unhashable), and multipart/form-data (FormData serialises with a fresh
-    // random boundary in both the body bytes and Content-Type on every call).
+    // Bypassed for s3:// (per-second SigV4 headers), streamed bodies
+    // (unhashable), multipart/form-data (random per-call boundary), and
+    // per-call transport overrides not covered by KeyInputs (proxy headers,
+    // custom TLS, forced protocol) to avoid false hits across those axes.
     let store_request: Option<(FetchStore, store::StoredRequest)> = match fetch_store {
         Some(store_)
             if !is_s3
+                && proxy_headers.is_none()
+                && ssl_config.is_none()
+                && !force_http1
+                && !force_http2
+                && !force_http3
                 && matches!(&body, HTTPRequestBody::AnyBlob(_))
                 && !body.get_any_blob().is_some_and(|b| {
                     bun_core::strings::has_prefix_comptime(b.content_type(), b"multipart/form-data")

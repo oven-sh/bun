@@ -832,16 +832,12 @@ impl<'a> Parser<'a> {
             ) {
                 if let Some(fetch_expr) = json.get(b"fetch") {
                     if let Some(cache) = fetch_expr.get(b"cache") {
-                        if let Some(value) = cache.as_string(self.bump) {
+                        let value = cache
+                            .as_string(self.bump)
+                            .or_else(|| cache.get(b"path").and_then(|e| e.as_string(self.bump)));
+                        if let Some(value) = value {
                             self.ctx.runtime_options.fetch_store =
                                 bun_options_types::context::FetchStoreConfig::parse(value);
-                        } else if let Some(path) =
-                            cache.get(b"path").and_then(|e| e.as_string(self.bump))
-                        {
-                            self.ctx.runtime_options.fetch_store =
-                                bun_options_types::context::FetchStoreConfig::Dir {
-                                    path: path.to_vec().into_boxed_slice(),
-                                };
                         } else {
                             self.add_error(cache.loc, b"Expected string or { path }")?;
                         }

@@ -327,7 +327,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Kill every descendant when Bun exits; on POSIX also exit when the parent process dies."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -552,7 +552,7 @@ pub(crate) const BUILD_PARAMS: &[ParamType] =
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Kill every descendant when Bun exits; on POSIX also exit when the parent process dies."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."

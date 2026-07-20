@@ -1508,6 +1508,13 @@ pub const JobObjectExtendedLimitInformation: DWORD = 9;
 /// last job handle closes.
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
 
+/// `WAITORTIMERCALLBACK` (`winnt.h`) — thread-pool callback for
+/// `RegisterWaitForSingleObject`. `TimerOrWaitFired` is `TRUE` on timeout.
+pub type WAITORTIMERCALLBACK =
+    unsafe extern "system" fn(lpParameter: LPVOID, TimerOrWaitFired: BOOLEAN);
+/// `WT_EXECUTEONLYONCE` (`winnt.h`) — fire once; caller does not unregister.
+pub const WT_EXECUTEONLYONCE: ULONG = 0x0000_0008;
+
 /// `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (`winnt.h`).
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -1862,6 +1869,19 @@ unsafe extern "system" {
         out_lpExitTime: *mut FILETIME,
         out_lpKernelTime: *mut FILETIME,
         out_lpUserTime: *mut FILETIME,
+    ) -> BOOL;
+
+    /// `RegisterWaitForSingleObject` (`winbase.h`). Queues `Callback` to the
+    /// system thread pool once `hObject` is signaled (or `dwMilliseconds`
+    /// elapses). Returns non-zero on success; `*phNewWaitObject` receives the
+    /// wait handle.
+    pub fn RegisterWaitForSingleObject(
+        phNewWaitObject: *mut HANDLE,
+        hObject: HANDLE,
+        Callback: WAITORTIMERCALLBACK,
+        Context: LPVOID,
+        dwMilliseconds: ULONG,
+        dwFlags: ULONG,
     ) -> BOOL;
 
     pub fn GetFileAttributesExW(

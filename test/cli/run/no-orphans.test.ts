@@ -1079,3 +1079,104 @@ describe.concurrent.each([
     }
   });
 });
+
+// Parent watch: RegisterWaitForSingleObject on the original parent's process
+// handle. Tree: test → cmd.exe (supervisor) → bun → cmd.exe → leaf. Killing
+// the supervisor must bring down bun (parent watch) and transitively the leaf
+// (bun's Job Object). Without --no-orphans bun survives: it's behind libuv's
+// SILENT_BREAKAWAY, and nothing else ties it to the supervisor.
+async function spawnParentWatchTreeWindows(noOrphans: boolean) {
+  const dir = tempDir("no-orphans-win-parent", {
+    "leaf.js": `
+      require("fs").writeFileSync(process.env.PIDFILE, process.pid + " " + process.env.MID_PID);
+      setInterval(()=>{}, 1000);
+    `,
+    "middle.js": `
+      Bun.spawn({
+        cmd: ["cmd.exe", "/d", "/c", process.env.LEAF_BAT],
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...process.env, MID_PID: String(process.pid) },
+      });
+      setInterval(()=>{}, 1000);
+    `,
+    "leaf.bat": `@"${bunExe()}" "%~dp0leaf.js"\r\n`,
+    "supervisor.bat": `@"${bunExe()}" ${noOrphans ? "--no-orphans " : ""}"%~dp0middle.js"\r\n`,
+  });
+  const pidfile = `${dir}\\pids.txt`;
+  const env: Record<string, string> = { ...bunEnv, PIDFILE: pidfile, LEAF_BAT: `${dir}\\leaf.bat` };
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+  const supervisor = Bun.spawn({
+    cmd: ["cmd.exe", "/d", "/c", `${dir}\\supervisor.bat`],
+    env,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const deadline = Date.now() + 15000;
+  let leafPid = 0;
+  let bunPid = 0;
+  while (bunPid === 0 && Date.now() < deadline) {
+    try {
+      const t = (await Bun.file(pidfile).text()).trim().split(" ");
+      if (t.length === 2) {
+        leafPid = Number(t[0]);
+        bunPid = Number(t[1]);
+      }
+    } catch {}
+    if (bunPid === 0) await sleep(25);
+  }
+  return {
+    supervisor,
+    bunPid,
+    leafPid,
+    async reap() {
+      supervisor.kill("SIGKILL");
+      await supervisor.exited;
+      for (const pid of [bunPid, leafPid]) {
+        if (pid > 0 && isAlive(pid)) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+          await waitUntilDead(pid, 2000);
+        }
+      }
+      dir[Symbol.dispose]();
+    },
+  };
+}
+
+test.concurrent.skipIf(!isWindows)(
+  "windows: without --no-orphans, Bun survives TerminateProcess on its parent",
+  async () => {
+    const { supervisor, bunPid, leafPid, reap } = await spawnParentWatchTreeWindows(false);
+    try {
+      expect(bunPid).toBeGreaterThan(0);
+      expect(isAlive(bunPid)).toBe(true);
+      supervisor.kill("SIGKILL");
+      await supervisor.exited;
+      const died = await waitUntilDead(bunPid, 1000);
+      expect({ bunDied: died, leafAlive: isAlive(leafPid) }).toEqual({ bunDied: false, leafAlive: true });
+    } finally {
+      await reap();
+    }
+  },
+);
+
+test.concurrent.skipIf(!isWindows)(
+  "windows: --no-orphans: Bun exits when its parent is TerminateProcess'd, and its descendants are reaped",
+  async () => {
+    const { supervisor, bunPid, leafPid, reap } = await spawnParentWatchTreeWindows(true);
+    try {
+      expect(bunPid).toBeGreaterThan(0);
+      expect(leafPid).toBeGreaterThan(0);
+      expect(isAlive(bunPid)).toBe(true);
+      expect(isAlive(leafPid)).toBe(true);
+      supervisor.kill("SIGKILL");
+      await supervisor.exited;
+      const bunDied = await waitUntilDead(bunPid, 10000);
+      const leafDied = await waitUntilDead(leafPid, 10000);
+      expect({ bunDied, leafDied }).toEqual({ bunDied: true, leafDied: true });
+    } finally {
+      await reap();
+    }
+  },
+);

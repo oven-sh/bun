@@ -42,18 +42,27 @@ pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
-// exit-time descendant SIGKILL walk. Windows uses a kill-on-close Job Object
-// self-assigned at `enable()`; children inherit Job membership (nested jobs,
-// Win8+), so when this process exits for any reason, including
-// `TerminateProcess`, the kernel closes our Job handle and terminates every
-// descendant. Downstream code calls `install()` / `enable()` / `is_enabled()`
+// exit-time descendant SIGKILL walk. Windows does both halves via Win32:
+//   descendants  — a kill-on-close Job Object self-assigned at `enable()`;
+//                  children inherit Job membership (nested jobs, Win8+), so
+//                  when this process exits for any reason, including
+//                  `TerminateProcess`, the kernel closes our Job handle and
+//                  terminates every descendant.
+//   parent watch — `RegisterWaitForSingleObject` on a `SYNCHRONIZE` handle to
+//                  the original parent; the system thread pool invokes
+//                  `on_parent_exit_cb` → `ExitProcess` when the parent's
+//                  process object is signaled (i.e. has terminated).
+// Downstream code calls `install()` / `enable()` / `is_enabled()`
 // unconditionally, so both arms expose the same surface.
 #[cfg(not(windows))]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
 #[cfg(windows)]
 pub mod parent_death_watchdog {
+    use core::ffi::c_void;
     use core::sync::atomic::{AtomicBool, Ordering};
+
+    use bun_sys::windows;
 
     use crate::posix_event_loop::EventLoopCtx;
 
@@ -83,46 +92,125 @@ pub mod parent_death_watchdog {
     }
 
     /// Idempotent. Creates an anonymous kill-on-close Job Object and assigns
-    /// the current process to it. The handle is intentionally leaked: closing
-    /// it early would fire `KILL_ON_JOB_CLOSE` and terminate us. Best-effort;
-    /// on failure the flag stays set so `run_command` still propagates the env
-    /// var to nested Bun processes.
+    /// the current process to it, then registers a thread-pool wait on the
+    /// original parent's process handle. Both handles are intentionally
+    /// leaked for the process lifetime. Best-effort; on any failure the flag
+    /// stays set so `run_command` still propagates the env var to nested Bun
+    /// processes.
     #[cold]
     #[inline(never)]
     pub fn enable() {
-        use bun_sys::windows;
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
         // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
         unsafe {
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
-            if job.is_null() {
-                return;
+            if !job.is_null() {
+                let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                    bun_core::ffi::zeroed();
+                jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if windows::SetInformationJobObject(
+                    job,
+                    windows::JobObjectExtendedLimitInformation,
+                    core::ptr::from_mut(&mut jeli).cast(),
+                    core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ) == 0
+                    || windows::AssignProcessToJobObject(job, windows::GetCurrentProcess()) == 0
+                {
+                    windows::CloseHandle(job);
+                }
             }
-            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if windows::SetInformationJobObject(
-                job,
-                windows::JobObjectExtendedLimitInformation,
-                core::ptr::from_mut(&mut jeli).cast(),
-                core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                windows::CloseHandle(job);
-                return;
-            }
-            if windows::AssignProcessToJobObject(job, windows::GetCurrentProcess()) == 0 {
-                windows::CloseHandle(job);
-            }
+
+            arm_parent_watch();
         }
+    }
+
+    /// Open a `SYNCHRONIZE` handle on the creating process and register a
+    /// one-shot thread-pool wait on it. Skipped if the parent is already gone
+    /// or the ppid was recycled before we could open it.
+    unsafe fn arm_parent_watch() {
+        // SAFETY: pure FFI; libuv reads `InheritedFromUniqueProcessId` via
+        // `NtQueryInformationProcess`, no loop state required.
+        let ppid = unsafe { windows::libuv::uv_os_getppid() };
+        if ppid <= 0 {
+            return;
+        }
+        // SAFETY: Win32 FFI; by-value args, failure → NULL.
+        let parent = unsafe { windows::OpenProcess(windows::SYNCHRONIZE, 0, ppid as u32) };
+        if parent.is_null() {
+            return;
+        }
+        // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
+        // creation, so if the creator already exited and its PID was reused we
+        // just opened an unrelated process. A real parent's creation time is
+        // strictly earlier than ours; a reused PID's is not.
+        if !is_plausible_parent(parent) {
+            // SAFETY: `parent` is a valid handle we just opened.
+            unsafe { windows::CloseHandle(parent) };
+            return;
+        }
+        let mut wait: windows::HANDLE = core::ptr::null_mut();
+        // SAFETY: `&mut wait` is a valid out-param; `parent` is a valid
+        // waitable handle; `on_parent_exit_cb` has the `WAITORTIMERCALLBACK`
+        // ABI; `Context` is unused.
+        if unsafe {
+            windows::RegisterWaitForSingleObject(
+                &raw mut wait,
+                parent,
+                on_parent_exit_cb,
+                core::ptr::null_mut(),
+                windows::INFINITE,
+                windows::WT_EXECUTEONLYONCE,
+            )
+        } == 0
+        {
+            // SAFETY: `parent` is a valid handle we just opened.
+            unsafe { windows::CloseHandle(parent) };
+        }
+    }
+
+    fn is_plausible_parent(parent: windows::HANDLE) -> bool {
+        let Some(parent_created) = creation_time(parent) else {
+            return false;
+        };
+        let Some(self_created) = creation_time(windows::GetCurrentProcess()) else {
+            return true;
+        };
+        parent_created < self_created
+    }
+
+    fn creation_time(h: windows::HANDLE) -> Option<u64> {
+        let mut t: [windows::FILETIME; 4] = bun_core::ffi::zeroed();
+        // SAFETY: `h` is either the pseudo-handle or a handle we opened; out
+        // params are valid `FILETIME` slots.
+        if unsafe {
+            windows::GetProcessTimes(
+                h,
+                &raw mut t[0],
+                &raw mut t[1],
+                &raw mut t[2],
+                &raw mut t[3],
+            )
+        } == 0
+        {
+            return None;
+        }
+        Some((u64::from(t[0].dwHighDateTime) << 32) | u64::from(t[0].dwLowDateTime))
+    }
+
+    /// Thread-pool callback: the parent's process object signaled. Matches the
+    /// Linux `PR_SET_PDEATHSIG` SIGKILL path (hard exit, no Rust-side
+    /// unwinding); the Job Object reaps descendants when our handles close.
+    unsafe extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
+        windows::kernel32::ExitProcess(EXIT_CODE as u32);
     }
 
     #[inline]
     pub fn install_on_event_loop(_handle: EventLoopCtx) {}
     #[inline]
     pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
-        debug_assert!(false, "ParentDeathWatchdog poll on Windows");
+        debug_assert!(false, "ParentDeathWatchdog FilePoll on Windows");
     }
 }
 pub use parent_death_watchdog as ParentDeathWatchdog;

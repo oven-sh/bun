@@ -3440,6 +3440,10 @@ pub use bun_windows_sys::externs::AssignProcessToJobObject;
 
 pub use bun_windows_sys::externs::GetCurrentProcess;
 
+pub use bun_windows_sys::externs::{
+    RegisterWaitForSingleObject, WAITORTIMERCALLBACK, WT_EXECUTEONLYONCE,
+};
+
 pub use bun_windows_sys::externs::ResumeThread;
 
 // Job Object structures + JOBOBJECTINFOCLASS consts — canonical definitions

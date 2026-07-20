@@ -23,6 +23,25 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
     }
   });
 
+  test("dlopen error reports the first attempt's message, not the cwd-resolved retry", () => {
+    try {
+      dlopen("libnonexistent_first_err_54321.so", {
+        test: { args: [], returns: "int" },
+      });
+      expect.unreachable("Should have thrown an error");
+    } catch (err: any) {
+      expect(err.message).toMatch(/Failed to open library/i);
+      // The fallback retry absolutizes against cwd; its dlerror would mention
+      // that path. The reported error must come from the user's original name.
+      expect(err.message).not.toContain(process.cwd());
+      if (isWindows) {
+        // FormatMessageW text, not a bare "error code 126".
+        expect(err.message).not.toMatch(/: error code \d+$/);
+        expect(err.message).toMatch(/could not be found|cannot find/i);
+      }
+    }
+  });
+
   test("dlopen shows which symbol is missing when symbol not found", () => {
     // Use appropriate system library for the platform
     const libName =

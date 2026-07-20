@@ -74,7 +74,15 @@ unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
 }
 
-use super::get_dl_error;
+/// `DynLib::open` wrapped with the crash-reporter "loading native module"
+/// breadcrumb so a segfaulting static initializer names the library.
+fn dynlib_open(name: &[u8]) -> Result<bun_sys::DynLib, Box<[u8]>> {
+    // SAFETY: `name` outlives the guard; `scoped_action` restores the
+    // thread-local before this frame (and thus `name`) is dropped.
+    let name_static: &'static [u8] = unsafe { bun_collections::detach_lifetime(name) };
+    let _guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Dlopen(name_static));
+    bun_sys::DynLib::open(name)
+}
 
 /// Run a function that needs to write to JIT-protected memory.
 ///
@@ -1494,40 +1502,38 @@ impl FFI {
 
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
-            match bun_sys::DynLib::open(name) {
+            let first_err = match dynlib_open(name) {
                 Ok(d) => break 'brk d,
-                Err(_) => {
-                    let backup_name = Fs::FileSystem::instance().abs(&[name]);
-                    // if that fails, try resolving the filepath relative to the current working directory
-                    match bun_sys::DynLib::open(backup_name) {
-                        Ok(d) => break 'brk d,
-                        Err(_) => {
-                            // Then, if that fails, report an error with the library name and system error
-                            let dlerror_msg = get_dl_error();
-
-                            let mut msg = Vec::new();
-                            write!(
-                                &mut msg,
-                                "Failed to open library \"{}\": {}",
-                                BStr::new(name),
-                                BStr::new(&dlerror_msg)
-                            )
-                            .ok();
-                            let system_error = SystemError {
-                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
-                                message: bun_core::String::clone_utf8(&msg),
-                                syscall: bun_core::String::clone_utf8(b"dlopen"),
-                                errno: 0,
-                                path: bun_core::String::EMPTY,
-                                hostname: bun_core::String::EMPTY,
-                                fd: -1,
-                                dest: bun_core::String::EMPTY,
-                            };
-                            return system_error.to_error_instance(global);
-                        }
-                    }
+                Err(e) => e,
+            };
+            // if that fails, try resolving the filepath relative to the current working directory
+            let backup_name = Fs::FileSystem::instance().abs(&[name]);
+            if backup_name != name {
+                if let Ok(d) = dynlib_open(backup_name) {
+                    break 'brk d;
                 }
             }
+            // Report the error from the original path the user asked for;
+            // the cwd-absolutized retry's error is usually just ENOENT.
+            let mut msg = Vec::new();
+            write!(
+                &mut msg,
+                "Failed to open library \"{}\": {}",
+                BStr::new(name),
+                BStr::new(&first_err)
+            )
+            .ok();
+            let system_error = SystemError {
+                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
+                message: bun_core::String::clone_utf8(&msg),
+                syscall: bun_core::String::clone_utf8(b"dlopen"),
+                errno: 0,
+                path: bun_core::String::EMPTY,
+                hostname: bun_core::String::EMPTY,
+                fd: -1,
+                dest: bun_core::String::EMPTY,
+            };
+            return system_error.to_error_instance(global);
         };
 
         let mut size = symbols.values().len();

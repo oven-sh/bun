@@ -4598,11 +4598,16 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_v
     };
     let len = data.len();
     buf.as_mut_slice()[len] = 0;
+    // Same flag policy as `bun_sys::dlopen`: MSDN documents
+    // `LOAD_WITH_ALTERED_SEARCH_PATH` as undefined for relative paths.
     const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x00000008;
+    let dw_flags = if bun_paths::is_absolute_windows_wtf16(&buf.as_slice()[..len]) {
+        LOAD_WITH_ALTERED_SEARCH_PATH
+    } else {
+        0
+    };
     // SAFETY: buf NUL-terminated at [len]
-    unsafe {
-        kernel32::LoadLibraryExW(buf.as_ptr(), ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH)
-    }
+    unsafe { kernel32::LoadLibraryExW(buf.as_ptr(), ptr::null_mut(), dw_flags) }
 }
 
 pub use bun_windows_sys::externs::windows_enable_stdio_inheritance;

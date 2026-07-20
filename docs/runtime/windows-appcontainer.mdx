@@ -65,7 +65,9 @@ shipped apps cannot rely on.
   the container — creation appears to succeed but the junction is unusable.
   (Some Windows Server builds leave such junctions traversable.) Use
   `bun install` with the default (hoisted) linker; the isolated linker
-  depends on junctions and is unsupported in sandboxes.
+  depends on junctions and is unsupported in sandboxes. `bun link` and
+  `bun unlink` are likewise unsupported: the global link directory sits
+  outside any container grant and their path resolution is denied.
 - **`os.homedir()` points at an inaccessible directory.** `USERPROFILE` is
   inherited unchanged, but the profile directory carries no ACE for the
   container. Drive roots (`C:\`) are not listable either; Bun's resolver

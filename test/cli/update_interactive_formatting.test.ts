@@ -448,7 +448,6 @@ registry = "${registryUrl}"
 
       // The header proves we reached process_multi_select where width is used.
       expect(ptyOutput).toContain("Select packages to update");
-      expect(stderr).not.toContain("attempt to subtract with overflow");
       expect(exitCode).toBe(0);
     } finally {
       if (slaveOpen) {

@@ -108,7 +108,6 @@ mod dom_call_slowpath {
 // `tcc_externs!` in `src/tcc_sys/tcc.rs`.
 use bun_tcc_sys as TCC;
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
 // `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,

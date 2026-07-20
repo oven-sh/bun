@@ -418,10 +418,11 @@ impl ValkeyClient {
 
         self.flush_data();
 
-        let have_more = self.queue.readable_length() > 0;
+        // Stay registered only if this pass actually drained something and more
+        // remains; otherwise `send_next_command` / `enqueue` will re-register
+        // when the queue becomes drainable again.
+        let have_more = pipelineable_count > 0 && self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
-
-        // Return true if we should schedule another flush
         have_more
     }
     // ** End of auto-pipelining **

@@ -71,6 +71,10 @@ function internalBinding(name: string) {
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
+    case "cares_wrap":
+      // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
+      // resolver surface lives in node:dns.
+      return { canonicalizeIP: require("bun:internal-for-testing").canonicalizeIP };
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

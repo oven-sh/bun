@@ -417,6 +417,12 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
+/* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
+ * listen socket behind it. Same contract as the listener resolver: an owned
+ * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
+typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
+    const char *hostname, int *abort_handshake);
+void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or

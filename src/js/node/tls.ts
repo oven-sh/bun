@@ -951,6 +951,11 @@ TLSSocket.prototype.getTLSTicket = function getTLSTicket() {
   return this._handle?.getTLSTicket?.();
 };
 
+// Lets net.ts's SNI dispatch recognize a raw native SecureContext returned by
+// a socket-level SNICallback (`new tls.TLSSocket(sock, { isServer: true,
+// SNICallback })`), where the handler's `this` is the socket, not a Server.
+TLSSocket.prototype[kNativeSecureContextCtor] = NativeSecureContext;
+
 TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   // Serve this connection's identity from the given context (Node calls this
   // from ALPNCallback/SNICallback before the certificate is sent). Accepts a

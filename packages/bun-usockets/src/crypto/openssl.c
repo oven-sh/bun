@@ -166,6 +166,9 @@ static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
+/* Per-SSL socket-level SNI resolver (us_socket_sni_resolver_t), used when the
+ * SSL has no listen socket behind it. */
+static int us_ssl_socket_sni_ex_idx = -1;
 /* Set (to a non-NULL marker) only on SSLs attached to a real us_socket_t via
  * us_internal_ssl_attach. The new-session callback uses it to ignore SSLs
  * owned by other engines (the JS-stream SSL wrapper used for TLS-over-duplex)
@@ -206,6 +209,19 @@ static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   if (!st) return;
   if (st->resolved_ctx) SSL_CTX_free(st->resolved_ctx);
   us_free(st);
+}
+
+/* Holder for the socket-level SNI resolver. A struct rather than stashing the
+ * function pointer straight into ex_data: converting a function pointer to
+ * void* is not portable C. */
+struct us_socket_sni_resolver_t {
+  us_socket_server_name_cb cb;
+};
+
+static void us_socket_sni_resolver_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                        int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) us_free(ptr);
 }
 
 struct us_ssl_reneg_state_t {
@@ -374,6 +390,8 @@ static void us_ex_idx_init(void) {
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_socket_sni_ex_idx =
+      SSL_get_ex_new_index(0, NULL, NULL, NULL, us_socket_sni_resolver_free);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
@@ -2519,7 +2537,16 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
 
   struct us_listen_socket_t *ls =
       (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
-  if (!ls || !ls->on_server_name) return ssl_select_cert_success;
+  /* With no listener resolver, the SSL may still carry a socket-level one: a
+   * server-side socket adopted into TLS with its own SNICallback. */
+  const int no_listener_resolver = (!ls || !ls->on_server_name);
+  struct us_socket_sni_resolver_t *socket_resolver = NULL;
+  if (no_listener_resolver && us_ssl_socket_sni_ex_idx >= 0) {
+    socket_resolver = SSL_get_ex_data(ssl, us_ssl_socket_sni_ex_idx);
+  }
+  if (no_listener_resolver && !(socket_resolver && socket_resolver->cb)) {
+    return ssl_select_cert_success;
+  }
 
   char hostname[256];
   if (!us_client_hello_servername(hello, hostname, sizeof(hostname))) {
@@ -2543,7 +2570,9 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   void *saved_loop_state[5];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
-  SSL_CTX *dyn = ls->on_server_name(ls, hostname, &abort_handshake, cb_socket);
+  SSL_CTX *dyn =
+      socket_resolver ? socket_resolver->cb(cb_socket, hostname, &abort_handshake)
+                      : ls->on_server_name(ls, hostname, &abort_handshake, cb_socket);
   us_internal_ssl_loop_state_restore(saved_loop_state);
 
   if (abort_handshake == 1) {
@@ -2574,10 +2603,12 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   }
 
   /* No dynamic selection: fall back to the static SNI tree (the bind
-   * hostname and addContext() entries). */
-  struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
-  if (node) {
-    SSL_set_SSL_CTX(ssl, node->ctx);
+   * hostname and addContext() entries). An adopted socket has no tree. */
+  if (ls) {
+    struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
+    if (node) {
+      SSL_set_SSL_CTX(ssl, node->ctx);
+    }
   }
   return ssl_select_cert_success;
 }
@@ -2681,6 +2712,29 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
   if (ls->ssl_ctx) {
     SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
   }
+}
+
+/* Register a socket-level SNI resolver on an already-attached server-side SSL.
+ * Must run after us_socket_adopt_tls and before the handshake is driven. */
+void us_socket_on_server_name(struct us_socket_t *s, us_socket_server_name_cb cb) {
+  if (!s || !cb || !s->ssl || !s_ssl(s)) return;
+  us_ex_idx_ensure();
+  if (us_ssl_socket_sni_ex_idx < 0) return;
+  SSL *ssl = s_ssl(s);
+  struct us_socket_sni_resolver_t *r =
+      SSL_get_ex_data(ssl, us_ssl_socket_sni_ex_idx);
+  if (!r) {
+    r = us_calloc(1, sizeof(*r));
+    if (!r) return;
+    SSL_set_ex_data(ssl, us_ssl_socket_sni_ex_idx, r);
+  }
+  r->cb = cb;
+  /* Only the early select-certificate stage supports retry, which an async
+   * SNICallback needs. The CTX is a memoized SecureContext possibly shared
+   * with a listener, and this install is permanent, so us_select_cert_cb must
+   * stay a no-op on any SSL carrying neither resolver. */
+  SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+  if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
 }
 
 void *us_socket_server_name_userdata(struct us_socket_t *s) {

@@ -204,6 +204,16 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
+    /// Install a socket-level SNI resolver on an already-adopted server-side
+    /// TLS socket (there is no listen socket to hang it off). Must run before
+    /// the handshake is driven.
+    pub fn on_server_name(
+        &mut self,
+        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
+    ) {
+        c::us_socket_on_server_name(self, cb);
+    }
+
     /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
     pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
         if !self.is_tls() {
@@ -514,6 +524,14 @@ mod c {
             s: &mut us_socket_t,
             ctx: *mut SslCtx,
             error: c_int,
+        );
+        pub(super) safe fn us_socket_on_server_name(
+            s: &mut us_socket_t,
+            cb: extern "C" fn(
+                *mut us_socket_t,
+                *const core::ffi::c_char,
+                *mut c_int,
+            ) -> *mut SslCtx,
         );
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,

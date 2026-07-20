@@ -1598,6 +1598,11 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let lexed = parser.slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
+                // [10.2.1.2] Core schema int: `0o[0-7]+` / `0x[0-9a-fA-F]+`
+                // have no sign, so `+0x1f`/`-0o17` stay strings.
+                if matches!(first_char, FirstChar::Negative | FirstChar::Positive) {
+                    return Ok(());
+                }
                 let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),
@@ -3302,13 +3307,19 @@ impl MappingProps {
             self.merge_indexed += 1;
         }
 
-        'next_merge_prop: for merge_prop in merge_props.iter().rev() {
+        let pre_merge_len = self.list.len();
+        'next_merge_prop: for merge_prop in merge_props.iter() {
             let merge_key = merge_prop.key.as_ref().unwrap();
             let merge_hash = yaml_merge_key_expr_hash(merge_key);
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
                     if yaml_merge_key_expr_eql(existing_key, merge_key) {
+                        // Duplicate from this merge source: later value wins.
+                        // Key present before this merge: existing value wins.
+                        if (*existing_idx as usize) >= pre_merge_len {
+                            self.list[*existing_idx as usize].value = merge_prop.value;
+                        }
                         continue 'next_merge_prop;
                     }
                 }
@@ -5267,6 +5278,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
+                    if c == 0x0D && Enc::wide(self.peek(1)) == 0x0A {
+                        self.inc(1);
+                    }
                     self.newline();
                     self.inc(1);
                     match self.fold_lines() {
@@ -5350,6 +5364,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
+                    if c == 0x0D && Enc::wide(self.peek(1)) == 0x0A {
+                        self.inc(1);
+                    }
                     self.newline();
                     self.inc(1);
                     match self.fold_lines() {
@@ -5392,6 +5409,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     match Enc::wide(self.next()) {
                         0x0D | 0x0A => {
+                            if Enc::wide(self.next()) == 0x0D && Enc::wide(self.peek(1)) == 0x0A {
+                                self.inc(1);
+                            }
                             self.newline();
                             self.inc(1);
                             let lines = self.fold_lines();

@@ -1803,12 +1803,11 @@ folded: >
         ] as const)("%s resolves as number %p", (input, expected) => {
           expect(YAML.parse(input)).toBe(expected);
         });
-        test.todo.each(["-0x1f", "+0x1f", "-0o17", "+0o17"])(
+        test.each(["-0x1f", "+0x1f", "-0o17", "+0o17", "-0xFF", "+0x0"])(
           "signed hex/octal %s resolves as string (§10.2.1.2)",
           input => {
             // Core schema int regex is `0x [0-9a-fA-F]+` — no sign. js-yaml,
-            // PyYAML, ruamel agree. Pre-existing on the int path (not gated
-            // by is_core_schema_number, which only validates the float path).
+            // PyYAML, ruamel agree.
             expect(YAML.parse(input)).toBe(input);
           },
         );
@@ -1849,11 +1848,25 @@ folded: >
           expect(() => YAML.parse("a\x80b")).toThrow();
         });
 
-        test.todo("CRLF in quoted scalars folds as one line break (→ space)", () => {
-          // [73] b-l-folded: a single break folds to a space. Currently `\r\n`
-          // in quoted scalars produces `\n` instead.
+        test("CRLF in quoted scalars folds as one line break (→ space)", () => {
+          // [73] b-l-folded: a single break folds to a space, and `\r\n` is
+          // one break ([28] b-break).
           expect(YAML.parse('"a\r\nb"')).toBe("a b");
           expect(YAML.parse("'a\r\nb'")).toBe("a b");
+          // Bare `\r` and bare `\n` are each one break.
+          expect(YAML.parse('"a\rb"')).toBe("a b");
+          expect(YAML.parse('"a\nb"')).toBe("a b");
+          // Two breaks: one `\n` survives ([73] n>1 → n-1 line feeds).
+          expect(YAML.parse('"a\r\n\r\nb"')).toBe("a\nb");
+          expect(YAML.parse("'a\r\n\r\nb'")).toBe("a\nb");
+          expect(YAML.parse('"a\n\nb"')).toBe("a\nb");
+          // Escaped line break: the break is consumed, nothing emitted.
+          expect(YAML.parse('"a\\\r\nb"')).toBe("ab");
+          expect(YAML.parse('"a\\\nb"')).toBe("ab");
+          expect(YAML.parse('"a\\\r\n\r\nb"')).toBe("a\nb");
+          // Same document, CRLF vs LF, must parse identically.
+          const lf = 'a:\n  "x\n  y"\n';
+          expect(YAML.parse(lf.replaceAll("\n", "\r\n"))).toEqual(YAML.parse(lf));
         });
 
         test.todo("verbatim/named-handle tags resolve as Core-schema types", () => {
@@ -1929,9 +1942,21 @@ folded: >
           expect(() => YAML.parse("a: 1\nb:\n\tc: 2")).toThrow(/line\s*\d|:\d+:\d+/);
         });
 
-        test.todo("`<<:` merge preserves source property order", () => {
+        test("`<<:` merge preserves source property order", () => {
           const r: any = YAML.parse("x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x");
           expect(Object.keys(r.y)).toEqual(["a", "b", "c"]);
+          // Flow source too.
+          const f: any = YAML.parse("x: &x {a: 1, b: 2, c: 3}\ny:\n  <<: *x");
+          expect(Object.keys(f.y)).toEqual(["a", "b", "c"]);
+          // Own key before the merge keeps its slot; merged keys follow in
+          // source order.
+          const before: any = YAML.parse("x: &x {a: 1, b: 2, c: 3}\ny:\n  a: 0\n  <<: *x");
+          expect(Object.keys(before.y)).toEqual(["a", "b", "c"]);
+          expect(before.y.a).toBe(0);
+          // `<<: [*a, *b]`: *a's keys first, *a wins over *b on overlap.
+          const list: any = YAML.parse("a: &a {x: 1, y: 2}\nb: &b {y: 20, z: 30}\nm:\n  <<: [*a, *b]");
+          expect(Object.keys(list.m)).toEqual(["x", "y", "z"]);
+          expect(list.m).toEqual({ x: 1, y: 2, z: 30 });
         });
 
         test.todo("alias with property on prior line is rejected ([104] c-ns-alias-node)", () => {
@@ -2359,32 +2384,36 @@ my_config:
       expect(YAML.parse(input2)).toMatchSnapshot();
     });
 
-    test("handles YAML bombs", () => {
-      function buildTest(depth) {
-        const lines: string[] = [];
-        lines.push(`a0: &a0\n  k0: 0`);
-        for (let i = 1; i <= depth; i++) {
-          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
-          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+    test(
+      "handles YAML bombs",
+      () => {
+        function buildTest(depth) {
+          const lines: string[] = [];
+          lines.push(`a0: &a0\n  k0: 0`);
+          for (let i = 1; i <= depth; i++) {
+            const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+            lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+          }
+          lines.push(`root:\n  <<: *a${depth}`);
+          const input = lines.join("\n");
+
+          const expected: any = {};
+          for (let i = 0; i <= depth; i++) {
+            const record = {};
+            for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+            expected[`a${i}`] = record;
+          }
+          expected.root = { ...expected[`a${depth}`] };
+
+          return { input, expected };
         }
-        lines.push(`root:\n  <<: *a${depth}`);
-        const input = lines.join("\n");
 
-        const expected: any = {};
-        for (let i = 0; i <= depth; i++) {
-          const record = {};
-          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
-          expected[`a${i}`] = record;
-        }
-        expected.root = { ...expected[`a${depth}`] };
+        const { input, expected } = buildTest(24);
 
-        return { input, expected };
-      }
-
-      const { input, expected } = buildTest(24);
-
-      expect(YAML.parse(input)).toEqual(expected);
-    }, 100);
+        expect(YAML.parse(input)).toEqual(expected);
+      },
+      isDebug || isASAN ? 1_000 : 100,
+    );
 
     describe("merge keys", () => {
       test("merge overrides", () => {

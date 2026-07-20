@@ -136,13 +136,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
 [ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
 
-# Same Windows half-close + client-RST gap over a node:http server: the server
-# half-closes (res.socket.end()) mid-upload, the fetch client RSTs the cut-short
-# 10 MB POST body, and that RST is not surfaced to the server's still-open
-# readable side on Windows, so the accepted connection never ends and
-# server.close() (via `await using`) waits forever. The assertion itself passes;
-# only the teardown hangs. Passes on Linux and macOS.
-
 # The 10 MB socket write in this test is an order of magnitude slower under
 # AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
 [ ASAN ] test/js/node/test/parallel/test-net-error-twice.js [ SKIP ] # ASAN-instrumented 10 MB write exceeds the timeout
@@ -174,7 +167,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # reliably. Follow-up: rewrite without the external-IP dependence (repo rule forbids
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
-
-
-# node:http servers cannot listen on Windows named pipes yet (ENOENT from
-# uv_pipe bind), so common.PIPE-based http tests cannot run there.

@@ -25,7 +25,9 @@ set -uo pipefail
 error=""
 for log in "/tmp/bk-${BUILDKITE_JOB_ID:-}.log" "/tmp/sc-${BUILDKITE_JOB_ID:-}.log"; do
   [ -s "$log" ] || continue
-  body=$(grep -v '^Stopping VM\.\.\.' "$log" 2>/dev/null || true)
+  # Cap per-log output so a pathological tart dump cannot push the shared
+  # `--append`ed annotation past Buildkite's 1 MiB body limit.
+  body=$(grep -v '^Stopping VM\.\.\.' "$log" 2>/dev/null | head -c 2048 || true)
   [ -n "$body" ] && error+="${error:+$'\n'}${log##*/}: ${body}"
 done
 
@@ -33,9 +35,12 @@ done
 
 label="${BUILDKITE_LABEL:-${BUILDKITE_STEP_KEY:-job}}"
 job_url="${BUILDKITE_BUILD_URL:-}#${BUILDKITE_JOB_ID:-}"
+# Match escapeCodeBlock() in scripts/runner.node.mjs: the body renders inside a
+# ```terminal fence, so only backticks need escaping.
+preview=$(printf '%s' "$error" | sed 's/`/\\`/g')
 
 printf '<details><summary><code>tart guest boot</code> failed on <a href="%s">%s</a></summary>\n\n```terminal\n%s\n```\n\n</details>\n\n' \
-  "$job_url" "$label" "$error" \
+  "$job_url" "$label" "$preview" \
   | buildkite-agent annotate --append --style error --context tart-guest-boot --priority 5 2>&1 \
   || echo "pre-exit: buildkite-agent annotate failed (non-fatal)"
 

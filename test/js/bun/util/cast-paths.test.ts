@@ -33,10 +33,6 @@ test("Float16Array inspection reads element values through the u8/f16 slice cast
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toContain("Float16Array(4)");
-  expect(stdout).toContain(" 1");
-  expect(stdout).toContain(" 2");
-  expect(stdout).toContain(" -3");
-  expect(stdout).toContain(" 1.5");
+  expect(stdout).toBe("Float16Array(4) [ 1, 2, -3, 1.5 ]");
   expect(exitCode).toBe(0);
 });

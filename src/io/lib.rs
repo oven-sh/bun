@@ -126,29 +126,35 @@ pub mod parent_death_watchdog {
         }
     }
 
-    /// Open a `SYNCHRONIZE` handle on the creating process and register a
-    /// one-shot thread-pool wait on it. Skipped if the parent is already gone
-    /// or the ppid was recycled before we could open it.
+    /// Open a handle on the creating process and register a one-shot
+    /// thread-pool wait on it. If the creator is already gone (OpenProcess
+    /// fails, or the PID was recycled), exit immediately, matching the POSIX
+    /// race branches in `ParentDeathWatchdog.rs`.
     unsafe fn arm_parent_watch() {
-        // SAFETY: pure FFI; libuv reads `InheritedFromUniqueProcessId` via
-        // `NtQueryInformationProcess`, no loop state required.
-        let ppid = unsafe { windows::libuv::uv_os_getppid() };
-        if ppid <= 0 {
+        let ppid = getppid();
+        if ppid == 0 {
             return;
         }
-        // SAFETY: Win32 FFI; by-value args, failure → NULL.
-        let parent = unsafe { windows::OpenProcess(windows::SYNCHRONIZE, 0, ppid as u32) };
-        if parent.is_null() {
-            return;
-        }
+        // SAFETY: Win32 FFI; by-value args, failure → NULL. SYNCHRONIZE for
+        // the wait, PROCESS_QUERY_LIMITED_INFORMATION for `GetProcessTimes`.
+        let parent = unsafe {
+            windows::OpenProcess(
+                windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                ppid,
+            )
+        };
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
-        // just opened an unrelated process. A real parent's creation time is
-        // strictly earlier than ours; a reused PID's is not.
-        if !is_plausible_parent(parent) {
-            // SAFETY: `parent` is a valid handle we just opened.
-            unsafe { windows::CloseHandle(parent) };
-            return;
+        // just opened an unrelated process. A real creator's creation time is
+        // no later than ours; a reused PID's is strictly later. Either outcome
+        // here means the original parent is gone.
+        if parent.is_null() || !is_original_parent(parent) {
+            if !parent.is_null() {
+                // SAFETY: `parent` is a valid handle we just opened.
+                unsafe { windows::CloseHandle(parent) };
+            }
+            windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
         let mut wait: windows::HANDLE = core::ptr::null_mut();
         // SAFETY: `&mut wait` is a valid out-param; `parent` is a valid
@@ -170,14 +176,36 @@ pub mod parent_death_watchdog {
         }
     }
 
-    fn is_plausible_parent(parent: windows::HANDLE) -> bool {
+    /// `InheritedFromUniqueProcessId` via direct ntdll call. Not
+    /// `uv_os_getppid`: libuv loads `NtQueryInformationProcess` lazily in
+    /// `uv__winapi_init`, and `enable()` runs from `main()` before that.
+    fn getppid() -> u32 {
+        // SAFETY: out-param is a valid `PROCESS_BASIC_INFORMATION`; the pseudo
+        // handle needs no access rights.
+        unsafe {
+            let mut pbi: windows::PROCESS_BASIC_INFORMATION = bun_core::ffi::zeroed_unchecked();
+            let rc = windows::ntdll::NtQueryInformationProcess(
+                windows::GetCurrentProcess(),
+                windows::ProcessBasicInformation,
+                core::ptr::from_mut(&mut pbi).cast(),
+                core::mem::size_of::<windows::PROCESS_BASIC_INFORMATION>() as u32,
+                core::ptr::null_mut(),
+            );
+            if !windows::NT_SUCCESS(rc) {
+                return 0;
+            }
+            pbi.InheritedFromUniqueProcessId as u32
+        }
+    }
+
+    fn is_original_parent(parent: windows::HANDLE) -> bool {
         let Some(parent_created) = creation_time(parent) else {
             return false;
         };
         let Some(self_created) = creation_time(windows::GetCurrentProcess()) else {
             return true;
         };
-        parent_created < self_created
+        parent_created <= self_created
     }
 
     fn creation_time(h: windows::HANDLE) -> Option<u64> {

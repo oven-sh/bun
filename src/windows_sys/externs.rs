@@ -636,6 +636,16 @@ pub mod ntdll {
         /// linking kernel32 in the standalone PE.
         pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
 
+        /// `NtQueryInformationProcess` (`winternl.h`). With
+        /// `ProcessBasicInformation` (0), fills a [`PROCESS_BASIC_INFORMATION`].
+        pub fn NtQueryInformationProcess(
+            ProcessHandle: HANDLE,
+            ProcessInformationClass: ULONG,
+            ProcessInformation: *mut c_void,
+            ProcessInformationLength: ULONG,
+            ReturnLength: *mut ULONG,
+        ) -> NTSTATUS;
+
         pub fn NtReadFile(
             FileHandle: HANDLE,
             Event: HANDLE,
@@ -1514,6 +1524,20 @@ pub type WAITORTIMERCALLBACK =
     unsafe extern "system" fn(lpParameter: LPVOID, TimerOrWaitFired: BOOLEAN);
 /// `WT_EXECUTEONLYONCE` (`winnt.h`) — fire once; caller does not unregister.
 pub const WT_EXECUTEONLYONCE: ULONG = 0x0000_0008;
+
+/// `PROCESS_BASIC_INFORMATION` (`winternl.h`). Only
+/// `InheritedFromUniqueProcessId` is read; the rest are layout padding.
+#[repr(C)]
+pub struct PROCESS_BASIC_INFORMATION {
+    pub ExitStatus: NTSTATUS,
+    pub PebBaseAddress: *mut c_void,
+    pub AffinityMask: usize,
+    pub BasePriority: i32,
+    pub UniqueProcessId: usize,
+    pub InheritedFromUniqueProcessId: usize,
+}
+/// `PROCESSINFOCLASS::ProcessBasicInformation` (`winternl.h`).
+pub const ProcessBasicInformation: ULONG = 0;
 
 /// `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (`winnt.h`).
 #[repr(C)]

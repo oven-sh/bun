@@ -720,9 +720,6 @@ impl ValkeyClient {
                     // Head is pipelineable. Register the flusher to batch it with others.
                     self.register_auto_flusher();
                 }
-            } else if self.in_flight.readable_length() == 0 {
-                // Without auto pipelining, wait for in-flight to empty before draining
-                self.drain();
             }
         }
 
@@ -1362,17 +1359,6 @@ impl ValkeyClient {
             match self.status {
                 Status::Connected => {
                     self.enqueue(&checked_command, promise)?;
-
-                    // Schedule auto-flushing to process this command if pipelining is enabled
-                    if self.flags.enable_auto_pipelining
-                        && checked_command
-                            .meta
-                            .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-                        && self.status == Status::Connected
-                        && self.queue.readable_length() > 0
-                    {
-                        self.register_auto_flusher();
-                    }
                 }
                 Status::Connecting | Status::Disconnected => {
                     // Only queue if offline queue is enabled

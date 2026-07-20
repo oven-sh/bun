@@ -18,13 +18,11 @@ describe("fetch store", () => {
     });
     const store = { type: "dir", path: String(cacheDir) } as const;
 
-    // miss → records
     const r1 = await fetch(`http://localhost:${server.port}/hello`, { store });
     expect(r1.status).toBe(200);
     expect(await r1.json()).toEqual({ n: 1, path: "/hello" });
     expect(hits).toBe(1);
 
-    // hit → replays, server not contacted
     const r2 = await fetch(`http://localhost:${server.port}/hello`, { store });
     expect(r2.status).toBe(200);
     expect(r2.headers.get("content-type")).toBe("application/json");
@@ -32,7 +30,6 @@ describe("fetch store", () => {
     expect(await r2.json()).toEqual({ n: 1, path: "/hello" });
     expect(hits).toBe(1);
 
-    // one file on disk, valid JSON with the expected shape
     const files = readdirSync(String(cacheDir)).filter(f => f.endsWith(".json"));
     expect(files.length).toBe(1);
     const data = JSON.parse(readFileSync(join(String(cacheDir), files[0]), "utf8"));
@@ -44,7 +41,7 @@ describe("fetch store", () => {
     expect(JSON.parse(data.response.body)).toEqual({ n: 1, path: "/hello" });
   });
 
-  test("dir: different method/url/body get different keys", async () => {
+  test("dir: different method/url/body/headers get different keys", async () => {
     using cacheDir = tempDir("fetch-store-keys", {});
     let hits = 0;
     await using server = Bun.serve({
@@ -61,16 +58,53 @@ describe("fetch store", () => {
     await (await fetch(`${base}/b`, { store })).text();
     await (await fetch(`${base}/a`, { method: "POST", body: "x", store })).text();
     await (await fetch(`${base}/a`, { method: "POST", body: "y", store })).text();
-    expect(hits).toBe(4);
+    await (await fetch(`${base}/a`, { headers: { "x-k": "1" }, store })).text();
+    await (await fetch(`${base}/a`, { headers: { "x-k": "2" }, store })).text();
+    expect(hits).toBe(6);
 
-    // all four should now hit
     await (await fetch(`${base}/a`, { store })).text();
     await (await fetch(`${base}/b`, { store })).text();
     await (await fetch(`${base}/a`, { method: "POST", body: "x", store })).text();
     await (await fetch(`${base}/a`, { method: "POST", body: "y", store })).text();
-    expect(hits).toBe(4);
+    await (await fetch(`${base}/a`, { headers: { "x-k": "1" }, store })).text();
+    await (await fetch(`${base}/a`, { headers: { "x-k": "2" }, store })).text();
+    expect(hits).toBe(6);
 
-    expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(4);
+    expect(readdirSync(String(cacheDir)).filter(f => f.endsWith(".json")).length).toBe(6);
+  });
+
+  test("dir: header order and case do not perturb the key", async () => {
+    using cacheDir = tempDir("fetch-store-hdr-order", {});
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        hits++;
+        return new Response(String(hits));
+      },
+    });
+    const store = { type: "dir", path: String(cacheDir) } as const;
+    const base = `http://localhost:${server.port}`;
+
+    const a = await (
+      await fetch(`${base}/h`, {
+        headers: [
+          ["X-A", "1"],
+          ["x-b", "2"],
+        ] as [string, string][],
+        store,
+      })
+    ).text();
+    const b = await (
+      await fetch(`${base}/h`, {
+        headers: [
+          ["x-b", "2"],
+          ["x-a", "1"],
+        ] as [string, string][],
+        store,
+      })
+    ).text();
+    expect({ a, b, hits }).toEqual({ a: "1", b: "1", hits: 1 });
   });
 
   test("dir: binary body is base64 encoded", async () => {
@@ -114,25 +148,39 @@ describe("fetch store", () => {
     expect(hits).toBe(1);
   });
 
-  test("memory: max evicts when full", async () => {
-    let hits = 0;
-    await using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        hits++;
-        return new Response(new URL(req.url).pathname);
-      },
+  test.concurrent("memory: max bounds entry count", async () => {
+    // Subprocess gives an isolated memory store. With max=1 each insert
+    // evicts the prior key, so re-fetching both keys misses both times;
+    // an unbounded store would leave `after` at 2.
+    using srcDir = tempDir("fetch-store-mem-max", {
+      "script.ts": `
+        let hits = 0;
+        await using server = Bun.serve({
+          port: 0,
+          fetch(req) { hits++; return new Response(new URL(req.url).pathname); },
+        });
+        const store = { type: "memory", max: 1 } as const;
+        const base = "http://localhost:" + server.port;
+        await (await fetch(base + "/m1", { store })).text();
+        await (await fetch(base + "/m2", { store })).text();
+        const before = hits;
+        await (await fetch(base + "/m1", { store })).text();
+        await (await fetch(base + "/m2", { store })).text();
+        console.log(JSON.stringify({ before, after: hits }));
+      `,
     });
-    const store = { type: "memory", max: 2 } as const;
-    const base = `http://localhost:${server.port}`;
-
-    await (await fetch(`${base}/m1`, { store })).text();
-    await (await fetch(`${base}/m2`, { store })).text();
-    await (await fetch(`${base}/m3`, { store })).text();
-    // 3 misses; map holds 2 entries. m3 is definitely cached.
-    expect(hits).toBe(3);
-    await (await fetch(`${base}/m3`, { store })).text();
-    expect(hits).toBe(3);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "script.ts"],
+      env: bunEnv,
+      cwd: String(srcDir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { before: 2, after: 4 },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("store type validation", async () => {

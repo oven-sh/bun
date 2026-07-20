@@ -3046,23 +3046,31 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
+                    // Store the env path in tmp_buf AFTER the resolved device.
+                    // buf2[0..resolved_tail_len] already holds the accumulated
+                    // tail; writing the value there (as before) clobbered it,
+                    // which is why `resolve("C:foo")` produced corrupted output
+                    // on Windows. tmp_buf past the device is scratch here.
                     if T::IS_U16 {
-                        buf_size = r.len();
+                        buf_size = r.len().min(tmp_buf.len() - resolved_device_len);
                         // T == u16 when IS_U16; bytemuck checks the layout at runtime.
-                        let dst: &mut [u16] =
-                            bytemuck::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
-                        memmove(dst, &r);
+                        let dst: &mut [u16] = bytemuck::cast_slice_mut::<T, u16>(
+                            &mut tmp_buf[resolved_device_len..resolved_device_len + buf_size],
+                        );
+                        memmove(dst, &r[..buf_size]);
                     } else {
-                        // Reuse buf2 because it's used for path.
                         // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                        let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(&mut buf2[..]);
+                        let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(
+                            &mut tmp_buf[resolved_device_len..],
+                        );
                         buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
                     }
                     env_path_len = Some(buf_size);
                 }
             }
             if let Some(ep_len) = env_path_len {
-                path_ptr = buf2.as_ptr();
+                // SAFETY: offset is within tmp_buf (resolved_device_len == 2 here).
+                path_ptr = unsafe { tmp_buf.as_ptr().add(resolved_device_len) };
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.

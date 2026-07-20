@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";
 import path from "node:path";
@@ -109,6 +109,42 @@ describe("path.resolve", () => {
     expect(path.win32.resolve("//server/share", "C:relative")).toBe(path.win32.resolve("C:relative"));
     expect(path.win32.resolve("//server/share", "C:")).toBe(path.win32.resolve("C:"));
     expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));
+  });
+
+  // On Windows, a drive-relative path like "C:foo" is resolved against the
+  // per-drive cwd stored in the `=C:` environment variable. The env value was
+  // being written into the same buffer region that already held the
+  // accumulated tail ("foo"), corrupting the result. Spawn a child with a
+  // known `=C:` so the expected output is deterministic.
+  test.skipIf(!isWindows)("win32 drive-relative input resolves against the per-drive cwd (=X: env var)", async () => {
+    const script = `const p = require("path");
+      console.log(JSON.stringify([
+        p.resolve("C:foo"),
+        p.resolve("C:"),
+        p.resolve("C:", "foo"),
+        p.resolve("C:foo/bar"),
+        p.resolve("c:foo"),
+        p.win32.resolve("C:foo"),
+        p.toNamespacedPath("C:foo"),
+      ]));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, "=C:": "C:\\known\\dir" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual([
+      "C:\\known\\dir\\foo",
+      "C:\\known\\dir",
+      "C:\\known\\dir\\foo",
+      "C:\\known\\dir\\foo\\bar",
+      "c:\\known\\dir\\foo",
+      "C:\\known\\dir\\foo",
+      "\\\\?\\C:\\known\\dir\\foo",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {

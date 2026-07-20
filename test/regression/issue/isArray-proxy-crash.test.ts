@@ -13,7 +13,7 @@
 //   - expect(proxy).toEqual(expect.arrayContaining([...])) -> UBSan null deref
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe } from "harness";
 import vm from "vm";
 
 describe("isArray + Proxy crash fixes", () => {
@@ -90,11 +90,23 @@ describe("isArray + Proxy crash fixes", () => {
     }).toThrow(); // assertion fails, no crash
   });
 
+  test("vm.compileFunction propagates isArray() error for revoked Proxy", () => {
+    const rp = Proxy.revocable([], {});
+    rp.revoke();
+    // Before: the isArray exception was ignored and ERR::INVALID_ARG_INSTANCE
+    // re-threw from determineSpecificType's [[Get]] on the revoked proxy
+    // ("No more operations are allowed"). Now the isArray error propagates
+    // directly, matching Node's shape.
+    expect(() => vm.compileFunction("return 1", rp.proxy)).toThrow(/isArray/i);
+    expect(() => vm.compileFunction("return 1", [], { contextExtensions: rp.proxy })).toThrow(/isArray/i);
+  });
+
   // vm.compileFunction's params/contextExtensions validation calls JSC::isArray(),
   // which can throw (Proxy path). The exception must be checked before building
   // the ERR_INVALID_ARG_TYPE message; BUN_JSC_validateExceptionChecks=1 aborts
-  // the process if not. Only ASAN builds compile in exception-scope verification.
-  test.skipIf(!isASAN)("vm.compileFunction Proxy validation checks isArray() exception", async () => {
+  // the process if not. On builds without exception-scope verification the
+  // option is a no-op and the child exits 0 either way.
+  test("vm.compileFunction Proxy validation checks isArray() exception", async () => {
     const src = `
       const vm = require("vm");
       const rp = Proxy.revocable([], {}); rp.revoke();

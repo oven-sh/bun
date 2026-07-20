@@ -498,6 +498,12 @@ macro_rules! decl_js_sink_externs {
                 ) -> JSValue;
                 #[link_name = concat!($abi, "__setDestroyCallback")]
                 pub(crate) safe fn set_destroy_callback(v: JSValue, cb: usize);
+                #[link_name = concat!($abi, "__setPendingWriteValue")]
+                pub(crate) safe fn set_pending_write_value(
+                    this: JSValue,
+                    g: &JSGlobalObject,
+                    v: JSValue,
+                );
                 #[link_name = concat!($abi, "__assignToStream")]
                 pub(crate) safe fn assign_to_stream(
                     g: &JSGlobalObject,
@@ -537,6 +543,13 @@ macro_rules! impl_js_sink_abi {
                 }
                 fn set_destroy_callback_extern(value: ::bun_jsc::JSValue, callback: usize) {
                     __abi::set_destroy_callback(value, callback)
+                }
+                fn set_pending_write_value_extern(
+                    this: ::bun_jsc::JSValue,
+                    global: &::bun_jsc::JSGlobalObject,
+                    value: ::bun_jsc::JSValue,
+                ) {
+                    __abi::set_pending_write_value(this, global, value)
                 }
                 fn assign_to_stream_extern(
                     global: &::bun_jsc::JSGlobalObject,
@@ -580,6 +593,15 @@ pub trait JsSinkAbi {
     ) -> crate::webcore::jsc::JSValue;
     /// `${abi_name}__setDestroyCallback`.
     fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
+    /// `${abi_name}__setPendingWriteValue` — store/clear a GC-visited
+    /// `m_pendingWriteValue` on the wrapper (sink or controller) at
+    /// `this`, so a large write's backing store stays alive while the
+    /// socket drains without `protect()`/`Strong`.
+    fn set_pending_write_value_extern(
+        this: crate::webcore::jsc::JSValue,
+        global: &crate::webcore::jsc::JSGlobalObject,
+        value: crate::webcore::jsc::JSValue,
+    );
     /// `${abi_name}__assignToStream`. Safe wrapper: takes `&JSGlobalObject` and
     /// performs the `as_ptr()` projection internally so the FFI call is the
     /// impl body's sole guarded operation.

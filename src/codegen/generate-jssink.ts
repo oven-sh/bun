@@ -116,6 +116,10 @@ function header() {
             int m_refCount { 1 };
 
             uintptr_t m_onDestroy { 0 };
+
+            // Holds the backing store of a large write() by reference while
+            // the socket drains (GC-visited; avoids protect()/Strong).
+            mutable WriteBarrier<JSC::Unknown> m_pendingWriteValue;
                                                                                                                                                                                     
             ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
                 : Base(vm, structure)
@@ -172,6 +176,10 @@ function header() {
                 mutable WriteBarrier<JSC::JSObject> m_onPull;
                 mutable WriteBarrier<JSC::JSObject> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
+
+                // Holds the backing store of a large write() by reference while
+                // the socket drains (GC-visited; avoids protect()/Strong).
+                mutable WriteBarrier<JSC::Unknown> m_pendingWriteValue;
 
                 uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                         
@@ -752,6 +760,24 @@ extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr
     }
 }
 
+extern "C" void ${name}__setPendingWriteValue(EncodedJSValue encodedThis, JSC::JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    JSValue thisValue = JSValue::decode(encodedThis);
+    JSValue value = JSValue::decode(encodedValue);
+    auto& vm = globalObject->vm();
+    if (auto* controller = dynamicDowncast<WebCore::${controller}>(thisValue)) {
+        if (value.isCell())
+            controller->m_pendingWriteValue.set(vm, controller, value);
+        else
+            controller->m_pendingWriteValue.clear();
+    } else if (auto* sink = dynamicDowncast<WebCore::${className}>(thisValue)) {
+        if (value.isCell())
+            sink->m_pendingWriteValue.set(vm, sink, value);
+        else
+            sink->m_pendingWriteValue.clear();
+    }
+}
+
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);    
@@ -804,7 +830,8 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // Avoid duplicating in the heap snapshot
     visitor.appendHidden(thisObject->m_onPull);
     visitor.appendHidden(thisObject->m_onClose);
-    
+    visitor.append(thisObject->m_pendingWriteValue);
+
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);
@@ -818,6 +845,7 @@ void ${className}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${className}* thisObject = uncheckedDowncast<${className}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_pendingWriteValue);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);

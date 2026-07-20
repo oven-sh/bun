@@ -704,11 +704,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     if (strict.isBoolean() && strict.asBoolean()) {
 
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = Bun__deepEquals<true, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = Bun__deepEquals<false, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }

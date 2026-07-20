@@ -21,7 +21,7 @@
 
 "use strict";
 
-const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
+const { SafeMap, SafeSet } = require("internal/primordials");
 const {
   isKeyObject,
   isPromise,
@@ -34,7 +34,7 @@ const {
   isAnyArrayBuffer,
 } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, validateOneOf } = require("internal/validators");
 
 const ArrayFrom = Array.from;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -44,11 +44,20 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayBufferIsView = ArrayBuffer.isView;
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
+const NumberIsInteger = Number.isInteger;
+const ObjectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+// Reads the real typed-array tag, immune to faked Symbol.toStringTag properties.
+const TypedArrayPrototypeGetToStringTag = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  Symbol.toStringTag,
+)!.get!;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
-const ReflectHas = Reflect.has;
-const ReflectOwnKeys = Reflect.ownKeys;
+const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
+const ObjectPrototypeToString = Object.prototype.toString;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
@@ -57,11 +66,12 @@ const SymbolIterator = Symbol.iterator;
 
 type nodeAssert = typeof import("node:assert");
 
+const kOptions = Symbol("options");
+
+const { isDeepStrictEqual, withCycleGuard } = require("internal/util/comparisons");
+
 function isDeepEqual(a, b) {
   return Bun.deepEquals(a, b, false);
-}
-function isDeepStrictEqual(a, b) {
-  return Bun.deepEquals(a, b, true);
 }
 
 var _inspect;
@@ -90,11 +100,61 @@ export default assert;
 
 const NO_EXCEPTION_SENTINEL = {};
 
+/**
+ * @class Assert
+ * @param {object} [options] - `diff` ('simple'|'full'), `strict` (default true),
+ *   `skipPrototype` (default false).
+ * @throws {ERR_CONSTRUCT_CALL_REQUIRED} If not called with `new`.
+ */
+function Assert(options) {
+  if (!new.target) {
+    throw $ERR_CONSTRUCT_CALL_REQUIRED("Class constructor Assert cannot be invoked without `new`");
+  }
+
+  options = ObjectAssign({ __proto__: null, strict: true, skipPrototype: false }, options);
+
+  if (options.diff !== undefined) {
+    validateOneOf(options.diff, "options.diff", ["simple", "full"]);
+  }
+
+  loadAssertionError();
+  this.AssertionError = AssertionError;
+  ObjectDefineProperty(this, kOptions, {
+    __proto__: null,
+    value: options,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+
+  if (options.strict) {
+    this.equal = this.strictEqual;
+    this.deepEqual = this.deepStrictEqual;
+    this.notEqual = this.notStrictEqual;
+    this.notDeepEqual = this.notDeepStrictEqual;
+  }
+}
+
+// Functions compiled as builtins have no automatic `.prototype`; assign one
+// explicitly (same pattern as EventEmitter in node/events.ts).
+Assert.prototype = {};
+ObjectDefineProperty(Assert.prototype, "constructor", {
+  __proto__: null,
+  value: Assert,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+
 // All of the following functions must throw an AssertionError
 // when a corresponding condition is not met, with a message that
 // may be undefined if not provided. All assertion methods provide
 // both the actual and expected values to the assertion error for
 // display purposes.
+
+// DESTRUCTURING WARNING: All Assert.prototype methods use optional chaining
+// (this?.[kOptions]) so that methods destructured from an Assert instance
+// (losing their `this`) fall back to default behavior.
 
 function innerFail(obj) {
   const objMessage = obj.message;
@@ -150,6 +210,7 @@ function fail(
     operator: operator === undefined ? "fail" : operator,
     stackStartFn: stackStartFn || fail,
     message,
+    diff: this?.[kOptions]?.diff,
   };
   if (AssertionError === undefined) loadAssertionError();
   const err = new AssertionError(errArgs);
@@ -159,10 +220,9 @@ function fail(
   throw err;
 }
 
-assert.fail = fail;
+Assert.prototype.fail = fail;
 
 // The AssertionError is defined in internal/error.
-assert.AssertionError = AssertionError;
 Object.defineProperty(assert, "AssertionError", {
   get() {
     loadAssertionError();
@@ -186,7 +246,10 @@ function ok(value: unknown, message?: string | Error): asserts value;
 function ok(...args: unknown[]): void {
   innerOk(ok, args.length, ...args);
 }
-assert.ok = ok;
+
+Assert.prototype.ok = function ok(...args) {
+  innerOk(ok, args.length, ...args);
+};
 
 /**
  * The equality assertion tests shallow, coercive equality with ==.
@@ -196,7 +259,7 @@ assert.ok = ok;
  * @returns {void}
  */
 /* eslint-disable no-restricted-properties */
-assert.equal = function equal(actual: unknown, expected: unknown, message?: string | Error) {
+Assert.prototype.equal = function equal(actual: unknown, expected: unknown, message?: string | Error) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -208,6 +271,7 @@ assert.equal = function equal(actual: unknown, expected: unknown, message?: stri
       message,
       operator: "==",
       stackStartFn: equal,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -220,7 +284,7 @@ assert.equal = function equal(actual: unknown, expected: unknown, message?: stri
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.notEqual = function notEqual(actual, expected, message) {
+Assert.prototype.notEqual = function notEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -232,6 +296,7 @@ assert.notEqual = function notEqual(actual, expected, message) {
       message,
       operator: "!=",
       stackStartFn: notEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -243,7 +308,7 @@ assert.notEqual = function notEqual(actual, expected, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.deepEqual = function deepEqual(actual, expected, message) {
+Assert.prototype.deepEqual = function deepEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -254,6 +319,7 @@ assert.deepEqual = function deepEqual(actual, expected, message) {
       message,
       operator: "deepEqual",
       stackStartFn: deepEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -265,7 +331,7 @@ assert.deepEqual = function deepEqual(actual, expected, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
+Assert.prototype.notDeepEqual = function notDeepEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -276,6 +342,7 @@ assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
       message,
       operator: "notDeepEqual",
       stackStartFn: notDeepEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -289,17 +356,18 @@ assert.notDeepEqual = function notDeepEqual(actual, expected, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
+Assert.prototype.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  if (!isDeepStrictEqual(actual, expected)) {
+  if (!isDeepStrictEqual(actual, expected, this?.[kOptions]?.skipPrototype)) {
     innerFail({
       actual,
       expected,
       message,
       operator: "deepStrictEqual",
       stackStartFn: deepStrictEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -312,18 +380,19 @@ assert.deepStrictEqual = function deepStrictEqual(actual, expected, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.notDeepStrictEqual = notDeepStrictEqual;
+Assert.prototype.notDeepStrictEqual = notDeepStrictEqual;
 function notDeepStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  if (isDeepStrictEqual(actual, expected)) {
+  if (isDeepStrictEqual(actual, expected, this?.[kOptions]?.skipPrototype)) {
     innerFail({
       actual,
       expected,
       message,
       operator: "notDeepStrictEqual",
       stackStartFn: notDeepStrictEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 }
@@ -335,7 +404,7 @@ function notDeepStrictEqual(actual, expected, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.strictEqual = function strictEqual(actual, expected, message) {
+Assert.prototype.strictEqual = function strictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -346,6 +415,7 @@ assert.strictEqual = function strictEqual(actual, expected, message) {
       message,
       operator: "strictEqual",
       stackStartFn: strictEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -357,7 +427,7 @@ assert.strictEqual = function strictEqual(actual, expected, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
+Assert.prototype.notStrictEqual = function notStrictEqual(actual, expected, message) {
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -368,6 +438,7 @@ assert.notStrictEqual = function notStrictEqual(actual, expected, message) {
       message,
       operator: "notStrictEqual",
       stackStartFn: notStrictEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -376,7 +447,6 @@ function isSpecial(obj) {
   return obj == null || typeof obj !== "object" || Error.isError(obj) || isRegExp(obj) || isDate(obj);
 }
 
-const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
 const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
 const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
 const SafeMapPrototypeHas = SafeMap.prototype.has;
@@ -396,6 +466,18 @@ function compareBranch(actual, expected, comparedObjects?) {
     return actual !== 0 || ObjectIs(actual, expected);
   }
 
+  // Distinct weak collections and promises are never partially equal.
+  if (
+    isWeakSet(actual) ||
+    isWeakMap(actual) ||
+    isPromise(actual) ||
+    isWeakSet(expected) ||
+    isWeakMap(expected) ||
+    isPromise(expected)
+  ) {
+    return false;
+  }
+
   // Check for Map object equality (subset check for partialDeepStrictEqual)
   if (isMap(actual) && isMap(expected)) {
     if (expected.size > actual.size) {
@@ -405,20 +487,78 @@ function compareBranch(actual, expected, comparedObjects?) {
     return withCycleGuard(actual, expected, comparedObjects, compareBranchMap);
   }
 
-  // Check for ArrayBuffer object equality
-  if (
-    ArrayBufferIsView(actual) ||
-    isAnyArrayBuffer(actual) ||
-    ArrayBufferIsView(expected) ||
-    isAnyArrayBuffer(expected)
-  ) {
-    return Bun.deepEquals(actual, expected, true);
+  // Typed arrays / ArrayBuffers: the expected contents must appear in the
+  // actual contents in order (with gaps), like node's kPartial mode.
+  const actualIsView = ArrayBufferIsView(actual);
+  const expectedIsView = ArrayBufferIsView(expected);
+  if (actualIsView || expectedIsView) {
+    if (actualIsView !== expectedIsView) {
+      return false;
+    }
+    const tag = TypedArrayPrototypeGetToStringTag.$call(actual);
+    if (tag !== TypedArrayPrototypeGetToStringTag.$call(expected)) {
+      return false;
+    }
+    if (tag === undefined) {
+      // DataViews have no indexed elements; compare raw bytes.
+      return compareBranchArray(
+        new Uint8Array(actual.buffer, actual.byteOffset, actual.byteLength),
+        new Uint8Array(expected.buffer, expected.byteOffset, expected.byteLength),
+        comparedObjects,
+      );
+    }
+    return compareBranchArray(actual, expected, comparedObjects);
+  }
+  const actualIsBuffer = isAnyArrayBuffer(actual);
+  const expectedIsBuffer = isAnyArrayBuffer(expected);
+  if (actualIsBuffer || expectedIsBuffer) {
+    if (
+      actualIsBuffer !== expectedIsBuffer ||
+      ObjectPrototypeToString.$call(actual) !== ObjectPrototypeToString.$call(expected)
+    ) {
+      return false;
+    }
+    return compareBranchArray(new Uint8Array(actual), new Uint8Array(expected), comparedObjects);
   }
 
-  for (const type of typesToCallDeepStrictEqualWith) {
-    if (type(actual) || type(expected)) {
-      return isDeepStrictEqual(actual, expected);
+  if (isKeyObject(actual) || isKeyObject(expected)) {
+    return isKeyObject(actual) && isKeyObject(expected) && actual.equals(expected);
+  }
+
+  // URLs must both be URLs with the same href.
+  if (actual instanceof URL || expected instanceof URL) {
+    if (!(actual instanceof URL) || !(expected instanceof URL) || actual.href !== expected.href) {
+      return false;
     }
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
+  }
+
+  // Errors compare name/message/cause/errors leniently: `undefined` (or an
+  // empty expected message) on the expected side is ignored.
+  if (Error.isError(actual) || Error.isError(expected)) {
+    if (!Error.isError(actual) || !Error.isError(expected)) {
+      return false;
+    }
+    for (const key of ["message", "name", "errors"]) {
+      const expectedValue = expected[key];
+      if (expectedValue === undefined || (key === "message" && expectedValue === "")) {
+        continue;
+      }
+      if (!compareBranch(actual[key], expectedValue, comparedObjects)) {
+        return false;
+      }
+    }
+    // An own `cause` on the expected error (even undefined) must exist on the
+    // actual error as well.
+    if (ObjectPrototypeHasOwnProperty.$call(expected, "cause")) {
+      if (
+        !ObjectPrototypeHasOwnProperty.$call(actual, "cause") ||
+        !compareBranch(actual.cause, expected.cause, comparedObjects)
+      ) {
+        return false;
+      }
+    }
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
   }
 
   // Check for Set object equality
@@ -433,7 +573,7 @@ function compareBranch(actual, expected, comparedObjects?) {
 
     expectedIteration: for (const expectedItem of expectedIterator) {
       for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
-        if (!usedIndices.has(actualIdx) && isDeepStrictEqual(actualArray[actualIdx], expectedItem)) {
+        if (!usedIndices.has(actualIdx) && Bun.deepEquals(actualArray[actualIdx], expectedItem, true)) {
           usedIndices.add(actualIdx);
           continue expectedIteration;
         }
@@ -446,6 +586,9 @@ function compareBranch(actual, expected, comparedObjects?) {
 
   // The expected array must match a subsequence of the actual array, in order,
   // with each element compared partially (Node's partialArrayEquiv).
+  if ($isArray(actual) !== $isArray(expected)) {
+    return false;
+  }
   if ($isArray(actual) && $isArray(expected)) {
     if (expected.length > actual.length) {
       return false;
@@ -456,39 +599,61 @@ function compareBranch(actual, expected, comparedObjects?) {
 
   // Comparison done when at least one of the values is not an object
   if (isSpecial(actual) || isSpecial(expected)) {
-    return isDeepStrictEqual(actual, expected);
+    return Bun.deepEquals(actual, expected, true);
+  }
+
+  // Objects with different type tags (e.g. an array vs a plain object) are
+  // never partially equal.
+  if (ObjectPrototypeToString.$call(actual) !== ObjectPrototypeToString.$call(expected)) {
+    return false;
   }
 
   return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
 }
 
-// Path-scoped cycle detection tracking each side separately: a cycle is accepted
-// only when actual and expected each cycle back on their own side together.
-function withCycleGuard(actual, expected, comparedObjects, body) {
-  comparedObjects ??= { a: new SafeWeakSet(), b: new SafeWeakSet() };
-  const { a: seenActual, b: seenExpected } = comparedObjects;
-  const hadActual = seenActual.has(actual);
-  const hadExpected = seenExpected.has(expected);
-  if (hadActual && hadExpected) return true;
-  if (hadActual || hadExpected) return false;
-  seenActual.add(actual);
-  seenExpected.add(expected);
-  const result = body(actual, expected, comparedObjects);
-  seenActual.delete(actual);
-  seenExpected.delete(expected);
-  return result;
+// A string key that is a canonical array index (0 <= i < 2**32 - 1).
+function isIndexKey(key) {
+  if (typeof key !== "string") return false;
+  const n = +key;
+  return NumberIsInteger(n) && n >= 0 && n < 4294967295 && String(n) === key;
+}
+
+// Own enumerable check on both sides, matching node's partial mode.
+function compareBranchOwnProperty(actual, expected, key, comparedObjects) {
+  return (
+    ObjectPrototypePropertyIsEnumerable.$call(actual, key) &&
+    compareBranch(actual[key], expected[key], comparedObjects)
+  );
 }
 
 function compareBranchMap(actual, expected, comparedObjects) {
+  let actualEntries;
+  const usedIndices = new SafeSet();
   const expectedIterator = SafeMapPrototypeIterator.$call(expected);
-  for (const { 0: key, 1: expectedValue } of expectedIterator) {
-    if (!SafeMapPrototypeHas.$call(actual, key)) {
+  entryIteration: for (const { 0: key, 1: expectedValue } of expectedIterator) {
+    // Fast path: identical key present on both sides.
+    if (SafeMapPrototypeHas.$call(actual, key)) {
+      const actualValue = SafeMapPrototypeGet.$call(actual, key);
+      if (compareBranch(actualValue, expectedValue, comparedObjects)) {
+        continue;
+      }
+    }
+    if (typeof key !== "object" || key === null) {
       return false;
     }
-    const actualValue = SafeMapPrototypeGet.$call(actual, key);
-    if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
-      return false;
+    // Object keys are matched by partial deep equality, like node.
+    actualEntries ??= ArrayFrom(SafeMapPrototypeIterator.$call(actual));
+    for (let i = 0; i < actualEntries.length; i++) {
+      if (
+        !usedIndices.has(i) &&
+        compareBranch(actualEntries[i][0], key, comparedObjects) &&
+        compareBranch(actualEntries[i][1], expectedValue, comparedObjects)
+      ) {
+        usedIndices.add(i);
+        continue entryIteration;
+      }
     }
+    return false;
   }
   return true;
 }
@@ -505,15 +670,32 @@ function compareBranchArray(actual, expected, comparedObjects) {
     }
     actualPos++;
   }
+  // node also compares own enumerable non-index properties.
+  for (const key of ObjectKeys(expected)) {
+    if (isIndexKey(key)) continue;
+    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
+      return false;
+    }
+  }
+  for (const key of ObjectGetOwnPropertySymbols(expected)) {
+    if (!ObjectPrototypePropertyIsEnumerable.$call(expected, key)) continue;
+    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
+      return false;
+    }
+  }
   return true;
 }
 
 function compareBranchObject(actual, expected, comparedObjects) {
-  // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties
-  const keysExpected = ReflectOwnKeys(expected);
-  for (let i = 0; i < keysExpected.length; i++) {
-    const key = keysExpected[i];
-    if (!ReflectHas(actual, key) || !compareBranch(actual[key], expected[key], comparedObjects)) {
+  // Own enumerable string and symbol properties only, like node's partial mode.
+  for (const key of ObjectKeys(expected)) {
+    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
+      return false;
+    }
+  }
+  for (const key of ObjectGetOwnPropertySymbols(expected)) {
+    if (!ObjectPrototypePropertyIsEnumerable.$call(expected, key)) continue;
+    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
       return false;
     }
   }
@@ -527,7 +709,7 @@ function compareBranchObject(actual, expected, comparedObjects) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected, message) {
+Assert.prototype.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected, message) {
   // emitExperimentalWarning("assert.partialDeepStrictEqual");
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
@@ -540,6 +722,7 @@ assert.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected
       message,
       operator: "partialDeepStrictEqual",
       stackStartFn: partialDeepStrictEqual,
+      diff: this?.[kOptions]?.diff,
     });
   }
 };
@@ -769,7 +952,7 @@ function expectsError(stackStartFn: Function, actual: unknown, error: unknown, m
       details += ` (${(error as Error).name})`;
     }
     details += message ? `: ${message}` : ".";
-    const fnType = stackStartFn === assert.rejects ? "rejection" : "exception";
+    const fnType = stackStartFn === Assert.prototype.rejects ? "rejection" : "exception";
     innerFail({
       actual: undefined,
       expected: error,
@@ -812,7 +995,7 @@ function expectsNoError(stackStartFn, actual, error, message) {
 
   if (!error || hasMatchingError(actual, error)) {
     const details = message ? `: ${message}` : ".";
-    const fnType = stackStartFn === assert.doesNotReject ? "rejection" : "exception";
+    const fnType = stackStartFn === Assert.prototype.doesNotReject ? "rejection" : "exception";
     innerFail({
       actual,
       expected: error,
@@ -830,7 +1013,10 @@ function expectsNoError(stackStartFn, actual, error, message) {
  * @param {...any} [args]
  * @returns {void}
  */
-assert.throws = function throws(promiseFn: () => Promise<unknown> | Promise<unknown>, ...args: unknown[]): void {
+Assert.prototype.throws = function throws(
+  promiseFn: () => Promise<unknown> | Promise<unknown>,
+  ...args: unknown[]
+): void {
   expectsError(throws, getActual(promiseFn), ...args);
 };
 
@@ -849,7 +1035,7 @@ function rejects(
 async function rejects(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
   expectsError(rejects, await waitForActual(block), ...args);
 }
-assert.rejects = rejects;
+Assert.prototype.rejects = rejects;
 
 /**
  * Asserts that the function `fn` does not throw an error.
@@ -857,7 +1043,7 @@ assert.rejects = rejects;
  * @param {...any} [args]
  * @returns {void}
  */
-assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args: unknown[]): void {
+Assert.prototype.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args: unknown[]): void {
   expectsNoError(doesNotThrow, getActual(fn), ...args);
 };
 
@@ -867,7 +1053,10 @@ assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args:
  * @param {...any} [args]
  * @returns {Promise<void>}
  */
-assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...args: unknown[]): Promise<void> {
+Assert.prototype.doesNotReject = async function doesNotReject(
+  fn: () => Promise<unknown>,
+  ...args: unknown[]
+): Promise<void> {
   expectsNoError(doesNotReject, await waitForActual(fn), ...args);
 };
 
@@ -876,7 +1065,7 @@ assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, 
  * @param {any} err
  * @returns {void}
  */
-assert.ifError = function ifError(err: unknown): void {
+Assert.prototype.ifError = function ifError(err: unknown): void {
   if (err !== null && err !== undefined) {
     let message = "ifError got unwanted exception: ";
     const errMessage = typeof err === "object" ? err.message : undefined;
@@ -899,6 +1088,7 @@ assert.ifError = function ifError(err: unknown): void {
       operator: "ifError",
       message,
       stackStartFn: ifError,
+      diff: this?.[kOptions]?.diff,
     });
 
     // Make sure we actually have a stack trace!
@@ -937,9 +1127,10 @@ assert.ifError = function ifError(err: unknown): void {
 
 function internalMatch(string, regexp, message, fn) {
   if (!isRegExp(regexp)) {
-    throw $ERR_INVALID_ARG_TYPE("regexp", "RegExp", regexp);
+    // List form so the message renders "an instance of RegExp" like node.
+    throw $ERR_INVALID_ARG_TYPE("regexp", ["RegExp"], regexp);
   }
-  const match = fn === assert.match;
+  const match = fn === Assert.prototype.match;
   if (typeof string !== "string" || (RegExpPrototypeExec.$call(regexp, string) !== null) !== match) {
     if (message instanceof Error) {
       throw message;
@@ -976,7 +1167,7 @@ function internalMatch(string, regexp, message, fn) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.match = function match(string, regexp, message) {
+Assert.prototype.match = function match(string, regexp, message) {
   internalMatch(string, regexp, message, match);
 };
 
@@ -987,7 +1178,7 @@ assert.match = function match(string, regexp, message) {
  * @param {string | Error} [message]
  * @returns {void}
  */
-assert.doesNotMatch = function doesNotMatch(string, regexp, message) {
+Assert.prototype.doesNotMatch = function doesNotMatch(string, regexp, message) {
   internalMatch(string, regexp, message, doesNotMatch);
 };
 
@@ -1017,6 +1208,29 @@ function strict(...args) {
   innerOk(strict, args.length, ...args);
 }
 
+for (const name of [
+  "ok",
+  "fail",
+  "equal",
+  "notEqual",
+  "deepEqual",
+  "notDeepEqual",
+  "deepStrictEqual",
+  "notDeepStrictEqual",
+  "strictEqual",
+  "notStrictEqual",
+  "partialDeepStrictEqual",
+  "match",
+  "doesNotMatch",
+  "throws",
+  "rejects",
+  "doesNotThrow",
+  "doesNotReject",
+  "ifError",
+]) {
+  assert[name] = Assert.prototype[name];
+}
+
 assert.strict = ObjectAssign(strict, assert, {
   equal: assert.strictEqual,
   deepEqual: assert.deepStrictEqual,
@@ -1024,4 +1238,7 @@ assert.strict = ObjectAssign(strict, assert, {
   notDeepEqual: assert.notDeepStrictEqual,
 });
 
+assert.strict.Assert = Assert;
 assert.strict.strict = assert.strict;
+
+assert.Assert = Assert;

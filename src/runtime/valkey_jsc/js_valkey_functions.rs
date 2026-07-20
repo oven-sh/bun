@@ -364,20 +364,13 @@ impl JSValkeyClient {
         }
 
         let cmd_str = command.to_utf8_without_ref();
-        let mut cmd = Command {
-            command: cmd_str.slice(),
-            args: CommandArgs::Args(&args),
-            meta: CommandMeta::default(),
-        };
-        cmd.meta = cmd.meta.check(cmd_str.slice());
-        // Send command with slices directly
-        let promise = match this.send(global, &cmd) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send command", err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        send_cmd(
+            this,
+            global,
+            cmd_str.slice(),
+            CommandArgs::Args(&args),
+            CommandMeta::default(),
+        )
     }
 
     cmd_key!(get, "get", "GET", "key", NotSubscriber);
@@ -470,7 +463,9 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("SREM requires at least a key and one member")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "SREM requires at least a key and one member"
+            )));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -559,7 +554,9 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("SADD requires at least a key and one member")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "SADD requires at least a key and one member"
+            )));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -592,7 +589,9 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("HMGET requires at least a key and one field")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "HMGET requires at least a key and one field"
+            )));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -603,7 +602,9 @@ impl JSValkeyClient {
         if second_arg.is_array() {
             let array_len = second_arg.get_length(global)?;
             if array_len == 0 {
-                return Err(global.throw(format_args!("HMGET requires at least one field")));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "HMGET requires at least one field"
+                )));
             }
 
             let mut array_iter = second_arg.array_iterator(global)?;
@@ -686,7 +687,7 @@ impl JSValkeyClient {
             // Pattern 3: Array - hmset(key, [field, value, ...])
             let mut iter = second_arg.array_iterator(global)?;
             if iter.len % 2 != 0 {
-                return Err(global.throw(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Array must have an even number of elements (field-value pairs)"
                 )));
             }
@@ -697,7 +698,7 @@ impl JSValkeyClient {
                 args.push(field_js.to_slice(global)?);
 
                 let Some(value_js) = iter.next()? else {
-                    return Err(global.throw(format_args!(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
                 };
@@ -707,7 +708,7 @@ impl JSValkeyClient {
             // Pattern 2: Variadic - hset(key, field, value, ...)
             let args_count = frame.arguments_count();
             if args_count < 3 {
-                return Err(global.throw(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "{} requires at least key, field, and value arguments",
                     bstr::BStr::new(command)
                 )));
@@ -715,7 +716,7 @@ impl JSValkeyClient {
 
             let field_value_count = args_count - 1; // Exclude key
             if !field_value_count.is_multiple_of(2) {
-                return Err(global.throw(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "{} requires field-value pairs (even number of arguments after key)",
                     bstr::BStr::new(command)
                 )));
@@ -731,7 +732,7 @@ impl JSValkeyClient {
         }
 
         if args.len() == 1 {
-            return Err(global.throw(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "{} requires at least one field-value pair",
                 bstr::BStr::new(command)
             )));
@@ -1197,35 +1198,14 @@ impl JSValkeyClient {
         NotSubscriber
     );
 
-    #[bun_jsc::host_fn(method)]
-    pub fn publish(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, "publish")?;
-
-        let args_view = frame.arguments();
-        let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
-
-        let arg0 = frame.argument(0);
-        if !arg0.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
-        }
-        let channel = from_js(global, arg0)?.expect("unreachable");
-
-        args.push(channel);
-
-        let arg1 = frame.argument(1);
-        if !arg1.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
-        }
-        let message = from_js(global, arg1)?.expect("unreachable");
-        args.push(message);
-        send_cmd(
-            this,
-            global,
-            b"PUBLISH",
-            CommandArgs::Args(&args),
-            CommandMeta::default(),
-        )
-    }
+    cmd_key_value!(
+        publish,
+        "publish",
+        "PUBLISH",
+        "channel",
+        "message",
+        NotSubscriber
+    );
 
     #[bun_jsc::host_fn(method)]
     pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

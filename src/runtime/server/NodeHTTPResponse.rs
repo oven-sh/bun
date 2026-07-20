@@ -657,7 +657,10 @@ impl NodeHTTPResponse {
         // mark_request_as_done's clear_and_free does not drop user data).
         let body_pending = self.body_read_state.get() == BodyReadState::Pending
             && !(flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-                && self.buffered_request_body_data_during_pause.get().is_empty());
+                && self
+                    .buffered_request_body_data_during_pause
+                    .get()
+                    .is_empty());
 
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP

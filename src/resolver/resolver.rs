@@ -3811,31 +3811,33 @@ impl<'a> Resolver<'a> {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
-                        // Try to have a friendly error message if people forget the extension
-                        if ends_with_star {
-                            let buf = bufs!(load_as_file);
-                            buf[..base.len()].copy_from_slice(base);
-                            for ext in self.opts.ext_order_slice(extension_order).iter() {
-                                let ext: &[u8] = ext;
-                                let file_name = &mut buf[0..base.len() + ext.len()];
-                                file_name[base.len()..].copy_from_slice(ext);
-                                if entries.get(&file_name[..]).is_some() {
-                                    if let Some(debug) = self.debug_logs.as_mut() {
-                                        let parts = [package_json.name.as_ref(), package_subpath];
-                                        debug.add_note_fmt(format_args!(
-                                            "The import {} is missing the extension {}",
-                                            bstr::BStr::new(ResolvePath::join(
-                                                &parts,
-                                                bun_paths::Platform::AUTO
-                                            )),
-                                            bstr::BStr::new(ext)
-                                        ));
-                                    }
-                                    esm_resolution.status = Status::ModuleNotFoundMissingExtension;
-                                    let _ = ext;
-                                    break;
-                                }
-                            }
+                        // When the exports/imports target came from a wildcard expansion
+                        // like `"./*": "./dist/*"` and the substituted path doesn't
+                        // exist as-is, try a couple of friendly fallbacks that bundlers
+                        // (TypeScript `moduleResolution: "bundler"`, Vite, webpack)
+                        // already do:
+                        //
+                        //   1. Append a configured extension (`.js`, `.mjs`, `.ts`, ...) —
+                        //      makes `@modelcontextprotocol/sdk/server/stdio` resolve
+                        //      to `stdio.js` when the wildcard target has no extension
+                        //      (oven-sh/bun#29679).
+                        //   2. Rewrite a trailing `.js`/`.jsx`/`.mjs` in the target to
+                        //      `.ts`/`.tsx`/`.mts` — makes `#app/*` → `./app/*.js` pick
+                        //      up `app/main.ts` (oven-sh/bun#10001). Same rewrite is
+                        //      applied to plain file loads in `load_as_file` below.
+                        //
+                        // Exact (non-wildcard) keys are untouched.
+                        if ends_with_star
+                            && self.probe_wildcard_extensions(
+                                entries,
+                                resolved_dir_info,
+                                package_json,
+                                base,
+                                extension_order,
+                                out,
+                            )
+                        {
+                            return MatchStatus::Success;
                         }
                         return MatchStatus::NotFound;
                     }
@@ -3952,6 +3954,173 @@ impl<'a> Resolver<'a> {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// Probe the filesystem for a file that a wildcard `exports`/`imports`
+    /// pattern almost named. Called when the substituted path doesn't exist
+    /// on disk as-is. Writes into `out` and returns `true` on a hit. Two cases:
+    ///
+    ///   * Target has no extension (`"./*": "./dist/*"`) → append each
+    ///     configured extension and return the first hit.
+    ///   * Target ends with `.js`/`.jsx`/`.mjs` (`"#foo/*": "./foo/*.js"`) →
+    ///     swap it for the TypeScript counterpart and return the first hit,
+    ///     same rewrite `load_as_file` applies to plain file loads. Gated
+    ///     on not being inside `node_modules` (oven-sh/bun#5426).
+    ///
+    /// Caller has already confirmed the resolution came from a wildcard
+    /// expansion (`.ExactEndsWithStar`).
+    fn probe_wildcard_extensions<'e>(
+        &mut self,
+        entries: &'e Fs::file_system::DirEntry,
+        resolved_dir_info: DirInfoRef,
+        package_json: &PackageJSON,
+        base: &[u8],
+        extension_order: options::ExtOrder,
+        out: &mut MatchResult,
+    ) -> bool {
+        let rfs = self.rfs_ptr();
+
+        // Case 1: target has no extension (`"./*": "./dist/*"`) → append
+        // extension_order. Gated on the substituted basename actually being
+        // extensionless so `"./*": "./dist/*.js"` doesn't chase
+        // `./dist/foo.js.ts`, `./dist/foo.js.js`, etc. when `foo.js` is
+        // missing — the literal `.js`→`.ts` rewrite is Case 2's job.
+        if bun_paths::extension(base).is_empty() {
+            let buf = bufs!(load_as_file);
+            buf[..base.len()].copy_from_slice(base);
+            for ext in self.opts.ext_order_slice(extension_order).iter() {
+                let ext: &[u8] = ext;
+                let file_name = &mut buf[0..base.len() + ext.len()];
+                file_name[base.len()..].copy_from_slice(ext);
+                if let Some(ext_query) = entries.get(&file_name[..]) {
+                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                    if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
+                        == Fs::file_system::EntryKind::File
+                    {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Resolved to \"{}\" by adding extension \"{}\"",
+                                bstr::BStr::new(file_name),
+                                bstr::BStr::new(ext)
+                            ));
+                        }
+                        self.build_wildcard_match(
+                            entries,
+                            resolved_dir_info,
+                            package_json,
+                            ext_query,
+                            out,
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Case 2: `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`. Mirrors the
+        // TypeScript rewrite `load_as_file` does for plain file loads.
+        // Only fires for wildcard keys — users writing an explicit
+        // `"./foo": "./foo.js"` target get exactly what they asked for.
+        // Skipped under node_modules (oven-sh/bun#5426) — published
+        // packages ship the compiled `.js` and any sibling `.ts` is
+        // almost always typings the user doesn't want to execute.
+        let in_node_modules = strings::path_contains_node_modules_folder(&entries.dir);
+        if !in_node_modules {
+            if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
+                let ext = &base[last_dot..];
+                let ts_exts: &[&[u8]] = if ext == b".mjs" {
+                    &[b".mts"]
+                } else if ext == b".js" || ext == b".jsx" {
+                    &[b".ts", b".tsx", b".mts"]
+                } else {
+                    &[]
+                };
+
+                if !ts_exts.is_empty() {
+                    let segment = &base[..last_dot];
+                    let buf = bufs!(load_as_file);
+                    buf[..segment.len()].copy_from_slice(segment);
+                    for &replacement in ts_exts.iter() {
+                        let file_name = &mut buf[0..segment.len() + replacement.len()];
+                        file_name[segment.len()..].copy_from_slice(replacement);
+                        if let Some(ts_query) = entries.get(&file_name[..]) {
+                            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                            if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
+                                == Fs::file_system::EntryKind::File
+                            {
+                                if let Some(debug) = self.debug_logs.as_mut() {
+                                    debug.add_note_fmt(format_args!(
+                                        "Rewrote \"{}\" to \"{}\"",
+                                        bstr::BStr::new(base),
+                                        bstr::BStr::new(file_name)
+                                    ));
+                                }
+                                self.build_wildcard_match(
+                                    entries,
+                                    resolved_dir_info,
+                                    package_json,
+                                    ts_query,
+                                    out,
+                                );
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn build_wildcard_match<'e>(
+        &mut self,
+        entries: &'e Fs::file_system::DirEntry,
+        resolved_dir_info: DirInfoRef,
+        package_json: &PackageJSON,
+        query: crate::fs::EntryLookup<'e>,
+        out: &mut MatchResult,
+    ) {
+        let abs_path: &[u8] = {
+            if query.entry().abs_path.is_empty() {
+                let parts = [query.entry().dir.as_ref(), query.entry().base()];
+                let abs = self.fs_ref().abs_buf(&parts, bufs!(load_as_file));
+                // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                // evaluated before LHS `&mut Entry` is materialized.
+                unsafe { &mut *query.entry }.abs_path = Interned::from_static(
+                    self.fs_ref()
+                        .dirname_store
+                        .append_slice(abs)
+                        .expect("unreachable"),
+                );
+            }
+            query.entry().abs_path.as_bytes()
+        };
+        let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
+            pkg.module_type
+        } else {
+            options::ModuleType::Unknown
+        };
+
+        *out = MatchResult {
+            path_pair: PathPair {
+                primary: Path::init_with_namespace(abs_path, b"file"),
+                secondary: None,
+            },
+            dirname_fd: entries.fd,
+            file_fd: query.entry().cache().fd,
+            dir_info: Some(resolved_dir_info),
+            diff_case: query.diff_case,
+            is_node_module: true,
+            package_json: Some(
+                resolved_dir_info
+                    .package_json()
+                    .map(std::ptr::from_ref)
+                    .unwrap_or_else(|| std::ptr::from_ref(package_json)),
+            ),
+            module_type,
+            ..Default::default()
+        };
     }
 
     pub fn resolve_without_remapping(

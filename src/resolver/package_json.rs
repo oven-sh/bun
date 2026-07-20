@@ -2139,18 +2139,16 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
-                            == result.len() - 1
-                    {
-                        Status::ExactEndsWithStar
-                    } else {
-                        Status::Exact
-                    };
+                    // Mark any wildcard-pattern expansion with `.ExactEndsWithStar` so
+                    // the resolver knows this result came from a `"./*"`-style
+                    // expansion key. When the target has no extension (e.g.
+                    // `"./*": { "import": "./dist/*" }`), the resolver then probes
+                    // for `*.js`, `*.mjs`, etc. the same way it does for bare paths.
+                    // See oven-sh/bun#29679.
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
-                        status,
+                        status: Status::ExactEndsWithStar,
                         debug: ResolutionDebug::default(),
                     };
                 } else {

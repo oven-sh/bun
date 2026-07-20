@@ -2094,6 +2094,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !is_s3
                 && proxy_headers.is_none()
                 && ssl_config.is_none()
+                && check_server_identity.is_empty_or_undefined_or_null()
                 && !force_http1
                 && !force_http2
                 && !force_http3

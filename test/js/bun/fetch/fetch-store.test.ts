@@ -218,8 +218,11 @@ describe("fetch store", () => {
   test("store type validation", async () => {
     // @ts-expect-error invalid type
     await expect(fetch("http://example.com", { store: { type: "nope" } })).rejects.toThrow(/store\.type/);
+    // @ts-expect-error missing type
+    await expect(fetch("http://example.com", { store: { path: "./x" } })).rejects.toThrow(/store\.type/);
     // @ts-expect-error missing path
     await expect(fetch("http://example.com", { store: { type: "dir" } })).rejects.toThrow(/store\.path/);
+    await expect(fetch("http://example.com", { store: { type: "dir", path: "" } })).rejects.toThrow(/store\.path/);
     // @ts-expect-error not an object
     await expect(fetch("http://example.com", { store: 123 })).rejects.toThrow(/'store' must be an object/);
   });

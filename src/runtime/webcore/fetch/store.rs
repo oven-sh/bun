@@ -229,7 +229,9 @@ impl FetchStore {
             );
         }
         let Some(ty) = value.get(global, "type")? else {
-            return Ok(None);
+            return Err(global.throw_invalid_arguments(format_args!(
+                "fetch: 'store.type' must be \"dir\" or \"memory\""
+            )));
         };
         if !ty.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -249,6 +251,11 @@ impl FetchStore {
                 )));
             }
             let path = path.to_slice_clone(global)?;
+            if path.slice().is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "fetch: 'store.path' is required when store.type is \"dir\""
+                )));
+            }
             return Ok(Some(FetchStore::Dir {
                 path: to_abs_path(path.slice()),
             }));

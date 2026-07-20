@@ -47,11 +47,13 @@ test("onEndTag callbacks are released after the rewrite", () => {
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only
 // unprotected the held JSValues and leaked the struct memory.
 //
-// RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
-// lol-html builder, but the allocators don't promptly hand pages back to the
-// OS. So warmup runs the *same* workload as the measured phase: the allocator
-// footprint is established before the baseline, and any growth past that is
-// what's actually retained.
+// RSS is a high-water mark across the allocator's committed segments. mimalloc
+// hands a ~30 MB segment back to the OS on its own schedule, so a single
+// `Bun.gc(true); rss()` sample lands on either side of that release — the
+// 4-vCPU Windows CI lane saw `after` at the peak and `before` in the trough
+// for a +31 MB "delta" with nothing retained. Per-window *peak* RSS is the
+// stable observable: a leak raises it every pass (~50 MB over 3), while freed
+// memory leaves it flat regardless of when the decommit fires.
 //
 // Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
 // allocation tracking adds enough RSS noise to drown the signal. CI has no
@@ -76,10 +78,14 @@ test.skipIf(isDebug)(
         return process.memoryUsage.rss();
       }
 
-      pass(); pass();
-      const before = pass();
-      pass(); pass();
-      const after = pass();
+      function peakOver(passes) {
+        let peak = 0;
+        for (let i = 0; i < passes; i++) peak = Math.max(peak, pass());
+        return peak;
+      }
+
+      const before = peakOver(3);
+      const after = peakOver(3);
 
       process.stdout.write(
         JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
@@ -113,7 +119,7 @@ test.skipIf(isDebug)(
 
     const { deltaMB } = JSON.parse(stdout.trim());
 
-    // Unfixed: ~50 MB over 3 measured passes. Fixed: ±1 MB plateau.
+    // Unfixed: ~50 MB over 3 measured passes. Fixed: <1 MB.
     // Threshold sits at ~half the unfixed signal.
     expect(deltaMB).toBeLessThan(25);
     expect(exitCode).toBe(0);

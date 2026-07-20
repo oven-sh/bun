@@ -29,7 +29,7 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///
-/// `ref_count` must stay at this field offset for `bun_ptr::IntrusiveArc<Self>`.
+/// `ref_count` must stay at this field offset for `bun_ptr::RefPtr<Self>`.
 //
 // Intrusive *atomic* refcount. Blob stores (and thus this allocator, smuggled
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
@@ -59,8 +59,8 @@ impl LinuxMemFdAllocator {
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    pub fn new(fd: Fd, size: usize) -> bun_ptr::IntrusiveArc<Self> {
-        bun_ptr::IntrusiveArc::new(Self {
+    pub fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
+        bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             fd,
             size,

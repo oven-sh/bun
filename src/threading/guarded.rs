@@ -17,9 +17,6 @@ pub type Guarded<Value> = GuardedBy<Value, Mutex>;
 /// [`crate::mutex::MutexGuard`] returned by `Mutex::lock_guard()`.
 pub type MutexGuard<'a, Value> = GuardedLock<'a, Value, Mutex>;
 
-/// Uses `bun_safety::ThreadLock`.
-pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
-
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
 pub struct GuardedBy<Value, M: RawMutex> {

@@ -2693,8 +2693,6 @@ pub enum Pollable {
     NotReady,
     Hup,
 }
-/// Alias for [`Pollable`].
-pub type PollFlag = Pollable;
 
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
@@ -3791,7 +3789,7 @@ pub mod hash {
     /// Wyhash one-shot (`bun.hash`).
     #[inline]
     pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
+        bun_hash::RapidHash::hash(0, bytes)
     }
 }
 

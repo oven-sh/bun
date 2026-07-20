@@ -104,19 +104,6 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
     }
 }
 
-// ───────────────────────────── StaticBitSet ─────────────────────────────
-
-/// Returns the optimal static bit set type for the specified number
-/// of elements.  The returned type will perform no allocations,
-/// can be copied by value, and does not require deinitialization.
-/// Both possible implementations fulfill the same interface.
-///
-// Stable Rust cannot select a struct definition from a const generic, so this
-// alias is the integer form and is only valid for `SIZE <= usize::BITS`
-// (enforced by `IntegerBitSet`'s debug asserts). Callers needing more bits
-// must use `ArrayBitSet<SIZE, { num_masks_for(SIZE) }>` directly.
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>;
-
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
 /// A bit set with static size, which is backed by a single integer.

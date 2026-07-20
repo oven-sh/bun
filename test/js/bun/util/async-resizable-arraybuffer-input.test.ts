@@ -58,28 +58,32 @@ const driver = /* js */ `
 // The wild read only reliably faults under ASAN; on release the pool thread often
 // finishes before resize(0) decommits the pages. Run in a subprocess so the SEGV
 // is contained and the runner can report a clean failure.
-test.skipIf(!isASAN)("async native input survives ArrayBuffer.prototype.resize(0) mid-flight", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", driver],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: [
-      "pbkdf2 ok",
-      "scrypt ok",
-      "deflate ok",
-      "gzip ok",
-      "brotliCompress ok",
-      "zstdCompress ok",
-      "inflate ok",
-      "gunzip ok",
-      "brotliDecompress ok",
-      "zstdDecompress ok",
-    ].join("\n"),
-    stderr: expect.any(String),
-    exitCode: 0,
-  });
-}, 30_000);
+test.skipIf(!isASAN)(
+  "async native input survives ArrayBuffer.prototype.resize(0) mid-flight",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", driver],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: [
+        "pbkdf2 ok",
+        "scrypt ok",
+        "deflate ok",
+        "gzip ok",
+        "brotliCompress ok",
+        "zstdCompress ok",
+        "inflate ok",
+        "gunzip ok",
+        "brotliDecompress ok",
+        "zstdDecompress ok",
+      ].join("\n"),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

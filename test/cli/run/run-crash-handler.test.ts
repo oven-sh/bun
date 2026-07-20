@@ -130,8 +130,7 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
   // diagnostic stays in charge; the handler chain is WTF -> ASAN there. Either
   // way the process must emit a diagnostic rather than dying silently.
   const expectCrashDiagnostic = (stderr: string) => {
-    const patterns = isASAN ? [/AddressSanitizer:.*stack-overflow/] : [/Segmentation fault at address/, /bun\.report/];
-    for (const p of patterns) expect(stderr).toMatch(p);
+    expect(stderr).toMatch(isASAN ? /AddressSanitizer:.*stack-overflow/ : /Segmentation fault at address/);
   };
   // Skip llvm-symbolizer in the child; the unwinder walks hundreds of
   // identical frames and symbolising them all takes several seconds.

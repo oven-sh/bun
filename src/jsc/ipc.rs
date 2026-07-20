@@ -1329,14 +1329,19 @@ impl SendQueue {
         if self.queue.is_empty() {
             return false; // nothing to send
         }
-        let first = &self.queue[0];
-        if first.data.cursor > 0 {
-            return true; // send in progress, waiting on writable
-        }
-        if self.write_in_progress {
-            return true; // send in progress (windows), waiting on writable
-        }
-        false // error state.
+        // Anything still queued has not reached the peer, so the loop has to
+        // stay alive; otherwise the process exits and the messages are dropped
+        // without their send() callbacks ever running.
+        //
+        // That includes the head item having sent nothing yet (`cursor == 0`
+        // with no write in flight). This is what a write refused for
+        // backpressure leaves behind and is the ordinary state while waiting
+        // for the socket to become writable again, not an error.
+        //
+        // A closed socket can never drain the queue. `_socket_closed` disables
+        // the keep-alive, and declining to re-arm it here stops a half-sent
+        // queue from pinning the loop open forever.
+        matches!(self.socket, SocketUnion::Open(_))
     }
 
     pub fn update_ref(&mut self, global: &JSGlobalObject) {

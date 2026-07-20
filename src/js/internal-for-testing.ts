@@ -320,6 +320,7 @@ function nodeGetStringWidth(str: string, removeControlChars: boolean = true): nu
 // vendored tests need more internals.
 export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
+  "internal/util/debuglog": require("internal/util/debuglog"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),

@@ -4930,9 +4930,8 @@ impl NodeFS {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             // SAFETY: `src_fd` is a valid open fd; `posix_fadvise` only reads it.
-            let _ = unsafe {
-                libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL)
-            };
+            let _ =
+                unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
         }
 
         let mut stack_buf = [0u8; 64 * 1024];

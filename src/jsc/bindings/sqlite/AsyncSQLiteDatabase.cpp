@@ -557,7 +557,7 @@ void AsyncSQLiteConnection::runOpen(uint64_t operationId, uint32_t callerThreadU
     if (sqlite3_threadsafe() == 0) {
         result = connectionResult(false, SQLITE_MISUSE, "SQLite library is not thread-safe");
     } else {
-        int rc = sqlite3_open_v2(m_path.c_str(), &database, m_openFlags | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX, nullptr);
+        int rc = sqlite3_open_v2(m_path.c_str(), &database, m_openFlags | SQLITE_OPEN_FULLMUTEX, nullptr);
         if (rc != SQLITE_OK || !database) {
             int code = rc;
             std::string message = database && sqlite3_errmsg(database) ? sqlite3_errmsg(database) : sqlite3_errstr(rc);
@@ -871,7 +871,8 @@ static std::unique_ptr<AsyncSQLiteOperationResult> runOperationSQL(sqlite3* data
             continue;
         }
         sawStatement = true;
-        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> finalizedStatement(statement, sqlite3_finalize);
+        auto finalize = [](sqlite3_stmt* statement) { sqlite3_finalize(statement); };
+        std::unique_ptr<sqlite3_stmt, decltype(finalize)> finalizedStatement(statement, finalize);
 
         if (operation.bindings && !bindingsApplied) {
             bindingsApplied = true;
@@ -1100,15 +1101,13 @@ void executeSQLiteJob(AsyncSQLiteNativeJob& job, AsyncSQLiteNativeResult& result
 {
     Bun__initializeSQLite();
 
-    // The connection is opened FULLMUTEX and driven entirely on this WorkPool
-    // thread, so the library must have been built thread-safe (serialized or
-    // multi-thread). A 0 here means FULLMUTEX is a no-op and the handle is
-    // unsafe to touch off the JS thread; refuse to proceed.
+    // FULLMUTEX requires a thread-safe SQLite build for WorkPool execution.
+    // Refuse libraries where sqlite3_threadsafe() reports single-thread mode.
     if (sqlite3_threadsafe() == 0)
         return;
 
     sqlite3* database = nullptr;
-    int rc = sqlite3_open_v2(job.path.c_str(), &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX, nullptr);
+    int rc = sqlite3_open_v2(job.path.c_str(), &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
     if (rc != SQLITE_OK || !database) {
         if (database)
             sqlite3_close(database);
@@ -1381,9 +1380,7 @@ static bool snapshotBindingValue(JSC::JSGlobalObject* globalObject, JSC::JSValue
     return false;
 }
 
-// SQLite's default SQLITE_LIMIT_VARIABLE_NUMBER (sqlite3_local.h documents 32766);
-// exceeding it always fails to prepare, so cap before any large snapshot alloc.
-static constexpr unsigned kMaxSQLiteVariableNumber = 32766;
+static constexpr unsigned kBunSQLiteMaxVariableNumber = 250000;
 
 // Snapshots a binding argument into owned native values before admission.
 // undefined/null -> no bindings; arrays -> positional; objects -> a complete map
@@ -1403,8 +1400,8 @@ static bool snapshotBindings(JSC::JSGlobalObject* globalObject, JSC::JSValue arg
             out = nullptr;
             return true;
         }
-        if (length > kMaxSQLiteVariableNumber) [[unlikely]] {
-            throwRangeError(globalObject, scope, makeString("Too many binding values: "_s, length, " exceeds SQLite's maximum of "_s, kMaxSQLiteVariableNumber));
+        if (length > kBunSQLiteMaxVariableNumber) [[unlikely]] {
+            throwRangeError(globalObject, scope, makeString("Too many binding values: "_s, length, " exceeds SQLite's maximum of "_s, kBunSQLiteMaxVariableNumber));
             return false;
         }
         auto bindings = std::make_unique<AsyncSQLiteBindings>();
@@ -1973,7 +1970,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionOpenForTesting, (JSC::J
     RETURN_IF_EXCEPTION(scope, {});
     int timeout = callFrame->argument(2).isUndefined() ? 60000 : std::max(0, callFrame->argument(2).toInt32(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    // Private open options (arg 3), fixed per connection to match the future
+    // Private open options (arg 3), fixed per connection to match
     // AsyncDatabase options and sync binding behavior.
     bool strict = false;
     bool safeIntegers = false;
@@ -2007,10 +2004,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteDatabaseOpen, (JSC::JSGlobalObjec
         return throwVMTypeError(globalObject, scope, "AsyncDatabase.open requires a path"_s);
     int openFlags = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    int timeout = std::max(0, callFrame->argument(2).toInt32(globalObject));
+    double timeoutNumber = callFrame->argument(2).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    uint32_t capacity = std::max(1, callFrame->argument(3).toInt32(globalObject));
+    if (!std::isfinite(timeoutNumber) || std::trunc(timeoutNumber) != timeoutNumber || timeoutNumber < 0 || timeoutNumber > INT32_MAX) {
+        throwRangeError(globalObject, scope, "AsyncDatabase.open busyTimeout must be an integer between 0 and 2147483647"_s);
+        return {};
+    }
+    int timeout = static_cast<int>(timeoutNumber);
+    double capacityNumber = callFrame->argument(3).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (!std::isfinite(capacityNumber) || std::trunc(capacityNumber) != capacityNumber || capacityNumber < 1 || capacityNumber > INT32_MAX) {
+        throwRangeError(globalObject, scope, "AsyncDatabase.open maxPending must be an integer between 1 and 2147483647"_s);
+        return {};
+    }
+    uint32_t capacity = static_cast<uint32_t>(capacityNumber);
     bool strict = callFrame->argument(4).toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     bool safeIntegers = callFrame->argument(5).toBoolean(globalObject);
@@ -2200,11 +2207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_asyncSQLiteConnectionStatsForTesting, (JSC::
     return JSC::JSValue::encode(object);
 }
 
-// Builds the public AsyncDatabase native surface. The exec/run/get/all/values/
-// close entry points share the same host functions as the private testing
-// surface (their SQLite semantics are identical); only the arg-shape-specific
-// open differs. Exposed exclusively through this factory, never via
-// bun:internal-for-testing.
+// Builds the public AsyncDatabase native surface using shared operation hosts.
 JSC::JSValue createAsyncSQLiteBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();

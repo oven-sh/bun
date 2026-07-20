@@ -69,7 +69,7 @@ describe("as", () => {
   });
 });
 
-describe("async SQLite method semantics (Gate C prerequisite private)", () => {
+describe("async SQLite method semantics", () => {
   it("exposes Promise-shaped private Exec, Run, Get, All, and Values helpers", async () => {
     const {
       asyncSQLiteConnectionOpenForTesting,
@@ -331,9 +331,9 @@ describe("async SQLite method semantics (Gate C prerequisite private)", () => {
   });
 });
 
-describe("AsyncDatabase (public Gate C)", () => {
-  const asyncTmp = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "async.db");
+const asyncDatabasePath = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "async.db");
 
+describe("AsyncDatabase", () => {
   it("exposes AsyncDatabase as an ESM named export and via CommonJS require", async () => {
     const esm = await import("bun:sqlite");
     expect(typeof esm.AsyncDatabase).toBe("function");
@@ -389,7 +389,7 @@ describe("AsyncDatabase (public Gate C)", () => {
 
   it("exposes filename as a read-only property", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
-    const file = asyncTmp("async-db-filename");
+    const file = asyncDatabasePath("async-db-filename");
     await using db = await AsyncDatabase.open(file);
     expect(db.filename).toBe(file);
     expect(() => {
@@ -401,7 +401,7 @@ describe("AsyncDatabase (public Gate C)", () => {
 
   it("opens and persists a file-backed database", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
-    const file = asyncTmp("async-db-file");
+    const file = asyncDatabasePath("async-db-file");
     {
       await using db = await AsyncDatabase.open(file);
       await db.exec("CREATE TABLE t (v INTEGER)");
@@ -417,7 +417,7 @@ describe("AsyncDatabase (public Gate C)", () => {
 
   it("opens read-only against an existing database and rejects writes", async () => {
     const { AsyncDatabase, SQLiteError } = await import("bun:sqlite");
-    const file = asyncTmp("async-db-readonly");
+    const file = asyncDatabasePath("async-db-readonly");
     {
       const seed = new Database(file);
       seed.exec("CREATE TABLE t (v INTEGER)");
@@ -464,6 +464,12 @@ describe("AsyncDatabase (public Gate C)", () => {
     await expect(AsyncDatabase.open(":memory:", { maxPending: 2.5 })).rejects.toThrow(RangeError);
     await expect(AsyncDatabase.open(":memory:", { maxPending: Infinity })).rejects.toThrow(RangeError);
     await expect(AsyncDatabase.open(1234)).rejects.toThrow(TypeError);
+  });
+
+  it("rejects public options beyond the native int32 range", async () => {
+    const { AsyncDatabase } = await import("bun:sqlite");
+    await expect(AsyncDatabase.open(":memory:", { busyTimeout: 0x80000000 })).rejects.toThrow(RangeError);
+    await expect(AsyncDatabase.open(":memory:", { maxPending: 0x80000000 })).rejects.toThrow(RangeError);
   });
 
   it("accepts busyTimeout of zero and normal values", async () => {
@@ -559,7 +565,7 @@ describe("AsyncDatabase (public Gate C)", () => {
 
   it("enforces the maxPending boundary: at the limit succeeds, one over rejects", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
-    const file = asyncTmp("async-db-maxpending");
+    const file = asyncDatabasePath("async-db-maxpending");
     await using db = await AsyncDatabase.open(file, { maxPending: 1, busyTimeout: 60000 });
     await db.exec("CREATE TABLE t (v INTEGER)");
     const blocker = new Database(file);
@@ -594,7 +600,7 @@ describe("AsyncDatabase (public Gate C)", () => {
     const { AsyncDatabase } = await import("bun:sqlite");
     await using outer = await AsyncDatabase.open(":memory:");
     await outer.exec("CREATE TABLE seed (v INTEGER)");
-    const db = await AsyncDatabase.open(asyncTmp("async-db-fence"));
+    const db = await AsyncDatabase.open(asyncDatabasePath("async-db-fence"));
     await db.exec("CREATE TABLE t (v INTEGER)");
     const accepted = db.run("INSERT INTO t VALUES (1)");
     const closing = db.close();
@@ -616,9 +622,7 @@ describe("AsyncDatabase (public Gate C)", () => {
   });
 });
 
-describe("AsyncDatabase lifecycle (Gate C validation)", () => {
-  const asyncTmp = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "async.db");
-
+describe("AsyncDatabase lifecycle", () => {
   // Runs a Bun subprocess script and drains stdout, stderr, and exit concurrently.
   const runScript = async (files, { env = {}, cmd = ["main.js"] } = {}) => {
     const dir = tempDirWithFiles("sqlite-async-lifecycle-proc", files);
@@ -633,9 +637,37 @@ describe("AsyncDatabase lifecycle (Gate C validation)", () => {
     return { dir, stdout, stderr, exitCode };
   };
 
+  it.skipIf(isWindows)(
+    "treats a URI-looking filename literally (Windows cannot represent ':' and '?' in a filename)",
+    async () => {
+      const { stdout, stderr, exitCode } = await runScript({
+        "main.js": `
+          import { AsyncDatabase } from "bun:sqlite";
+          const filename = "file:literal?mode=memory";
+          const writer = await AsyncDatabase.open(filename);
+          try {
+            await writer.exec("CREATE TABLE t (value INTEGER)");
+            await writer.run("INSERT INTO t VALUES (42)");
+          } finally {
+            await writer.close();
+          }
+          const reader = await AsyncDatabase.open(filename, { create: false });
+          try {
+            console.log(JSON.stringify(await reader.get("SELECT value FROM t")));
+          } finally {
+            await reader.close();
+          }
+        `,
+      });
+      expect(stdout.trim()).toBe(JSON.stringify({ value: 42 }));
+      expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    },
+    30000,
+  );
+
   it("keeps the event loop responsive while a public write waits on a contended lock", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
-    const file = asyncTmp("async-db-responsive");
+    const file = asyncDatabasePath("async-db-responsive");
     {
       const seed = new Database(file);
       seed.exec("CREATE TABLE t (v INTEGER)");
@@ -699,7 +731,7 @@ describe("AsyncDatabase lifecycle (Gate C validation)", () => {
 
   it("lets an independent AsyncDatabase make progress while another blocks on a lock", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
-    const fileA = asyncTmp("async-db-overlap");
+    const fileA = asyncDatabasePath("async-db-overlap");
     {
       const seed = new Database(fileA);
       seed.exec("CREATE TABLE t (v INTEGER)");
@@ -735,7 +767,7 @@ describe("AsyncDatabase lifecycle (Gate C validation)", () => {
   it("releases owned native rows, results, and requests after teardown of a result-producing op", async () => {
     const { AsyncDatabase } = await import("bun:sqlite");
     const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
-    const file = asyncTmp("async-db-owned-drop");
+    const file = asyncDatabasePath("async-db-owned-drop");
     {
       const seed = new Database(file);
       seed.exec("CREATE TABLE t (v INTEGER)");
@@ -788,7 +820,7 @@ describe("AsyncDatabase lifecycle (Gate C validation)", () => {
         await new Promise(() => {}); // never resolve; the parent terminates this worker
       `,
     });
-    const file = path.join(dir, "gate.db");
+    const file = path.join(dir, "async.db");
     const blocker = new Database(file);
     try {
       blocker.exec("CREATE TABLE gate (value INTEGER)");
@@ -976,7 +1008,7 @@ describe("AsyncDatabase lifecycle (Gate C validation)", () => {
   }, 30000);
 });
 
-describe("AsyncDatabase cancellation (Gate D)", () => {
+describe("AsyncDatabase cancellation", () => {
   const cancelTmp = (name, files = { "empty.txt": "" }) => path.join(tempDirWithFiles(name, files), "cancel.db");
 
   // Opens a synchronous blocker that holds the write lock via BEGIN IMMEDIATE so
@@ -1275,7 +1307,7 @@ describe("AsyncDatabase cancellation (Gate D)", () => {
         await new Promise(() => {}); // never resolves; the parent terminates this worker
       `,
     });
-    const file = path.join(dir, "gate.db");
+    const file = path.join(dir, "async.db");
     const blocker = new Database(file);
     try {
       blocker.exec("CREATE TABLE gate (value INTEGER)");
@@ -3395,14 +3427,38 @@ async function waitForAsyncSQLiteStats(stats, predicate, description) {
   throw new Error(`${description}: ${JSON.stringify(stats())}`);
 }
 
-describe("async SQLite task substrate (Gate A private)", () => {
+// Check that native ownership returned to the pre-test baseline.
+const asyncSQLiteBaselineRestored = baseline => current =>
+  current.liveConnections === baseline.liveConnections &&
+  current.liveJobs === baseline.liveJobs &&
+  current.liveResults === baseline.liveResults &&
+  current.liveRequests === baseline.liveRequests &&
+  current.liveRows === baseline.liveRows &&
+  current.liveErrors === baseline.liveErrors &&
+  current.activeConnectionOperations === baseline.activeConnectionOperations;
+
+// Memoize close so cleanup can retry a rejected operation.
+const makeAsyncSQLiteClose = (closeForTesting, id) => {
+  let pending = null;
+  return () => {
+    if (!pending) {
+      pending = Promise.resolve(closeForTesting(id)).catch(err => {
+        pending = null;
+        throw err;
+      });
+    }
+    return pending;
+  };
+};
+
+describe("async SQLite task substrate", () => {
   it("runs an async SQLite task off-thread, remains responsive, and cleans up GC roots", async () => {
     const { asyncSQLiteTaskForTesting, asyncSQLiteTaskStatsForTesting } = await import("bun:internal-for-testing");
     expect(typeof asyncSQLiteTaskForTesting).toBe("function");
     expect(typeof asyncSQLiteTaskStatsForTesting).toBe("function");
 
-    const dir = tempDirWithFiles("sqlite-async-gate-a", { "empty.txt": "" });
-    const file = path.join(dir, "gate.db");
+    const dir = tempDirWithFiles("sqlite-async-tasks", { "empty.txt": "" });
+    const file = path.join(dir, "async.db");
     const blocker = new Database(file);
     const controller = new AbortController();
 
@@ -3451,7 +3507,7 @@ describe("async SQLite task substrate (Gate A private)", () => {
 
   it("tears down running and queued async SQLite tasks after Worker termination", async () => {
     const rounds = isASAN || isDebug ? 2 : 6;
-    const dir = tempDirWithFiles("sqlite-async-gate-a-workers", {
+    const dir = tempDirWithFiles("sqlite-async-task-workers", {
       "main.js": `
         import { Database } from "bun:sqlite";
         import { Worker } from "node:worker_threads";
@@ -3603,7 +3659,7 @@ describe("async SQLite task substrate (Gate A private)", () => {
           }
         };
 
-        const dbPath = "gate.db";
+        const dbPath = "async.db";
         const db = new Database(dbPath);
         db.exec("CREATE TABLE gate (value INTEGER)");
         const summaries = [];
@@ -3667,7 +3723,7 @@ describe("async SQLite task substrate (Gate A private)", () => {
   }, 30000);
 });
 
-describe("async SQLite connection core (Gate B private)", () => {
+describe("async SQLite connection core", () => {
   it("opens and closes a file-backed connection off-thread", async () => {
     const {
       asyncSQLiteConnectionOpenForTesting,
@@ -3676,8 +3732,8 @@ describe("async SQLite connection core (Gate B private)", () => {
     } = await import("bun:internal-for-testing");
     expect(typeof asyncSQLiteConnectionOpenForTesting).toBe("function");
 
-    const dir = tempDirWithFiles("sqlite-async-gate-b-open", { "empty.txt": "" });
-    const file = path.join(dir, "gate-b.db");
+    const dir = tempDirWithFiles("sqlite-async-connection-open", { "empty.txt": "" });
+    const file = path.join(dir, "connection.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
     expect((await connection.ready).offThread).toBe(true);
     await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
@@ -3691,7 +3747,7 @@ describe("async SQLite connection core (Gate B private)", () => {
       asyncSQLiteConnectionExecForTesting,
       asyncSQLiteConnectionCloseForTesting,
     } = await import("bun:internal-for-testing");
-    const file = path.join(tempDirWithFiles("sqlite-async-gate-b-ids", { "empty.txt": "" }), "gate-b.db");
+    const file = path.join(tempDirWithFiles("sqlite-async-connection-ids", { "empty.txt": "" }), "connection.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
     await connection.ready;
     await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
@@ -3744,7 +3800,7 @@ describe("async SQLite connection core (Gate B private)", () => {
       asyncSQLiteConnectionExecForTesting,
       asyncSQLiteConnectionCloseForTesting,
     } = await import("bun:internal-for-testing");
-    const file = path.join(tempDirWithFiles("sqlite-async-gate-b-fifo", { "empty.txt": "" }), "gate-b.db");
+    const file = path.join(tempDirWithFiles("sqlite-async-connection-fifo", { "empty.txt": "" }), "connection.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 8);
     await connection.ready;
 
@@ -3771,7 +3827,7 @@ describe("async SQLite connection core (Gate B private)", () => {
       asyncSQLiteConnectionExecForTesting,
       asyncSQLiteConnectionCloseForTesting,
     } = await import("bun:internal-for-testing");
-    const file = path.join(tempDirWithFiles("sqlite-async-gate-b-queue", { "empty.txt": "" }), "gate-b.db");
+    const file = path.join(tempDirWithFiles("sqlite-async-connection-queue", { "empty.txt": "" }), "connection.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 2, 60000);
     await connection.ready;
     await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE gate (value INTEGER)");
@@ -3801,7 +3857,7 @@ describe("async SQLite connection core (Gate B private)", () => {
   });
 
   it("uses close as an admission fence and closes exactly once", async () => {
-    const dir = tempDirWithFiles("sqlite-async-gate-b-close", {
+    const dir = tempDirWithFiles("sqlite-async-connection-close", {
       "main.js": `
         import { Database } from "bun:sqlite";
         import {
@@ -3882,7 +3938,7 @@ describe("async SQLite connection core (Gate B private)", () => {
         }
       `,
     });
-    const file = path.join(dir, "gate-b.db");
+    const file = path.join(dir, "connection.db");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js", file],
       cwd: dir,
@@ -3904,7 +3960,7 @@ describe("async SQLite connection core (Gate B private)", () => {
   });
 
   it("drains accepted operations when close is requested during Opening", async () => {
-    const dir = tempDirWithFiles("sqlite-async-gate-b-close-opening", {
+    const dir = tempDirWithFiles("sqlite-async-connection-close-opening", {
       "main.js": `
         import { Database } from "bun:sqlite";
         import {
@@ -4029,7 +4085,7 @@ describe("async SQLite connection core (Gate B private)", () => {
         }
       `,
     });
-    const file = path.join(dir, "gate-b.db");
+    const file = path.join(dir, "connection.db");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js", file],
       cwd: dir,
@@ -4056,7 +4112,7 @@ describe("async SQLite connection core (Gate B private)", () => {
     );
     const baseline = asyncSQLiteConnectionStatsForTesting();
     const invalidPath = path.join(
-      tempDirWithFiles("sqlite-async-gate-b-failure", { "directory": {} }),
+      tempDirWithFiles("sqlite-async-connection-failure", { "directory": {} }),
       "missing",
       "db",
     );
@@ -4070,13 +4126,13 @@ describe("async SQLite connection core (Gate B private)", () => {
         current.liveResults === baseline.liveResults &&
         current.liveRequests === baseline.liveRequests &&
         current.activeConnectionOperations === baseline.activeConnectionOperations,
-      "failed Gate B open leaked native state",
+      "failed connection open leaked native state",
     );
     expect(asyncSQLiteConnectionStatsForTesting().liveConnections).toBe(baseline.liveConnections);
   });
 
   it("rejects operations accepted while an invalid connection is Opening", async () => {
-    const dir = tempDirWithFiles("sqlite-async-gate-b-failure-queued", {
+    const dir = tempDirWithFiles("sqlite-async-connection-failure-queued", {
       "main.js": `
         import { Database } from "bun:sqlite";
         import {
@@ -4096,7 +4152,7 @@ describe("async SQLite connection core (Gate B private)", () => {
         };
 
         const file = process.argv[2];
-        const invalidPath = file + "/missing/gate.db";
+        const invalidPath = file + "/missing/async.db";
         const baseline = asyncSQLiteConnectionStatsForTesting();
         const blocker = new Database(file);
         try {
@@ -4149,7 +4205,7 @@ describe("async SQLite connection core (Gate B private)", () => {
         }
       `,
     });
-    const file = path.join(dir, "gate-b-failure.db");
+    const file = path.join(dir, "connection-failure.db");
     let proc;
     try {
       proc = Bun.spawn({
@@ -4180,7 +4236,7 @@ describe("async SQLite connection core (Gate B private)", () => {
   it("abandons an active and queued connection operation during Worker teardown", async () => {
     const { asyncSQLiteConnectionStatsForTesting } = await import("bun:internal-for-testing");
     const { Worker } = await import("node:worker_threads");
-    const dir = tempDirWithFiles("sqlite-async-gate-b-worker", {
+    const dir = tempDirWithFiles("sqlite-async-connection-worker", {
       "main.js": `
         import { parentPort, workerData } from "node:worker_threads";
         import {
@@ -4200,7 +4256,7 @@ describe("async SQLite connection core (Gate B private)", () => {
         await new Promise(() => {});
       `,
     });
-    const file = path.join(dir, "gate-b-worker.db");
+    const file = path.join(dir, "connection-worker.db");
     const blocker = new Database(file);
     let worker;
     try {
@@ -4216,7 +4272,7 @@ describe("async SQLite connection core (Gate B private)", () => {
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
         current => current.activeConnectionOperations === baseline.activeConnectionOperations + 1,
-        "Worker teardown did not publish an active Gate B connection operation",
+        "Worker teardown did not publish an active connection operation",
       );
       await worker.terminate();
       worker = undefined;
@@ -4229,7 +4285,7 @@ describe("async SQLite connection core (Gate B private)", () => {
           current.liveResults === baseline.liveResults &&
           current.liveRequests === baseline.liveRequests &&
           current.activeConnectionOperations === baseline.activeConnectionOperations,
-        "Worker teardown leaked Gate B connection state",
+        "Worker teardown leaked connection state",
       );
       const final = asyncSQLiteConnectionStatsForTesting();
       expect(final.liveConnections).toBe(baseline.liveConnections);
@@ -4248,37 +4304,7 @@ describe("async SQLite connection core (Gate B private)", () => {
   });
 });
 
-describe("async SQLite owned row results (Gate C prerequisite private)", () => {
-  // Baseline restoration predicate shared by every Gate C test: all live native
-  // ownership must return to the pre-test baseline. copiedRowValues is cumulative
-  // and asserted separately, not here.
-  const baselineRestored = baseline => current =>
-    current.liveConnections === baseline.liveConnections &&
-    current.liveJobs === baseline.liveJobs &&
-    current.liveResults === baseline.liveResults &&
-    current.liveRequests === baseline.liveRequests &&
-    current.liveRows === baseline.liveRows &&
-    current.liveErrors === baseline.liveErrors &&
-    current.activeConnectionOperations === baseline.activeConnectionOperations;
-
-  // Idempotent close registered immediately after open. `done` is set only after
-  // a successful close so a rejected close can still be retried by finally,
-  // avoiding double close and test poisoning.
-  const makeClose = (closeForTesting, id) => {
-    // Memoize the in-flight close so an unawaited getter close() and later cleanup
-    // await the same operation; reset on rejection so a failed close can be retried.
-    let pending = null;
-    return () => {
-      if (!pending) {
-        pending = Promise.resolve(closeForTesting(id)).catch(err => {
-          pending = null;
-          throw err;
-        });
-      }
-      return pending;
-    };
-  };
-
+describe("async SQLite owned row results", () => {
   it("returns owned column names and rows from a one-shot SELECT that survive finalization", async () => {
     const {
       asyncSQLiteConnectionOpenForTesting,
@@ -4289,10 +4315,10 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
     expect(typeof asyncSQLiteConnectionQueryForTesting).toBe("function");
 
     const baseline = asyncSQLiteConnectionStatsForTesting();
-    const dir = tempDirWithFiles("sqlite-async-gate-c", { "empty.txt": "" });
-    const file = path.join(dir, "gate-c.db");
+    const dir = tempDirWithFiles("sqlite-async-row-results", { "empty.txt": "" });
+    const file = path.join(dir, "row-results.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4337,8 +4363,8 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
 
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
-        "Gate C one-shot query leaked native state",
+        asyncSQLiteBaselineRestored(baseline),
+        "one-shot query leaked native state",
       );
     } finally {
       await close();
@@ -4354,10 +4380,10 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
     } = await import("bun:internal-for-testing");
 
     const baseline = asyncSQLiteConnectionStatsForTesting();
-    const dir = tempDirWithFiles("sqlite-async-gate-c-err", { "empty.txt": "" });
-    const file = path.join(dir, "gate-c-err.db");
+    const dir = tempDirWithFiles("sqlite-async-row-results-error", { "empty.txt": "" });
+    const file = path.join(dir, "row-results-error.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4387,8 +4413,8 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
-        "Gate C error-path query leaked native state",
+        asyncSQLiteBaselineRestored(baseline),
+        "error-path query leaked native state",
       );
     } finally {
       await close();
@@ -4404,10 +4430,10 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
     } = await import("bun:internal-for-testing");
 
     const baseline = asyncSQLiteConnectionStatsForTesting();
-    const dir = tempDirWithFiles("sqlite-async-gate-c-throw", { "empty.txt": "" });
-    const file = path.join(dir, "gate-c-throw.db");
+    const dir = tempDirWithFiles("sqlite-async-row-results-throw", { "empty.txt": "" });
+    const file = path.join(dir, "row-results-throw.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4433,8 +4459,8 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
-        "Gate C forced materialization failure leaked native state",
+        asyncSQLiteBaselineRestored(baseline),
+        "forced materialization failure leaked native state",
       );
     } finally {
       await close();
@@ -4451,14 +4477,14 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
     } = await import("bun:internal-for-testing");
 
     const baseline = asyncSQLiteConnectionStatsForTesting();
-    const dir = tempDirWithFiles("sqlite-async-gate-c-copy", { "empty.txt": "" });
-    const file = path.join(dir, "gate-c-copy.db");
+    const dir = tempDirWithFiles("sqlite-async-row-results-copy", { "empty.txt": "" });
+    const file = path.join(dir, "row-results-copy.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
-      // Exec of row-producing SQL (including a multi-statement Gate B script)
+      // Exec of row-producing SQL (including a multi-statement script)
       // must drain rows without copying any values.
       const beforeExec = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
       expect(await asyncSQLiteConnectionExecForTesting(connection.id, "SELECT 1, 2, 3")).toBe(true);
@@ -4471,7 +4497,7 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
       const afterExec = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
       expect(afterExec - beforeExec).toBe(0);
 
-      // Query copies each produced value; the counter is debug-gated, so the
+      // Query copies each produced value; the counter is debug-only, so the
       // delta is 3 in debug/assert builds and 0 in release.
       const beforeQuery = asyncSQLiteConnectionStatsForTesting().copiedRowValues;
       const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1, 2, 3");
@@ -4482,8 +4508,8 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
-        "Gate C exec/query copy accounting leaked native state",
+        asyncSQLiteBaselineRestored(baseline),
+        "exec/query copy accounting leaked native state",
       );
     } finally {
       await close();
@@ -4499,8 +4525,8 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
     } = await import("bun:internal-for-testing");
 
     const baseline = asyncSQLiteConnectionStatsForTesting();
-    const dir = tempDirWithFiles("sqlite-async-gate-c-badcols", { "empty.txt": "" });
-    const file = path.join(dir, "gate-c-badcols.db");
+    const dir = tempDirWithFiles("sqlite-async-row-results-badcols", { "empty.txt": "" });
+    const file = path.join(dir, "row-results-badcols.db");
 
     // Sync setup with distinctive same-length ASCII names, then binary-patch the
     // stored quoted names to same-length invalid UTF-8 (0xE9, 0xFF) so they must
@@ -4520,7 +4546,7 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
     writeFileSync(file, buf);
 
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4533,8 +4559,8 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
-        "Gate C non-UTF-8 column-name query leaked native state",
+        asyncSQLiteBaselineRestored(baseline),
+        "non-UTF-8 column-name query leaked native state",
       );
     } finally {
       await close();
@@ -4542,7 +4568,7 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
   });
 
   it("stops instead of looping forever on an embedded NUL after a valid statement", async () => {
-    const dir = tempDirWithFiles("sqlite-async-gate-c-nul", {
+    const dir = tempDirWithFiles("sqlite-async-row-results-nul", {
       "main.js": `
         import {
           asyncSQLiteConnectionCloseForTesting,
@@ -4560,7 +4586,7 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
         console.log(JSON.stringify({ columns: result.columns, rows: result.rows }));
       `,
     });
-    const file = path.join(dir, "gate-c-nul.db");
+    const file = path.join(dir, "row-results-nul.db");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js", file],
       cwd: dir,
@@ -4597,34 +4623,7 @@ describe("async SQLite owned row results (Gate C prerequisite private)", () => {
   });
 });
 
-describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
-  // Every binding value is validated and copied on the JS thread before queue
-  // admission; because that snapshot is synchronous inside the submit call,
-  // mutating a source after the call returns is guaranteed to be post-snapshot.
-  const baselineRestored = baseline => current =>
-    current.liveConnections === baseline.liveConnections &&
-    current.liveJobs === baseline.liveJobs &&
-    current.liveResults === baseline.liveResults &&
-    current.liveRequests === baseline.liveRequests &&
-    current.liveRows === baseline.liveRows &&
-    current.liveErrors === baseline.liveErrors &&
-    current.activeConnectionOperations === baseline.activeConnectionOperations;
-
-  const makeClose = (closeForTesting, id) => {
-    // Memoize the in-flight close so an unawaited getter close() and later cleanup
-    // await the same operation; reset on rejection so a failed close can be retried.
-    let pending = null;
-    return () => {
-      if (!pending) {
-        pending = Promise.resolve(closeForTesting(id)).catch(err => {
-          pending = null;
-          throw err;
-        });
-      }
-      return pending;
-    };
-  };
-
+describe("async SQLite binding snapshots", () => {
   it("round-trips positional owned values and snapshots them before admission", async () => {
     const {
       asyncSQLiteConnectionOpenForTesting,
@@ -4637,7 +4636,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-pos", { "empty.txt": "" });
     const file = path.join(dir, "bind-pos.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4697,7 +4696,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "positional binding query leaked native state",
       );
     } finally {
@@ -4717,7 +4716,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-named", { "empty.txt": "" });
     const file = path.join(dir, "bind-named.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4746,7 +4745,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "named binding snapshot leaked native state",
       );
     } finally {
@@ -4766,7 +4765,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-throw", { "empty.txt": "" });
     const file = path.join(dir, "bind-throw.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4792,7 +4791,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "throwing named getter leaked native state",
       );
     } finally {
@@ -4812,7 +4811,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-nonstrict", { "empty.txt": "" });
     const file = path.join(dir, "bind-nonstrict.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4832,7 +4831,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "non-strict named binding leaked native state",
       );
     } finally {
@@ -4852,7 +4851,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-strict", { "empty.txt": "" });
     const file = path.join(dir, "bind-strict.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4, undefined, { strict: true });
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4881,7 +4880,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "strict named binding leaked native state",
       );
     } finally {
@@ -4926,7 +4925,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-plainerr", { "empty.txt": "" });
     const file = path.join(dir, "bind-plainerr.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4, undefined, { strict: true });
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -4976,7 +4975,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "binding error classification leaked native state",
       );
     } finally {
@@ -4998,7 +4997,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-firststmt", { "empty.txt": "" });
     const file = path.join(dir, "bind-firststmt.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -5019,7 +5018,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "first-statement binding leaked native state",
       );
     } finally {
@@ -5045,7 +5044,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-empty", { "empty.txt": "" });
     const file = path.join(dir, "bind-empty.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -5065,7 +5064,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "empty-array binding leaked native state",
       );
     } finally {
@@ -5086,7 +5085,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-reentrant", { "empty.txt": "" });
     const file = path.join(dir, "bind-reentrant.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
       expect(await asyncSQLiteConnectionExecForTesting(connection.id, "CREATE TABLE log(n INTEGER)")).toBe(true);
@@ -5114,7 +5113,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "reentrant admission ordering leaked native state",
       );
     } finally {
@@ -5134,7 +5133,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-close", { "empty.txt": "" });
     const file = path.join(dir, "bind-close.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -5160,7 +5159,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "close-during-getter leaked native state",
       );
     } finally {
@@ -5180,7 +5179,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const dir = tempDirWithFiles("sqlite-async-bind-detach", { "empty.txt": "" });
     const file = path.join(dir, "bind-detach.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
@@ -5209,7 +5208,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "detached-buffer binding leaked native state",
       );
     } finally {
@@ -5255,8 +5254,8 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     const fileSafe = path.join(dir, "bind-bigint-safe.db");
     const connDefault = asyncSQLiteConnectionOpenForTesting(fileDefault, 4);
     const connSafe = asyncSQLiteConnectionOpenForTesting(fileSafe, 4, undefined, { safeIntegers: true });
-    const closeDefault = makeClose(asyncSQLiteConnectionCloseForTesting, connDefault.id);
-    const closeSafe = makeClose(asyncSQLiteConnectionCloseForTesting, connSafe.id);
+    const closeDefault = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connDefault.id);
+    const closeSafe = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connSafe.id);
     try {
       expect((await connDefault.ready).offThread).toBe(true);
       expect((await connSafe.ready).offThread).toBe(true);
@@ -5315,7 +5314,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       await closeSafe();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "bigint binding leaked native state",
       );
     } finally {
@@ -5324,7 +5323,7 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
     }
   });
 
-  it("caps a too-large positional array with a RangeError before admission", async () => {
+  it("uses Bun's positional binding limit before snapshot allocation", async () => {
     const {
       asyncSQLiteConnectionOpenForTesting,
       asyncSQLiteConnectionQueryForTesting,
@@ -5332,46 +5331,39 @@ describe("async SQLite binding snapshot (Gate C prerequisite private)", () => {
       asyncSQLiteConnectionStatsForTesting,
     } = await import("bun:internal-for-testing");
 
-    const MAX_VARS = 32766;
+    const BUN_MAX_VARIABLE_NUMBER = 250000;
     const baseline = asyncSQLiteConnectionStatsForTesting();
     const dir = tempDirWithFiles("sqlite-async-bind-cap", { "empty.txt": "" });
     const file = path.join(dir, "bind-cap.db");
     const connection = asyncSQLiteConnectionOpenForTesting(file, 4);
-    const close = makeClose(asyncSQLiteConnectionCloseForTesting, connection.id);
+    const close = makeAsyncSQLiteClose(asyncSQLiteConnectionCloseForTesting, connection.id);
     try {
       expect((await connection.ready).offThread).toBe(true);
 
-      // One past the max: rejected on the JS thread by the snapshot cap, before any
-      // admission or large allocation. A sparse array avoids materializing values.
+      // One past Bun's max is rejected on the JS thread before sparse slots are
+      // snapshotted into native values.
       let capErr;
       try {
-        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1", new Array(MAX_VARS + 1));
+        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1", new Array(BUN_MAX_VARIABLE_NUMBER + 1));
       } catch (e) {
         capErr = e;
       }
       expect(capErr).toBeInstanceOf(RangeError);
-      expect(capErr.message).toContain("32766");
+      expect(capErr.message).toContain("250000");
 
-      // At the boundary the snapshot cap must not fire: the request reaches the
-      // worker and fails there with the plain count-mismatch Error instead.
-      let boundaryErr;
-      try {
-        await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 1", new Array(MAX_VARS));
-      } catch (e) {
-        boundaryErr = e;
-      }
-      expect(boundaryErr).toBeDefined();
-      expect(boundaryErr).not.toBeInstanceOf(RangeError);
-      expect(boundaryErr.message).toContain("expected 0 values, received 32766");
+      const values = new Array(40000);
+      values[39999] = 42;
+      const result = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT ?40000 AS value", values);
+      expect(result.rows).toEqual([[42]]);
 
-      // The connection remains usable after both rejections.
+      // The connection remains usable after the rejected snapshot.
       const ok = await asyncSQLiteConnectionQueryForTesting(connection.id, "SELECT 5 AS n");
       expect(ok.rows).toEqual([[5]]);
 
       await close();
       await waitForAsyncSQLiteStats(
         asyncSQLiteConnectionStatsForTesting,
-        baselineRestored(baseline),
+        asyncSQLiteBaselineRestored(baseline),
         "positional cap leaked native state",
       );
     } finally {

@@ -706,9 +706,7 @@ const kAsyncOpen = 0;
 const kAsyncClosing = 1;
 const kAsyncClosed = 2;
 
-// Best-effort safety net: close the native connection if a wrapper is dropped
-// without close(). Explicit close() unregisters. Full GC ownership is hardened
-// in the following gate-c-validation task.
+// FinalizationRegistry closes native connections dropped without close().
 let asyncFinalization;
 function reapAsyncConnection(connectionId) {
   try {
@@ -755,8 +753,8 @@ function normalizeAsyncOpenOptions(options) {
     if (typeof value !== "number") {
       throw $ERR_INVALID_ARG_TYPE("options.busyTimeout", "number", value);
     }
-    if (!Number.isInteger(value) || value < 0) {
-      throw $ERR_OUT_OF_RANGE("options.busyTimeout", ">= 0 and an integer", value);
+    if (!Number.isInteger(value) || value < 0 || value > 0x7fffffff) {
+      throw $ERR_OUT_OF_RANGE("options.busyTimeout", ">= 0 and <= 2147483647 and an integer", value);
     }
     busyTimeout = value;
   }
@@ -766,8 +764,8 @@ function normalizeAsyncOpenOptions(options) {
     if (typeof value !== "number") {
       throw $ERR_INVALID_ARG_TYPE("options.maxPending", "number", value);
     }
-    if (!Number.isInteger(value) || value < 1) {
-      throw $ERR_OUT_OF_RANGE("options.maxPending", ">= 1 and an integer", value);
+    if (!Number.isInteger(value) || value < 1 || value > 0x7fffffff) {
+      throw $ERR_OUT_OF_RANGE("options.maxPending", ">= 1 and <= 2147483647 and an integer", value);
     }
     maxPending = value;
   }

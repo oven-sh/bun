@@ -103,10 +103,7 @@ declare module "bun:sqlite" {
      */
     readwrite?: boolean;
 
-    /**
-     * Require all SQL parameters to be bound and allow named bindings without
-     * their SQL prefix.
-     */
+    /** Require all SQL parameters and allow named bindings without prefixes. */
     strict?: boolean;
 
     /**
@@ -612,22 +609,11 @@ declare module "bun:sqlite" {
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
   }
 
-  /**
-   * A SQLite3 database whose operations run asynchronously.
-   *
-   * Use {@link AsyncDatabase.open} to create an instance; the constructor is
-   * intentionally private.
-   */
+  /** An asynchronous SQLite3 database created with {@link AsyncDatabase.open}. */
   export class AsyncDatabase implements AsyncDisposable {
     private constructor();
 
-    /**
-     * Open or create a SQLite3 database asynchronously.
-     *
-     * When `safeIntegers` is `true`, integer columns and
-     * `Changes.lastInsertRowid` are returned as `bigint`; otherwise they are
-     * returned as `number`.
-     */
+    /** Open a database. `safeIntegers` returns integers as `bigint`. */
     static open(filename?: string, options?: AsyncDatabaseOptions): Promise<AsyncDatabase>;
 
     readonly filename: string;

@@ -76,6 +76,7 @@ typedef int (*lazy_sqlite3_db_config_type)(sqlite3*, int op, ...);
 typedef const char* (*lazy_sqlite3_db_filename_type)(sqlite3*, const char* zDbName);
 typedef sqlite3* (*lazy_sqlite3_db_handle_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_busy_timeout_type)(sqlite3*, int ms);
+typedef int (*lazy_sqlite3_busy_handler_type)(sqlite3*, int (*)(void*, int), void*);
 typedef int (*lazy_sqlite3_wal_checkpoint_v2_type)(sqlite3*, const char* zDb, int eMode, int* pnLog, int* pnCkpt);
 typedef const char* (*lazy_sqlite3_bind_parameter_name_type)(sqlite3_stmt*, int);
 typedef int (*lazy_sqlite3_exec_type)(sqlite3*, const char* sql, int (*callback)(void*, int, char**, char**), void*, char** errmsg);
@@ -147,6 +148,7 @@ inline lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
 inline lazy_sqlite3_close_type lazy_sqlite3_close;
 inline lazy_sqlite3_interrupt_type lazy_sqlite3_interrupt;
 inline lazy_sqlite3_busy_timeout_type lazy_sqlite3_busy_timeout;
+inline lazy_sqlite3_busy_handler_type lazy_sqlite3_busy_handler;
 inline lazy_sqlite3_wal_checkpoint_v2_type lazy_sqlite3_wal_checkpoint_v2;
 inline lazy_sqlite3_file_control_type lazy_sqlite3_file_control;
 inline lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
@@ -249,6 +251,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_close lazy_sqlite3_close
 #define sqlite3_interrupt lazy_sqlite3_interrupt
 #define sqlite3_busy_timeout lazy_sqlite3_busy_timeout
+#define sqlite3_busy_handler lazy_sqlite3_busy_handler
 #define sqlite3_wal_checkpoint_v2 lazy_sqlite3_wal_checkpoint_v2
 #define sqlite3_file_control lazy_sqlite3_file_control
 #define sqlite3_column_blob lazy_sqlite3_column_blob
@@ -394,6 +397,8 @@ inline int lazyLoadSQLite()
     lazy_sqlite3_close_v2 = (lazy_sqlite3_close_v2_type)dlsym(sqlite3_handle, "sqlite3_close_v2");
     lazy_sqlite3_close = (lazy_sqlite3_close_type)dlsym(sqlite3_handle, "sqlite3_close");
     lazy_sqlite3_busy_timeout = (lazy_sqlite3_busy_timeout_type)dlsym(sqlite3_handle, "sqlite3_busy_timeout");
+    lazy_sqlite3_busy_handler = (lazy_sqlite3_busy_handler_type)dlsym(sqlite3_handle, "sqlite3_busy_handler");
+    if (!lazy_sqlite3_busy_handler) return -1;
     lazy_sqlite3_wal_checkpoint_v2 = (lazy_sqlite3_wal_checkpoint_v2_type)dlsym(sqlite3_handle, "sqlite3_wal_checkpoint_v2");
     lazy_sqlite3_file_control = (lazy_sqlite3_file_control_type)dlsym(sqlite3_handle, "sqlite3_file_control");
     lazy_sqlite3_column_blob = (lazy_sqlite3_column_blob_type)dlsym(sqlite3_handle, "sqlite3_column_blob");

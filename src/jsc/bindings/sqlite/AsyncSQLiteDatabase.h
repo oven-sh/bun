@@ -69,8 +69,7 @@ struct AsyncSQLiteRows {
     std::vector<std::vector<AsyncSQLiteValue>> rows;
 };
 
-// Closed set of connection operation kinds. Exec discards any produced rows
-// (Gate B scalar semantics); Query returns owned rows to the JS thread.
+// Exec discards produced rows; Query returns owned rows to the JS thread.
 enum class AsyncSQLiteOperationKind : uint8_t {
     Exec,
     QueryForTesting,
@@ -343,9 +342,7 @@ struct AsyncSQLiteTaskStats {
 void abandonAsyncSQLiteRequestsForGlobal(JSC::JSGlobalObject*);
 
 // Factory for the public `AsyncDatabase` native surface, loaded lazily via
-// `$cpp()` from src/js/bun/sqlite.ts. Returns an object of host functions
-// (open/exec/run/get/all/values/close) so production never imports the
-// bun:internal-for-testing bindings.
+// `$cpp()` from src/js/bun/sqlite.ts.
 JSC::JSValue createAsyncSQLiteBinding(Zig::GlobalObject*);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_asyncSQLiteTaskForTesting);

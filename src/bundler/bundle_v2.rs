@@ -2892,18 +2892,9 @@ pub mod bv2_impl {
 
             this.linker.dev_server = this.dev_server;
 
-            // Arena-owned. Erase the `&mut` lifetime so later `&mut this`
-            // borrows (`this.graph.pool = ...`, `from_mut(&mut *this)`) don't
-            // conflict.
-            let pool = NonNull::from(this.arena().alloc(ThreadPool::default()));
+            let tp = ThreadPool::init(&*this, thread_pool)?;
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
-
-            // SAFETY: arena slot is live for the bundle pass; the default value
-            // written above has no Drop, so overwriting via `*pool = ...` is fine.
-            unsafe {
-                *pool.as_ptr() = ThreadPool::init(&*this, thread_pool)?;
-            }
-            this.graph.pool = bun_ptr::BackRef::from(pool);
+            this.graph.pool = bun_ptr::BackRef::from(NonNull::from(this.arena().alloc(tp)));
             // Install the watcher only after `ThreadPool::init()` has succeeded —
             // the `?` above is the last early-return in this fn, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller

@@ -15,13 +15,23 @@
 # The marker is build meta-data, which is server-side and so remains visible
 # here even when the reporter ran inside an ephemeral VM (the darwin tart
 # agents forward the Job API socket into the guest). Repository hooks run on
-# every posix agent; Windows agents look for pre-exit.{bat,ps1} and ignore this
-# file. Never exits non-zero.
+# every posix agent, and on Windows via Git Bash. Never exits non-zero.
 
 set -uo pipefail
 
-[ "${BUILDKITE_COMMAND_EXIT_STATUS:-0}" = "0" ] && exit 0
+status="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
+[ "$status" = "0" ] && exit 0
 [ -n "${BUILDKITE_JOB_ID:-}" ] || exit 0
+
+# Skip cancel/timeout kills: the agent SIGKILLs the command after its grace
+# period (or on build cancel), which reports as exit -1 on posix and
+# 3221225786 (STATUS_CONTROL_C_EXIT) / 15 (SIGTERM passthrough) on Windows.
+# The reporter had no chance to set the marker, and a canceled build annotating
+# 30 "step failed outside runner" entries is noise, not signal. Real infra
+# failures exit with ordinary codes (1, 2, 127, ...).
+case "$status" in
+  -1|255|3221225786|15) exit 0 ;;
+esac
 
 if buildkite-agent meta-data exists "reported-${BUILDKITE_JOB_ID}" 2>/dev/null; then
   exit 0
@@ -48,7 +58,7 @@ done
 preview=$(printf '%s' "$detail" | sed 's/`/\\`/g')
 
 printf '<details><summary><a><code>step failed outside runner</code></a> - exit %s on <a href="%s">%s</a></summary>\n\n```terminal\n%s\n```\n\n</details>\n\n' \
-  "${BUILDKITE_COMMAND_EXIT_STATUS}" "$job_url" "$label" "$preview" \
+  "$status" "$job_url" "$label" "$preview" \
   | buildkite-agent annotate --append --style error --context step-failed-outside-runner --priority 5 2>&1 \
   || echo "pre-exit: buildkite-agent annotate failed (non-fatal)"
 

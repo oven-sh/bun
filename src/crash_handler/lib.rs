@@ -2,12 +2,14 @@
 //! print backtraces that are mapped to source code. In release builds, we do
 //! not have debug symbols in the binary. Bun's solution to this is called
 //! a "trace string", a url with compressed encoding of the captured
-//! backtrace. Version 1 trace strings contain the following information:
+//! backtrace. Version 3 trace strings contain the following information:
 //!
 //! - What version and commit of Bun captured the backtrace.
 //! - The platform the backtrace was captured on.
 //! - The list of addresses with ASLR removed, ready to be remapped.
 //! - If panicking, the message that was panicked with.
+//! - For hardware faults, the faulting pc and general-purpose register values
+//!   captured from `ucontext_t` / `CONTEXT`.
 //!
 //! These can be demangled using Bun's remapping API, which has cached
 //! versions of all debug symbols for all versions of Bun. Hosting this keeps
@@ -849,13 +851,76 @@ mod draft {
         ActionGuard(prev)
     }
 
+    /// General-purpose register snapshot at the faulting instruction, lifted
+    /// from `ucontext_t` (POSIX) / `CONTEXT` (Windows). Encoded into the trace
+    /// string (v3/v4) after the reason payload so the remapper can show the
+    /// register state even when the stack walk is short or corrupt.
+    ///
+    /// Slot order is fixed per arch and shared with the decoder:
+    ///   x86_64:  rax rbx rcx rdx rdi rsi rbp rsp r8 r9 r10 r11 r12 r13 r14 r15 rip
+    ///   aarch64: x0..x28 fp lr sp pc
+    #[derive(Clone, Copy)]
+    pub struct FaultRegisters {
+        /// Faulting instruction pointer (raw, ASLR not removed). Becomes stack
+        /// frame 0 and is separately encoded as a `StackLine` so the remapper
+        /// has the exact fault site even if the frame walk produced nothing.
+        pub pc: usize,
+        /// Frame pointer for the frame walker. Not encoded.
+        pub fp: usize,
+        values: [u64; Self::MAX],
+        count: u8,
+    }
+
+    impl FaultRegisters {
+        pub const MAX: usize = 34;
+
+        #[cfg(target_arch = "x86_64")]
+        pub const NAMES: &[&str] = &[
+            "rax", "rbx", "rcx", "rdx", "rdi", "rsi", "rbp", "rsp", "r8", "r9", "r10", "r11",
+            "r12", "r13", "r14", "r15", "rip",
+        ];
+        #[cfg(target_arch = "aarch64")]
+        pub const NAMES: &[&str] = &[
+            "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
+            "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25",
+            "x26", "x27", "x28", "fp", "lr", "sp", "pc",
+        ];
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        pub const NAMES: &[&str] = &[];
+
+        const fn empty(pc: usize, fp: usize) -> Self {
+            Self {
+                pc,
+                fp,
+                values: [0; Self::MAX],
+                count: 0,
+            }
+        }
+
+        /// Testing-only constructor: seeds a fault context with caller-supplied
+        /// register values so the `bun:internal-for-testing` segfault hook can
+        /// exercise the v3/v4 encoding path without a real fault (ASAN owns the
+        /// SIGSEGV handler under debug builds).
+        pub fn for_testing(pc: usize, values: &[u64]) -> Self {
+            let mut r = Self::empty(pc, 0);
+            let n = values.len().min(Self::MAX);
+            r.values[..n].copy_from_slice(&values[..n]);
+            r.count = n as u8;
+            r
+        }
+
+        pub fn values(&self) -> &[u64] {
+            &self.values[..self.count as usize]
+        }
+    }
+
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]
     pub enum TraceSeed<'a> {
         /// Signal/exception handler saved the fault register context: walk frame
         /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
         /// becomes frame 0.
-        Fault { pc: usize, fp: usize },
+        Fault(FaultRegisters),
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
         /// Walk the current stack and trim the capture machinery above this PC.
@@ -872,7 +937,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = BoundedArray::<u8, 1536>::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1110,6 +1175,7 @@ mod draft {
 
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;
+                    let mut fault_regs: Option<FaultRegisters> = None;
 
                     let trace: &StackTrace = 'blk: {
                         let idx: usize = match seed {
@@ -1121,8 +1187,9 @@ mod draft {
                             // `SA_ONSTACK` altstack, so its own frame chain is
                             // disjoint from the faulting thread's, and release builds
                             // strip the unwind tables a CFI-based capture would need.
-                            TraceSeed::Fault { pc, fp } => {
-                                bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
+                            TraceSeed::Fault(regs) => {
+                                fault_regs = Some(regs);
+                                bun_core::debug::capture_from_context(regs.pc, regs.fp, &mut addr_buf)
                             }
                             TraceSeed::BeginAddr(addr) => {
                                 debug::capture_stack_trace(addr, &mut addr_buf)
@@ -1151,6 +1218,7 @@ mod draft {
                                 trace,
                                 reason,
                                 action: TraceStringAction::ViewTrace,
+                                regs: fault_regs.as_ref(),
                             }
                         )
                         .is_err()
@@ -1236,6 +1304,7 @@ mod draft {
                                 trace,
                                 reason,
                                 action: TraceStringAction::OpenIssue,
+                                regs: fault_regs.as_ref(),
                             }
                         )
                         .is_err()
@@ -1601,27 +1670,53 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
-    /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
-    /// `None` on arch/OS combos we don't have register offsets for (the caller
-    /// then falls back to a current-stack capture).
+    /// Lift `pc`, `fp` and the general-purpose register file from the
+    /// `ucontext_t` the kernel hands the signal handler. `pc`/`fp` seed the
+    /// frame-pointer walk; the full register set is encoded into the trace
+    /// string. Returns `None` on arch/OS combos we don't have layouts for
+    /// (the caller then falls back to a current-stack capture).
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<FaultRegisters> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            target_arch = "x86_64"
+        ))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
-            let mc = &(*uc).uc_mcontext;
-            let pc = mc.gregs[libc::REG_RIP as usize] as usize;
-            let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            let g = &(*uc).uc_mcontext.gregs;
+            let pc = g[libc::REG_RIP as usize] as usize;
+            let mut r = FaultRegisters::empty(pc, g[libc::REG_RBP as usize] as usize);
+            for (i, slot) in [
+                libc::REG_RAX, libc::REG_RBX, libc::REG_RCX, libc::REG_RDX,
+                libc::REG_RDI, libc::REG_RSI, libc::REG_RBP, libc::REG_RSP,
+                libc::REG_R8,  libc::REG_R9,  libc::REG_R10, libc::REG_R11,
+                libc::REG_R12, libc::REG_R13, libc::REG_R14, libc::REG_R15,
+                libc::REG_RIP,
+            ].into_iter().enumerate() {
+                r.values[i] = g[slot as usize] as u64;
+            }
+            r.count = 17;
+            Some(r)
         }
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            target_arch = "aarch64"
+        ))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            let mut r = FaultRegisters::empty(mc.pc as usize, mc.regs[29] as usize);
+            for i in 0..29 {
+                r.values[i] = mc.regs[i] as u64;
+            }
+            r.values[29] = mc.regs[29] as u64; // fp
+            r.values[30] = mc.regs[30] as u64; // lr
+            r.values[31] = mc.sp as u64;
+            r.values[32] = mc.pc as u64;
+            r.count = 33;
+            Some(r)
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1630,7 +1725,16 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            let ss = &(*mc).__ss;
+            let mut r = FaultRegisters::empty(ss.__rip as usize, ss.__rbp as usize);
+            r.values = [
+                ss.__rax, ss.__rbx, ss.__rcx, ss.__rdx, ss.__rdi, ss.__rsi, ss.__rbp, ss.__rsp,
+                ss.__r8,  ss.__r9,  ss.__r10, ss.__r11, ss.__r12, ss.__r13, ss.__r14, ss.__r15,
+                ss.__rip,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ];
+            r.count = 17;
+            Some(r)
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1639,17 +1743,88 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            let ss = &(*mc).__ss;
+            let mut r = FaultRegisters::empty(ss.__pc as usize, ss.__fp as usize);
+            for i in 0..29 {
+                r.values[i] = ss.__x[i];
+            }
+            r.values[29] = ss.__fp;
+            r.values[30] = ss.__lr;
+            r.values[31] = ss.__sp;
+            r.values[32] = ss.__pc;
+            r.count = 33;
+            Some(r)
         }
         #[cfg(not(any(
-            all(target_os = "linux", target_arch = "x86_64"),
-            all(target_os = "linux", target_arch = "aarch64"),
+            all(any(target_os = "linux", target_os = "android"), target_arch = "x86_64"),
+            all(any(target_os = "linux", target_os = "android"), target_arch = "aarch64"),
             all(target_os = "macos", target_arch = "x86_64"),
             all(target_os = "macos", target_arch = "aarch64"),
         )))]
         {
             let _ = uc;
             None
+        }
+    }
+
+    /// Lift `pc`, `fp` and the general-purpose register file from the Windows
+    /// `CONTEXT` record handed to a vectored exception handler.
+    #[cfg(windows)]
+    fn fault_context_from_windows_context(
+        ctx: *mut c_void,
+        fallback_pc: usize,
+    ) -> FaultRegisters {
+        if ctx.is_null() {
+            return FaultRegisters::empty(fallback_pc, 0);
+        }
+        // `bun_sys::windows::CONTEXT` is an opaque aligned blob; read the GP
+        // register slots by their documented `winnt.h` byte offsets so this
+        // crate does not need the full arch-specific struct definition.
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the kernel provides a valid CONTEXT; offsets per winnt.h.
+        unsafe {
+            let read = |off: usize| ctx.cast::<u8>().add(off).cast::<u64>().read_unaligned();
+            // winnt.h _CONTEXT (x64): Rax at 0x78, then Rcx Rdx Rbx Rsp Rbp Rsi
+            // Rdi R8..R15 Rip, each DWORD64.
+            let rax = read(0x78);
+            let rcx = read(0x80);
+            let rdx = read(0x88);
+            let rbx = read(0x90);
+            let rsp = read(0x98);
+            let rbp = read(0xA0);
+            let rsi = read(0xA8);
+            let rdi = read(0xB0);
+            let rip = read(0xF8);
+            let mut r = FaultRegisters::empty(rip as usize, rbp as usize);
+            r.values = [
+                rax, rbx, rcx, rdx, rdi, rsi, rbp, rsp,
+                read(0xB8), read(0xC0), read(0xC8), read(0xD0),
+                read(0xD8), read(0xE0), read(0xE8), read(0xF0),
+                rip,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ];
+            r.count = 17;
+            r
+        }
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: the kernel provides a valid CONTEXT; offsets per winnt.h.
+        unsafe {
+            let read = |off: usize| ctx.cast::<u8>().add(off).cast::<u64>().read_unaligned();
+            // winnt.h _ARM64_NT_CONTEXT: X[31] at 0x8, Sp at 0x100, Pc at 0x108.
+            let pc = read(0x108);
+            let fp = read(0x8 + 29 * 8);
+            let mut r = FaultRegisters::empty(pc as usize, fp as usize);
+            for i in 0..31 {
+                r.values[i] = read(0x8 + i * 8);
+            }
+            r.values[31] = read(0x100); // sp
+            r.values[32] = pc;
+            r.count = 33;
+            r
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            FaultRegisters::empty(fallback_pc, 0)
         }
     }
 
@@ -1669,7 +1844,7 @@ mod draft {
                 _ => unreachable!(),
             },
             match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+                Some(regs) => TraceSeed::Fault(regs),
                 None => TraceSeed::None,
             },
         );
@@ -1890,6 +2065,7 @@ mod draft {
                         trace: &trace,
                         reason,
                         action: TraceStringAction::ViewTrace,
+                        regs: None,
                     }
                 );
             } else {
@@ -1914,6 +2090,7 @@ mod draft {
                         trace: &trace,
                         reason,
                         action: TraceStringAction::OpenIssue,
+                        regs: None,
                     }
                 );
                 let _ = writer.write_all(trace_str_buf.const_slice());
@@ -1971,6 +2148,7 @@ mod draft {
                     action: TraceStringAction::ViewTrace,
                     reason: CrashReason::ZigError(b"DumpStackTrace"),
                     trace: &stack,
+                    regs: None,
                 }
             );
             return;
@@ -2054,10 +2232,11 @@ mod draft {
         };
         // SAFETY: kernel provides a valid EXCEPTION_RECORD; ExceptionAddress is
         // the faulting instruction.
-        let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
+        let fallback_pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
         // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
         // by `pc`; the frame-pointer slot is unused.
-        crash_handler(reason, TraceSeed::Fault { pc, fp: 0 });
+        let regs = fault_context_from_windows_context(info.ContextRecord, fallback_pc);
+        crash_handler(reason, TraceSeed::Fault(regs));
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -2355,7 +2534,13 @@ mod draft {
     ///
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
-    const VERSION_CHAR: &str = if Environment::IS_CANARY { "2" } else { "1" };
+    /// '3' - same as '1' with a trailing fault-register block appended after the
+    ///       reason payload (see `encode_trace_string`): one `StackLine`-encoded
+    ///       fault pc, a VLQ register count, then count * 2-VLQ register values.
+    ///       A decoder that only knows '1'/'2' can treat '3' as '1' and stop at
+    ///       the end of the reason payload; everything after it is additive.
+    /// '4' - same as '3' but this build is known to be a canary build
+    const VERSION_CHAR: &str = if Environment::IS_CANARY { "4" } else { "3" };
 
     // The v1/v2 trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
@@ -2557,6 +2742,7 @@ mod draft {
         trace: &'a StackTrace<'a>,
         reason: CrashReason,
         action: TraceStringAction,
+        regs: Option<&'a FaultRegisters>,
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2672,6 +2858,24 @@ mod draft {
             }
 
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
+        }
+
+        // v3/v4 register block. Always present so the decoder does not have to
+        // branch on which reason codes carry one; `_A` (= no pc, 0 regs) marks
+        // "no fault context" (panic/OOM/unknown arch).
+        match opts.regs {
+            None => {
+                StackLine::write_encoded(None, writer)?;
+                writer.write_all(VLQ::ZERO.slice())?;
+            }
+            Some(regs) => {
+                let pc_line = StackLine::from_address(regs.pc, &mut name_bytes);
+                StackLine::write_encoded(pc_line.as_ref(), writer)?;
+                writer.write_all(VLQ::encode(regs.count as i32).slice())?;
+                for &v in regs.values() {
+                    write_u64_as_two_vlqs(writer, v as usize)?;
+                }
+            }
         }
 
         if opts.action == TraceStringAction::ViewTrace {
@@ -3011,6 +3215,7 @@ mod draft {
                 trace,
                 reason,
                 action: TraceStringAction::ViewTrace,
+                regs: None,
             };
             if IS_ROOT {
                 bun_core::pretty_errorln!(
@@ -3065,6 +3270,7 @@ mod draft {
                     action: TraceStringAction::ViewTrace,
                     reason: CrashReason::ZigError(b"DumpStackTrace"),
                     trace,
+                    regs: None,
                 }
             );
             return;

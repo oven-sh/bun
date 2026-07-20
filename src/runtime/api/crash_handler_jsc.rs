@@ -12,7 +12,7 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
+        let obj = JSValue::create_empty_object(global, 9);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -23,6 +23,10 @@ pub mod js_bindings {
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
+            (
+                "segfaultWithRegisters",
+                __jsc_host_js_segfault_with_registers,
+            ),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -91,6 +95,25 @@ pub mod js_bindings {
             core::hint::black_box(ptr);
         }
         Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_segfault_with_registers(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        // Deterministic sentinel values so the test can assert on the encoded
+        // register block without depending on real CPU state.
+        let vals: [u64; 4] = [0x1111, 0x2222, 0x3333, 0xDEADBEEF00000000];
+        let regs = crash_handler::FaultRegisters::for_testing(
+            js_segfault_with_registers as *const () as usize,
+            &vals,
+        );
+        crash_handler::crash_handler(
+            crash_handler::CrashReason::SegmentationFault(0xDEADBEEF),
+            crash_handler::TraceSeed::Fault(regs),
+        );
     }
 
     #[bun_jsc::host_fn]

@@ -122,6 +122,86 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
+describe("trace string v3/v4 (fault pc + register block)", () => {
+  // `noReportEnv` sets BUN_CRASH_REPORT_URL="" so the base URL is empty; the
+  // trace string is just `/<version>/<payload>` on its own line.
+  function traceStringPayload(stderr: string): string {
+    const m = stderr.match(/^ \/[^/\s]+\/(\S+)/m);
+    expect(m, `no trace string in stderr:\n${stderr}`).not.toBeNull();
+    return m![1];
+  }
+
+  test("version char is '3'/'4' and a fault context encodes pc + registers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "segfaultWithRegisters",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+
+    const payload = traceStringPayload(stderr);
+    // payload = <platform><cmd><version><sha7>... ; version char is at index 2.
+    expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
+
+    // Strip any trailing `/view` so the suffix assertions see only the
+    // encoded body.
+    const body = payload.replace(/\/view$/, "");
+
+    // Reason code '2' (SegmentationFault) precedes the fault address. After
+    // the two-VLQ fault address the v3 block begins: one StackLine for the
+    // fault pc (always present, so never `_` here), then VLQ(4)='I' for the
+    // four synthetic registers, then eight VLQs of register halves.
+    // v1/v2 would end immediately after the fault-address VLQs.
+    const reasonIdx = body.lastIndexOf("2A");
+    expect(reasonIdx, `no segfault reason in payload=${body}`).toBeGreaterThan(0);
+    const afterReason = body.slice(reasonIdx);
+    // Reason char '2' + write_u64_as_two_vlqs(0xDEADBEEF) is at most 9 bytes
+    // ('2' + VLQ(0)=1 + VLQ(i32)<=7). v3 must have substantially more after
+    // it: a StackLine (>=1 byte) + 'I' + 8 VLQs (>=8 bytes).
+    expect(
+      afterReason.length,
+      `v3 register block missing; tail=${afterReason}`,
+    ).toBeGreaterThanOrEqual(9 + 1 + 1 + 8);
+    // Register count VLQ(4)='I' must appear in the tail.
+    expect(afterReason).toContain("I");
+
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("non-fault crashes encode an empty register block (`_A` suffix)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "outOfMemory",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+
+    const payload = traceStringPayload(stderr);
+    expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
+
+    const body = payload.replace(/\/view$/, "");
+    // OutOfMemory reason code is '9' with no trailing data in v1; v3 appends
+    // the empty register block: '_' (no pc) + 'A' (VLQ 0 = no registers).
+    expect(body.endsWith("9_A"), `payload=${body}`).toBe(true);
+
+    expect(exitCode).not.toBe(0);
+  });
+});
+
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack
   // trace remappings will stop working.

@@ -1,4 +1,5 @@
 import { spawnSync, which } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
@@ -114,6 +115,37 @@ it("process.chdir() on root dir", () => {
     expect(process.cwd()).toBe(root);
     process.chdir(cwd);
     expect(process.cwd()).toBe(cwd);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+// Windows stores each drive's cwd in a hidden `=X:` env var that
+// SetCurrentDirectoryW does not update; process.chdir must write it (as
+// libuv's uv_chdir does) so drive-relative paths see the new directory.
+it.skipIf(!isWindows)("process.chdir() updates the per-drive cwd environment variable on Windows", () => {
+  const k32 = dlopen("kernel32.dll", {
+    GetEnvironmentVariableW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
+  });
+  const readDriveCwd = drive => {
+    const name = new Uint16Array([0x3d /* = */, drive.charCodeAt(0), 0x3a /* : */, 0]);
+    const buf = new Uint16Array(32768);
+    const n = k32.symbols.GetEnvironmentVariableW(name, buf, buf.length);
+    if (n === 0 || n >= buf.length) return undefined;
+    return String.fromCharCode(...buf.subarray(0, n));
+  };
+
+  const cwd = process.cwd();
+  using dir = tempDir("chdir-drive-env", { "placeholder.txt": "" });
+  const target = String(dir);
+  const drive = target[0].toUpperCase();
+  try {
+    process.chdir(target);
+    const got = readDriveCwd(drive);
+    expect(got?.toLowerCase()).toBe(process.cwd().toLowerCase());
+
+    process.chdir(cwd);
+    expect(readDriveCwd(drive)?.toLowerCase()).toBe(cwd.toLowerCase());
   } finally {
     process.chdir(cwd);
   }

@@ -4496,6 +4496,34 @@ mod windows_impl {
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
         }
+        // `SetCurrentDirectoryW` does not update the hidden per-drive `=X:`
+        // env var. Mirror libuv's `uv_chdir`: re-read the resolved cwd and, if
+        // it begins with a drive letter, write it to `=X:`.
+        let len =
+            unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
+        if len != 0 && (len as usize) < wbuf.len() {
+            let mut len = len as usize;
+            if len > 3 && (wbuf[len - 1] == b'\\' as u16 || wbuf[len - 1] == b'/' as u16) {
+                len -= 1;
+            }
+            wbuf[len] = 0;
+            if len >= 2 && wbuf[1] == b':' as u16 {
+                let d = wbuf[0];
+                let drive = if (b'A' as u16..=b'Z' as u16).contains(&d) {
+                    Some(d)
+                } else if (b'a' as u16..=b'z' as u16).contains(&d) {
+                    Some(d - (b'a' as u16) + (b'A' as u16))
+                } else {
+                    None
+                };
+                if let Some(drive) = drive {
+                    let name: [u16; 4] = [b'=' as u16, drive, b':' as u16, 0];
+                    unsafe {
+                        w::kernel32::SetEnvironmentVariableW(name.as_ptr(), wbuf.as_ptr());
+                    }
+                }
+            }
+        }
         Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {

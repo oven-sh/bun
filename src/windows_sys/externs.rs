@@ -822,7 +822,7 @@ pub mod kernel32 {
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
         CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SYSTEM_INFO,
-        SetCurrentDirectoryW, SetFilePointerEx,
+        SetCurrentDirectoryW, SetEnvironmentVariableW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
@@ -1387,6 +1387,8 @@ unsafe extern "system" {
     pub fn SetCurrentDirectoryW(lpPathName: LPCWSTR) -> BOOL;
 
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
+
+    pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
 

@@ -108,6 +108,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSymbolObject,
     return JSValue::encode(
         jsBoolean(globalObject->symbolObjectStructure() == cell->structure()));
 }
+extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
+
+// util.isDeepStrictEqual / assert.deepStrictEqual: node semantics, including
+// the [[Prototype]] identity check that Bun.deepEquals(a, b, true) omits.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    bool result = Bun__deepEqualsNodeStrict(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(result));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe))

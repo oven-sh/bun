@@ -1036,11 +1036,16 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 // for validateOneOf
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
 {
-    WTF::StringBuilder builder;
-    builder.append("The argument '"_s);
-    JSValueToStringSafe(globalObject, builder, name);
+    WTF::StringBuilder nameBuilder;
+    JSValueToStringSafe(globalObject, nameBuilder, name);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto nameString = nameBuilder.toString();
 
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    // Node treats dotted names ('options.diff') as properties, plain names as arguments.
+    builder.append(nameString.contains('.') ? "property '"_s : "argument '"_s);
+    builder.append(nameString);
     builder.append("' "_s);
     builder.append(reason);
     unsigned length = oneOf->length();

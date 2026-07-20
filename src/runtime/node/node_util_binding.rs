@@ -146,6 +146,13 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     pub(crate) fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
 
+        // A lookbehind split emits no trailing empty field when the input ends
+        // with '\n' (but "" still splits to [""]).
+        if start == self.buffer.len() && start != 0 {
+            self.index = None;
+            return None;
+        }
+
         if let Some(delim_start) = self.buffer[start..]
             .iter()
             .position(|&b| b == T::from(b'\n'))

@@ -1537,6 +1537,30 @@ impl VirtualMachine {
         self.has_run_cleanup_hooks = true;
     }
 
+    /// Final collection for `bun test`'s exit paths, which never run
+    /// `on_exit()`. ASAN lanes leak-check at exit (ASAN_OPTIONS
+    /// `detect_leaks=1` + `abort_on_error=1`), and without a collection
+    /// between the last test and `exit()`, the final file's GC-finalizer-owned
+    /// Rust boxes (bun:test `Expect` wrappers and the `RefData` pinning that
+    /// file's `BunTestCell`) are still malloc-live when LSan scans, aborting a
+    /// green run. No-op in non-ASAN builds, which skip all teardown for exit
+    /// speed. https://github.com/oven-sh/bun/issues/32176
+    pub fn collect_for_leak_check_at_exit(&mut self) {
+        debug_assert!(self.is_shutting_down());
+        if !bun_core::env::ENABLE_ASAN {
+            return;
+        }
+        // Deferred napi finalizers enqueued by the sweep below (non-
+        // experimental addons route GC finalizers through
+        // `NapiFinalizerTask::schedule`) would be parked on
+        // `RareData::cleanup_hooks`, which this exit path never drains.
+        // Marking the list as done routes them to schedule()'s
+        // drop-immediately branch instead, same as finalizers deferred
+        // during `destructOnExit()`'s collection after `on_exit()` ran.
+        self.has_run_cleanup_hooks = true;
+        let _ = self.garbage_collect(true);
+    }
+
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
         // FIXME: we should be doing this, but we're not, but unfortunately

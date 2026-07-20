@@ -126,3 +126,10 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# bun test at exit: the test/describe/expect function wrappers of the final
+# (still gcProtected) global are alive, but their native ScopeFunctions boxes
+# are pointed to only from JSC heap cells, which LSan cannot scan, so it
+# reports them as leaks. They are freed by GC finalizers whenever a global
+# dies (isolation swap, BUN_DESTRUCT_VM_ON_EXIT teardown). Per-global, bounded.
+# https://github.com/oven-sh/bun/issues/32176
+leak:scope_functions::ScopeFunctions

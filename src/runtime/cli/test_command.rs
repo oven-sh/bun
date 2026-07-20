@@ -2936,6 +2936,7 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        vm.collect_for_leak_check_at_exit();
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;

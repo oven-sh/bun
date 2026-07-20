@@ -258,8 +258,9 @@ it("Object.defineProperty on process.env rejects accessor and partial descriptor
 });
 
 // process.env is no longer a JSFinalObject; it must still structured-clone as
-// a plain object so postMessage / workerData keep working like Node.
-it("structuredClone(process.env) produces a plain-object snapshot", () => {
+// a plain object so postMessage / workerData keep working like Node. On Windows
+// process.env is a Proxy and the serializer rejects Proxy objects (pre-existing).
+it.skipIf(isWindows)("structuredClone(process.env) produces a plain-object snapshot", () => {
   process.env.__SC_PROBE = "hello";
   try {
     const clone = structuredClone(process.env);

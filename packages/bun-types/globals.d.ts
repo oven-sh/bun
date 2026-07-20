@@ -2006,6 +2006,27 @@ interface BunFetchRequestInit extends RequestInit {
   unix?: string;
 
   /**
+   * Record & replay this request through a persistent store. When a request
+   * with the same method, URL, headers and body has been recorded before, the
+   * recorded Response is returned without touching the network.
+   *
+   * - `{ type: "dir", path }` writes one JSON file per unique request under
+   *   `path`. Non-text bodies are base64-encoded. Designed for committing
+   *   fixtures alongside tests and for agents to inspect traffic.
+   * - `{ type: "memory", ttl?, max? }` keeps entries in a process-global
+   *   hash map. `ttl` is in milliseconds; `max` bounds the entry count.
+   *
+   * The process-wide default can be set with `--fetch-cache=<path|memory>`
+   * or `[fetch] cache` in `bunfig.toml`; this per-call option overrides it.
+   *
+   * Not part of the Fetch API specification.
+   * @experimental
+   */
+  store?:
+    | { type: "dir"; path: string }
+    | { type: "memory"; ttl?: number; max?: number };
+
+  /**
    * Force the underlying HTTP version. `"http2"` advertises only `h2` in
    * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
    * server doesn't select it. `"http1.1"` pins the request to HTTP/1.1,

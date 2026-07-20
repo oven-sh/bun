@@ -124,6 +124,10 @@ pub struct FetchTasklet {
 
     pub tracker: AsyncTaskTracker,
 
+    /// Record/replay store carried from `fetch()`; consumed once the body is
+    /// fully buffered (`on_body_received` with `!has_more`).
+    pub store_request: Option<(super::store::FetchStore, super::store::StoredRequest)>,
+
     pub ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
 
@@ -487,6 +491,7 @@ impl FetchTasklet {
 
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
+        self.store_request = None;
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -755,6 +760,7 @@ impl FetchTasklet {
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
             buffer_reset.set(false);
             if !self.result.has_more {
+                self.persist_to_store();
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
                 // `body` (&mut response.body.value) and `get_fetch_headers()`
@@ -1736,6 +1742,7 @@ impl FetchTasklet {
             return BodyValue::Locked(pending);
         }
 
+        self.persist_to_store();
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
         let response = BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
@@ -1744,6 +1751,24 @@ impl FetchTasklet {
         self.scheduled_response_buffer = MutableString::default();
 
         response
+    }
+
+    /// Commit the record/replay store entry once a full buffered body is
+    /// available. Called from both fast-path (`to_body_value`, body arrived
+    /// with headers) and slow-path (`on_body_received`, body streamed in).
+    fn persist_to_store(&mut self) {
+        let Some((store_, req)) = self.store_request.take() else {
+            return;
+        };
+        let Some(metadata) = self.metadata.as_ref() else {
+            return;
+        };
+        let mut resp = super::store::capture_response(
+            metadata,
+            self.scheduled_response_buffer.list.as_slice(),
+        );
+        resp.redirected = self.result.redirected;
+        store_.persist(&req, resp);
     }
 
     fn to_response(&mut self) -> Response {
@@ -1914,6 +1939,7 @@ impl FetchTasklet {
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
             tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
+            store_request: fetch_options.store_request,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
@@ -2578,6 +2604,7 @@ pub struct FetchOptions {
     pub force_http1: bool,
     pub is_node_http_client: bool,
     pub compress: Option<http::compress_body::CompressOption>,
+    pub store_request: Option<(super::store::FetchStore, super::store::StoredRequest)>,
 }
 
 impl Default for FetchOptions {
@@ -2614,6 +2641,7 @@ impl Default for FetchOptions {
             force_http1: false,
             is_node_http_client: false,
             compress: None,
+            store_request: None,
         }
     }
 }

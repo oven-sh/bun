@@ -254,6 +254,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--conditions <STR>...             Pass custom conditions to resolve"),
     parse_param!("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading"),
     parse_param!(
+        "--fetch-cache <STR>               Record & replay fetch() responses. Pass \"memory\" or a directory path"
+    ),
+    parse_param!(
         "--experimental-http2-fetch        Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1"
     ),
     parse_param!(
@@ -1102,6 +1105,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
+        if let Some(value) = args.option(b"--fetch-cache") {
+            ctx.runtime_options.fetch_store =
+                bun_options_types::context::FetchStoreConfig::parse(value);
+        }
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");

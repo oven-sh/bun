@@ -150,6 +150,15 @@ depth = 3
 
 Higher values show more nested properties but may produce verbose output for complex objects. The `--console-depth` CLI flag overrides this setting.
 
+### `fetch.cache`
+
+Enable a process-wide record/replay store for `fetch()`. Pass `"memory"` for an in-process cache, or a directory path to write one JSON file per unique request. The `--fetch-cache` CLI flag overrides this setting, and a per-call `store` option on `fetch()` overrides both.
+
+```toml title="bunfig.toml" icon="settings"
+[fetch]
+cache = "./.bun-fetch-cache"
+```
+
 ## Serve
 
 The `[serve]` section configures `Bun.serve` and `bun run` when serving HTTP.

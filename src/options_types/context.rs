@@ -529,6 +529,38 @@ pub struct DebuggerEnable {
     pub set_breakpoint_on_first_line: bool,
 }
 
+/// Process-wide default for `fetch()`'s record/replay store. Set by
+/// `--fetch-cache` / `[fetch] cache` in bunfig; a per-call `store` option
+/// overrides it.
+#[derive(Clone, Default)]
+pub enum FetchStoreConfig {
+    #[default]
+    None,
+    Dir {
+        path: Box<[u8]>,
+    },
+    Memory {
+        ttl_ms: u32,
+        max: u32,
+    },
+}
+
+impl FetchStoreConfig {
+    /// Parse the `--fetch-cache=` value / bunfig string form:
+    /// `"memory"` or a directory path.
+    pub fn parse(value: &[u8]) -> Self {
+        if value.is_empty() {
+            return FetchStoreConfig::None;
+        }
+        if value == b"memory" {
+            return FetchStoreConfig::Memory { ttl_ms: 0, max: 0 };
+        }
+        FetchStoreConfig::Dir {
+            path: value.to_vec().into_boxed_slice(),
+        }
+    }
+}
+
 pub struct RuntimeOptions {
     pub smol: bool,
     pub debugger: Debugger,
@@ -539,6 +571,7 @@ pub struct RuntimeOptions {
     pub preconnect: Vec<Box<[u8]>>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
+    pub fetch_store: FetchStoreConfig,
     pub dns_result_order: Box<[u8]>,
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
@@ -603,6 +636,7 @@ impl Default for RuntimeOptions {
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,
+            fetch_store: FetchStoreConfig::None,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
             preserve_symlinks_main: false,

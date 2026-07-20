@@ -38,6 +38,9 @@ pub mod fetch_tasklet;
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
 
+#[path = "fetch/store.rs"]
+pub mod store;
+
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -81,6 +84,7 @@ use bun_url::URL as ZigURL;
 
 pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+use self::store::FetchStore;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -998,6 +1002,34 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
         break 'extract_verbose verbose;
     };
+
+    // store: { type: "dir" | "memory", ... } | undefined
+    let fetch_store: Option<FetchStore> = 'extract_store: {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(store_val) = obj.get(global_this, "store")? {
+                    if !store_val.is_undefined_or_null() {
+                        break 'extract_store FetchStore::from_js(global_this, store_val)?;
+                    }
+                }
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+        // No per-call store: fall back to the process-wide --fetch-cache /
+        // bunfig [fetch] cache setting.
+        bun_options_types::context::try_get()
+            .and_then(|ctx| FetchStore::from_config(&ctx.runtime_options.fetch_store))
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
 
     // proxy: string | { url: string, headers?: Headers } | undefined;
     let mut proxy_headers: Option<Headers> = None;
@@ -2040,6 +2072,40 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // Record/replay store: key the request now that method/url/headers/body
+    // are finalised, and either short-circuit on a hit or carry the key into
+    // the tasklet so the response can be persisted once fully buffered.
+    let store_request: Option<(FetchStore, store::StoredRequest)> = match fetch_store {
+        Some(store_) if !url.is_s3() => {
+            let body_bytes: Option<&[u8]> = match &body {
+                HTTPRequestBody::AnyBlob(_) => {
+                    let s = body.slice();
+                    if s.is_empty() { None } else { Some(s) }
+                }
+                _ => None,
+            };
+            let empty_headers;
+            let req = store::build_request(
+                method,
+                url.href,
+                match headers.as_ref() {
+                    Some(h) => h,
+                    None => {
+                        empty_headers = Headers::default();
+                        &empty_headers
+                    }
+                },
+                body_bytes,
+            );
+            if let Some(hit) = store_.lookup(req.key) {
+                body.detach();
+                return Ok(store::response_from_hit(global_this, hit));
+            }
+            Some((store_, req))
+        }
+        _ => None,
+    };
+
     // Only create this after we have validated all the input.
     // or else we will leak it
     let promise = jsc::JSPromiseStrong::init(global_this);
@@ -2097,6 +2163,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         force_http1,
         is_node_http_client: ALLOW_GET_BODY,
         compress,
+        store_request,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()
         } else {

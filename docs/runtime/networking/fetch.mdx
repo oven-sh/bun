@@ -445,6 +445,24 @@ BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
 
 The max value for this limit is 65,535. The maximum port number is 65,535, so it's quite difficult for any one computer to exceed this limit.
 
+### Recording & replaying requests
+
+Bun can record every `fetch()` request/response pair and replay the recorded response on the next identical request, skipping the network entirely. This is designed for writing tests against third-party APIs and for agents that need deterministic traffic.
+
+```ts
+// Per request: write one JSON file per unique request under ./fixtures
+const res = await fetch("https://api.example.com/users/1", {
+  store: { type: "dir", path: "./fixtures" },
+});
+
+// Per request: in-memory, with optional TTL (ms) and max entries
+const res2 = await fetch(url, { store: { type: "memory", ttl: 60_000, max: 1000 } });
+```
+
+Two requests share a cache entry when their method, URL, request headers and (buffered) request body are identical. For the `dir` backend, each entry is a standalone JSON file containing the full request and response; bodies that are not valid UTF-8 text are base64-encoded.
+
+To enable the store for every `fetch()` in a process, use `bun --fetch-cache=<path>` (or `--fetch-cache=memory`), or set `cache` under `[fetch]` in `bunfig.toml`.
+
 ### Response buffering
 
 The fastest way to read the response body is to use one of these methods:

@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "../../../harness";
+import { isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -401,7 +401,8 @@ describe("Bun.serve hostname and port validation", () => {
 });
 
 describe("Bun.serve hostname coercion", () => {
-  test("number hostnames coerce to string", () => {
+  // Windows can't bind to hostname "0" (POSIX resolves it to 0.0.0.0).
+  test.skipIf(isWindows)("number hostnames coerce to string", () => {
     using server = serve({
       // @ts-expect-error - Testing runtime coercion
       hostname: 0, // Should coerce to "0"

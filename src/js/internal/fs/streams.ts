@@ -445,6 +445,9 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write && !writev) {
       throw $ERR_INVALID_ARG_TYPE("options.fs.write", "function", write);
     }
+    // It's enough to override either, in which case only one will be used.
+    if (!write) this._write = null;
+    if (!writev) this._writev = null;
   } else {
     this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");

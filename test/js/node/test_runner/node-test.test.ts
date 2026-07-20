@@ -518,7 +518,8 @@ test("run(): an uncaught exception during a pending body fails that test instead
     `,
     "driver.mjs": `
       import { run } from 'node:test';
-      const stream = run({ files: [new URL('./fixture.test.mjs', import.meta.url).pathname] });
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./fixture.test.mjs', import.meta.url))] });
       const fails = [];
       stream.on('test:fail', d => fails.push({ name: d.name, failureType: d.details?.error?.failureType }));
       for await (const _ of stream);
@@ -565,7 +566,8 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
     `,
     "driver.mjs": `
       import { run } from 'node:test';
-      const stream = run({ files: [new URL('./outer.test.mjs', import.meta.url).pathname] });
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./outer.test.mjs', import.meta.url))] });
       let passed = 0, failed = 0;
       stream.on('test:pass', () => passed++);
       stream.on('test:fail', () => failed++);

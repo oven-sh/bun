@@ -29,14 +29,13 @@
 //! Installed lazily on the first c-ares channel creation, lives for the
 //! process, does not keep the event loop alive.
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use bun_jsc::virtual_machine::VirtualMachine;
 
 bun_output::declare_scope!(DNSConfigWatcher, visible);
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
-static INSTALLED: AtomicBool = AtomicBool::new(false);
 
 #[inline]
 pub fn generation() -> u64 {
@@ -52,13 +51,12 @@ pub fn bump_generation() {
     bun_output::scoped_log!(DNSConfigWatcher, "generation bumped");
 }
 
-/// Arm the OS watcher once per process. Best-effort: if the backend can't
-/// register (readonly `/etc`, seccomp, unsupported OS) we silently fall back
-/// to the reactive loopback check.
+/// Arm the OS watcher. On POSIX the FilePoll lives in this VM's hive, so the
+/// install is per-VM (a Worker's watcher dies with the Worker rather than
+/// masking the main thread's). On Windows `NotifyIpInterfaceChange` is
+/// process-scoped, so a process-global flag is correct. Best-effort: if the
+/// backend can't register we silently fall back to the reactive loopback check.
 pub fn install(vm: &VirtualMachine) {
-    if INSTALLED.swap(true, Ordering::Relaxed) {
-        return;
-    }
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     posix::install(vm);
     #[cfg(windows)]
@@ -154,6 +152,13 @@ mod posix {
     }
 
     pub(super) fn install(vm: &VirtualMachine) {
+        if VirtualMachine::get_mut()
+            .rare_data()
+            .dns_config_watcher_slot()
+            .is_some()
+        {
+            return;
+        }
         let Some(fd) = open_watch_fd() else {
             return;
         };
@@ -173,6 +178,8 @@ mod posix {
         }
         // SAFETY: `poll` just successfully registered; exclusive on the JS thread.
         unsafe { (*poll).disable_keeping_process_alive(ctx) };
+        *VirtualMachine::get_mut().rare_data().dns_config_watcher_slot() =
+            NonNull::new(poll.cast());
     }
 
     /// `__bun_run_file_poll` dispatch target for `poll_tag::DNS_CONFIG`.
@@ -240,11 +247,14 @@ pub use posix::on_poll;
 #[cfg(windows)]
 mod windows {
     use core::ffi::c_void;
+    use core::sync::atomic::{AtomicBool, Ordering};
 
     use bun_jsc::virtual_machine::VirtualMachine;
 
     type HANDLE = *mut c_void;
     const AF_UNSPEC: u16 = 0;
+
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
 
     unsafe extern "system" {
         fn NotifyIpInterfaceChange(
@@ -261,6 +271,9 @@ mod windows {
     }
 
     pub(super) fn install(_vm: &VirtualMachine) {
+        if INSTALLED.swap(true, Ordering::Relaxed) {
+            return;
+        }
         let mut handle: HANDLE = core::ptr::null_mut();
         // SAFETY: FFI; `handle` is a stack out-param, callback has `system` ABI.
         // Handle is intentionally leaked; the watch lives for the process.

@@ -263,6 +263,11 @@ pub struct RareData {
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
     pub memory_pressure_watcher: Option<NonNull<c_void>>,
 
+    /// `bun_runtime::dns_jsc::config_watcher` FilePoll — erased; lazy-init on
+    /// this VM's first c-ares channel. Per-VM so a Worker's watcher dies with
+    /// the Worker instead of masking the main thread's.
+    pub dns_config_watcher: Option<NonNull<c_void>>,
+
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
     /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
@@ -325,6 +330,7 @@ impl Default for RareData {
             mime_types: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
+            dns_config_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
@@ -633,6 +639,12 @@ impl RareData {
     #[inline]
     pub fn memory_pressure_watcher_slot(&mut self) -> &mut Option<NonNull<c_void>> {
         &mut self.memory_pressure_watcher
+    }
+
+    /// Raw slot — lazy-init body lives in `bun_runtime::dns_jsc::config_watcher`.
+    #[inline]
+    pub fn dns_config_watcher_slot(&mut self) -> &mut Option<NonNull<c_void>> {
+        &mut self.dns_config_watcher
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────

@@ -4823,7 +4823,6 @@ impl Resolver {
             return;
         };
         if !Self::channel_servers_are_loopback_fallback(channel) {
-            self.is_servers_default.set(false);
             return;
         }
         bun_output::scoped_log!(DNSResolver, "ensure_servers: recreating channel");

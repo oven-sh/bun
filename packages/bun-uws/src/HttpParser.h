@@ -102,6 +102,10 @@ struct HttpResponseData;
          * llhttp reports this as HPE_STRICT "Expected LF after chunk data",
          * distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE). */
         HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
+        /* A Content-Length field appeared in the trailer section of a chunked
+         * body. llhttp reports HPE_INVALID_CONTENT_LENGTH ("Content-Length can't
+         * be present with Transfer-Encoding"). node:http compat only. */
+        HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
     };
 
 
@@ -545,21 +549,40 @@ struct HttpResponseData;
          * message is completed. Node's llhttp fails the message on a malformed trailer
          * field line (clientError HPE_INVALID_HEADER_TOKEN) instead of completing it
          * with req.trailers silently dropped; a CTL byte in a value is only accepted
-         * under insecureHTTPParser, exactly like a header value. An empty section
-         * (bare CRLF, no trailers) is valid.
+         * under insecureHTTPParser, exactly like a header value. A Content-Length or
+         * Transfer-Encoding field in the trailer section is rejected exactly like
+         * llhttp does (it runs trailers through the same header state machine, so
+         * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
+         * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING). An empty
+         * section (bare CRLF, no trailers) is valid.
          *
          * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
          * more valid fields than that followed by a malformed line is accepted where node
          * still errors; reaching it requires a deliberately padded (but size-capped)
          * section, and rejecting it would need a second scanning mode. */
-        static bool validNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser) {
+        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser) {
             if (!section || section->size() <= 2) {
-                return true;
+                return HTTP_PARSER_ERROR_NONE;
             }
             /* parseTrailerFields consumes (post-pads) its input, so validate a copy. */
             std::string copy(*section);
             std::pair<std::string_view, std::string_view> scratch[MAX_TRAILER_FIELDS];
-            return parseTrailerFields(copy, scratch, useInsecureHTTPParser) > 0;
+            unsigned count = parseTrailerFields(copy, scratch, useInsecureHTTPParser);
+            if (count == 0) {
+                return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
+            }
+            if (!useInsecureHTTPParser) {
+                for (unsigned i = 0; i < count; i++) {
+                    std::string_view name = scratch[i].first;
+                    if (name.length() == 14 && !strncasecmp(name.data(), "content-length", 14)) {
+                        return HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH;
+                    }
+                    if (name.length() == 17 && !strncasecmp(name.data(), "transfer-encoding", 17)) {
+                        return HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING;
+                    }
+                }
+            }
+            return HTTP_PARSER_ERROR_NONE;
         }
 
     private:
@@ -1278,10 +1301,12 @@ struct HttpResponseData;
                         if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
-                        /* The fin dispatch completes the message: a malformed trailer field
-                         * line must fail it first (node: HPE_INVALID_HEADER_TOKEN). */
-                        if (IsNodeHttp && chunk.length() == 0 && !validNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
-                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                        /* The fin dispatch completes the message: a malformed or
+                         * framing-field trailer must fail it first (node: HPE_*). */
+                        if (IsNodeHttp && chunk.length() == 0) {
+                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
+                            }
                         }
                         void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                         if (returnedUser != user) {
@@ -1359,10 +1384,12 @@ public:
                     if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
-                    /* The fin dispatch completes the message: a malformed trailer field
-                     * line must fail it first (node: HPE_INVALID_HEADER_TOKEN). */
-                    if (IsNodeHttp && chunk.length() == 0 && !validNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
-                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                    /* The fin dispatch completes the message: a malformed or
+                     * framing-field trailer must fail it first (node: HPE_*). */
+                    if (IsNodeHttp && chunk.length() == 0) {
+                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
+                        }
                     }
                     void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                     if (returnedUser != user) {
@@ -1442,10 +1469,12 @@ public:
                             if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }
-                            /* The fin dispatch completes the message: a malformed trailer field
-                             * line must fail it first (node: HPE_INVALID_HEADER_TOKEN). */
-                            if (IsNodeHttp && chunk.length() == 0 && !validNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
-                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                            /* The fin dispatch completes the message: a malformed or
+                             * framing-field trailer must fail it first (node: HPE_*). */
+                            if (IsNodeHttp && chunk.length() == 0) {
+                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
+                                }
                             }
                             void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                             if (returnedUser != user) {

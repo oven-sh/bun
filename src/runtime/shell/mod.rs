@@ -137,7 +137,7 @@ pub mod subproc;
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
 pub use bun_shell_parser::{
-    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, assert_special_char, escape_8bit,
+    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, escape_8bit,
     needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 

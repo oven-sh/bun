@@ -4200,10 +4200,6 @@ pub const SPECIAL_CHARS_TABLE: ByteTable = {
     ByteTable(table)
 };
 
-pub fn assert_special_char(c: u8) {
-    debug_assert!(SPECIAL_CHARS_TABLE.is_set(c as usize));
-}
-
 /// Characters that need to be backslashed inside double quotes
 pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 

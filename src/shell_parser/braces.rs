@@ -11,13 +11,11 @@ use smallvec::SmallVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Moved from `bun_shell`:
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
+//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter
 // These live here so `bun_shell` (higher tier) can depend on `shell_parser`
 // without a back-edge. `bun_shell` re-exports these under its old paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use bun_core::strings;
-use bun_core::strings::CodePoint; // i32
 use bun_core::strings::{CodepointIterator, Cursor};
 
 /// Encoding of the shell input bytes being expanded.
@@ -350,26 +348,6 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
             escaped: true,
         })
     }
-}
-
-// ─── has_eq_sign ───────────────────────────────────────────────────────────
-
-/// Returns the index of the first `=` in the string, if any
-/// (codepoint-aware for non-ASCII input).
-pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
-    if strings::is_all_ascii(str_) {
-        return bun_core::strings::index_of_char(str_, b'=');
-    }
-
-    // TODO actually i think that this can also use the simd stuff
-    let iter = CodepointIterator::init(str_);
-    let mut cursor = Cursor::default();
-    while CodepointIterator::next(&iter, &mut cursor) {
-        if cursor.c == b'=' as CodePoint {
-            return Some(cursor.i);
-        }
-    }
-    None
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -237,6 +237,113 @@ test("insecureHTTPParser accepts a CTL byte in a trailer value like node", async
   expect(result).toEqual({ trailers: { "x-t": "a\bb" }, raw: ["X-T", "a\bb"] });
 });
 
+// RFC 9110 6.5.1: framing fields (Content-Length, Transfer-Encoding) are forbidden
+// in trailers. llhttp runs trailers through the same header state machine and the
+// already-set F_CHUNKED collides, so node rejects both before the body completes.
+for (const { field, value, code } of [
+  { field: "Content-Length", value: "5", code: "HPE_INVALID_CONTENT_LENGTH" },
+  { field: "content-length", value: "5", code: "HPE_INVALID_CONTENT_LENGTH" },
+  { field: "Transfer-Encoding", value: "chunked", code: "HPE_INVALID_TRANSFER_ENCODING" },
+  { field: "Transfer-Encoding", value: "gzip", code: "HPE_INVALID_TRANSFER_ENCODING" },
+  { field: "transfer-encoding", value: "chunked", code: "HPE_INVALID_TRANSFER_ENCODING" },
+]) {
+  test(`${field}: ${value} in trailer section fires clientError ${code}`, async () => {
+    const { promise, resolve } = Promise.withResolvers<{ err?: any; trailers?: any }>();
+    await using server = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        resolve({ trailers: { ...req.trailers } });
+        res.end("ok");
+      });
+    });
+    server.on("clientError", (err, socket) => {
+      socket.destroy();
+      resolve({ err });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        "POST /a HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" +
+          `5\r\nHELLO\r\n0\r\n${field}: ${value}\r\n\r\n`,
+      );
+    });
+    socket.on("error", () => {});
+    const result = await promise;
+    socket.destroy();
+    expect(result.err?.code).toBe(code);
+    expect(result.trailers).toBeUndefined();
+  });
+}
+
+test("framing field in trailers is rejected before a pipelined follow-up is served", async () => {
+  const paths: string[] = [];
+  await using server = createServer((req, res) => {
+    paths.push(req.url!);
+    req.resume();
+    req.on("end", () => res.end(`u=${req.url} trailers=${JSON.stringify(req.trailers)}`));
+  });
+  server.on("clientError", (err, socket) => {
+    try {
+      socket.end(`HTTP/1.1 400 x\r\nx-cerr: ${(err as any).code}\r\nconnection: close\r\n\r\n`);
+    } catch {}
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /a HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" +
+        "5\r\nHELLO\r\n0\r\nContent-Length: 5\r\n\r\n" +
+        "GET /after HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let wire = "";
+  socket.on("data", d => (wire += d));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(wire));
+  const response = await promise;
+  expect(response).toContain("x-cerr: HPE_INVALID_CONTENT_LENGTH");
+  expect(response).not.toContain('content-length":"5"');
+  expect(response).not.toContain("u=/after");
+  expect(paths).toEqual(["/a"]);
+});
+
+test("insecureHTTPParser accepts Content-Length / Transfer-Encoding in trailers like node", async () => {
+  for (const { field, value } of [
+    { field: "Content-Length", value: "5" },
+    { field: "Transfer-Encoding", value: "chunked" },
+  ]) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ trailers: any; raw: string[] }>();
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      req.resume();
+      req.on("end", () => {
+        resolve({ trailers: { ...req.trailers }, raw: [...req.rawTrailers] });
+        res.end("ok");
+      });
+    });
+    server.on("clientError", (err, socket) => {
+      socket.destroy();
+      reject(err);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" +
+          `5\r\nHELLO\r\n0\r\n${field}: ${value}\r\n\r\n`,
+      );
+    });
+    socket.on("error", reject);
+    const result = await promise;
+    socket.destroy();
+    expect(result).toEqual({ trailers: { [field.toLowerCase()]: value }, raw: [field, value] });
+  }
+});
+
 test("createServer({maxHeaderSize:0}) still bounds trailer section", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<any>();
   await using server = createServer({ maxHeaderSize: 0 }, (req, res) => {

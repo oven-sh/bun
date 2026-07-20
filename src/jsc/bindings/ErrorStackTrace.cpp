@@ -521,12 +521,7 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
         return String();
     }
 
-    auto* jsExecutable = function->jsExecutable();
-    if (!jsExecutable) {
-        return String();
-    }
-
-    return Zig::sourceURL(jsExecutable->source());
+    return Zig::sourceURL(function->jsExecutable()->source());
 }
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
@@ -539,12 +534,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        auto* jsExecutable = uncheckedDowncast<JSC::FunctionExecutable>(executable);
-        if (!jsExecutable) {
-            return String();
-        }
-
-        return jsExecutable->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
     }
 
     return String();
@@ -590,17 +580,12 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         if (functionName.isEmpty()) {
             if (jstype == JSC::JSFunctionType) {
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                if (function) {
-                    functionName = function->nameWithoutGC(vm);
-                    if (functionName.isEmpty() && !function->isHostFunction()) {
-                        functionName = function->jsExecutable()->ecmaName().string();
-                    }
+                functionName = function->nameWithoutGC(vm);
+                if (functionName.isEmpty() && !function->isHostFunction()) {
+                    functionName = function->jsExecutable()->ecmaName().string();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
-                auto* function = uncheckedDowncast<JSC::InternalFunction>(object);
-                if (function) {
-                    functionName = function->name();
-                }
+                functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
             }
         }
     }
@@ -661,22 +646,17 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                 // Lastly, try type-specific properties.
                 if (jstype == JSC::JSFunctionType) {
                     auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                    if (function) {
-                        auto str = function->nameWithoutGC(vm);
-                        if (str.isEmpty() && !function->isHostFunction()) {
-                            setTypeFlagsIfNecessary();
-                            return function->jsExecutable()->ecmaName().string();
-                        }
+                    auto str = function->nameWithoutGC(vm);
+                    if (str.isEmpty() && !function->isHostFunction()) {
                         setTypeFlagsIfNecessary();
-                        return str;
+                        return function->jsExecutable()->ecmaName().string();
                     }
+                    setTypeFlagsIfNecessary();
+                    return str;
                 } else if (jstype == JSC::InternalFunctionType) {
-                    auto* function = uncheckedDowncast<JSC::InternalFunction>(object);
-                    if (function) {
-                        auto str = function->name();
-                        setTypeFlagsIfNecessary();
-                        return str;
-                    }
+                    auto str = uncheckedDowncast<JSC::InternalFunction>(object)->name();
+                    setTypeFlagsIfNecessary();
+                    return str;
                 }
             }
         }

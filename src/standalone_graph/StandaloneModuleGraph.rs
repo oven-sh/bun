@@ -23,6 +23,8 @@ use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
+bun_core::declare_scope!(StandaloneModuleGraph, hidden);
+
 // `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
 // set from `bun_runtime`, so it is modeled as an opaque erased pointer here.
 bun_opaque::opaque_ffi! {
@@ -2115,13 +2117,15 @@ impl StandaloneModuleGraph {
                     )
                 };
                 if rc != 0 {
-                    bun_core::debug_warn!(
+                    bun_core::scoped_log!(
+                        StandaloneModuleGraph,
                         "hintSourcePagesDontNeed: madvise failed errno={}",
                         bun_sys::last_errno()
                     );
                     return;
                 }
-                bun_core::debug_warn!(
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
                     "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
                     end - start
                 );

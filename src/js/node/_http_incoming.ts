@@ -424,9 +424,14 @@ function onDataIncomingMessage(
   // Incoming request-body bytes are socket activity: push the connection's
   // inactivity timeout (socket.setTimeout / server.timeout) further out, like
   // Node.js does for reads on the socket.
-  this.socket?._unrefTimer?.();
+  const socket = this.socket;
+  socket?._unrefTimer?.();
 
-  if (chunk && !this._dumped) this.push(chunk);
+  if (chunk && !this._dumped) {
+    // Like Node's parserOnBody: once the IncomingMessage buffer fills,
+    // pause the connection so it emits 'pause' and stops reading.
+    if (!this.push(chunk)) readStop(socket);
+  }
 
   if (isLast) {
     emitEOFIncomingMessage(this);
@@ -800,4 +805,4 @@ function onError(self, error, cb) {
   }
 }
 
-export { IncomingMessage, kReqShouldKeepAlive, readStart, readStop };
+export { IncomingMessage, kReqShouldKeepAlive, onDataIncomingMessage, readStart, readStop };

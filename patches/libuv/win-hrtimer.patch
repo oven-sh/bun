@@ -160,7 +160,7 @@ On older Windows, fall back to timeBeginPeriod(1).
 +/* Per-loop: create the high-res waitable timer + wait-completion packet and
 + * stash them on the loop's internal fields. hrtimer stays NULL on failure,
 + * which uv__poll treats as "use the plain GQCS ms timeout". */
-+static void uv__hrtimer_init(uv_loop_t* loop, uv__loop_internal_fields_t* lfields) {
++static void uv__hrtimer_init(uv__loop_internal_fields_t* lfields) {
 +  HANDLE pkt;
 +  if (!uv__have_hrtimer)
 +    return;
@@ -187,7 +187,7 @@ On older Windows, fall back to timeBeginPeriod(1).
    if (err)
      goto fail_async_init;
  
-+  uv__hrtimer_init(loop, lfields);
++  uv__hrtimer_init(lfields);
 +
    return 0;
  
@@ -205,17 +205,18 @@ On older Windows, fall back to timeBeginPeriod(1).
    uv_mutex_destroy(&lfields->loop_metrics.lock);
    uv__free(lfields);
    loop->internal_fields = NULL;
-@@ -463,6 +527,26 @@ static void uv__poll(uv_loop_t* loop, DWORD timeout) {
+@@ -463,6 +527,27 @@ static void uv__poll(uv_loop_t* loop, DWORD timeout) {
       */
      lfields->current_timeout = timeout;
  
 +    /* Arm the high-res waitable timer and associate it with this loop's IOCP;
 +     * it posts a NULL-overlapped completion (already treated as a pure wakeup
-+     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait. */
-+    if (timeout != 0 && timeout != INFINITE && lfields->hrtimer != NULL) {
++     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait.
++     * >100ms deadlines don't need sub-tick precision; skip the 3 syscalls. */
++    if (timeout - 1 < 100 && lfields->hrtimer != NULL) {
 +      LARGE_INTEGER due;
 +      due.QuadPart = -(LONGLONG) timeout * 10000;  /* relative, 100ns units */
-+      pNtCancelWaitCompletionPacket(lfields->hrtimer_pkt, FALSE);
++      pNtCancelWaitCompletionPacket(lfields->hrtimer_pkt, TRUE);
 +      if (SetWaitableTimer(lfields->hrtimer, &due, 0, NULL, NULL, FALSE) &&
 +          NT_SUCCESS(pNtAssociateWaitCompletionPacket(lfields->hrtimer_pkt,
 +                                                      loop->iocp,

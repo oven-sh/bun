@@ -154,29 +154,13 @@ impl<'a> Entry<'a> {
             }
             return None;
         } else if let Some(url_idx) = strings::index_of(unquoted, b"@https://") {
-            let after_at = url_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
+            return Some(&unquoted[url_idx + 1..]);
         } else if let Some(git_idx) = strings::index_of(unquoted, b"@git+") {
-            let after_at = git_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
+            return Some(&unquoted[git_idx + 1..]);
         } else if let Some(gh_idx) = strings::index_of(unquoted, b"@github:") {
-            let after_at = gh_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
+            return Some(&unquoted[gh_idx + 1..]);
         } else if let Some(file_idx) = strings::index_of(unquoted, b"@file:") {
-            let after_at = file_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
+            return Some(&unquoted[file_idx + 1..]);
         } else if let Some(idx) = strings::index_of(unquoted, b"@") {
             let after_at = idx + 1;
             if after_at < unquoted.len() {

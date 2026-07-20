@@ -624,9 +624,7 @@ pub fn install_with_manager(
 
     if manager.lockfile.packages.len() > 0 {
         root = *manager.lockfile.packages.get(0);
-    }
 
-    if manager.lockfile.packages.len() > 0 {
         for request in &manager.update_requests {
             // prevent redundant errors
             if request.failed {

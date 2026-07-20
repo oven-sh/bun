@@ -607,8 +607,8 @@ impl JSValkeyClient {
                 protocol: uri,
                 username,
                 password,
-                in_flight: command::promise::Queue::init(),
-                queue: command::entry::Queue::init(),
+                in_flight: command::PromiseQueue::init(),
+                queue: command::EntryQueue::init(),
                 status: valkey::Status::Disconnected,
                 handshake: valkey::Handshake::default(),
                 socket: Socket::SocketTcp(uws::SocketTCP {
@@ -698,8 +698,8 @@ impl JSValkeyClient {
                 protocol: client.protocol,
                 username,
                 password,
-                in_flight: command::promise::Queue::init(),
-                queue: command::entry::Queue::init(),
+                in_flight: command::PromiseQueue::init(),
+                queue: command::EntryQueue::init(),
                 status: valkey::Status::Disconnected,
                 handshake: valkey::Handshake::default(),
                 socket: Socket::SocketTcp(uws::SocketTCP {

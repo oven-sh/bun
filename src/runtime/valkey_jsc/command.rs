@@ -115,11 +115,7 @@ pub struct Entry {
     pub promise: Promise,
 }
 
-// Inherent associated
-// types are unstable on stable Rust, so expose as a sibling module alias instead.
-pub mod entry {
-    pub(crate) type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
-}
+pub(crate) type EntryQueue = LinearFifo<Entry, DynamicBuffer<Entry>>;
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
@@ -201,11 +197,7 @@ pub struct Promise {
     pub promise: jsc::JSPromiseStrong,
 }
 
-// See `entry` note above.
-pub mod promise {
-    pub(crate) type Queue =
-        super::LinearFifo<super::Promise, super::DynamicBuffer<super::Promise>>;
-}
+pub(crate) type PromiseQueue = LinearFifo<Promise, DynamicBuffer<Promise>>;
 
 impl Promise {
     pub fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {

@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "../../../harness";
+import { bunEnv, bunExe, isASAN, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -599,6 +599,41 @@ describe("Bun.serve unix socket validation", () => {
         },
       }),
     ).toThrow();
+  });
+
+  test("unix option does not leak the string", async () => {
+    // The WTFStringImpl backing the 'unix' option was never deref'd. Drive the
+    // hostname+unix error path (no actual bind) with a large string and check
+    // RSS growth stays bounded.
+    const src = `
+      const base = Buffer.alloc(512 * 1024, "x").toString();
+      function once(i) {
+        try {
+          Bun.serve({ hostname: "127.0.0.1", unix: "/tmp/" + i + base, fetch: () => new Response("ok") });
+        } catch {}
+      }
+      for (let i = 0; i < 50; i++) once(i);
+      Bun.gc(true);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 1000; i++) once(i);
+      Bun.gc(true);
+      Bun.gc(true);
+      const after = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMB: (after - before) / 1024 / 1024 }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    const { deltaMB } = JSON.parse(stdout);
+    // Leaking: 1000 * 512KB ≈ 500MB. Fixed: ~22MB (flat, independent of string size).
+    expect(deltaMB).toBeLessThan(isASAN ? 192 : 64);
+    expect(exitCode).toBe(0);
   });
 
   describe("invalid unix socket paths should throw", () => {

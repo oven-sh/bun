@@ -1217,6 +1217,7 @@ impl ServerConfig {
         }
 
         if let Some(unix) = arg.get_stringish(global, "unix")? {
+            let unix = bun_core::OwnedString::new(unix);
             let unix_str = unix.to_utf8();
             if !unix_str.slice().is_empty() {
                 if has_hostname {

@@ -1128,9 +1128,9 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
 });
 
 // A directory the user can read but not write (RX-only grant) must still be
-// descended by the scanner: read-only directory opens used to also request
-// FILE_WRITE_ATTRIBUTES and fail ACCESS_DENIED. Elevated tokens bypass the
-// ACL; the precondition is probed and the test skips visibly then.
+// descended by the scanner: directory opens used to request FILE_ADD_FILE and
+// fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition
+// is probed and the test skips visibly then.
 let roDirRoot = "";
 let roDirA = "";
 let roDirEnforced = false;

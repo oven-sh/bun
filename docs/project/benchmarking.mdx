@@ -261,13 +261,19 @@ bun --cpu-prof --cpu-prof-dir ./profiles script.js
 
 ## Heap profiling
 
-Generate heap snapshots on exit to analyze memory usage and find memory leaks.
+Write a heap profile on exit to analyze memory usage and find memory leaks.
 
 ```sh terminal icon="terminal"
 bun --heap-prof script.js
 ```
 
-`--heap-prof` writes a V8 `.heapsnapshot` file you can load in Chrome DevTools (Memory tab → Load).
+`--heap-prof` writes a `.heapprofile` file using Node.js's filename format
+(`Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.heapprofile`). JavaScriptCore does not
+sample allocation call stacks, so the profile reports the live heap size on the
+`(root)` frame rather than a per-function allocation tree.
+
+For a full heap snapshot you can load in Chrome DevTools (Memory tab → Load), use
+`v8.writeHeapSnapshot()` or `Bun.generateHeapSnapshot("v8")` instead.
 
 ### Markdown output
 
@@ -282,13 +288,14 @@ bun --heap-prof-md script.js
 ### Options
 
 ```sh terminal icon="terminal"
-bun --heap-prof --heap-prof-name my-snapshot.heapsnapshot script.js
+bun --heap-prof --heap-prof-name my-profile.heapprofile script.js
 bun --heap-prof --heap-prof-dir ./profiles script.js
 ```
 
-| Flag                          | Description                                |
-| ----------------------------- | ------------------------------------------ |
-| `--heap-prof`                 | Generate a V8 `.heapsnapshot` file on exit |
-| `--heap-prof-md`              | Generate a markdown heap profile on exit   |
-| `--heap-prof-name <filename>` | Set output filename                        |
-| `--heap-prof-dir <dir>`       | Set output directory                       |
+| Flag                           | Description                                                  |
+| ------------------------------ | ------------------------------------------------------------ |
+| `--heap-prof`                  | Write a `.heapprofile` file on exit                          |
+| `--heap-prof-md`               | Generate a markdown heap profile on exit                     |
+| `--heap-prof-name <filename>`  | Set output filename                                          |
+| `--heap-prof-dir <dir>`        | Set output directory                                         |
+| `--heap-prof-interval <bytes>` | Accepted for Node.js compatibility (sampling is unsupported) |

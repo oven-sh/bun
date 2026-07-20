@@ -180,6 +180,14 @@ export function rustLibPath(cfg: Config): string {
   return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_rust${cfg.libSuffix}`);
 }
 
+/** The `RUSTC_WORKSPACE_WRAPPER` source — see its module doc for why it exists. */
+const metadataShimSource = resolve(import.meta.dirname, "rustc-metadata-shim.rs");
+
+/** Where the compiled wrapper lands. A HOST executable — cargo spawns it. */
+function metadataShimPath(cfg: Config): string {
+  return resolve(cfg.buildDir, `rustc-metadata-shim${cfg.host.exeSuffix}`);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Ninja rules
 // ───────────────────────────────────────────────────────────────────────────
@@ -202,6 +210,34 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
 
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
+
+  const rustup = findRustup(cfg);
+  // Toolchain self-heal, prepended to anything that invokes a rustup proxy —
+  // see the rust_build_cross comment below for what it repairs and why it's a
+  // ~70ms no-op otherwise.
+  const repair =
+    rustup !== undefined && cfg.rustToolchain !== undefined
+      ? `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && `
+      : "";
+
+  // `RUSTC_WORKSPACE_WRAPPER` — pins `-C metadata` so our crates keep the same
+  // v0 symbol names across builds (rustc-metadata-shim.rs has the why). A bare
+  // `rustc` builds it: it must exist before cargo runs, so it can't be a
+  // workspace member. That makes it the build's first rustup-proxy call, hence
+  // the repair above: a partially installed toolchain has no host `rust-std`
+  // for it to link against. `-Clinker`: rustc's default `cc` isn't on every CI
+  // image, so use the clang tools.ts resolved (MSVC's link.exe on a Windows
+  // host), same as the cargo env picks for the dep graph's host artifacts.
+  const rustc = join(dirname(cfg.cargo), `rustc${cfg.host.exeSuffix}`);
+  const shimLink = hostWin
+    ? [`-Clinker=${cfg.msvcLinker ?? cfg.ld}`]
+    : [`-Clinker=${cfg.hostCc}`, "-Clink-arg=-fuse-ld=lld"];
+  const shimCmd = `${repair}${q(rustc)} --edition 2024 -Copt-level=2 ${quoteArgs(shimLink, hostWin)} -o $out $in`;
+  n.rule("rustc_metadata_shim", {
+    // ninja spawns via CreateProcess, so `&&` needs a shell — same as rust_build_cross.
+    command: hostWin && repair !== "" ? `cmd /c "${shimCmd}"` : shimCmd,
+    description: "rustc → $out",
+  });
 
   // Cargo build for `bun_bin`. Runs from repo root (workspace `Cargo.toml`
   // lives there). Env passed via stream.ts `--env=K=V`.
@@ -295,11 +331,8 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     });
   }
 
-  const rustup = findRustup(cfg);
-  if (rustup !== undefined && cfg.rustToolchain !== undefined) {
-    const chain =
-      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
-      `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
+  if (repair !== "") {
+    const chain = `${repair}${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,
       description: "cargo bun_bin → $label ($rust_target_arg)",
@@ -364,6 +397,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   const tier3 = rustTargetIsTier3(triple);
   const profile = cargoProfile(cfg);
   const lib = rustLibPath(cfg);
+
+  // Implicit input of every cargo edge below, so it's on disk before cargo
+  // tries to spawn it. Emitted after `env` is built (the rule's toolchain
+  // repair wants it).
+  const metadataShim = metadataShimPath(cfg);
 
   // ─── Build args ───
   const args: string[] = [
@@ -653,6 +691,12 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // ─── Environment ───
   const env: Record<string, string> = {
     CARGO_TERM_COLOR: "always",
+    // Pins `-C metadata` for our own crates so their v0 symbol names survive a
+    // dependency-graph edit — rustc-metadata-shim.rs has the why. `_WORKSPACE_`
+    // rather than plain `RUSTC_WRAPPER`: cargo applies it to workspace members
+    // only, leaving registry crates on its collision-proof hash. `cargo clippy`
+    // sets this variable itself, so it keeps working.
+    RUSTC_WORKSPACE_WRAPPER: metadataShim,
     // `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_*.rs"))` and
     // `include_bytes!` in `bun_js_parser`/`bun_runtime` resolve against this.
     // Set in cargo's env so it reaches every crate's `rustc` invocation
@@ -764,6 +808,18 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
+  const envArgs = Object.entries(env)
+    .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+    .join(" ");
+
+  // ─── `-C metadata` pin ───
+  n.build({
+    outputs: [metadataShim],
+    rule: "rustc_metadata_shim",
+    inputs: [metadataShimSource],
+    vars: { env: envArgs },
+  });
+
   // ─── Windows .bin/ shim PE ───
   // Builds `src/install/windows-shim/bun_shim_impl.rs` as a freestanding release PE and wires the artifact into `include_bytes!`. Without this step `include_bytes!` embeds the
   // 0-byte placeholder and `bun install` writes empty `.exe`s into
@@ -861,7 +917,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       // workspace manifest if any path-dep's `Cargo.toml` is missing.
       // shimDest: rebuilt when a sibling build dir (other arch/profile)
       // overwrote the shared exe.
-      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
+      implicitInputs: [cfg.cargo, metadataShim, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
       vars: {
         cwd: cfg.cwd,
         args: quoteArgs(shimArgs, hostWin),
@@ -898,16 +954,21 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // so depending on those orders the codegen step before cargo without
     // ninja needing to know the `.rs` paths. vendorStamps orders the
     // lol-html source fetch before cargo resolves the path dep.
-    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
+    implicitInputs: [
+      cfg.cargo,
+      metadataShim,
+      ...inputs.rustSources,
+      ...inputs.codegenInputs,
+      ...inputs.vendorStamps,
+      ...shimInputs,
+    ],
     orderOnlyInputs: inputs.codegenOrderOnly,
     vars: {
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),
       ...(useCrossRule ? { rust_target_arg: tier3 ? "" : `--target ${triple}` } : {}),
       label: `${cfg.libPrefix}bun_rust${cfg.libSuffix}`,
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
+      env: envArgs,
     },
   });
   n.phony("bun-rust", [lib]);

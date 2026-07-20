@@ -56,6 +56,27 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     }
 }
 
+/// Host-agnostic bare-specifier check for Node ESM error shaping. Node
+/// classifies specifiers platform-independently (URL-based), so this must not
+/// vary by host: relative (`./`, `../`, `.`, `..`), separator-led (`/`, `\`),
+/// and ASCII-letter drive forms (`C:/`, `C:\`) are path-like; everything else
+/// is a package. Unlike host-native `bun_paths::is_absolute`, the drive byte
+/// must be alphabetic — its Windows arm accepts any byte before `:`, which
+/// made `:://x` classify as a module on Windows but a package on POSIX
+/// (Node says "Cannot find package '::'" on both).
+fn is_bare_esm_specifier(s: &[u8]) -> bool {
+    let is_sep = |b: u8| b == b'/' || b == b'\\';
+    match s {
+        [] | [b'.'] | [b'.', b'.'] => return false,
+        [b, ..] if is_sep(*b) => return false,
+        [b'.', b, ..] if is_sep(*b) => return false,
+        [b'.', b'.', b, ..] if is_sep(*b) => return false,
+        [d, b':', b, ..] if d.is_ascii_alphabetic() && is_sep(*b) => return false,
+        _ => {}
+    }
+    true
+}
+
 /// First path segment of a bare specifier ("@scope/name" keeps two),
 /// matching Node's ERR_MODULE_NOT_FOUND "Cannot find package '<name>'".
 fn esm_package_name(specifier: &[u8]) -> &[u8] {
@@ -392,7 +413,7 @@ impl ResolveMessage {
             }
             ImportKind::Stmt | ImportKind::Dynamic => {
                 let referrer = referrer?;
-                if bun_resolver::is_package_path(specifier) {
+                if is_bare_esm_specifier(specifier) {
                     write!(
                         &mut out,
                         "Cannot find package '{}' imported from {}",

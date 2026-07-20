@@ -35,9 +35,9 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
       // that path. The reported error must come from the user's original name.
       expect(err.message).not.toContain(process.cwd());
       if (isWindows) {
-        // FormatMessageW text, not a bare "error code 126".
+        // FormatMessageW text, not a bare "error code 126". The text itself
+        // is localized, so only assert the old bare-code fallback is gone.
         expect(err.message).not.toMatch(/: error code \d+$/);
-        expect(err.message).toMatch(/could not be found|cannot find/i);
       }
     }
   });

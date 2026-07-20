@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Async threadpool natives borrowed a pointer+length into the caller's buffer.
-// The in-flight pin blocks transfer() but not ArrayBuffer.prototype.resize();
-// a shrink on the JS thread decommits pages the pool thread is still reading,
-// which segfaults the process. Fixed by copying resizable inputs into the job.
+// Async threadpool natives borrowed a pointer+length into the caller's buffer; pin()
+// blocks transfer() but not resize(), so a shrink decommits pages the pool thread is
+// still reading. Fixed by copying resizable inputs into the job.
 
 const driver = /* js */ `
   const crypto = require("node:crypto");

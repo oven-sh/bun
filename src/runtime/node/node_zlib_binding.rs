@@ -416,10 +416,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 return Err(global_this.throw_out_of_memory());
             };
             if buf.resizable && !buf.shared {
-                // pin() blocks transfer(), not resize(); a shrink decommits pages
-                // the threadpool is still reading. Copy the subslice into a fixed
-                // Buffer; it is rooted via `pending_input_set_cached` and unpinned
-                // on completion like the original would have been.
+                // pin() blocks transfer(), not resize(); a shrink decommits pages the
+                // threadpool is still reading. Copy into a fixed Buffer rooted via
+                // `pending_input_set_cached` and unpinned on completion like the original.
                 let owned =
                     buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize].to_vec();
                 arguments[1].unpin_array_buffer();

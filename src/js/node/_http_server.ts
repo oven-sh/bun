@@ -64,6 +64,7 @@ const {
   fakeSocketSymbol,
   noBodySymbol,
   kOutHeaders,
+  onDataIncomingMessage,
   validateMsecs,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -71,7 +72,7 @@ const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
 
-const { IncomingMessage, kReqShouldKeepAlive, onDataIncomingMessage } = require("node:_http_incoming");
+const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
   OutgoingMessage,
   kErrored,

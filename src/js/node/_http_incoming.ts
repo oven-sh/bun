@@ -424,24 +424,12 @@ function onDataIncomingMessage(
   // Incoming request-body bytes are socket activity: push the connection's
   // inactivity timeout (socket.setTimeout / server.timeout) further out, like
   // Node.js does for reads on the socket.
-  const socket = this.socket;
-  socket?._unrefTimer?.();
+  this.socket?._unrefTimer?.();
 
-  if (chunk && !this._dumped) {
-    if (!this.push(chunk)) {
-      // Like Node's parserOnBody: pause the connection once the buffer fills.
-      // Upgrade-with-body routes through its own handle so the socket's flow
-      // state stays with the upgrade listener; _read() balances it.
-      if (this.upgrade) this[kHandle]?.pause();
-      else if (!socket?.writableEnded) readStop(socket);
-    }
-  }
+  if (chunk && !this._dumped) this.push(chunk);
 
   if (isLast) {
     emitEOFIncomingMessage(this);
-    // Like Node's parserOnMessageComplete: any readStop above left the shared
-    // socket's flowing=false, which would swallow the next request's 'pause'.
-    if (!this.upgrade) readStart(socket);
   }
 }
 
@@ -812,4 +800,4 @@ function onError(self, error, cb) {
   }
 }
 
-export { IncomingMessage, kReqShouldKeepAlive, onDataIncomingMessage, readStart, readStop };
+export { IncomingMessage, kReqShouldKeepAlive, readStart, readStop };

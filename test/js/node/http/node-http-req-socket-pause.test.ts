@@ -3,7 +3,7 @@
  */
 import { expect, it } from "bun:test";
 import { once } from "node:events";
-import { createServer, request } from "node:http";
+import { Agent, createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 
 it("req.socket emits 'pause' once an unread request body fills the IncomingMessage buffer", async () => {
@@ -81,7 +81,7 @@ it("req.socket emits 'pause' on every body-bearing keep-alive request, not just 
   const pauses: string[] = [];
   const ended = Promise.withResolvers<void>();
   const server = createServer((req, res) => {
-    req.connection!.on("pause", () => {
+    req.connection!.once("pause", () => {
       pauses.push(req.url!);
       res.end("ok");
       if (req.url === "/b") ended.resolve();
@@ -92,7 +92,7 @@ it("req.socket emits 'pause' on every body-bearing keep-alive request, not just 
   try {
     await once(server.listen(0), "listening");
     const port = (server.address() as AddressInfo).port;
-    const agent = new (require("node:http").Agent)({ keepAlive: true, maxSockets: 1 });
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
     for (const path of ["/a", "/b"]) {
       await new Promise<void>((resolve, reject) => {
         const post = request({ method: "POST", port, path, agent }, res => {
@@ -105,8 +105,7 @@ it("req.socket emits 'pause' on every body-bearing keep-alive request, not just 
     }
     await ended.promise;
     agent.destroy();
-    expect(pauses).toContain("/a");
-    expect(pauses).toContain("/b");
+    expect(pauses).toEqual(["/a", "/b"]);
   } finally {
     server.closeAllConnections();
     server.close();

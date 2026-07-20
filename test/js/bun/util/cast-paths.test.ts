@@ -2,7 +2,7 @@
 // safe-transmute helpers). Each case exercises a distinct cast shape so a
 // regression in the slice-reinterpretation logic surfaces as a concrete value
 // mismatch rather than a hard-to-localize downstream failure.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // `&[u16]` ↔ `&[u8]` via `cast_slice` / `cast_slice_mut` (encoding.rs).

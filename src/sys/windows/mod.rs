@@ -3906,7 +3906,7 @@ pub fn GetFinalPathNameByHandle(
         bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {:?}", hFile, err);
         // An AppContainer (lowbox) token is denied the mount-manager lookup
         // behind the DOS volume-name translation while the NT form still
-        // works; rebuild `X:\…` from the NT name and the learned device map.
+        // works; rebuild `X:\…` from the NT name (system volume only).
         if fmt.volume_name == win32::VolumeName::Dos
             && err == u32::from(Win32Error::ACCESS_DENIED.0)
             && is_app_container()

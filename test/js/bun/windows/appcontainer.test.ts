@@ -6,7 +6,7 @@ import { dirname, join } from "path";
 
 // Launches bun inside a real Windows AppContainer (lowbox token) and asserts
 // the sandbox-only behaviors: spawn with piped stdio, the LOCAL\ pipe
-// namespace, realpath, and the rewritten TEMP. No admin rights are needed.
+// namespace, realpath denial, and the rewritten TEMP. No admin rights needed.
 //
 // The launch is done with bun:ffi (CreateAppContainerProfile +
 // PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES); results are written by the

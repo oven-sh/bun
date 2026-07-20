@@ -22,7 +22,6 @@ if (process.argv[2] === 'child') {
       test(() => assert.strictEqual(testSignal.aborted, true));
     }));
 
-    // TODO(benjamingr) add more tests to describe + AbortSignal
     // this just tests the parameter is passed
     test.describe('Abort Signal in describe', common.mustCall(({ signal }) => {
       test.it('Supports AbortSignal', common.mustCall(() => {

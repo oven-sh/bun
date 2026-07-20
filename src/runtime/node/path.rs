@@ -10,10 +10,9 @@ use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
-/// Most JS entry points convert to UTF-8 first (via `ZigString.toSlice`) and
-/// instantiate with `T = u8`; `to_namespaced_path` dispatches on the JS
-/// string's native width and reaches the `u16` arm for 16-bit or non-ASCII
-/// Latin-1 input. The `u8` arm treats its input as UTF-8.
+/// Most JS entry points instantiate with `T = u8` on a UTF-8 slice;
+/// `to_namespaced_path` dispatches on native width and reaches the `u16` arm
+/// for 16-bit or non-ASCII Latin-1 input. The `u8` arm treats input as UTF-8.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{StringJsc as _, bun_string_jsc};
@@ -3465,9 +3464,8 @@ pub(crate) fn resolve(
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L622
 ///
-/// Returns `Ok(None)` when Node would return the input string unchanged
-/// (resolved length ≤ 2 code units); the caller returns the original
-/// `JSValue` directly instead of round-tripping it through a buffer.
+/// `Ok(None)` = Node returns the input unchanged (resolved length ≤ 2 code
+/// units); the caller hands back the original `JSValue` directly.
 pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     path: &[T],
     buf: &'a mut [T],

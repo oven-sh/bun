@@ -4165,11 +4165,12 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // A `loop`
-        // returning the resolver result; `retry_on_not_found` is consumed on
-        // the first miss.
+        if source == MAIN_FILE_NAME && bun_paths::is_absolute(normalized_specifier) {
+            self.transpiler.resolver.entry_point_hint = Some(Box::from(normalized_specifier));
+        }
+
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let result: bun_resolver::Result = loop {
+        let resolved: Result<bun_resolver::Result, crate::CrateError> = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else {
@@ -4182,11 +4183,11 @@ impl VirtualMachine {
                 import_kind,
                 global_cache,
             ) {
-                ResultUnion::Success(r) => break r,
-                ResultUnion::Failure(e) => return Err(e.into()),
+                ResultUnion::Success(r) => break Ok(r),
+                ResultUnion::Failure(e) => break Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if !retry_on_not_found {
-                        return Err(crate::CrateError::ModuleNotFound);
+                        break Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
 
@@ -4196,7 +4197,7 @@ impl VirtualMachine {
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
+                                break Err(crate::CrateError::ModuleNotFound);
                             }
                             // Normalized without trailing slash.
                             bun_paths::string_paths::normalize_slashes_only(
@@ -4217,7 +4218,7 @@ impl VirtualMachine {
                         // If the specifier is too long to join, it can't name
                         // a real directory — skip the cache bust and fail.
                         if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
+                            break Err(crate::CrateError::ModuleNotFound);
                         }
                         let parts: [&[u8]; 3] = [
                             source_to_use,
@@ -4236,10 +4237,13 @@ impl VirtualMachine {
                     ) {
                         continue;
                     }
-                    return Err(crate::CrateError::ModuleNotFound);
+                    break Err(crate::CrateError::ModuleNotFound);
                 }
             }
         };
+
+        self.transpiler.resolver.entry_point_hint = None;
+        let result = resolved?;
 
         if !self.macro_mode {
             self.has_any_macro_remappings =

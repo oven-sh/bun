@@ -278,14 +278,7 @@ impl DirInfo {
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
-            .fs
-            .entries
-            .at_index(self.entries)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
+        self.get_entries_ref(0)
     }
 
     #[inline]

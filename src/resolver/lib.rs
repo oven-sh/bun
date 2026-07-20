@@ -1254,7 +1254,9 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
+                            EntriesOption::Entries(e)
+                                if e.generation < generation || !e.complete =>
+                            {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),
@@ -1631,7 +1633,7 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+                if existing.generation < generation || !existing.complete {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };

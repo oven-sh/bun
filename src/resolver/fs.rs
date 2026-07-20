@@ -564,6 +564,9 @@ pub struct DirEntry {
     pub fd: Fd,
     pub generation: Generation,
     pub data: dir_entry::EntryMap,
+    /// `false` marks a listing created without a full `readdir` (entry-point
+    /// fast path); consumers that iterate must re-read it first.
+    pub complete: bool,
 }
 
 impl DirEntry {
@@ -576,6 +579,7 @@ impl DirEntry {
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            complete: true,
         }
     }
 
@@ -1136,7 +1140,7 @@ impl RealFS {
         let existing_ptr = map.at_index(index)?;
         // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
         if let EntriesOption::Entries(entries) = unsafe { &mut *existing_ptr } {
-            if entries.generation < generation {
+            if entries.generation < generation || !entries.complete {
                 let dir_path = entries.dir;
                 // capture raw ptrs to the in-place `DirEntry` fields, then
                 // drop the short-lived `&mut` before re-borrowing `self` for
@@ -1629,7 +1633,7 @@ impl RealFS {
                     // match only — the raw `*mut` is what escapes to the caller.
                     match unsafe { &mut *cached_result } {
                         EntriesOption::Err(_) => return Ok(cached_result),
-                        EntriesOption::Entries(e) if e.generation >= generation => {
+                        EntriesOption::Entries(e) if e.generation >= generation && e.complete => {
                             return Ok(cached_result);
                         }
                         EntriesOption::Entries(e) => {

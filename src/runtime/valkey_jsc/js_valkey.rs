@@ -58,7 +58,7 @@ pub use crate::generated_classes::js_RedisClient as Js;
 bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
 
 impl SubscriptionCtx {
-    pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
+    pub fn init(valkey_parent: &JSValkeyClient) -> Self {
         let callback_map = JSMap::create(&valkey_parent.global_object);
         let parent_this = valkey_parent
             .this_value
@@ -72,7 +72,7 @@ impl SubscriptionCtx {
             callback_map,
         );
 
-        Ok(SubscriptionCtx {
+        SubscriptionCtx {
             original_enable_offline_queue: valkey_parent.client.get().flags.enable_offline_queue,
             original_enable_auto_pipelining: valkey_parent
                 .client
@@ -80,7 +80,7 @@ impl SubscriptionCtx {
                 .flags
                 .enable_auto_pipelining,
             is_subscriber: false,
-        })
+        }
     }
 
     fn subscription_callback_map(&self) -> &mut JSMap {
@@ -661,7 +661,7 @@ impl JSValkeyClient {
                 protocol: uri,
                 username,
                 password,
-                in_flight: command::promise_pair::Queue::init(),
+                in_flight: command::promise::Queue::init(),
                 queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
                 connection_strings,
@@ -719,7 +719,7 @@ impl JSValkeyClient {
         // Need to associate the subscription context, after the JS ref has been populated.
         new_client
             ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client)?);
+            .set(SubscriptionCtx::init(new_client));
 
         Ok(new_client_ptr)
     }
@@ -774,7 +774,7 @@ impl JSValkeyClient {
                 protocol: client.protocol,
                 username,
                 password,
-                in_flight: command::promise_pair::Queue::init(),
+                in_flight: command::promise::Queue::init(),
                 queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
                 connection_strings: connection_strings_copy,
@@ -894,7 +894,7 @@ impl JSValkeyClient {
         }
 
         // Save the original flag values and create a new subscription context
-        self._subscription_ctx.set(SubscriptionCtx::init(self)?);
+        self._subscription_ctx.set(SubscriptionCtx::init(self));
 
         // We need to make sure we disable the offline queue, but we actually want to make sure
         // that our HELLO message goes through first. Consequently, we only disable the offline
@@ -1276,25 +1276,22 @@ impl JSValkeyClient {
         self.update_poll_ref();
     }
 
-    pub fn on_valkey_subscribe(&self, value: &mut protocol::RESPValue) {
+    pub fn on_valkey_subscribe(&self) {
         debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
         let _guard = self.ref_scope();
 
-        let _ = value;
-
         self.client_mut().on_writable();
         self.update_poll_ref();
     }
 
-    pub fn on_valkey_unsubscribe(&self) -> JsResult<()> {
+    pub fn on_valkey_unsubscribe(&self) {
         debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
         self.client_mut().on_writable();
         self.update_poll_ref();
-        Ok(())
     }
 
     pub fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) {
@@ -1620,9 +1617,8 @@ impl JSValkeyClient {
     pub fn send(
         &self,
         global_this: &JSGlobalObject,
-        _this_value: JSValue,
         command: &Command,
-    ) -> Result<*mut JSPromise, crate::Error> {
+    ) -> Result<*mut JSPromise, protocol::RedisError> {
         // Keep `*self` alive across re-entrant connect/close paths below;
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_scope();
@@ -1640,7 +1636,7 @@ impl JSValkeyClient {
                     .to_js();
                 let promise = JSPromise::create(global_this);
                 let _exit = self.vm().enter_event_loop_scope();
-                promise.reject(global_this, Ok(err_value))?;
+                let _ = promise.reject(global_this, Ok(err_value));
                 return Ok(promise);
             }
             self.reset_connection_timeout();
@@ -1663,7 +1659,7 @@ impl JSValkeyClient {
 
         // Add queue sizes
         memory_cost += client.in_flight.readable_length()
-            * core::mem::size_of::<super::command::PromisePair>();
+            * core::mem::size_of::<super::command::Promise>();
         for command in client.queue.readable_slice(0) {
             memory_cost += command.serialized_data.len();
         }
@@ -1835,13 +1831,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let handshake_success = success == 1;
         let _guard = this.ref_scope();
         let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
-        let vm = this.client.get().vm;
         if handshake_success {
+            let vm = this.client.get().vm;
             if this.client.get().tls.reject_unauthorized(vm) {
                 // only reject the connection if reject_unauthorized == true
                 if ssl_error.error_no != 0 {
                     // Certificate chain validation failed.
-                    return Self::fail_handshake_with_verify_error(this, vm, &ssl_error);
+                    return Self::fail_handshake_with_verify_error(this, &ssl_error);
                 }
 
                 // Certificate chain is valid; verify the hostname matches the
@@ -1893,7 +1889,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                             ),
                         )
                         .to_js();
-                    return Self::fail_handshake(this, vm, err);
+                    return Self::fail_handshake(this, err);
                 }
             }
             this.client_mut().start()?;
@@ -1901,14 +1897,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the
             // server
-            return Self::fail_handshake_with_verify_error(this, vm, &ssl_error);
+            return Self::fail_handshake_with_verify_error(this, &ssl_error);
         }
         Ok(())
     }
 
     fn fail_handshake_with_verify_error(
         this: &JSValkeyClient,
-        vm: &VirtualMachine,
         ssl_error: &uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         let ssl_js_value =
@@ -1928,14 +1923,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     return Ok(());
                 }
             };
-        Self::fail_handshake(this, vm, ssl_js_value)
+        Self::fail_handshake(this, ssl_js_value)
     }
 
-    fn fail_handshake(
-        this: &JSValkeyClient,
-        _vm: &VirtualMachine,
-        err_value: JSValue,
-    ) -> JsResult<()> {
+    fn fail_handshake(this: &JSValkeyClient, err_value: JSValue) -> JsResult<()> {
         this.client_mut().flags.is_authenticated = false;
         let _exit = this.vm().enter_event_loop_scope();
         this.client_mut().flags.is_manually_closed = true;

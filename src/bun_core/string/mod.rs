@@ -1292,12 +1292,12 @@ impl OwnedString {
     /// slice afterwards.
     #[inline]
     pub fn as_raw_slice(owned: &[OwnedString]) -> &[String] {
-        // `#[repr(transparent)]` over `String` ⇒ bytemuck's safe slice peel.
-        <Self as bytemuck::TransparentWrapper<String>>::peel_slice(owned)
+        // `#[repr(transparent)]` over `String` ⇒ safe slice peel.
+        <Self as crate::cast::TransparentWrapper<String>>::peel_slice(owned)
     }
 }
 // SAFETY: `OwnedString` is `#[repr(transparent)]` with a single `String` field.
-unsafe impl bytemuck::TransparentWrapper<String> for OwnedString {}
+unsafe impl crate::cast::TransparentWrapper<String> for OwnedString {}
 impl core::ops::Deref for OwnedString {
     type Target = String;
     #[inline]

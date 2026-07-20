@@ -51,8 +51,8 @@ pub(crate) fn array_buffer_to_string(
     match array_buffer.typed_array_type {
         JSType::Uint16Array | JSType::Int16Array => {
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
-            // bytemuck checks both at runtime.
-            let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
+            // `cast_slice` checks both at runtime.
+            let utf16: &[u16] = bun_core::cast::cast_slice(array_buffer.byte_slice());
             let zig_str = ZigString::init_utf16(utf16);
             Ok(zig_str.to_js(global))
         }

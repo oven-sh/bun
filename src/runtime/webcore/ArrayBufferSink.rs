@@ -155,9 +155,9 @@ impl ArrayBufferSink {
         }
         let bytes = data.slice();
         // The caller guarantees the byte slice is u16-aligned and has even
-        // length when the stream encoding is UTF-16. bytemuck checks both at
+        // length when the stream encoding is UTF-16. `cast_slice` checks both at
         // runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
+        let utf16: &[u16] = bun_core::cast::cast_slice(bytes);
         let len = match self.bytes.write_utf16(utf16) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),

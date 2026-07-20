@@ -414,7 +414,7 @@ pub mod Runtime {
 
             // `[bool; N]` is N bytes of 0x00/0x01.
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
-            hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+            hasher.update(bun_core::cast::cast_slice::<bool, u8>(&bools));
             hasher.update(&[self.react_compiler as u8]);
 
             // Hash --feature flags. These directly affect transpiled output via

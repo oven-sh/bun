@@ -5699,8 +5699,8 @@ pub mod formatter {
             // `slice` comes from a typed array whose backing storage is aligned for its
             // element type (JS spec: typed-array byteOffset is always a multiple of
             // element size, and ArrayBuffer storage is mimalloc-aligned), so the safe
-            // `bytemuck::cast_slice` alignment/size checks always pass.
-            use bytemuck::cast_slice;
+            // `bun_core::cast::cast_slice` alignment/size checks always pass.
+            use bun_core::cast::cast_slice;
             match js_type {
                 T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice(slice)),
                 T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice(slice)),

@@ -302,7 +302,7 @@ mod advanced {
     }
     // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
     // `Copy + 'static`; the single byte is always an initialized discriminant.
-    unsafe impl bytemuck::NoUninit for IPCMessageType {}
+    unsafe impl bun_core::cast::NoUninit for IPCMessageType {}
 
     impl IPCMessageType {
         fn tag_name(raw: u8) -> &'static str {

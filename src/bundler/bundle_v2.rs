@@ -7523,7 +7523,7 @@ pub mod bv2_impl {
         }
         pub(crate) fn write_ints(&mut self, i: &[u32]) {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
-            self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
+            self.hasher.update(bun_core::cast::cast_slice::<u32, u8>(i));
         }
         pub(crate) fn digest(&self) -> u64 {
             self.hasher.digest()

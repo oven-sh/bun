@@ -2883,7 +2883,7 @@ pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
 /// `[0-9a-fA-F]`. `T` is capped at 16 bytes (u128) since stable Rust can't size
 /// a stack array by a generic without `generic_const_exprs`.
 #[inline]
-pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
+pub fn parse_hex_to_int<T: crate::cast::AnyBitPattern>(slice: &[u8]) -> Option<T> {
     let n = core::mem::size_of::<T>();
     debug_assert!(n <= 16);
     if slice.len() != n * 2 {
@@ -2893,7 +2893,7 @@ pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
     for i in 0..n {
         buf[i] = hex_pair_value(slice[i * 2], slice[i * 2 + 1])?;
     }
-    Some(bytemuck::pod_read_unaligned(&buf[..n]))
+    Some(crate::cast::pod_read_unaligned(&buf[..n]))
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).

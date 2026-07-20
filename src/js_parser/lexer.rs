@@ -2769,7 +2769,7 @@ lexer_impl_header! {
                 // It was created via `cast_slice::<u16, u8>` from an arena `[u16]` dupe,
                 // so the pointer is u16-aligned and `cast_slice` back is sound (panics
                 // if that invariant is ever broken — strictly safer than the raw cast).
-                let utf16: &[u16] = bytemuck::cast_slice::<u8, u16>(self.string_literal_raw_content);
+                let utf16: &[u16] = bun_core::cast::cast_slice::<u8, u16>(self.string_literal_raw_content);
                 Ok(js_ast::E::String::init_utf16(utf16))
             }
             StringLiteralRawFormat::NeedsDecode => {
@@ -3164,7 +3164,7 @@ lexer_impl_header! {
 
             let dup = self.arena.alloc_slice_copy(&tmp);
             // Reinterpret &[u16] as &[u8] — `u16: Pod`, so `cast_slice` is safe.
-            self.string_literal_raw_content = bytemuck::cast_slice::<u16, u8>(dup);
+            self.string_literal_raw_content = bun_core::cast::cast_slice::<u16, u8>(dup);
             self.string_literal_raw_format = StringLiteralRawFormat::Utf16;
             tmp.clear();
             self.temp_buffer_u16 = tmp;
@@ -3250,7 +3250,7 @@ lexer_impl_header! {
                         }
                         let dup = self.arena.alloc_slice_copy(&tmp);
                         // Reinterpret arena-owned &[u16] as &[u8] — `u16: Pod`.
-                        self.string_literal_raw_content = bytemuck::cast_slice::<u16, u8>(dup);
+                        self.string_literal_raw_content = bun_core::cast::cast_slice::<u16, u8>(dup);
                         self.string_literal_raw_format = StringLiteralRawFormat::Utf16;
 
                         let was_empty = tmp.is_empty();

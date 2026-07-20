@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 itoa.workspace = true
 bun_opaque.workspace = true
 strum.workspace = true

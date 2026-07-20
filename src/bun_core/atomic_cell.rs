@@ -190,7 +190,7 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   reinterpreting as `uN` reads only initialized bits).
 /// - Round-tripping `Self → uN → Self` (where every `uN` value observed was
 ///   produced from a valid `Self`) yields the original value. This is weaker
-///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
+///   than [`crate::cast::AnyBitPattern`] — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op

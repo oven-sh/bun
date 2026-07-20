@@ -42,12 +42,12 @@ pub(crate) type ImportAttributes = FetchParameters;
 pub struct RecordKind(pub u8);
 // SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
 // a valid `u8`. `Pod` lets
-// `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
+// `bun_core::cast::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
 // printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
-unsafe impl bytemuck::Zeroable for RecordKind {}
+unsafe impl bun_core::cast::Zeroable for RecordKind {}
 // SAFETY: see above — `#[repr(transparent)]` over `u8`, so no padding and every
 // bit pattern is valid; `RecordKind` is `Copy + 'static` with no interior refs.
-unsafe impl bytemuck::Pod for RecordKind {}
+unsafe impl bun_core::cast::Pod for RecordKind {}
 
 impl RecordKind {
     /// var_name
@@ -430,10 +430,10 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
 /// or its length is not a multiple of `size_of::<T>()` (i.e. the format's
 /// internal padding was violated).
 ///
-/// (`bytemuck::try_cast_slice` checks both alignment and size.)
+/// (`bun_core::cast::try_cast_slice` checks both alignment and size.)
 #[inline]
-fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
-    bytemuck::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
+fn bytes_as_slice<T: bun_core::cast::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
+    bun_core::cast::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -487,15 +487,16 @@ impl ModuleInfoExt for ModuleInfo {
             rm_keys = bun_ptr::RawSlice::new(view.requested_modules_keys);
             rm_values = bun_ptr::RawSlice::new(view.requested_modules_values);
             // Printer's `ModulePhase` is `#[repr(u8)] NoUninit` — safe to view as `&[u8]`.
-            rm_phases = bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, u8>(
+            rm_phases = bun_ptr::RawSlice::new(bun_core::cast::cast_slice::<_, u8>(
                 view.requested_modules_phases,
             ));
             buffer = bun_ptr::RawSlice::new(view.buffer);
             // Printer's `RecordKind` is `#[repr(u8)] NoUninit` with the same
             // discriminant layout as this crate's `#[repr(transparent)] u8`
-            // `RecordKind` (Pod) — `bytemuck::cast_slice` is the safe reinterpret.
-            record_kinds =
-                bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, RecordKind>(view.record_kinds));
+            // `RecordKind` (Pod) — `bun_core::cast::cast_slice` is the safe reinterpret.
+            record_kinds = bun_ptr::RawSlice::new(bun_core::cast::cast_slice::<_, RecordKind>(
+                view.record_kinds,
+            ));
             let mut f = Flags::empty();
             f.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
             f.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);

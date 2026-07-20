@@ -109,8 +109,8 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // as the symbol's true type. Callers monomorphise T to the matching `extern "C" fn`
     // (or pointer-sized data symbol) declared by CoreFoundation/CoreServices; the const
     // assert above enforces size parity, and the null check rules out the absent-symbol
-    // case so the resulting fn pointer is always non-null. Not expressible via
-    // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
+    // case so the resulting fn pointer is always non-null. Not expressible via a
+    // safe cast: fn pointers are not Pod and `as` can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 #[cfg(not(unix))]

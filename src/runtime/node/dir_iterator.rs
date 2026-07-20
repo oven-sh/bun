@@ -719,8 +719,8 @@ mod platform {
                 // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
                 // it is itself 8-byte aligned, and per MS docs each record (and
                 // thus its FileName at offset 64) lands on an 8-byte boundary —
-                // bytemuck checks the u8→u16 alignment at runtime.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                // `cast_slice` checks the u8→u16 alignment at runtime.
+                let dir_info_name: &[u16] = bun_core::cast::cast_slice(
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
 

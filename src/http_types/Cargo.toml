@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true

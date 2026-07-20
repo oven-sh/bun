@@ -15,6 +15,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod cast;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
@@ -2502,9 +2503,9 @@ pub mod ffi {
     /// of [`cstr_bytes`] for inline arrays like `utsname::release`.
     #[inline]
     pub fn c_field_bytes(s: &[core::ffi::c_char]) -> &[u8] {
-        // `c_char` is a type alias for `i8`/`u8`; both are `bytemuck::Pod`, so
-        // the byte-sized reinterpretation is a safe `cast_slice`.
-        let b: &[u8] = bytemuck::cast_slice(s);
+        // `c_char` is a type alias for `i8`/`u8`; both are `Pod`, so the
+        // byte-sized reinterpretation is a safe `cast_slice`.
+        let b: &[u8] = crate::cast::cast_slice(s);
         &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
     }
 
@@ -2530,9 +2531,9 @@ pub mod ffi {
 
     /// Marker: the all-zero bit pattern is a valid value of `Self`.
     ///
-    /// Local re-spelling of `bytemuck::Zeroable` so we can blanket-`impl` it
-    /// for foreign `libc` POD (orphan rule blocks impl-ing the upstream trait
-    /// on `libc::sigaction` et al.). Once a type carries this marker,
+    /// Kept separate from [`crate::cast::Zeroable`] so this module can
+    /// blanket-`impl` it for foreign `libc` POD without dragging the cast
+    /// trait hierarchy into every FFI init site. Once a type carries this marker,
     /// [`zeroed`] is a *safe* call — the audit happens once at the `unsafe
     /// impl`, not at every out-param init site.
     ///
@@ -2560,7 +2561,7 @@ pub mod ffi {
     }
 
     // ── Zeroable impls ──────────────────────────────────────────────────────
-    // Primitives, raw pointers, arrays — match `bytemuck::Zeroable` blankets.
+    // Primitives, raw pointers, arrays.
     macro_rules! zeroable_prim {
         ($($t:ty),* $(,)?) => { $(
             // SAFETY: primitive numeric/unit type — the all-zero bit pattern is

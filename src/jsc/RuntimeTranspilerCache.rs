@@ -532,7 +532,7 @@ impl Entry {
                     // `chars` is `&mut [u16; char_len]` backed by contiguous
                     // WTFString storage; reinterpret as bytes for pread via the
                     // safe POD cast (`u16` → `u8` always satisfies size/align).
-                    let chars_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
+                    let chars_bytes: &mut [u8] = bun_core::cast::cast_slice_mut(chars);
                     let read_bytes =
                         file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
@@ -540,7 +540,7 @@ impl Entry {
                     }
 
                     if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
+                        let utf16_bytes: &[u8] = bun_core::cast::cast_slice(string.utf16());
                         if hash(utf16_bytes) != self.metadata.output_hash {
                             return Err(crate::CrateError::InvalidHash);
                         }

@@ -5778,7 +5778,7 @@ impl DevServer {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
         // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
-        // padding and is `bytemuck::Pod`, so the byte view is safe.
+        // padding and is `bun_core::cast::Pod`, so the byte view is safe.
         let fields: [u32; 10] = [
             /* incremental_graph_client */ cost.incremental_graph_client as u32,
             /* incremental_graph_server */ cost.incremental_graph_server as u32,
@@ -5793,7 +5793,7 @@ impl DevServer {
             /* system_used */ system_total.saturating_sub(crate::node::os::freemem()) as u32,
             /* system_total */ system_total as u32,
         ];
-        payload.extend_from_slice(bytemuck::bytes_of(&fields));
+        payload.extend_from_slice(bun_core::cast::bytes_of(&fields));
 
         // SourceMapStore is easy to leak refs in.
         {

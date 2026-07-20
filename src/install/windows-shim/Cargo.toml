@@ -48,16 +48,11 @@ required-features = ["shim_standalone"]
 [features]
 shim_standalone = []
 
-# Almost no crates.io dependencies: `bstr` / `strum` would defeat `#![no_std]`
+# No crates.io dependencies: `bstr` / `strum` would defeat `#![no_std]`
 # (they pull `alloc`/`std` into the link). The shared source's two former uses
 # of them — `strum::IntoStaticStr` on `FailReason` (never consumed) and
 # `bstr::BStr` for byte-slice display — are handled with `core`-only code
 # under `cfg(feature = "shim_standalone")`.
-#
-# `bytemuck` is the one exception: it is `#![no_std]` with no `alloc`, exports
-# no `#[no_mangle]` symbols, and inlines to the same (ptr, len*2) arithmetic
-# the hand-written `from_raw_parts` casts compiled to — so it adds zero link
-# roots and lets the shared source's `&[u16] → &[u8]` views stay safe.
 
 [lints]
 workspace = true
@@ -67,4 +62,3 @@ workspace = true
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
 bun_opaque.workspace = true
-bytemuck = { version = "1", default-features = false }

@@ -178,7 +178,7 @@ impl EventIterator {
         // The variable-length filename begins at the `FileName` field of the
         // record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
         // bytes which lie wholly inside `buf`. Safe bounds-checked sub-slice of
-        // the owned `[u8; 64K]` buffer, then a `bytemuck`-checked u8→u16 view
+        // the owned `[u8; 64K]` buffer, then a `cast_slice`-checked u8→u16 view
         // (alignment holds: `buf` is DWORD-aligned per the static assert above,
         // `self.offset` advances by kernel `NextEntryOffset` which is DWORD-
         // aligned, and `name_offset` == 12). Wrap in `RawSlice` so callers

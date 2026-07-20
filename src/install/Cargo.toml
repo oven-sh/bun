@@ -17,7 +17,6 @@ shim_standalone = []
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 strum.workspace = true
 thiserror.workspace = true
 bstr.workspace = true

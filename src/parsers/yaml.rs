@@ -576,7 +576,7 @@ impl Encoding for Utf16 {
         // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
         // Uniqueness is preserved (equal u16 slices ⇔ equal byte slices). Same
         // pattern as `bun_ast::E::EString::hash()` for the utf16 arm.
-        bytemuck::cast_slice(s)
+        bun_core::cast::cast_slice(s)
     }
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {

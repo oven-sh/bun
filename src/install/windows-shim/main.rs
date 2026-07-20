@@ -198,6 +198,45 @@ macro_rules! w_lit {
 pub mod bun_core {
     // Re-export under the path the shared source uses (`bun_core::w!`).
     pub use crate::w_lit as w;
+
+    /// Mirrors `bun_core::cast` (src/bun_core/cast.rs). The shared source only
+    /// calls `cast_slice` for `&[u16]` ↔ `&[u8]`, so a `u8`/`u16`-only subset
+    /// is enough; the real module is `core`-only but defining the handful of
+    /// needed impls locally keeps the trait surface out of this freestanding PE.
+    pub mod cast {
+        use core::mem::{align_of, size_of};
+
+        /// # Safety
+        /// See `bun_core::cast::NoUninit`.
+        pub unsafe trait NoUninit: Copy + 'static {}
+        /// # Safety
+        /// See `bun_core::cast::AnyBitPattern`.
+        pub unsafe trait AnyBitPattern: Copy + 'static {}
+        // SAFETY: primitive integers — no padding, every bit pattern valid.
+        unsafe impl NoUninit for u8 {}
+        // SAFETY: see above.
+        unsafe impl NoUninit for u16 {}
+        // SAFETY: see above.
+        unsafe impl AnyBitPattern for u8 {}
+        // SAFETY: see above.
+        unsafe impl AnyBitPattern for u16 {}
+
+        /// Mirrors `bun_core::cast::cast_slice`. Panics on misalignment or slop.
+        #[inline]
+        #[track_caller]
+        pub fn cast_slice<A: NoUninit, B: AnyBitPattern>(a: &[A]) -> &[B] {
+            let bytes = core::mem::size_of_val(a);
+            assert!(
+                align_of::<B>() <= align_of::<A>()
+                    || (a.as_ptr() as usize).is_multiple_of(align_of::<B>())
+            );
+            assert!(size_of::<B>() != 0 && bytes.is_multiple_of(size_of::<B>()));
+            // SAFETY: alignment + even division checked; trait bounds discharge
+            // value-validity in both directions.
+            unsafe { core::slice::from_raw_parts(a.as_ptr().cast::<B>(), bytes / size_of::<B>()) }
+        }
+    }
+
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
     /// interior-mutability cell with no synchronization. The shim is
     /// single-threaded (it never spawns a thread), so the

@@ -2670,7 +2670,7 @@ impl BlobExt for Blob {
             // This branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer`, unlike the toJSON path.
             let buf = &buf[..buf.len() & !1];
-            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+            let out = match bun_core::cast::try_cast_slice::<u8, u16>(buf) {
                 Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
                 Err(_) => {
                     let units: Vec<u16> = buf
@@ -2904,7 +2904,7 @@ impl BlobExt for Blob {
             // Reinterpret as u16: drop a trailing odd byte.
             // +1 WTF ref; `OwnedString` releases it on scope exit.
             let buf = &buf[..buf.len() & !1];
-            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+            let mut out = match bun_core::cast::try_cast_slice::<u8, u16>(buf) {
                 Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
                 Err(_) => {
                     let units: Vec<u16> = buf

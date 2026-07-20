@@ -4,6 +4,9 @@ const { isUint8Array } = require("node:util/types");
 
 const { validateOneOf } = require("internal/validators");
 
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const Uint8ArrayPrototype = Uint8Array.prototype;
+
 let isError;
 
 // Cached resolved promise to avoid allocating a new one on every sync fast-path.
@@ -113,7 +116,12 @@ function concatBytes(chunks) {
   if (chunks.length === 1) {
     const chunk = chunks[0];
     // If non-zero offset, skip the remaining buffer checks.
-    if (chunk.byteOffset === 0) {
+    // Bun's Buffer.from has no shared pool, so a small Buffer covers its whole
+    // backing store and would be returned as-is here, where Node's pooled
+    // Buffer takes the copy path and yields a plain Uint8Array. Restrict the
+    // identity fast path to plain Uint8Arrays so Buffer inputs normalize the
+    // way they observably do in Node.
+    if (chunk.byteOffset === 0 && ObjectGetPrototypeOf(chunk) === Uint8ArrayPrototype) {
       // Works for both ArrayBuffer and SharedArrayBuffer backings.
       if (chunk.byteLength === chunk.buffer.byteLength) {
         return chunk;

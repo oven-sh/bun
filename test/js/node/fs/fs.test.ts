@@ -5574,11 +5574,7 @@ describe.concurrent.each(["write", "writev"] as const)(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
@@ -5594,9 +5590,7 @@ describe.concurrent.each(["write", "writev"] as const)(
         op === "write"
           ? new Promise(r => fs.write(fh.fd, new Uint8Array(sab), 0, 4096, 0, (e, n) => r({ e, n })))
           : new Promise(r =>
-              fs.writev(fh.fd, [new Uint8Array(sab, 0, 2048), new Uint8Array(sab, 2048)], 0, (e, n) =>
-                r({ e, n }),
-              ),
+              fs.writev(fh.fd, [new Uint8Array(sab, 0, 2048), new Uint8Array(sab, 2048)], 0, (e, n) => r({ e, n })),
             );
       sab.grow(8192);
       const { e, n } = await p;

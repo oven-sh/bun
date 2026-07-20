@@ -10,11 +10,10 @@ use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
-/// In practice every JS entry point converts to UTF-8 first (via
-/// `ZigString.toSlice`) and instantiates with
-/// `T = u8`, so the `u16` arm is never reached at runtime — but it must still
-/// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
-/// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
+/// Most JS entry points convert to UTF-8 first (via `ZigString.toSlice`) and
+/// instantiate with `T = u8`; `to_namespaced_path` dispatches on the JS
+/// string's native width and reaches the `u16` arm for 16-bit or non-ASCII
+/// Latin-1 input. The `u8` arm treats its input as UTF-8.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{StringJsc as _, bun_string_jsc};
@@ -3465,29 +3464,23 @@ pub(crate) fn resolve(
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L622
+///
+/// Returns `Ok(None)` when Node would return the input string unchanged
+/// (resolved length ≤ 2 code units); the caller returns the original
+/// `JSValue` directly instead of round-tripping it through a buffer.
 pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     path: &[T],
     buf: &'a mut [T],
     buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
+) -> bun_sys::Result<Option<&'a [T]>> {
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
     // Borrowck: capture length, then re-borrow buf.
     let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
 
     let len = resolved_len;
-    // Node's guard compares `resolvedPath.length` (UTF-16 code units). For the
-    // UTF-8 `T = u8` instantiation, translate byte length to code-unit length;
-    // 2 code units occupy at most 6 UTF-8 bytes, so longer buffers skip it.
-    let code_unit_len = if !T::IS_U16 && len > 2 && len <= 6 {
-        strings::element_length_utf8_into_utf16(bytemuck::cast_slice::<T, u8>(&buf[0..len]))
-    } else {
-        len
-    };
-    if code_unit_len <= 2 {
-        buf[0..path.len()].copy_from_slice(path);
-        buf[path.len()] = T::default();
-        return Ok(&buf[0..path.len()]);
+    if len <= 2 {
+        return Ok(None);
     }
 
     let buf_offset: usize;
@@ -3518,7 +3511,7 @@ pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
                 buf[6] = T::from_u8(b'C');
                 buf[7] = T::from_u8(CHAR_BACKWARD_SLASH);
                 buf[buf_size] = T::default();
-                return Ok(&buf[0..buf_size]);
+                return Ok(Some(&buf[0..buf_size]));
             }
         }
     } else if is_windows_device_root_t(byte0)
@@ -3539,38 +3532,27 @@ pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
         buf[2] = T::from_u8(CHAR_QUESTION_MARK);
         buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
         buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
+        return Ok(Some(&buf[0..buf_size]));
     }
-    Ok(&buf[0..resolved_len])
-}
-
-pub(crate) fn to_namespaced_path_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    path: &[T],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match to_namespaced_path_windows_t(path, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
-    }
+    Ok(Some(&buf[0..resolved_len]))
 }
 
 pub(crate) fn to_namespaced_path_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
-    is_windows: bool,
+    path_ptr: JSValue,
     path: &[T],
 ) -> JsResult<JSValue> {
-    if !is_windows || path.is_empty() {
-        return create_js_string_t::<T>(global_object, path);
-    }
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
     let buf_len = (path.len() + max_path_size::<T>() + 1).max(path_size::<T>());
     // +8 for possible UNC prefix, +1 for null terminator; ×2 for buf/buf2.
     let mut scratch = PathScratch::<T>::new(pool, (buf_len + 8 + 1) * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 8 + 1);
-    to_namespaced_path_windows_js_t(global_object, path, buf, buf2)
+    match to_namespaced_path_windows_t(path, buf, buf2) {
+        Ok(Some(r)) => create_js_string_t::<T>(global_object, r),
+        Ok(None) => Ok(path_ptr),
+        Err(e) => Ok(e.to_js(global_object)),
+    }
 }
 
 pub(crate) fn to_namespaced_path(
@@ -3598,9 +3580,28 @@ pub(crate) fn to_namespaced_path(
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
+    // Operate on the JS string's native encoding so element counts match
+    // UTF-16 code units (Node's `resolvedPath.length <= 2` guard) and pure
+    // string manipulation does no transcoding.
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
+    if path_zstr.is_16bit() {
+        return to_namespaced_path_js_t::<u16>(
+            global_object,
+            pool,
+            path_ptr,
+            path_zstr.utf16_slice_aligned(),
+        );
+    }
+    let path8 = path_zstr.slice();
+    if strings::is_all_ascii(path8) {
+        return to_namespaced_path_js_t::<u8>(global_object, pool, path_ptr, path8);
+    }
+    // 8-bit Latin-1 with non-ASCII bytes: widen 1:1 to UTF-16 so the length
+    // guard counts code units and `get_cwd_u16` (UTF-8 cwd → UTF-16) mixes in
+    // the same encoding as the input.
+    let mut wide: SmallVec<[u16; 256]> = SmallVec::with_capacity(path8.len());
+    wide.extend(path8.iter().map(|&b| u16::from(b)));
+    to_namespaced_path_js_t::<u16>(global_object, pool, path_ptr, &wide)
 }
 
 // Emit the SYSV-ABI thunks locally.

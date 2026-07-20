@@ -80,15 +80,24 @@ describe("path.toNamespacedPath", () => {
     assert.strictEqual(path.win32.toNamespacedPath("/é"), "/é");
     assert.strictEqual(path.win32.toNamespacedPath("/\u00ff"), "/\u00ff");
     assert.strictEqual(path.win32.toNamespacedPath("/\u5555"), "/\u5555");
+    assert.strictEqual(path.win32.toNamespacedPath("/\uD800"), "/\uD800");
     assert.strictEqual(path.win32.toNamespacedPath("/./é"), "/./é");
+    // Node returns the input string object itself when the guard fires.
+    const s = "///é";
+    assert.ok(path.win32.toNamespacedPath(s) === s);
     // Controls: ASCII 2-unit path and >2-unit paths are unaffected.
     assert.strictEqual(path.win32.toNamespacedPath("/a"), "/a");
     assert.strictEqual(path.win32.toNamespacedPath("/ÅÅ"), "\\ÅÅ");
     assert.strictEqual(path.win32.toNamespacedPath("/😀"), "\\😀");
-    // Boundary: resolved "\\Å啕" is exactly 6 UTF-8 bytes (3 units);
-    // resolved "\\啕啕" is 7 bytes (3 units) and bypasses the conversion.
     assert.strictEqual(path.win32.toNamespacedPath("/Å\u5555"), "\\Å\u5555");
     assert.strictEqual(path.win32.toNamespacedPath("/\u5555\u5555"), "\\\u5555\u5555");
+  });
+
+  test("win32 handles non-ASCII UNC and device-root paths", () => {
+    assert.strictEqual(path.win32.toNamespacedPath("\\\\Å\\share"), "\\\\?\\UNC\\Å\\share\\");
+    assert.strictEqual(path.win32.toNamespacedPath("//Å//share"), "\\\\?\\UNC\\Å\\share\\");
+    assert.strictEqual(path.win32.toNamespacedPath("C:\\\u5555\\foo"), "\\\\?\\C:\\\u5555\\foo");
+    assert.strictEqual(path.win32.toNamespacedPath("C:\\Å"), "\\\\?\\C:\\Å");
   });
 
   test("posix", () => {

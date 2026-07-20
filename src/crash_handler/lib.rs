@@ -866,12 +866,9 @@ mod draft {
         ActionGuard(prev)
     }
 
-    /// General-purpose register snapshot at the faulting instruction, lifted
-    /// from `ucontext_t` (POSIX) / `CONTEXT` (Windows). Encoded into the trace
-    /// string (v3/v4) after the reason payload so the remapper can show the
-    /// register state even when the stack walk is short or corrupt.
-    ///
-    /// Slot order is fixed per arch and shared with the decoder:
+    /// GP register snapshot at the fault, lifted from `ucontext_t` / `CONTEXT`
+    /// and encoded into the v3/v4 trace string so the remapper has register
+    /// state when the stack walk is short. Slot order is shared with bun.report:
     ///   x86_64:  rax rbx rcx rdx rdi rsi rbp rsp r8 r9 r10 r11 r12 r13 r14 r15 rip
     ///   aarch64: x0..x28 fp lr sp pc
     #[derive(Clone, Copy)]
@@ -918,9 +915,8 @@ mod draft {
             }
         }
 
-        /// Testing-only constructor: seeds a fault context with caller-supplied
-        /// register values so the `bun:internal-for-testing` segfault hook can
-        /// exercise the v3/v4 encoding path without a real fault (ASAN owns the
+        /// Testing-only: synthesize a fault context so `bun:internal-for-testing`
+        /// can exercise the v3/v4 encoder without a real fault (ASAN owns the
         /// SIGSEGV handler under debug builds).
         pub fn for_testing(pc: usize, values: &[u64]) -> Self {
             let mut r = Self::empty(pc, 0);
@@ -938,10 +934,9 @@ mod draft {
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]
     pub enum TraceSeed<'a> {
-        /// Signal/exception handler saved the fault register context: walk frame
-        /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
-        /// becomes frame 0. Borrowed: the register file lives on the signal
-        /// handler's stack; boxing it would allocate inside a signal handler.
+        /// Signal/exception handler saved the fault context: walk frame pointers
+        /// from `fp` (POSIX) / trim by `pc` (Windows); `pc` is frame 0. Borrowed
+        /// so the signal handler does not allocate.
         Fault(&'a FaultRegisters),
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
@@ -1696,11 +1691,9 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Lift `pc`, `fp` and the general-purpose register file from the
-    /// `ucontext_t` the kernel hands the signal handler. `pc`/`fp` seed the
-    /// frame-pointer walk; the full register set is encoded into the trace
-    /// string. Returns `None` on arch/OS combos we don't have layouts for
-    /// (the caller then falls back to a current-stack capture).
+    /// Lift `pc`, `fp` and the GP register file from the kernel-supplied
+    /// `ucontext_t`; `pc`/`fp` seed the frame walk, the rest is encoded into
+    /// the trace string. `None` for arch/OS combos without a known layout.
     #[cfg(unix)]
     fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<FaultRegisters> {
         debug_assert!(!ctx.is_null());

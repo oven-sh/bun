@@ -188,6 +188,36 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 
 extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
 
+#else
+
+/* kevent(2) returns EINTR when a signal is caught (XNU kqueue_scan returns
+ * EINTR on THREAD_INTERRUPTED; FreeBSD kqueue_scan maps ERESTART->EINTR), so
+ * retry with the remaining time against an absolute monotonic deadline. */
+static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents, unsigned int flags, const struct timespec *timeout) {
+    int ret;
+    uint64_t deadline_ns = 0;
+    const int has_deadline = timeout && (timeout->tv_sec | timeout->tv_nsec);
+    if (has_deadline) {
+        deadline_ns = us_internal_monotonic_ns()
+                    + (uint64_t) timeout->tv_sec * 1000000000ULL
+                    + (uint64_t) timeout->tv_nsec;
+    }
+
+    struct timespec remaining_ts;
+    const struct timespec *remaining = timeout;
+    for (;;) {
+        ret = kevent64(kqfd, NULL, 0, eventlist, nevents, flags, remaining);
+        if (!IS_EINTR(ret)) return ret;
+        if (!has_deadline) continue;
+        uint64_t now = us_internal_monotonic_ns();
+        if (now >= deadline_ns) return 0;
+        uint64_t left = deadline_ns - now;
+        remaining_ts.tv_sec  = (time_t) (left / 1000000000ULL);
+        remaining_ts.tv_nsec = (long)   (left % 1000000000ULL);
+        remaining = &remaining_ts;
+    }
+}
+
 #endif
 
 /* Loop */
@@ -376,9 +406,7 @@ void us_loop_run(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
         loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
-        do {
-            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
-        } while (IS_EINTR(loop->num_ready_polls));
+        loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
 #endif
 
         us_internal_dispatch_ready_polls(loop);
@@ -451,17 +479,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
-    do {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS,
-            /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
-             * In XNU's kqueue_scan (bsd/kern/kern_event.c):
-             *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
-             *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
-             *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
-             *    though the deadline is already in the past. */
-            will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
-            timeout);
-    } while (IS_EINTR(loop->num_ready_polls));
+    loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
+        /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
+         * In XNU's kqueue_scan (bsd/kern/kern_event.c):
+         *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
+         *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
+         *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
+         *    though the deadline is already in the past. */
+        will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
+        timeout);
 #endif
 
     /* Before anything can allocate again. */

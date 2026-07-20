@@ -433,7 +433,11 @@ it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
   const { ticks, cpuUs, wallUs } = JSON.parse(stdout);
   const cpuPercent = (cpuUs / wallUs) * 100;
   // Busy-spinning puts cpuUs ~= wallUs (100%). Sleeping properly it is a
@@ -500,7 +504,11 @@ __attribute__((constructor)) static void arm(void) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(filteredStderr).toBe("");
     const { ms } = JSON.parse(stdout);
     // Without the fix this lands ~900-1000 ms; with it, ~200-210 ms.
     expect(ms).toBeWithin(200, 500);

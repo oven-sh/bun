@@ -1442,10 +1442,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             consumed,
             len
         );
-        // For buffers `pin()` prevents `transfer()` from detaching the backing
-        // store; resizable/growable-shared are excluded (resize() mprotect()s
-        // trimmed pages PROT_NONE). JSString character buffers are immutable.
-        let cell = if is_array_buffer {
+        // The cell is rooted via the controller's GC-visited
+        // `m_pendingWriteValue` WriteBarrier; released on drain, spill,
+        // abort or destroy. For buffers `pin()` additionally prevents
+        // `transfer()` from detaching the backing store; resizable /
+        // growable-shared are excluded (resize() mprotect()s trimmed pages
+        // PROT_NONE). JSString character buffers are immutable.
+        let controller = self.controller_value();
+        let cell = if controller == JSValue::ZERO {
+            None
+        } else if is_array_buffer {
             match input_value.as_pinned_arraybuffer(self.global_this()) {
                 Some(ab) if !ab.resizable => Some(input_value),
                 Some(_) => {
@@ -1457,13 +1463,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         } else {
             Some(JSValue::ZERO)
         };
-        // The cell is rooted via the controller's GC-visited
-        // `m_pendingWriteValue` WriteBarrier; released on drain, spill,
-        // abort or destroy.
-        let controller = self.controller_value();
-        if let Some(cell) = cell
-            && controller != JSValue::ZERO
-        {
+        if let Some(cell) = cell {
             <Self as crate::webcore::sink::JsSinkAbi>::set_pending_write_value_extern(
                 controller,
                 self.global_this(),
@@ -2002,8 +2002,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
         self.spill_open_chunk();
         // All-ASCII Latin-1 is byte-identical to UTF-8 and the JSString's
-        // character buffer is immutable, so the pinned path can hold it by
-        // reference with `protect()` alone.
+        // character buffer is immutable, so it can take the pinned path
+        // without an ArrayBuffer pin().
         let bytes = data.slice();
         if strings::is_all_ascii(bytes) {
             if let Some(result) = self.try_write_pinned(bytes, input_value, false) {

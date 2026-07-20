@@ -658,6 +658,7 @@ void JS${controllerName}::detach() {
     m_onPull.clear();
     m_onClose.clear();
     m_weakReadableStream.clear();
+    m_pendingWriteValue.clear();
 
     if (destroy) {
         Bun__onSinkDestroyed(destroy, sinkPtr);

@@ -203,7 +203,7 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
 +     * it posts a NULL-overlapped completion (already treated as a pure wakeup
 +     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait.
 +     * >100ms deadlines don't need sub-tick precision; skip the 3 syscalls. */
-+    if (timeout - 1 < 100 && lfields->hrtimer != NULL) {
++    if (timeout > 0 && timeout <= 100 && lfields->hrtimer != NULL) {
 +      LARGE_INTEGER due;
 +      BOOLEAN signaled;
 +      due.QuadPart = -(LONGLONG) timeout * 10000;  /* relative, 100ns units */

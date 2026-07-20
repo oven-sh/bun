@@ -137,7 +137,9 @@ mod io_thread_pool {
                     // null. REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set
                     // under MUTEX below).
                     return unsafe {
-                        NonNull::new_unchecked(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
+                        NonNull::new_unchecked(
+                            THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>(),
+                        )
                     };
                 }
                 Err(actual) => count = actual,

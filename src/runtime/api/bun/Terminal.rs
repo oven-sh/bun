@@ -1129,7 +1129,15 @@ fn create_overlapped_pipe_pair(
     let name = {
         use std::io::Write;
         let mut cursor = &mut name_utf8_buf[..];
-        if write!(cursor, "\\\\.\\pipe\\bun-conpty-{}-{}", pid, counter).is_err() {
+        // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
+        // insert the segment only then so the name is unchanged outside one
+        // (matches libuv's uv__unique_pipe_name).
+        let local = if windows::is_app_container() {
+            r"LOCAL\"
+        } else {
+            ""
+        };
+        if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
             return Err(CreatePtyError::OpenPtyFailed);
         }
         let written = 96 - cursor.len();

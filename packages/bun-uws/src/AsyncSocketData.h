@@ -25,7 +25,7 @@ namespace uWS {
 
 struct BackPressure {
     std::string buffer;
-    unsigned int pendingRemoval = 0;
+    size_t pendingRemoval = 0;
     BackPressure(BackPressure &&other) {
         buffer = std::move(other.buffer);
         pendingRemoval = other.pendingRemoval;
@@ -34,12 +34,12 @@ struct BackPressure {
     void append(const char *data, size_t length) {
         buffer.append(data, length);
     }
-    void erase(unsigned int length) {
+    void erase(size_t length) {
         pendingRemoval += length;
-        /* Always erase a minimum of 1/32th the current backpressure */
-        if (pendingRemoval > (buffer.length() >> 5)) {
+        /* Compact once half the buffer is dead space so draining n bytes moves
+         * O(n) total (geometric series). clear() releases capacity on full drain. */
+        if (pendingRemoval > (buffer.length() >> 1)) {
             buffer.erase(0, pendingRemoval);
-            buffer.shrink_to_fit();
             pendingRemoval = 0;
         }
     }

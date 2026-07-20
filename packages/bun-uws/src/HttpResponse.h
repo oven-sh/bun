@@ -650,6 +650,18 @@ public:
 
         size_t length = data.length();
 
+        /* A write this large is split into several AsyncSocket::write calls below
+         * (chunk framing, INT_MAX slicing). Reserve once so those appends never
+         * realloc + copy a multi-GB backpressure buffer. */
+        if (length > 1024 * 1024) {
+            auto &bp = Super::getAsyncSocketData()->buffer;
+            size_t need = bp.totalLength() + length + 32;
+            if (need > bp.buffer.capacity()) {
+                /* libc++ reserve() is exact-fit; keep geometric growth explicit. */
+                bp.buffer.reserve(std::max(bp.buffer.capacity() * 2, need));
+            }
+        }
+
         // Special handling for extremely large data (greater than UINT_MAX bytes)
         // most clients expect a max of UINT_MAX, so we need to split the write into multiple writes
         if (length > UINT_MAX) {

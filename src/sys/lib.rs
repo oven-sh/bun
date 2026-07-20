@@ -9998,7 +9998,10 @@ mod normalize_path_windows_tests {
             let got = normalize(cwd, input);
             assert_ne!(got, "\\??\\AUX", "{input:?} -> {got}");
             assert_ne!(got, "\\??\\NUL", "{input:?} -> {got}");
-            assert!(got.ends_with(&input[input.len() - 3..]), "{input:?} -> {got}");
+            assert!(
+                got.ends_with(&input[input.len() - 3..]),
+                "{input:?} -> {got}"
+            );
         }
     }
 

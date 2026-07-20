@@ -3438,6 +3438,13 @@ pub use bun_windows_sys::externs::CreateJobObjectA;
 
 pub use bun_windows_sys::externs::AssignProcessToJobObject;
 
+pub use bun_windows_sys::externs::GetCurrentProcess;
+
+pub use bun_windows_sys::externs::{
+    PROCESS_BASIC_INFORMATION, ProcessBasicInformation, RegisterWaitForSingleObject,
+    SetEnvironmentVariableW, WAITORTIMERCALLBACK, WT_EXECUTEONLYONCE,
+};
+
 pub use bun_windows_sys::externs::ResumeThread;
 
 // Job Object structures + JOBOBJECTINFOCLASS consts — canonical definitions
@@ -4573,36 +4580,19 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_v
         compile_error!("unreachable");
     }
 
-    use bun_core::strings::EncodingNonAscii;
     let mut buf = bun_paths::WPathBuffer::uninit();
-    let data: &[u16] = match str_.encoding() {
-        EncodingNonAscii::Utf8 => {
-            bun_core::convert_utf8_to_utf16_in_buffer(buf.as_mut_slice(), str_.utf8())
-        }
-        EncodingNonAscii::Utf16 => {
-            let src = str_.utf16();
-            buf.as_mut_slice()[0..src.len()].copy_from_slice(src);
-            &buf.as_slice()[0..src.len()]
-        }
-        EncodingNonAscii::Latin1 => {
-            // Straight zero-extend per byte.
-            let src = str_.latin1();
-            let dst = &mut buf.as_mut_slice()[..src.len()];
-            // zip avoids the per-iteration bounds check an indexed loop would
-            // emit, letting the optimizer vectorize the widen.
-            for (d, &b) in dst.iter_mut().zip(src) {
-                *d = b as u16;
-            }
-            &buf.as_slice()[0..src.len()]
-        }
-    };
-    let len = data.len();
-    buf.as_mut_slice()[len] = 0;
+    // The path is JS-supplied; over-length input must surface as the same
+    // `null + GetLastError()` shape `LoadLibraryExW` itself would yield, not
+    // a Rust panic unwinding across the `extern "C"` boundary.
+    if str_.encode_into_utf16_buf_z(buf.as_mut_slice()).is_none() {
+        kernel32::SetLastError(DWORD::from(Win32Error::FILENAME_EXCED_RANGE.int()));
+        return ptr::null_mut();
+    }
     // Always set the altered-search flag to match libuv `uv_dlopen` (and so
     // Node.js) exactly. `process.dlopen` passes an absolute path, so MSDN's
     // "undefined for relative paths" caveat does not apply here.
     const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x00000008;
-    // SAFETY: buf NUL-terminated at [len]
+    // SAFETY: buf NUL-terminated by `encode_into_utf16_buf_z`.
     unsafe {
         kernel32::LoadLibraryExW(buf.as_ptr(), ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH)
     }

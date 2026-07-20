@@ -150,12 +150,7 @@ pub mod lockfile {
     // Back-compat aliases for names the inline stub spelled differently.
     pub use crate::Origin;
     pub use crate::lockfile_real::LockfileFormat as Format;
-    pub use crate::lockfile_real::Serializer::SerializerLoadResult;
     pub use crate::lockfile_real::package_index::Entry as PackageIndexEntry;
-    /// Callers pass a `Resolution.Tag` literal when invoking
-    /// `Scripts.createList` for the root package; alias the tag enum here so
-    /// `lockfile::ScriptsListKind::Root` resolves.
-    pub use crate::resolution::Tag as ScriptsListKind;
     /// `MultiArrayList<Package>.append` row type — the real `PackageList`
     /// (`package::List<u64>`) takes a `Package` value, so alias the row type
     /// for callers (e.g. `migration.rs`) that spell it `PackageListEntry`.

@@ -1653,7 +1653,7 @@ impl WindowsNamedPipeListeningContext {
     /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
     /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
     /// explicitly — matches the `extern "C" fn` callback convention used in
-    /// `udp_socket.rs` / `bun_io::PipeReader`.
+    /// `udp_socket.rs` / `bun_io::BufferedReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };

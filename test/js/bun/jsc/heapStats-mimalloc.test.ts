@@ -54,6 +54,7 @@ describe("heapStats() mimalloc integration", () => {
     using dir = tempDir("heapStats-mimalloc-pages", {
       "check.js": `
         import { heapStats } from "bun:jsc";
+        const theapsBefore = heapStats().mimalloc.theaps?.current ?? 0;
         const code = \`
           const hold = [];
           for (let i = 0; i < 50000; i++) hold.push({ a: i, b: "str_" + i });
@@ -69,7 +70,7 @@ describe("heapStats() mimalloc integration", () => {
         const stat = s.mimalloc.pages.current;
         const binSum = s.mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
         const theaps = s.mimalloc.theaps?.current ?? 0;
-        console.log(JSON.stringify({ stat, dump, binSum, theaps }));
+        console.log(JSON.stringify({ stat, dump, binSum, theapsBefore, theaps }));
         w.terminate();
       `,
     });
@@ -81,17 +82,17 @@ describe("heapStats() mimalloc integration", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { stat, dump, binSum, theaps } = JSON.parse(stdout);
-    // A Worker allocates on its own thread and must create at least one theap; without that
-    // precondition the assertion below would be vacuous.
-    expect(theaps).toBeGreaterThan(0);
+    const { stat, dump, binSum, theapsBefore, theaps } = JSON.parse(stdout);
+    // The Worker allocates on its own thread; if that didn't create a new theap the assertion
+    // below would be vacuous (only the caller's theap exists, which the old aggregate already
+    // folded in). The static main theap is not counted, so before is 0 in practice.
+    expect({ theapsBefore, theaps }).toSatisfy(v => v.theaps > v.theapsBefore);
     // The live heap walk is ground truth. A small slack covers the few pages that can change
     // between the two reads; before the fix the counter sat tens of pages below the walk here.
     expect(stat).toBeGreaterThanOrEqual(0);
     expect({ stat, dump }).toSatisfy(v => v.stat >= v.dump - 5);
     expect({ binSum, dump }).toSatisfy(v => v.binSum >= v.dump - 5);
-    expect(exitCode).toBe(0);
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   });
 
   test("dump reflects new heaps and allocations", () => {

@@ -1309,6 +1309,13 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    TestBuilder.command`export 1FOO`
+      .stderr("export: export: `1FOO`: not a valid identifier\n")
+      .exitCode(0)
+      .runAsTest("export rejects invalid identifier");
+
+    TestBuilder.command`export FOO`.stderr("").exitCode(0).runAsTest("export accepts bare valid identifier");
   });
 
   describe("pipeline", async () => {

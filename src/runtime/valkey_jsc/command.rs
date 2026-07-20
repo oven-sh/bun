@@ -1,6 +1,7 @@
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue};
 use bun_valkey::valkey_protocol as protocol;
+use bun_valkey::valkey_protocol::RedisError;
 
 use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
@@ -56,38 +57,42 @@ impl<'a> Args<'a> {
 }
 
 impl<'a> Command<'a> {
-    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
-        // Serialize as RESP array format directly
-        write!(writer, "*{}\r\n", 1 + self.args.len())?;
-        write!(writer, "${}\r\n", self.command.len())?;
-        writer.write_all(self.command)?;
-        writer.write_all(b"\r\n")?;
+    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), RedisError> {
+        // Serialize as RESP array format directly; `bun_io::Write` can only
+        // fail with an allocator error, so collapse to `OutOfMemory`.
+        (|| -> bun_io::Result<()> {
+            write!(writer, "*{}\r\n", 1 + self.args.len())?;
+            write!(writer, "${}\r\n", self.command.len())?;
+            writer.write_all(self.command)?;
+            writer.write_all(b"\r\n")?;
 
-        match &self.args {
-            Args::Slices(args) => {
-                for arg in args.iter() {
-                    let bytes = arg.slice();
-                    write!(writer, "${}\r\n", bytes.len())?;
-                    writer.write_all(bytes)?;
-                    writer.write_all(b"\r\n")?;
+            match &self.args {
+                Args::Slices(args) => {
+                    for arg in args.iter() {
+                        let bytes = arg.slice();
+                        write!(writer, "${}\r\n", bytes.len())?;
+                        writer.write_all(bytes)?;
+                        writer.write_all(b"\r\n")?;
+                    }
+                }
+                Args::Args(args) => {
+                    for arg in args.iter() {
+                        write!(writer, "${}\r\n", arg.byte_length())?;
+                        writer.write_all(arg.slice())?;
+                        writer.write_all(b"\r\n")?;
+                    }
+                }
+                Args::Raw(args) => {
+                    for arg in args.iter() {
+                        write!(writer, "${}\r\n", arg.len())?;
+                        writer.write_all(arg)?;
+                        writer.write_all(b"\r\n")?;
+                    }
                 }
             }
-            Args::Args(args) => {
-                for arg in args.iter() {
-                    write!(writer, "${}\r\n", arg.byte_length())?;
-                    writer.write_all(arg.slice())?;
-                    writer.write_all(b"\r\n")?;
-                }
-            }
-            Args::Raw(args) => {
-                for arg in args.iter() {
-                    write!(writer, "${}\r\n", arg.len())?;
-                    writer.write_all(arg)?;
-                    writer.write_all(b"\r\n")?;
-                }
-            }
-        }
-        Ok(())
+            Ok(())
+        })()
+        .map_err(|_| RedisError::OutOfMemory)
     }
 
     pub fn byte_length(&self) -> usize {
@@ -97,7 +102,7 @@ impl<'a> Command<'a> {
         counter.count
     }
 
-    pub fn serialize(&self) -> Result<Box<[u8]>, crate::Error> {
+    pub fn serialize(&self) -> Result<Box<[u8]>, RedisError> {
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
@@ -107,7 +112,6 @@ impl<'a> Command<'a> {
 /// Command stored in offline queue when disconnected
 pub struct Entry {
     pub serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
-    pub meta: Meta,
     pub promise: Promise,
 }
 
@@ -119,12 +123,9 @@ pub mod entry {
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
-    pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
+    pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, RedisError> {
         Ok(Entry {
             serialized_data: command.serialize()?,
-            // We should be calling .check against command here but due
-            // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
-            meta: command.meta,
             promise,
         })
     }
@@ -200,6 +201,12 @@ pub struct Promise {
     pub promise: jsc::JSPromiseStrong,
 }
 
+// See `entry` note above.
+pub mod promise {
+    pub(crate) type Queue =
+        super::LinearFifo<super::Promise, super::DynamicBuffer<super::Promise>>;
+}
+
 impl Promise {
     pub fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {
         let promise = jsc::JSPromiseStrong::init(global_object);
@@ -218,7 +225,7 @@ impl Promise {
         let js_value = match resp_value_to_js_with_options(value, global_object, options) {
             Ok(v) => v,
             Err(err) => {
-                self.reject(global_object, Ok(global_object.take_error(err)))?;
+                self.promise.reject(global_object, Err(err))?;
                 return Ok(());
             }
         };
@@ -229,32 +236,9 @@ impl Promise {
     pub fn reject(
         &mut self,
         global_object: &JSGlobalObject,
-        jsvalue: JsResult<JSValue>,
+        value: JSValue,
     ) -> Result<(), jsc::JsTerminated> {
-        self.promise.reject(global_object, jsvalue)?;
-        Ok(())
-    }
-}
-
-// Command+Promise pair for tracking which command corresponds to which promise
-pub struct PromisePair {
-    pub meta: Meta,
-    pub promise: Promise,
-}
-
-// See `entry` note above.
-pub mod promise_pair {
-    pub(crate) type Queue =
-        super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
-}
-
-impl PromisePair {
-    pub fn reject_command(
-        &mut self,
-        global_object: &JSGlobalObject,
-        jsvalue: JSValue,
-    ) -> Result<(), jsc::JsTerminated> {
-        self.promise.reject(global_object, Ok(jsvalue))?;
+        self.promise.reject(global_object, Ok(value))?;
         Ok(())
     }
 }

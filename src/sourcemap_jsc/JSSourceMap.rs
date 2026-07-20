@@ -91,6 +91,48 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     Ok(JSSourceMap::to_js(this, global))
 }
 
+/// node:inspector needs the compiled->original mapping for a transpiled
+/// script to report Debugger positions in original-source coordinates. Given
+/// the script's URL (file:// URL or absolute path), returns the standard
+/// source-map v3 `mappings` VLQ string from the VM's runtime table, or
+/// undefined when the script was not transpiled by Bun. Unlike
+/// `findSourceMap` this is internal and not gated on --enable-source-maps.
+#[bun_jsc::host_fn]
+pub fn get_inspector_mappings(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let source_url_value = frame.argument(0);
+    if !source_url_value.is_string() {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
+    let mut source_url_slice = source_url_string.to_utf8();
+
+    if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
+        if &source_url_slice.slice()[..source_url_index] != b"file" {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let path = bun_jsc::URL::path_from_file_url(source_url_string.dupe_ref());
+        if path.is_dead() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        drop(source_url_slice);
+        source_url_string = path;
+        source_url_slice = source_url_string.to_utf8();
+    }
+
+    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
+    let vm = global.bun_vm().as_mut();
+    let Some(source_map) = vm.source_mappings().get(source_url_slice.slice()) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+
+    let mut mappings = Vec::<u8>::new();
+    if source_map.write_vlqs(&mut mappings).is_err() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    bun_string_jsc::create_utf8_for_js(global, &mappings)
+}
+
 impl JSSourceMap {
     pub fn constructor(
         global: &JSGlobalObject,

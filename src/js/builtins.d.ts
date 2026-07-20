@@ -594,6 +594,7 @@ declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
 declare function $ERR_INSPECTOR_ALREADY_CONNECTED(): Error;
 declare function $ERR_INSPECTOR_NOT_CONNECTED(): Error;
 declare function $ERR_INSPECTOR_NOT_WORKER(): Error;
+declare function $ERR_INSPECTOR_CLOSED(): Error;
 declare function $ERR_INSPECTOR_COMMAND(message: string): Error;
 declare function $ERR_WORKER_UNSUPPORTED_OPERATION(message: string): TypeError;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;

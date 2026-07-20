@@ -370,6 +370,11 @@ class InspectorCDPAdapter {
   #disconnectNotify: DisconnectNotifyState;
   #isWaitingForDebugger: () => boolean;
 
+  // `allocateBackendId` lets several adapters share one backend whose
+  // replies are broadcast to all of them (JSC's FrontendRouter): a shared
+  // allocator keeps their command ids disjoint, so each claims only its own.
+  #allocateBackendId: (() => number) | undefined;
+
   constructor(
     writeToBackend: (message: string) => void,
     writeToClient: (message: string) => void,
@@ -379,12 +384,14 @@ class InspectorCDPAdapter {
       retaining: 0,
       adapters: undefined,
     },
+    allocateBackendId?: () => number,
   ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
     this.#isWaitingForDebugger = isWaitingForDebugger;
     this.#disconnectNotify = disconnectNotify;
     (disconnectNotify.adapters ??= new Set()).add(this);
+    this.#allocateBackendId = allocateBackendId;
   }
 
   // Node takes retaining_context_ once, inside notifyWaitingForDisconnect, so
@@ -553,7 +560,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#nextBackendId++;
+    const id = this.#allocateBackendId !== undefined ? this.#allocateBackendId() : this.#nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }

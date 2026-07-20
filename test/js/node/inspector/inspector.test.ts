@@ -606,7 +606,7 @@ test("Runtime.consoleAPICalled encodes -0/NaN/Infinity/bigint as unserializableV
   }
 });
 
-test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", () => {
+test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", async () => {
   const session = new inspector.Session();
   expect(() => session.post("Runtime.enable")).toThrow(
     expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED", message: "Session is not connected" }),
@@ -630,7 +630,15 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
   expect(() => session.post("Runtime.enable", (() => {}) as any, () => {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
-  expect(() => session.post("Nonexistent.domain")).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
+  // Like Node, a callback-less post() of an unknown method returns undefined
+  // rather than throwing; the ERR_INSPECTOR_COMMAND error goes to the callback.
+  expect(() => session.post("Nonexistent.domain")).not.toThrow();
+  expect(session.post("Nonexistent.domain")).toBeUndefined();
+  const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<any>();
+  session.post("Nonexistent.domain", err => resolveErr(err));
+  const unknownErr = await errPromise;
+  expect(unknownErr).toBeInstanceOf(Error);
+  expect(unknownErr.code).toBe("ERR_INSPECTOR_COMMAND");
   session.disconnect();
 
   // connectToMainThread() throws ERR_INSPECTOR_NOT_WORKER on the main thread.

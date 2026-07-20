@@ -546,6 +546,14 @@ mod draft {
         pub fn is_main_thread() -> bool {
             MAIN_THREAD_ID.load(Ordering::Relaxed) == bun_threading::current_thread_id()
         }
+
+        /// Zig: `Cli.cmd = command` (cli.zig `createContextData`). `bun_runtime`
+        /// stores `Command.Tag.char()` here at dispatch so crash-report trace
+        /// strings encode which subcommand was running instead of `_` (pre-init).
+        pub fn set_cmd_char(c: u8) {
+            CMD_CHAR.store(c, Ordering::Relaxed);
+        }
+
         pub(crate) fn cmd_char() -> Option<u8> {
             match CMD_CHAR.load(Ordering::Relaxed) {
                 0 => None,

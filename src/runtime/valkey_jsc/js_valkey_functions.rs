@@ -160,8 +160,6 @@ pub(crate) mod compile {
     pub(crate) enum ClientStateRequirement {
         /// The client must not be a subscriber (not in subscription mode).
         NotSubscriber,
-        /// The client must be in subscriber mode.
-        Subscriber,
         /// We don't care about the client state (subscriber or not).
         DontCare,
     }
@@ -173,9 +171,6 @@ pub(crate) mod compile {
         match REQ {
             ClientStateRequirement::NotSubscriber => {
                 require_not_subscriber(this, js_client_prototype_function_name)
-            }
-            ClientStateRequirement::Subscriber => {
-                require_subscriber(this, js_client_prototype_function_name)
             }
             ClientStateRequirement::DontCare => Ok(()),
         }
@@ -1197,7 +1192,7 @@ impl JSValkeyClient {
     );
     cmd_key_varargs!(zrevrank, "zrevrank", "ZREVRANK", "key", NotSubscriber);
     cmd_strings_varargs!(psubscribe, "psubscribe", "PSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(punsubscribe, "punsubscribe", "PUNSUBSCRIBE", Subscriber);
+    cmd_strings_varargs!(punsubscribe, "punsubscribe", "PUNSUBSCRIBE", DontCare);
     cmd_strings_varargs!(pubsub, "pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, "copy", "COPY", NotSubscriber);
     cmd_key_varargs!(unlink, "unlink", "UNLINK", "key", NotSubscriber);
@@ -1339,10 +1334,7 @@ impl JSValkeyClient {
         let _guard = this.ref_scope();
 
         // Check if we're in subscription mode
-        compile::test_correct_state::<{ compile::ClientStateRequirement::Subscriber }>(
-            this,
-            "unsubscribe",
-        )?;
+        require_subscriber(this, "unsubscribe")?;
 
         let args_view = frame.arguments();
 

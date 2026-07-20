@@ -13,7 +13,7 @@ import type { Dependency } from "../source.ts";
 // Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
 // CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
 // the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "4dcfac4780d394e0dc2d3fb30335ca01b553eb46";
+const LIBUV_COMMIT = "96873308d4505884ba4f82ac89905fe0fd97eb9e";
 
 // prettier-ignore
 const SHARED = [
@@ -48,16 +48,7 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  //
-  // win-hrtimer: GQCS's ms timeout rounds to the ~15.6ms system tick, so
-  // arm a CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer and post it
-  // to the IOCP via NtAssociateWaitCompletionPacket (Go runtime's recipe,
-  // golang/go#44343). Pre Win10 1803: probe fails, behavior is unchanged.
-  patches: [
-    "patches/libuv/win-poll-rearm-before-callback.patch",
-    "patches/libuv/win-poll-abort-with-disconnect.patch",
-    "patches/libuv/win-hrtimer.patch",
-  ],
+  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
 
   build: () => ({
     kind: "direct",

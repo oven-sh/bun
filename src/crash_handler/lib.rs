@@ -637,7 +637,6 @@ mod draft {
         FloatingPointError(usize),
         /// Windows-only
         DatatypeMisalignment,
-        /// Windows-only
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
@@ -659,10 +658,12 @@ mod draft {
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
+                // On POSIX a stack overflow arrives as SIGSEGV on the guard
+                // page; re-raise as SIGSEGV so the parent sees the real fault.
+                CrashReason::StackOverflow => libc::SIGSEGV,
                 CrashReason::Panic(_)
                 | CrashReason::Unreachable
                 | CrashReason::DatatypeMisalignment
-                | CrashReason::StackOverflow
                 | CrashReason::ZigError(_)
                 | CrashReason::OutOfMemory => libc::SIGABRT,
             }
@@ -1657,6 +1658,76 @@ mod draft {
         }
     }
 
+    /// Guard region immediately below the current thread's stack. A SIGSEGV /
+    /// SIGBUS whose `si_addr` lands here is a native stack overflow, not a
+    /// stray pointer dereference; classifying it as `StackOverflow` lets
+    /// bun.report bucket it separately and gives users the right hint.
+    /// `None` when the bounds are unavailable (e.g. musl's main thread).
+    #[cfg(unix)]
+    pub fn stack_guard_range() -> Option<core::ops::Range<usize>> {
+        let page = bun_alloc::page_size();
+
+        #[cfg(target_os = "linux")]
+        // SAFETY: `pthread_getattr_np` fills a zeroed attr for the current
+        // thread; accessors read from that attr; `destroy` releases it.
+        unsafe {
+            let mut attr: libc::pthread_attr_t = core::mem::zeroed();
+            if libc::pthread_getattr_np(libc::pthread_self(), &raw mut attr) != 0 {
+                return None;
+            }
+            let mut stackaddr: *mut c_void = core::ptr::null_mut();
+            let mut stacksize: libc::size_t = 0;
+            let mut guardsize: libc::size_t = 0;
+            let ok = libc::pthread_attr_getstack(&raw const attr, &raw mut stackaddr, &raw mut stacksize) == 0
+                && libc::pthread_attr_getguardsize(&raw const attr, &raw mut guardsize) == 0;
+            libc::pthread_attr_destroy(&raw mut attr);
+            if !ok {
+                return None;
+            }
+            if guardsize == 0 {
+                guardsize = page;
+            }
+            // `stackaddr` is the lowest usable byte; the guard sits just below.
+            let low = stackaddr as usize;
+            Some(low.saturating_sub(guardsize)..low.saturating_add(page))
+        }
+        #[cfg(target_os = "macos")]
+        // SAFETY: `pthread_self()` is valid for the calling thread; both `_np`
+        // accessors are documented thread-safe for it.
+        unsafe {
+            let th = libc::pthread_self();
+            let top = libc::pthread_get_stackaddr_np(th) as usize;
+            let size = libc::pthread_get_stacksize_np(th);
+            if top == 0 || size == 0 {
+                return None;
+            }
+            let low = top.saturating_sub(size);
+            Some(low.saturating_sub(page)..low.saturating_add(page))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = page;
+            None
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn posix_fault_reason(sig: c_int, addr: usize) -> CrashReason {
+        match sig {
+            libc::SIGSEGV | libc::SIGBUS
+                if addr != 0 && stack_guard_range().is_some_and(|r| r.contains(&addr)) =>
+            {
+                CrashReason::StackOverflow
+            }
+            libc::SIGSEGV => CrashReason::SegmentationFault(addr),
+            libc::SIGILL => CrashReason::IllegalInstruction(addr),
+            libc::SIGBUS => CrashReason::BusError(addr),
+            libc::SIGFPE => CrashReason::FloatingPointError(addr),
+            // we do not register this handler for other signals
+            _ => unreachable!(),
+        }
+    }
+
     #[cfg(unix)]
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
@@ -1664,14 +1735,7 @@ mod draft {
         let addr: usize = unsafe { (*info).si_addr() as usize };
 
         crash_handler(
-            match sig {
-                libc::SIGSEGV => CrashReason::SegmentationFault(addr),
-                libc::SIGILL => CrashReason::IllegalInstruction(addr),
-                libc::SIGBUS => CrashReason::BusError(addr),
-                libc::SIGFPE => CrashReason::FloatingPointError(addr),
-                // we do not register this handler for other signals
-                _ => unreachable!(),
-            },
+            posix_fault_reason(sig, addr),
             match fault_context_from_ucontext(ctx) {
                 Some((pc, fp)) => TraceSeed::Fault { pc, fp },
                 None => TraceSeed::None,
@@ -1728,6 +1792,22 @@ mod draft {
     // crate reads/writes/swaps that same atomic; no local mirror (a second copy
     // would go stale after T0's swap-to-null and trip the `debug_assert!(rc != 0)`
     // in `reset_segfault_handler` on a double-remove).
+
+    /// Install the POSIX fault handler unconditionally. `reset_on_posix`
+    /// skips installation under ASAN so ASAN's own report stays in charge of
+    /// real faults; the `stackOverflow` test hook needs the real signal path.
+    #[cfg(unix)]
+    pub fn install_posix_handler_for_testing() {
+        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
+        let mut act: libc::sigaction = bun_core::ffi::zeroed();
+        act.sa_sigaction = handle_segfault_posix as *const () as usize;
+        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
+        // SAFETY: sa_mask is a valid out-pointer.
+        unsafe {
+            libc::sigemptyset(&raw mut act.sa_mask);
+        }
+        let _ = update_posix_segfault_handler(Some(&mut act));
+    }
 
     #[cfg(unix)]
     pub fn reset_on_posix() {

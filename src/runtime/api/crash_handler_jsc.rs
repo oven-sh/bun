@@ -12,7 +12,7 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
+        let obj = JSValue::create_empty_object(global, 9);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -23,6 +23,7 @@ pub mod js_bindings {
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
+            ("stackOverflow", __jsc_host_js_stack_overflow),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -90,6 +91,41 @@ pub mod js_bindings {
             core::ptr::write_unaligned(ptr, 0xDEADBEEF);
             core::hint::black_box(ptr);
         }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_stack_overflow(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        #[cfg(unix)]
+        {
+            // Under ASAN the POSIX handler is normally not installed and ASAN
+            // owns SIGSEGV. Exercise the classification directly with this
+            // thread's real guard-page address so the fault → reason mapping
+            // (`posix_fault_reason`) is what the test observes.
+            if Environment::ENABLE_ASAN {
+                let addr = crash_handler::stack_guard_range()
+                    .map(|r| r.start)
+                    .unwrap_or(0);
+                crash_handler::crash_handler(
+                    crash_handler::posix_fault_reason(libc::SIGSEGV, addr),
+                    crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
+                );
+            }
+            // Non-ASAN: take the real signal path.
+            crash_handler::install_posix_handler_for_testing();
+        }
+        #[inline(never)]
+        #[allow(unconditional_recursion)]
+        fn recurse(n: usize) -> usize {
+            let frame = [n; 64];
+            core::hint::black_box(&frame);
+            core::hint::black_box(recurse(core::hint::black_box(n).wrapping_add(1)))
+        }
+        core::hint::black_box(recurse(0));
         Ok(JSValue::UNDEFINED)
     }
 

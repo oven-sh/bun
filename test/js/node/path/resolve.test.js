@@ -111,11 +111,8 @@ describe("path.resolve", () => {
     expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));
   });
 
-  // On Windows, a drive-relative path like "C:foo" is resolved against the
-  // per-drive cwd stored in the `=C:` environment variable. The env value was
-  // being written into the same buffer region that already held the
-  // accumulated tail ("foo"), corrupting the result. Spawn a child with a
-  // known `=C:` so the expected output is deterministic.
+  // Drive-relative paths ("C:foo") resolve against the per-drive cwd in `=C:`.
+  // Spawn a child with a known `=C:` so the expected output is deterministic.
   test.skipIf(!isWindows)("win32 drive-relative input resolves against the per-drive cwd (=X: env var)", async () => {
     const script = `const p = require("path");
       console.log(JSON.stringify([
@@ -134,17 +131,19 @@ describe("path.resolve", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual([
-      "C:\\known\\dir\\foo",
-      "C:\\known\\dir",
-      "C:\\known\\dir\\foo",
-      "C:\\known\\dir\\foo\\bar",
-      "c:\\known\\dir\\foo",
-      "C:\\known\\dir\\foo",
-      "\\\\?\\C:\\known\\dir\\foo",
-    ]);
-    expect(exitCode).toBe(0);
+    expect({ stdout: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      stdout: [
+        "C:\\known\\dir\\foo",
+        "C:\\known\\dir",
+        "C:\\known\\dir\\foo",
+        "C:\\known\\dir\\foo\\bar",
+        "c:\\known\\dir\\foo",
+        "C:\\known\\dir\\foo",
+        "\\\\?\\C:\\known\\dir\\foo",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {

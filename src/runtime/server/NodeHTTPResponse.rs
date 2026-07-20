@@ -336,7 +336,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 /// to `AnyServerTag` here.
 #[inline]
 fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPointer::from(packed);
+    let repr = bun_ptr::TaggedPtr::from(packed);
     let tag = match repr.data() {
         1024 => AnyServerTag::HTTPServer,
         1023 => AnyServerTag::HTTPSServer,

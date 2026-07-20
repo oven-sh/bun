@@ -958,6 +958,37 @@ impl String {
         }
     }
 
+    /// Encode `self` into `buf` as NUL-terminated UTF-16, returning the unit
+    /// count (excluding the NUL), or `None` when `self`'s UTF-16 form plus the
+    /// NUL would not fit. Bounds-checked for all three backing encodings; the
+    /// caller owns mapping `None` to an error (e.g. `ENAMETOOLONG`).
+    pub fn encode_into_utf16_buf_z(&self, buf: &mut [u16]) -> Option<usize> {
+        let cap = buf.len().checked_sub(1)?;
+        let len = match self.encoding() {
+            strings::EncodingNonAscii::Utf8 => {
+                strings::try_convert_utf8_to_utf16_in_buffer(&mut buf[..cap], self.utf8())?.len()
+            }
+            strings::EncodingNonAscii::Utf16 => {
+                let src = self.utf16();
+                if src.len() > cap {
+                    return None;
+                }
+                buf[..src.len()].copy_from_slice(src);
+                src.len()
+            }
+            strings::EncodingNonAscii::Latin1 => {
+                let src = self.latin1();
+                if src.len() > cap {
+                    return None;
+                }
+                strings::copy_latin1_into_utf16(&mut buf[..src.len()], src);
+                src.len()
+            }
+        };
+        buf[len] = 0;
+        Some(len)
+    }
+
     /// `bun.String.canBeUTF8` — true iff `self`'s 8-bit bytes
     /// are valid UTF-8 (i.e. either UTF-8-tagged or all-ASCII).
     pub fn can_be_utf8(&self) -> bool {

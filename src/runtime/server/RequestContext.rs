@@ -739,10 +739,6 @@ where
             return;
         }
 
-        if ctx.server.is_none() {
-            ctx.render_missing_invalid_response(value);
-            return;
-        }
         if value.is_empty_or_undefined_or_null() || !value.is_cell() {
             ctx.render_missing_invalid_response(value);
             return;
@@ -865,9 +861,7 @@ where
         }
 
         ctx_log!("deinit<d> ({:p})<r>", self);
-        if cfg!(debug_assertions) {
-            debug_assert!(self.flags.has_finalized());
-        }
+        debug_assert!(self.flags.has_finalized());
 
         // A response body stream suspended inside its `pull()` never settles the promise
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
@@ -1186,9 +1180,12 @@ where
         ctx_log!("end");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(data, close_connection);
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1199,13 +1196,16 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
             if resp.state().is_response_pending() {
                 resp.end_stream(close_connection);
             }
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1247,9 +1247,12 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1259,9 +1262,12 @@ where
     pub fn force_close(&mut self) {
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.force_close();
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1735,9 +1741,6 @@ where
             return;
         }
 
-        if self.resp.is_none() || self.server.is_none() {
-            return;
-        }
         // SAFETY: BACKREF
         let global_this = self.server().global_this();
         let resp = self.resp.expect("infallible: resp bound");
@@ -1919,8 +1922,8 @@ where
                     resp.write_header(b"accept-ranges", b"bytes");
                     let close = resp.should_close_connection();
                     self.detach_response();
-                    self.end_request_streaming_and_drain();
                     resp.end(b"", close);
+                    self.end_request_streaming_and_drain();
                     self.deref();
                     return;
                 }
@@ -1936,9 +1939,9 @@ where
             // SAFETY: FFI handle
             let close = resp.should_close_connection();
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(b"", close);
+            self.end_request_streaming_and_drain();
             self.deref();
             return;
         }

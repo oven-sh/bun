@@ -349,8 +349,6 @@ pub mod js_fns {
         hook!(on_test_finished, OnTestFinished);
     }
 }
-/// Compat alias for sibling drafts (jest.rs) that referenced `bun_test::HookKind`.
-pub use js_fns::GenericHookTag as HookKind;
 
 /// `Rc<BunTestCell>`: single-thread, weak-capable, interior-mutable shared handle.
 ///

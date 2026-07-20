@@ -122,12 +122,9 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
-// `sigaltstack(2)` is per-thread. Previously only the main thread registered
-// one, and WTF's SIGSEGV handler (installed on the first JSC::VM creation)
-// dropped `SA_ONSTACK` from the disposition, so a native stack overflow on any
-// thread became an unrecoverable guard-page fault with no crash output. With a
-// per-thread altstack plus `SA_ONSTACK` re-applied after VM init, the kernel
-// delivers the fault on the alternate stack and the handler chain runs.
+// `sigaltstack(2)` is per-thread and WTF's SIGSEGV handler drops `SA_ONSTACK`
+// on VM init; without a per-thread altstack + reapplied `SA_ONSTACK`, a native
+// stack overflow becomes an unrecoverable guard-page fault with no output.
 describe.if(isPosix)("native stack overflow produces a crash report", () => {
   // ASAN builds leave Bun's SIGSEGV handler uninstalled so ASAN's DEADLYSIGNAL
   // diagnostic stays in charge; the handler chain is WTF -> ASAN there. Either

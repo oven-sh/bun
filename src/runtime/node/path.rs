@@ -3540,7 +3540,7 @@ pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
 pub(crate) fn to_namespaced_path_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
-    path_ptr: JSValue,
+    path_value: JSValue,
     path: &[T],
 ) -> JsResult<JSValue> {
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
@@ -3550,7 +3550,7 @@ pub(crate) fn to_namespaced_path_js_t<T: PathCharCwd>(
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 8 + 1);
     match to_namespaced_path_windows_t(path, buf, buf2) {
         Ok(Some(r)) => create_js_string_t::<T>(global_object, r),
-        Ok(None) => Ok(path_ptr),
+        Ok(None) => Ok(path_value),
         Err(e) => Ok(e.to_js(global_object)),
     }
 }
@@ -3564,20 +3564,20 @@ pub(crate) fn to_namespaced_path(
     if args_len == 0 {
         return Ok(JSValue::UNDEFINED);
     }
-    let path_ptr = args[0];
+    let path_value = args[0];
 
     // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:
     // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
     // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1269
     //
     // Act as an identity function for non-string values and non-Windows platforms.
-    if !is_windows || !path_ptr.is_string() {
-        return Ok(path_ptr);
+    if !is_windows || !path_value.is_string() {
+        return Ok(path_value);
     }
-    let path_zstr = path_ptr.get_zig_string(global_object)?;
+    let path_zstr = path_value.get_zig_string(global_object)?;
     let len = path_zstr.len;
     if len == 0 {
-        return Ok(path_ptr);
+        return Ok(path_value);
     }
 
     // Operate on the JS string's native encoding so element counts match
@@ -3588,20 +3588,20 @@ pub(crate) fn to_namespaced_path(
         return to_namespaced_path_js_t::<u16>(
             global_object,
             pool,
-            path_ptr,
+            path_value,
             path_zstr.utf16_slice_aligned(),
         );
     }
     let path8 = path_zstr.slice();
     if strings::is_all_ascii(path8) {
-        return to_namespaced_path_js_t::<u8>(global_object, pool, path_ptr, path8);
+        return to_namespaced_path_js_t::<u8>(global_object, pool, path_value, path8);
     }
     // 8-bit Latin-1 with non-ASCII bytes: widen 1:1 to UTF-16 so the length
     // guard counts code units and `get_cwd_u16` (UTF-8 cwd → UTF-16) mixes in
     // the same encoding as the input.
     let mut wide: SmallVec<[u16; 256]> = SmallVec::with_capacity(path8.len());
     wide.extend(path8.iter().map(|&b| u16::from(b)));
-    to_namespaced_path_js_t::<u16>(global_object, pool, path_ptr, &wide)
+    to_namespaced_path_js_t::<u16>(global_object, pool, path_value, &wide)
 }
 
 // Emit the SYSV-ABI thunks locally.

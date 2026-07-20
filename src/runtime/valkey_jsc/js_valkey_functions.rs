@@ -1270,7 +1270,7 @@ impl JSValkeyClient {
 
                 // What we do here is add our receive handler. Notice that this doesn't really do anything until the
                 // "SUBSCRIBE" command is sent to redis and we get a response.
-                this._subscription_ctx.get().upsert_receive_handler(
+                this.subscription_ctx.get().upsert_receive_handler(
                     global,
                     channel_arg,
                     handler_callback,
@@ -1284,7 +1284,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(channel);
 
-            this._subscription_ctx.get().upsert_receive_handler(
+            this.subscription_ctx.get().upsert_receive_handler(
                 global,
                 channel_or_many,
                 handler_callback,
@@ -1308,7 +1308,7 @@ impl JSValkeyClient {
             Err(err) => {
                 for ch in &inserted_channels {
                     let _ = this
-                        ._subscription_ctx
+                        .subscription_ctx
                         .get()
                         .remove_receive_handler(global, *ch, handler_callback)?;
                 }
@@ -1341,11 +1341,11 @@ impl JSValkeyClient {
             let command = Command {
                 command: b"UNSUBSCRIBE",
                 args: CommandArgs::Blobs(&redis_channels),
-                meta: CommandMeta::default(),
+                meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
             };
             return match this.send(global, &command) {
                 Ok(p) => {
-                    this._subscription_ctx
+                    this.subscription_ctx
                         .get()
                         .clear_all_receive_handlers(global)?;
                     Ok(promise_to_js(p))
@@ -1385,7 +1385,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(ch);
 
-            let remaining_listeners = match this._subscription_ctx.get().remove_receive_handler(
+            let remaining_listeners = match this.subscription_ctx.get().remove_receive_handler(
                 global,
                 channel,
                 listener_cb,
@@ -1408,12 +1408,12 @@ impl JSValkeyClient {
                 let command = Command {
                     command: b"UNSUBSCRIBE",
                     args: CommandArgs::Blobs(&redis_channels),
-                    meta: CommandMeta::default(),
+                    meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
                 };
                 return match this.send(global, &command) {
                     Ok(p) => Ok(promise_to_js(p)),
                     Err(err) => {
-                        this._subscription_ctx.get().upsert_receive_handler(
+                        this.subscription_ctx.get().upsert_receive_handler(
                             global,
                             channel,
                             listener_cb,
@@ -1475,12 +1475,12 @@ impl JSValkeyClient {
         let command = Command {
             command: b"UNSUBSCRIBE",
             args: CommandArgs::Blobs(&redis_channels),
-            meta: CommandMeta::default(),
+            meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
         match this.send(global, &command) {
             Ok(p) => {
                 for ch in &cleared_channels {
-                    this._subscription_ctx
+                    this.subscription_ctx
                         .get()
                         .clear_receive_handlers(global, *ch)?;
                 }

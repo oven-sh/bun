@@ -270,7 +270,7 @@ pub struct ValkeyClient {
     pub tls: TLS,
 
     // Timeout and reconnection management
-    pub idle_timeout_interval_ms: u32,
+    pub idle_timeout_ms: u32,
     pub connection_timeout_ms: u32,
     pub retry_attempts: u32,
     pub max_retries: u32, // Maximum retry attempts
@@ -433,7 +433,7 @@ impl ValkeyClient {
             return 0;
         }
         match self.status {
-            Status::Connected => self.idle_timeout_interval_ms,
+            Status::Connected => self.idle_timeout_ms,
             _ => self.connection_timeout_ms,
         }
     }
@@ -904,7 +904,7 @@ impl ValkeyClient {
         if kind.is_subscribe_ack() {
             let p = self.parent();
             let sub_count = p
-                ._subscription_ctx
+                .subscription_ctx
                 .get()
                 .channels_subscribed_to_count(&global_this);
             p.add_subscription();
@@ -1046,10 +1046,14 @@ impl ValkeyClient {
                     should_consume_promise_pair = false;
                 }
                 Some(_) => {
-                    // Subscribe/unsubscribe acks only need promise pairs if we have pending commands
-                    if self.in_flight.readable_length() == 0 {
-                        should_consume_promise_pair = false;
-                    }
+                    // A subscribe/unsubscribe ack only pairs with a promise that was
+                    // itself a SUBSCRIBE/UNSUBSCRIBE request; multi-channel SUBSCRIBE
+                    // yields N acks for one promise, and other commands may be in flight.
+                    should_consume_promise_pair = self
+                        .in_flight
+                        .readable_slice(0)
+                        .first()
+                        .is_some_and(|p| p.meta.contains(command::Meta::SUBSCRIPTION_REQUEST));
                 }
                 None => {
                     should_consume_promise_pair = false;

@@ -268,16 +268,26 @@ impl FetchStore {
             }
             FetchStore::Dir { path } => {
                 if let Err(err) = write_dir_entry(path, req, &resp) {
-                    bun_core::scoped_log!(
-                        fetch_store,
-                        "dir: write failed key={:016x}: {:?}",
-                        req.key,
-                        err
-                    );
+                    warn_write_failed_once(path, &err);
                 }
             }
         }
     }
+}
+
+/// Surface a dir-write failure to stderr once per process; the fetch itself
+/// has already succeeded, so we don't fail it, but the user opted into
+/// recording and should learn it isn't happening.
+fn warn_write_failed_once(path: &[u8], err: &bun_sys::Error) {
+    static WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if WARNED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    bun_core::warn!(
+        "fetch: failed to record response to {}: {}",
+        bstr::BStr::new(path),
+        err
+    );
 }
 
 // ─── dir backend: paths + JSON ────────────────────────────────────────────

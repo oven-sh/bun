@@ -1028,6 +1028,8 @@ async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>
     bun,
     leafPid,
     async reap() {
+      bun.kill("SIGKILL");
+      await bun.exited;
       if (leafPid > 0 && isAlive(leafPid)) {
         try {
           process.kill(leafPid, "SIGKILL");

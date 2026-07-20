@@ -48,7 +48,16 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // win-hrtimer: GQCS's ms timeout rounds to the ~15.6ms system tick, so
+  // arm a CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer and post it
+  // to the IOCP via NtAssociateWaitCompletionPacket (Go runtime's recipe,
+  // golang/go#44343); fall back to timeBeginPeriod(1) on older Windows.
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-hrtimer.patch",
+  ],
 
   build: () => ({
     kind: "direct",

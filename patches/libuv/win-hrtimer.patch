@@ -1,0 +1,240 @@
+High-resolution event-loop timeouts on Windows.
+
+GetQueuedCompletionStatusEx's ms timeout rounds to the system clock tick
+(~15.6ms by default), so a 1ms uv_timer fires ~15ms late unless another
+process has raised the tick rate. On Win10 1803+, arm a
+CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer for the deadline and
+associate it with the loop's IOCP via NtAssociateWaitCompletionPacket; the
+kernel posts a NULL-overlapped completion when it fires, which the dequeue
+path already treats as a pure wakeup. GQCS itself then blocks with INFINITE.
+On older Windows, fall back to timeBeginPeriod(1).
+--- a/src/uv-common.h
++++ b/src/uv-common.h
+@@ -437,6 +437,10 @@ struct uv__loop_internal_fields_s {
+   struct uv__iou iou;
+   void* inv;  /* used by uv__platform_invalidate_fd() */
+ #endif  /* __linux__ */
++#ifdef _WIN32
++  void* hrtimer;       /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION or NULL */
++  void* hrtimer_pkt;   /* NtCreateWaitCompletionPacket handle or NULL */
++#endif  /* _WIN32 */
+ };
+ 
+ #if defined(_WIN32)
+--- a/src/win/winapi.h
++++ b/src/win/winapi.h
+@@ -4657,9 +4657,36 @@ typedef NTSTATUS (NTAPI *sNtQueryInformationProcess)
+                   ULONG Length,
+                   PULONG ReturnLength);
+ 
++typedef NTSTATUS (NTAPI *sNtCreateWaitCompletionPacket)
++                 (PHANDLE WaitCompletionPacketHandle,
++                  ACCESS_MASK DesiredAccess,
++                  POBJECT_ATTRIBUTES ObjectAttributes);
++
++typedef NTSTATUS (NTAPI *sNtAssociateWaitCompletionPacket)
++                 (HANDLE WaitCompletionPacketHandle,
++                  HANDLE IoCompletionHandle,
++                  HANDLE TargetObjectHandle,
++                  PVOID KeyContext,
++                  PVOID ApcContext,
++                  NTSTATUS IoStatus,
++                  ULONG_PTR IoStatusInformation,
++                  PBOOLEAN AlreadySignaled);
++
++typedef NTSTATUS (NTAPI *sNtCancelWaitCompletionPacket)
++                 (HANDLE WaitCompletionPacketHandle,
++                  BOOLEAN RemoveSignaledPacket);
++
+ /*
+  * Kernel32 headers
+  */
++#ifndef CREATE_WAITABLE_TIMER_MANUAL_RESET
++# define CREATE_WAITABLE_TIMER_MANUAL_RESET 0x00000001
++#endif
++
++#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
++# define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
++#endif
++
+ #ifndef FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+ # define FILE_SKIP_COMPLETION_PORT_ON_SUCCESS 0x1
+ #endif
+@@ -4813,6 +4840,9 @@ extern sNtQueryVolumeInformationFile pNtQueryVolumeInformationFile;
+ extern sNtQueryDirectoryFile pNtQueryDirectoryFile;
+ extern sNtQuerySystemInformation pNtQuerySystemInformation;
+ extern sNtQueryInformationProcess pNtQueryInformationProcess;
++extern sNtCreateWaitCompletionPacket pNtCreateWaitCompletionPacket;
++extern sNtAssociateWaitCompletionPacket pNtAssociateWaitCompletionPacket;
++extern sNtCancelWaitCompletionPacket pNtCancelWaitCompletionPacket;
+ 
+ /* Powrprof.dll function pointer */
+ extern sPowerRegisterSuspendResumeNotification pPowerRegisterSuspendResumeNotification;
+--- a/src/win/winapi.c
++++ b/src/win/winapi.c
+@@ -35,6 +35,9 @@ sNtQueryVolumeInformationFile pNtQueryVolumeInformationFile;
+ sNtQueryDirectoryFile pNtQueryDirectoryFile;
+ sNtQuerySystemInformation pNtQuerySystemInformation;
+ sNtQueryInformationProcess pNtQueryInformationProcess;
++sNtCreateWaitCompletionPacket pNtCreateWaitCompletionPacket;
++sNtAssociateWaitCompletionPacket pNtAssociateWaitCompletionPacket;
++sNtCancelWaitCompletionPacket pNtCancelWaitCompletionPacket;
+ 
+ /* Powrprof.dll function pointer */
+ sPowerRegisterSuspendResumeNotification pPowerRegisterSuspendResumeNotification;
+@@ -70,6 +73,9 @@ void uv__winapi_init(void) {
+     sNtQueryDirectoryFile pNtQueryDirectoryFile;
+     sNtQuerySystemInformation pNtQuerySystemInformation;
+     sNtQueryInformationProcess pNtQueryInformationProcess;
++    sNtCreateWaitCompletionPacket pNtCreateWaitCompletionPacket;
++    sNtAssociateWaitCompletionPacket pNtAssociateWaitCompletionPacket;
++    sNtCancelWaitCompletionPacket pNtCancelWaitCompletionPacket;
+     sPowerRegisterSuspendResumeNotification pPowerRegisterSuspendResumeNotification;
+     sProcessPrng pProcessPrng;
+     sSetWinEventHook pSetWinEventHook;
+@@ -133,6 +139,15 @@ void uv__winapi_init(void) {
+     uv_fatal_error(GetLastError(), "GetProcAddress");
+   }
+ 
++  u.proc = GetProcAddress(ntdll_module, "NtCreateWaitCompletionPacket");
++  pNtCreateWaitCompletionPacket = u.pNtCreateWaitCompletionPacket;
++
++  u.proc = GetProcAddress(ntdll_module, "NtAssociateWaitCompletionPacket");
++  pNtAssociateWaitCompletionPacket = u.pNtAssociateWaitCompletionPacket;
++
++  u.proc = GetProcAddress(ntdll_module, "NtCancelWaitCompletionPacket");
++  pNtCancelWaitCompletionPacket = u.pNtCancelWaitCompletionPacket;
++
+   powrprof_module = LoadLibraryExA("powrprof.dll",
+                                    NULL,
+                                    LOAD_LIBRARY_SEARCH_SYSTEM32);
+--- a/src/win/core.c
++++ b/src/win/core.c
+@@ -36,9 +36,18 @@
+ #include "heap-inl.h"
+ #include "req-inl.h"
+ 
++/* winmm.dll: timeBeginPeriod. windows.h under WIN32_LEAN_AND_MEAN omits it. */
++__declspec(dllimport) UINT __stdcall timeBeginPeriod(UINT uPeriod);
++#pragma comment(lib, "winmm.lib")
++
+ /* uv_once initialization guards */
+ static uv_once_t uv_init_guard_ = UV_ONCE_INIT;
+ 
++/* Non-zero when CREATE_WAITABLE_TIMER_HIGH_RESOLUTION and the
++ * Nt*WaitCompletionPacket family are both available (Win10 1803+). When zero
++ * the process falls back to timeBeginPeriod(1). */
++static int uv__have_hrtimer;
++
+ 
+ #if defined(_DEBUG) && (defined(_MSC_VER) || defined(__MINGW64_VERSION_MAJOR))
+ /* Our crt debug report handler allows us to temporarily disable asserts
+@@ -221,6 +230,56 @@ static void uv__init(void) {
+ 
+   /* Initialize system wakeup detection */
+   uv__init_detect_system_wakeup();
++
++  /* Probe high-resolution timer support. GetQueuedCompletionStatusEx's ms
++   * timeout rounds up to the system tick (~15.6ms on an idle box), so a 1ms
++   * uv_timer fires ~15ms late. On Win10 1803+ a high-res waitable timer can
++   * post to the IOCP via NtAssociateWaitCompletionPacket, waking the poll at
++   * sub-ms precision. Older Windows gets timeBeginPeriod(1), which raises the
++   * system tick to 1ms for this process. */
++  uv__have_hrtimer = 0;
++  if (pNtCreateWaitCompletionPacket != NULL &&
++      pNtAssociateWaitCompletionPacket != NULL &&
++      pNtCancelWaitCompletionPacket != NULL) {
++    HANDLE h = CreateWaitableTimerExW(
++        NULL,
++        NULL,
++        CREATE_WAITABLE_TIMER_MANUAL_RESET |
++            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
++        TIMER_ALL_ACCESS);
++    if (h != NULL) {
++      uv__have_hrtimer = 1;
++      CloseHandle(h);
++    }
++  }
++  if (!uv__have_hrtimer)
++    timeBeginPeriod(1);
++}
++
++
++/* Per-loop: create the high-res waitable timer + wait-completion packet and
++ * stash them on the loop's internal fields. hrtimer stays NULL on failure,
++ * which uv__poll treats as "use the plain GQCS ms timeout". */
++static void uv__hrtimer_init(uv_loop_t* loop, uv__loop_internal_fields_t* lfields) {
++  HANDLE pkt;
++  if (!uv__have_hrtimer)
++    return;
++  lfields->hrtimer = CreateWaitableTimerExW(
++      NULL,
++      NULL,
++      CREATE_WAITABLE_TIMER_MANUAL_RESET |
++          CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
++      TIMER_ALL_ACCESS);
++  if (lfields->hrtimer == NULL)
++    return;
++  pkt = NULL;
++  if (!NT_SUCCESS(pNtCreateWaitCompletionPacket(&pkt, GENERIC_ALL, NULL)) ||
++      pkt == NULL) {
++    CloseHandle(lfields->hrtimer);
++    lfields->hrtimer = NULL;
++    return;
++  }
++  lfields->hrtimer_pkt = pkt;
+ }
+ 
+ 
+@@ -249,6 +308,8 @@ int uv_loop_init(uv_loop_t* loop) {
+          0,
+          sizeof(lfields->loop_metrics.metrics));
+ 
++  uv__hrtimer_init(loop, lfields);
++
+   /* To prevent uninitialized memory access, loop->time must be initialized
+    * to zero before calling uv_update_time for the first time.
+    */
+@@ -367,6 +428,12 @@ void uv__loop_close(uv_loop_t* loop) {
+   loop->timer_heap = NULL;
+ 
+   lfields = uv__get_internal_fields(loop);
++  if (lfields->hrtimer_pkt != NULL) {
++    pNtCancelWaitCompletionPacket(lfields->hrtimer_pkt, FALSE);
++    CloseHandle(lfields->hrtimer_pkt);
++  }
++  if (lfields->hrtimer != NULL)
++    CloseHandle(lfields->hrtimer);
+   uv_mutex_destroy(&lfields->loop_metrics.lock);
+   uv__free(lfields);
+   loop->internal_fields = NULL;
+@@ -463,6 +530,29 @@ static void uv__poll(uv_loop_t* loop, DWORD timeout) {
+      */
+     lfields->current_timeout = timeout;
+ 
++    /* Arm the high-res waitable timer for the deadline and associate it with
++     * this loop's IOCP. When it fires the kernel posts a completion with
++     * lpOverlapped == NULL, which the dequeue loop below already treats as a
++     * pure wakeup. GQCS itself waits with INFINITE so its own ms-granularity
++     * timeout never applies. A stale packet from a previous arm (timer fired
++     * after we dequeued real I/O) is harmless: it costs one empty iteration. */
++    if (timeout != 0 && timeout != INFINITE && lfields->hrtimer != NULL) {
++      LARGE_INTEGER due;
++      due.QuadPart = -(LONGLONG) timeout * 10000;  /* relative, 100ns units */
++      pNtCancelWaitCompletionPacket(lfields->hrtimer_pkt, FALSE);
++      if (SetWaitableTimer(lfields->hrtimer, &due, 0, NULL, NULL, FALSE) &&
++          NT_SUCCESS(pNtAssociateWaitCompletionPacket(lfields->hrtimer_pkt,
++                                                      loop->iocp,
++                                                      lfields->hrtimer,
++                                                      NULL,
++                                                      NULL,
++                                                      0,
++                                                      0,
++                                                      NULL))) {
++        timeout = INFINITE;
++      }
++    }
++
+     success = GetQueuedCompletionStatusEx(loop->iocp,
+                                           overlappeds,
+                                           ARRAY_SIZE(overlappeds),

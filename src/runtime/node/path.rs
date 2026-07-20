@@ -3065,8 +3065,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 }
             }
             if let Some(ep_len) = env_path_len {
-                // SAFETY: offset is within tmp_buf (resolved_device_len == 2 here).
-                path_ptr = unsafe { tmp_buf.as_ptr().add(resolved_device_len) };
+                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.

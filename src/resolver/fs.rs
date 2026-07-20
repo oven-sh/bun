@@ -1535,7 +1535,16 @@ impl RealFS {
             // always `Some` here.
             let entries = entries.expect("caller holds entries_mutex when ENABLE_ENTRY_CACHE");
             let mut get_or_put_result = entries.get_or_put(dir)?;
-            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            // OHOS sandboxing can return EACCES/EPERM for ancestor directories
+            // (e.g. "/", "/storage/") that are otherwise walkable; treat those
+            // the same as ENOENT there so resolution can continue past them.
+            // Elsewhere EACCES/EPERM on a directory read is a real error and
+            // must not be silently cached as "not found".
+            let is_not_found = err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                || (cfg!(target_env = "ohos")
+                    && (err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)));
+            if is_not_found {
                 entries.mark_not_found(get_or_put_result);
                 return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                     slot.write(EntriesOption::Err(dir_entry::Err {

@@ -1171,7 +1171,11 @@ pub mod fs {
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
-                if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                let is_not_found = err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                    || (cfg!(target_env = "ohos")
+                        && (err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                            || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)));
+                if is_not_found {
                     self.entries.mark_not_found(get_or_put_result);
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {

@@ -113,8 +113,9 @@ function Assert(options) {
 
   options = ObjectAssign({ __proto__: null, strict: true, skipPrototype: false }, options);
 
-  if (options.diff !== undefined) {
-    validateOneOf(options.diff, "options.diff", ["simple", "full"]);
+  const { diff } = options;
+  if (diff !== undefined) {
+    validateOneOf(diff, "options.diff", ["simple", "full"]);
   }
 
   loadAssertionError();

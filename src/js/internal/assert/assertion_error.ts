@@ -327,7 +327,8 @@ class AssertionError extends Error {
         }
 
         // Only remove lines in case it makes sense to collapse those.
-        if (res.length > 50 && diff !== "full") {
+        const resLength = res.length;
+        if (resLength > 50 && diff !== "full") {
           res[46] = `${colors.blue}...${colors.white}`;
           while (res.length > 47) {
             ArrayPrototypePop.$call(res);

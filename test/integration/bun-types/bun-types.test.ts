@@ -556,6 +556,45 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("FormData iteration", () => {
+    typeTest("values()/entries() yield File | string and FormData is iterable (#27194)", {
+      files: {
+        "formdata-27194.ts": `
+          // https://github.com/oven-sh/bun/issues/27194
+          type Equals<A, B> =
+            (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+          type Assert<T extends true> = T;
+
+          const fd = new FormData();
+          fd.append("field", new Blob(["data"]), "file.txt");
+
+          // FormData is iterable (must expose [Symbol.iterator])
+          const asIterable: Iterable<[string, File | string]> = fd;
+          void asIterable;
+
+          // values()/entries() yield File | string, matching get()/getAll()/forEach(); keys() yields string
+          type _values = Assert<Equals<ReturnType<FormData["values"]>, IterableIterator<File | string>>>;
+          type _entries = Assert<Equals<ReturnType<FormData["entries"]>, IterableIterator<[string, File | string]>>>;
+          type _keys = Assert<Equals<ReturnType<FormData["keys"]>, IterableIterator<string>>>;
+
+          for (const [key, value] of fd) {
+            const k: string = key;
+            const v: File | string = value;
+            void k;
+            void v;
+          }
+
+          export {};
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("formdata-27194.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

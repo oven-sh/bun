@@ -120,6 +120,20 @@ pub mod js_bindings {
             // handler runs. Re-arm Bun's handler (now with `SA_ONSTACK` on a
             // second call) so the real signal path is what the test observes.
             crash_handler::reset_on_posix();
+            // CI runs with `ulimit -s unlimited`; cap the main-thread stack so
+            // recursion faults on the guard page instead of exhausting RAM.
+            // SAFETY: get/setrlimit take valid pointers; the process is about
+            // to crash so lowering limits in the test hook is harmless.
+            unsafe {
+                let mut lim: libc::rlimit = core::mem::zeroed();
+                if libc::getrlimit(libc::RLIMIT_STACK, &raw mut lim) == 0 {
+                    const CAP: libc::rlim_t = 16 << 20;
+                    if lim.rlim_cur == libc::RLIM_INFINITY || lim.rlim_cur > CAP {
+                        lim.rlim_cur = CAP.min(lim.rlim_max);
+                        let _ = libc::setrlimit(libc::RLIMIT_STACK, &raw const lim);
+                    }
+                }
+            }
         }
         #[inline(never)]
         #[allow(unconditional_recursion)]

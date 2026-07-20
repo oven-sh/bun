@@ -2,7 +2,7 @@ import { define } from "../../codegen/class-definitions";
 
 // [jsName, arity] — arity is the minimum arg count the Rust impl enforces
 // (see js_valkey_functions.rs): cmd_noargs→0, cmd_key/cmd_key_varargs→1,
-// cmd_key_value→2, cmd_key_value_value2→3, cmd_strings_varargs/cmd_key_value_varargs→0.
+// cmd_key_value→2, cmd_key_value_value2→3, cmd_strings_varargs→0.
 const commands: ReadonlyArray<readonly [name: string, length: number]> = [
   ["get", 1],
   ["getBuffer", 1],

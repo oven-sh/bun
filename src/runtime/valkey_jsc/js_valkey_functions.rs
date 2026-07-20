@@ -188,8 +188,7 @@ pub(crate) mod compile {
 // cmd_key_varargs! (key: RedisKey, ...args: RedisKey[]),
 // cmd_key_value! (key: RedisKey, value: RedisValue),
 // cmd_key_value_value2! (key: RedisKey, value: RedisValue, value2: RedisValue),
-// cmd_strings_varargs! (...strings: string[]),
-// cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue)
+// cmd_strings_varargs! (...strings: string[])
 
 macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
@@ -208,7 +207,6 @@ macro_rules! cmd_noargs {
                 $command.as_bytes(),
                 CommandArgs::Args(&[]),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -229,20 +227,13 @@ macro_rules! cmd_key {
                 this, $name,
             )?;
 
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
+            let key = require_arg(global, frame.argument(0), $name, $arg0_name)?;
             send_cmd(
                 this,
                 global,
                 $command.as_bytes(),
                 CommandArgs::Args(&[key]),
                 $meta,
-                concat!("Failed to send ", $command, " command"),
             )
         }
     };
@@ -260,13 +251,7 @@ macro_rules! cmd_key_varargs {
                 this, $name,
             )?;
 
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
+            let key = require_arg(global, frame.argument(0), $name, $arg0_name)?;
             let arguments = frame.arguments();
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
             args.push(key);
@@ -277,7 +262,6 @@ macro_rules! cmd_key_varargs {
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -298,27 +282,14 @@ macro_rules! cmd_key_value {
                 this, $name,
             )?;
 
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg1_name,
-                    "string or buffer",
-                ));
-            };
+            let key = require_arg(global, frame.argument(0), $name, $arg0_name)?;
+            let value = require_arg(global, frame.argument(1), $name, $arg1_name)?;
             send_cmd(
                 this,
                 global,
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value]),
                 $meta,
-                concat!("Failed to send ", $command, " command"),
             )
         }
     };
@@ -339,34 +310,15 @@ macro_rules! cmd_key_value_value2 {
                 this, $name,
             )?;
 
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg1_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value2) = from_js(global, frame.argument(2))? else {
-                return Err(global.throw_invalid_argument_type(
-                    $name,
-                    $arg2_name,
-                    "string or buffer",
-                ));
-            };
+            let key = require_arg(global, frame.argument(0), $name, $arg0_name)?;
+            let value = require_arg(global, frame.argument(1), $name, $arg1_name)?;
+            let value2 = require_arg(global, frame.argument(2), $name, $arg2_name)?;
             send_cmd(
                 this,
                 global,
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value, value2]),
                 $meta,
-                concat!("Failed to send ", $command, " command"),
             )
         }
     };
@@ -391,32 +343,6 @@ macro_rules! cmd_strings_varargs {
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
-    };
-}
-
-macro_rules! cmd_key_value_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let args = collect_varargs(global, frame.arguments(), $name, "additional arguments")?;
-            send_cmd(
-                this,
-                global,
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -439,14 +365,7 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(iter.len as usize);
 
         while let Some(arg_js) = iter.next()? {
-            let Some(v) = from_js(global, arg_js)? else {
-                return Err(global.throw_invalid_argument_type(
-                    "send",
-                    "argument",
-                    "string or buffer",
-                ));
-            };
-            args.push(v);
+            args.push(require_arg(global, arg_js, "send", "argument")?);
         }
 
         let cmd_str = command.to_utf8_without_ref();
@@ -483,10 +402,7 @@ impl JSValkeyClient {
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("set", "key", "string or buffer"));
-        };
-        args.push(key);
+        args.push(require_arg(global, frame.argument(0), "set", "key")?);
 
         let Some(value) = from_js(global, frame.argument(1))? else {
             return Err(global.throw_invalid_argument_type(
@@ -507,7 +423,6 @@ impl JSValkeyClient {
             b"SET",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SET command",
         )
     }
 
@@ -527,9 +442,7 @@ impl JSValkeyClient {
     pub fn expire(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, "expire")?;
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
-        };
+        let key = require_arg(global, frame.argument(0), "expire", "key")?;
 
         let seconds = global.validate_integer_range::<i32>(
             frame.argument(1),
@@ -550,7 +463,6 @@ impl JSValkeyClient {
             b"EXPIRE",
             CommandArgs::Raw(&[key.slice(), seconds_slice]),
             CommandMeta::default(),
-            "Failed to send EXPIRE command",
         )
     }
 
@@ -568,10 +480,7 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("srem", "key", "string or buffer"));
-        };
-        args.push(key);
+        args.push(require_arg(global, frame.argument(0), "srem", "key")?);
         args.extend(collect_varargs(global, &args_view[1..], "srem", "member")?);
         send_cmd(
             this,
@@ -579,7 +488,6 @@ impl JSValkeyClient {
             b"SREM",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SREM command",
         )
     }
 
@@ -595,14 +503,7 @@ impl JSValkeyClient {
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type(
-                "srandmember",
-                "key",
-                "string or buffer",
-            ));
-        };
-        args.push(key);
+        args.push(require_arg(global, frame.argument(0), "srandmember", "key")?);
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
@@ -621,7 +522,6 @@ impl JSValkeyClient {
             b"SRANDMEMBER",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SRANDMEMBER command",
         )
     }
 
@@ -635,10 +535,7 @@ impl JSValkeyClient {
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("spop", "key", "string or buffer"));
-        };
-        args.push(key);
+        args.push(require_arg(global, frame.argument(0), "spop", "key")?);
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
@@ -657,7 +554,6 @@ impl JSValkeyClient {
             b"SPOP",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SPOP command",
         )
     }
 
@@ -673,10 +569,7 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sadd", "key", "string or buffer"));
-        };
-        args.push(key);
+        args.push(require_arg(global, frame.argument(0), "sadd", "key")?);
         args.extend(collect_varargs(global, &args_view[1..], "sadd", "member")?);
         send_cmd(
             this,
@@ -684,7 +577,6 @@ impl JSValkeyClient {
             b"SADD",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SADD command",
         )
     }
 
@@ -710,10 +602,7 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hmget", "key", "string or buffer"));
-        };
-        args.push(key);
+        args.push(require_arg(global, frame.argument(0), "hmget", "key")?);
 
         let second_arg = frame.argument(1);
         if second_arg.is_array() {
@@ -724,14 +613,7 @@ impl JSValkeyClient {
 
             let mut array_iter = second_arg.array_iterator(global)?;
             while let Some(element) = array_iter.next()? {
-                let Some(field) = from_js(global, element)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "hmget",
-                        "field",
-                        "string or buffer",
-                    ));
-                };
-                args.push(field);
+                args.push(require_arg(global, element, "hmget", "field")?);
             }
         } else {
             args.extend(collect_varargs(global, &args_view[1..], "hmget", "field")?);
@@ -743,7 +625,6 @@ impl JSValkeyClient {
             b"HMGET",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send HMGET command",
         )
     }
 
@@ -840,14 +721,16 @@ impl JSValkeyClient {
             let args_count = frame.arguments_count();
             if args_count < 3 {
                 return Err(global.throw(format_args!(
-                    "HSET requires at least key, field, and value arguments"
+                    "{} requires at least key, field, and value arguments",
+                    bstr::BStr::new(command)
                 )));
             }
 
             let field_value_count = args_count - 1; // Exclude key
             if !field_value_count.is_multiple_of(2) {
                 return Err(global.throw(format_args!(
-                    "HSET requires field-value pairs (even number of arguments after key)"
+                    "{} requires field-value pairs (even number of arguments after key)",
+                    bstr::BStr::new(command)
                 )));
             }
 
@@ -863,21 +746,18 @@ impl JSValkeyClient {
         }
 
         if args.len() == 1 {
-            return Err(global.throw(format_args!("HSET requires at least one field-value pair")));
+            return Err(global.throw(format_args!(
+                "{} requires at least one field-value pair",
+                bstr::BStr::new(command)
+            )));
         }
 
-        let msg = if command == b"HSET" {
-            "Failed to send HSET command"
-        } else {
-            "Failed to send HMSET command"
-        };
         send_cmd(
             this,
             global,
             command,
             CommandArgs::Slices(&args),
             CommandMeta::default(),
-            msg,
         )
     }
 
@@ -938,14 +818,7 @@ impl JSValkeyClient {
     pub fn ping(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
-            let Some(m) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    "ping",
-                    "message",
-                    "string or buffer",
-                ));
-            };
-            Some(m)
+            Some(require_arg(global, frame.argument(0), "ping", "message")?)
         } else {
             None
         };
@@ -959,7 +832,6 @@ impl JSValkeyClient {
             b"PING",
             CommandArgs::Args(args_slice),
             CommandMeta::default(),
-            "Failed to send PING command",
         )
     }
 
@@ -1202,11 +1074,11 @@ impl JSValkeyClient {
         "decrement",
         NotSubscriber
     );
-    cmd_key_value_varargs!(lpush, "lpush", "LPUSH", NotSubscriber);
-    cmd_key_value_varargs!(lpushx, "lpushx", "LPUSHX", NotSubscriber);
+    cmd_strings_varargs!(lpush, "lpush", "LPUSH", NotSubscriber);
+    cmd_strings_varargs!(lpushx, "lpushx", "LPUSHX", NotSubscriber);
     cmd_key_value!(pfadd, "pfadd", "PFADD", "key", "value", NotSubscriber);
-    cmd_key_value_varargs!(rpush, "rpush", "RPUSH", NotSubscriber);
-    cmd_key_value_varargs!(rpushx, "rpushx", "RPUSHX", NotSubscriber);
+    cmd_strings_varargs!(rpush, "rpush", "RPUSH", NotSubscriber);
+    cmd_strings_varargs!(rpushx, "rpushx", "RPUSHX", NotSubscriber);
     cmd_key_value!(setnx, "setnx", "SETNX", "key", "value", NotSubscriber);
     cmd_key_value_value2!(
         setex,
@@ -1236,7 +1108,7 @@ impl JSValkeyClient {
         "member",
         NotSubscriber
     );
-    cmd_key_value_varargs!(zmscore, "zmscore", "ZMSCORE", NotSubscriber);
+    cmd_strings_varargs!(zmscore, "zmscore", "ZMSCORE", NotSubscriber);
     cmd_strings_varargs!(zadd, "zadd", "ZADD", NotSubscriber);
     cmd_strings_varargs!(zscan, "zscan", "ZSCAN", NotSubscriber);
     cmd_strings_varargs!(zdiff, "zdiff", "ZDIFF", NotSubscriber);
@@ -1367,7 +1239,6 @@ impl JSValkeyClient {
             b"PUBLISH",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send PUBLISH command",
         )
     }
 
@@ -1488,7 +1359,6 @@ impl JSValkeyClient {
                 b"UNSUBSCRIBE",
                 CommandArgs::Args(&redis_channels),
                 CommandMeta::default(),
-                "Failed to send UNSUBSCRIBE command",
             );
         }
 
@@ -1549,7 +1419,6 @@ impl JSValkeyClient {
                     b"UNSUBSCRIBE",
                     CommandArgs::Args(&redis_channels),
                     CommandMeta::default(),
-                    "Failed to send UNSUBSCRIBE command",
                 );
             }
 
@@ -1610,7 +1479,6 @@ impl JSValkeyClient {
             b"UNSUBSCRIBE",
             CommandArgs::Args(&redis_channels),
             CommandMeta::default(),
-            "Failed to send UNSUBSCRIBE command",
         )
     }
 
@@ -1638,16 +1506,4 @@ impl JSValkeyClient {
 
         Ok(JSPromise::resolved_promise_value(global, new_client_js))
     }
-
-    // script(subcommand: "LOAD", script: RedisValue)
-    // select(index: number | string)
-    // spublish(shardchannel: RedisValue, message: RedisValue)
-    // smove(source: RedisKey, destination: RedisKey, member: RedisValue)
-    // substr(key: RedisKey, start: number, end: number)` // Deprecated alias for getrang
-    // hstrlen(key: RedisKey, field: RedisValue)
-    // zrank(key: RedisKey, member: RedisValue)
-    // zrevrank(key: RedisKey, member: RedisValue)
-    // zscore(key: RedisKey, member: RedisValue)
-
-    // cluster(subcommand: "KEYSLOT", key: RedisKey)
 }

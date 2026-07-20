@@ -1399,7 +1399,45 @@ private:
             return true;
         }
 
+        // A view over a SharedArrayBuffer crosses a process boundary as a copy of the
+        // bytes (matching Node.js advanced IPC); only a SharedArrayBuffer referenced
+        // directly is rejected, in dumpIfTerminal.
+        if (arrayBuffer->isShared() && m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
+            JSValue bufferValue = toJSArrayBuffer(*arrayBuffer);
+            if (!startObjectInternal(asObject(bufferValue))) // handle duplicates
+                return true;
+            return writeArrayBufferAsCopy(*arrayBuffer, code);
+        }
+
         return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
+    }
+
+    // Writes a byte copy: ResizableArrayBufferTag if resizable/growable (so an auto-length
+    // view still deserializes), ArrayBufferTag otherwise. The caller must have registered
+    // the wrapper via startObjectInternal; the deserializer adds one pool entry per buffer.
+    bool writeArrayBufferAsCopy(ArrayBuffer& arrayBuffer, SerializationReturnCode& code)
+    {
+        uint64_t byteLength = arrayBuffer.byteLength();
+        if (arrayBuffer.isResizableOrGrowableShared()) {
+            if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+            write(ResizableArrayBufferTag);
+            write(byteLength);
+            uint64_t maxByteLength = arrayBuffer.maxByteLength().value_or(0);
+            write(maxByteLength);
+            write(static_cast<const uint8_t*>(arrayBuffer.data()), byteLength);
+            return true;
+        }
+        if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
+            code = SerializationReturnCode::DataCloneError;
+            return true;
+        }
+        write(ArrayBufferTag);
+        write(byteLength);
+        write(static_cast<const uint8_t*>(arrayBuffer.data()), byteLength);
+        return true;
     }
 
     // void dumpDOMPoint(const DOMPointReadOnly& point)
@@ -1844,6 +1882,15 @@ private:
                     write(index->value);
                     return true;
                 }
+
+                // Memory cannot be shared with another process: reject a directly referenced
+                // SharedArrayBuffer like Node.js does, instead of delivering an ArrayBuffer copy.
+                // Checked before the duplicate lookup so a buffer a view already copied still errors.
+                if (arrayBuffer->isShared() && m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
 
@@ -1863,29 +1910,7 @@ private:
                     }
                 }
 
-                if (arrayBuffer->isResizableOrGrowableShared()) {
-                    uint64_t byteLength = arrayBuffer->byteLength();
-                    if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
-                        code = SerializationReturnCode::DataCloneError;
-                        return true;
-                    }
-                    write(ResizableArrayBufferTag);
-                    write(byteLength);
-                    uint64_t maxByteLength = arrayBuffer->maxByteLength().value_or(0);
-                    write(maxByteLength);
-                    write(static_cast<const uint8_t*>(arrayBuffer->data()), byteLength);
-                    return true;
-                }
-
-                uint64_t byteLength = arrayBuffer->byteLength();
-                if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
-                write(ArrayBufferTag);
-                write(byteLength);
-                write(static_cast<const uint8_t*>(arrayBuffer->data()), byteLength);
-                return true;
+                return writeArrayBufferAsCopy(*arrayBuffer, code);
             }
             if (obj->inherits<JSArrayBufferView>()) {
                 if (checkForDuplicate(obj))

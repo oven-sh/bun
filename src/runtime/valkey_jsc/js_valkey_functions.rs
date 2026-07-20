@@ -52,7 +52,7 @@ fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()
     Ok(())
 }
 
-fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
+fn coerce_redis_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
     if value.is_undefined_or_null() {
         return Ok(None);
     }
@@ -68,14 +68,14 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, true)
 }
 
-/// `from_js` + throw-on-`None` for the common `"string or buffer"` case.
+/// `coerce_redis_arg` + throw-on-`None` for the common `"string or buffer"` case.
 fn require_arg(
     global: &JSGlobalObject,
     value: JSValue,
     method: &'static str,
     label: &'static str,
 ) -> JsResult<JSArgument> {
-    from_js(global, value)?
+    coerce_redis_arg(global, value)?
         .ok_or_else(|| global.throw_invalid_argument_type(method, label, "string or buffer"))
 }
 
@@ -89,7 +89,7 @@ fn collect_varargs(
 ) -> JsResult<Vec<JSArgument>> {
     let mut out = Vec::with_capacity(args.len());
     for arg in args {
-        let Some(v) = from_js(global, *arg)? else {
+        let Some(v) = coerce_redis_arg(global, *arg)? else {
             return Err(global.throw_invalid_argument_type(method, label, "string or buffer"));
         };
         out.push(v);
@@ -392,7 +392,7 @@ impl JSValkeyClient {
 
         args.push(require_arg(global, frame.argument(0), "set", "key")?);
 
-        let Some(value) = from_js(global, frame.argument(1))? else {
+        let Some(value) = coerce_redis_arg(global, frame.argument(1))? else {
             return Err(global.throw_invalid_argument_type(
                 "set",
                 "value",
@@ -500,7 +500,7 @@ impl JSValkeyClient {
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
-            let Some(count_arg) = from_js(global, frame.argument(1))? else {
+            let Some(count_arg) = coerce_redis_arg(global, frame.argument(1))? else {
                 return Err(global.throw_invalid_argument_type(
                     "srandmember",
                     "count",
@@ -532,7 +532,7 @@ impl JSValkeyClient {
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
-            let Some(count_arg) = from_js(global, frame.argument(1))? else {
+            let Some(count_arg) = coerce_redis_arg(global, frame.argument(1))? else {
                 return Err(global.throw_invalid_argument_type(
                     "spop",
                     "count",
@@ -1259,7 +1259,7 @@ impl JSValkeyClient {
 
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
-                let Some(channel) = from_js(global, channel_arg)? else {
+                let Some(channel) = coerce_redis_arg(global, channel_arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         "subscribe",
                         "channel",
@@ -1279,7 +1279,7 @@ impl JSValkeyClient {
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
-            let Some(channel) = from_js(global, channel_or_many)? else {
+            let Some(channel) = coerce_redis_arg(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
@@ -1380,7 +1380,7 @@ impl JSValkeyClient {
             // unsubscribe from. This s important since this list is used to send
             // the UNSUBSCRIBE command to redis. Without this, we would end up
             // unsubscribing from all channels.
-            let Some(ch) = from_js(global, channel)? else {
+            let Some(ch) = coerce_redis_arg(global, channel)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(ch);
@@ -1447,7 +1447,7 @@ impl JSValkeyClient {
             // It is an array, so let's iterate over it
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
-                let Some(channel) = from_js(global, channel_arg)? else {
+                let Some(channel) = coerce_redis_arg(global, channel_arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         "unsubscribe",
                         "channel",
@@ -1459,7 +1459,7 @@ impl JSValkeyClient {
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
-            let Some(channel) = from_js(global, channel_or_many)? else {
+            let Some(channel) = coerce_redis_arg(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(channel);

@@ -170,6 +170,13 @@ pub struct PublishConfig {
     pub otp: &'static [u8],
     pub auth_type: Option<AuthType>,
     pub tolerate_republish: bool,
+    /// `--provenance` / `--no-provenance`. Tri-state: `None` means "not
+    /// explicitly set" — fall back to `publishConfig.provenance` in
+    /// package.json, then `NPM_CONFIG_PROVENANCE` in the environment.
+    pub provenance: Option<bool>,
+    /// `--provenance-file <path>` — skip generation, attach this
+    /// pre-built Sigstore bundle after verifying its subject.
+    pub provenance_file: &'static [u8],
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -867,6 +874,12 @@ impl Options {
                 self.publish_config.auth_type = Some(auth_type);
             }
             self.publish_config.tolerate_republish = cli.tolerate_republish;
+            if let Some(prov) = cli.publish_config.provenance {
+                self.publish_config.provenance = Some(prov);
+            }
+            if !cli.publish_config.provenance_file.is_empty() {
+                self.publish_config.provenance_file = cli.publish_config.provenance_file;
+            }
 
             if !cli.ca.is_empty() {
                 self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();

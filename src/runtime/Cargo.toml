@@ -81,6 +81,7 @@ bun_safety.workspace = true
 bun_semver.workspace = true
 bun_semver_jsc.workspace = true
 bun_sha_hmac.workspace = true
+bun_sigstore.workspace = true
 bun_shell_parser.workspace = true
 bun_simdutf_sys.workspace = true
 bun_sourcemap.workspace = true

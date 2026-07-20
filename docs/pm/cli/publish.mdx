@@ -121,6 +121,33 @@ Provide a one-time password directly to the CLI. If the password is valid, `bun 
 bun publish --otp 123456
 ```
 
+### `--provenance`
+
+Generate a signed [npm provenance](https://docs.npmjs.com/generating-provenance-statements) statement via Sigstore keyless signing and attach it to the published package. Requires `--access public` and a supported CI environment:
+
+- **GitHub Actions** — the workflow must grant `permissions: id-token: write`.
+- **GitLab CI** — the job must define `SIGSTORE_ID_TOKEN` under [`id_tokens`](https://docs.gitlab.com/ee/ci/secrets/id_token_authentication.html) with audience `sigstore`.
+
+Provenance is also enabled implicitly when `NPM_CONFIG_PROVENANCE=true` (which `actions/setup-node` sets when configured with `provenance: true`). Use `--no-provenance` to override.
+
+```sh terminal icon="terminal"
+bun publish --provenance --access public
+```
+
+`--provenance` can also be set in the `publishConfig` field of your `package.json`:
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "provenance": true
+  }
+}
+```
+
+To attach an externally-generated Sigstore bundle instead of generating one, use `--provenance-file <path>`. The bundle's subject must match the package name and tarball digest. `--provenance` and `--provenance-file` are mutually exclusive.
+
+For private Sigstore deployments, the Fulcio/Rekor endpoints can be overridden via `BUN_SIGSTORE_FULCIO_URL`, `BUN_SIGSTORE_REKOR_URL`, `BUN_SIGSTORE_TLOG_BASE_URL`, and `BUN_SIGSTORE_OIDC_AUDIENCE`.
+
 <Note>
   `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable, useful when publishing from GitHub Actions or
   other automated workflows.

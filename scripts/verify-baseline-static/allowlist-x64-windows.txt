@@ -770,7 +770,7 @@ deflate_decompress_bmi2            [BMI2]
 # memchr::arch::x86_64::memchr::*_raw::detect / avx2::packedpair::Finder::new.
 # PDB DBI records carry demangled Rust names for the directly-linked crate;
 # the older v0-mangled detect entries are kept for toolchain drift.
-# (14 symbols)
+# (15 symbols)
 # ----------------------------------------------------------------------------
 memchr::arch::x86_64::avx2::memchr::One::find_raw_avx2             [AVX, AVX2]
 memchr::arch::x86_64::avx2::memchr::One::rfind_raw_avx2            [AVX, AVX2]
@@ -783,6 +783,7 @@ memchr::arch::x86_64::memchr::memchr_raw::find_avx2                [AVX, AVX2]
 memchr::arch::x86_64::memchr::memchr2_raw::find_avx2               [AVX, AVX2]
 memchr::arch::x86_64::memchr::memchr3_raw::find_avx2               [AVX, AVX2]
 memchr::arch::x86_64::memchr::memrchr_raw::find_avx2               [AVX, AVX2]
+memchr::arch::x86_64::memchr::count_raw::find_avx2                 [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect   [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect  [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX2]
@@ -794,6 +795,15 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX
 # (1 symbol)
 # ----------------------------------------------------------------------------
 blake2b_simd::avx2::compress1_loop  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Rust sha2 SHA-NI (via p256 → bun_sigstore, publish --provenance). Gate:
+# cpufeatures::new!(shani_cpuid, "sha", "sse2", "ssse3", "sse4.1") in
+# sha2::sha256::x86::compress — falls back to soft::compress.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+sha2::sha256::x86::digest_blocks  [SHA]
 
 
 # ----------------------------------------------------------------------------

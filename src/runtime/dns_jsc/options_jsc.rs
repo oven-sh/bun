@@ -233,8 +233,10 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
         b"family",
         // `bun_sys::net::Address` exposes `.family() -> i32`.
         match this.address.family() {
-            f if f == super::netc::AF_INET as _ => JSValue::js_number(4.0),
-            f if f == super::netc::AF_INET6 as _ => JSValue::js_number(6.0),
+            // `as i32`, not `as _`: serde_json's `impl PartialEq<Value> for
+            // i32` makes `_` ambiguous once any linked crate uses serde_json.
+            f if f == super::netc::AF_INET as i32 => JSValue::js_number(4.0),
+            f if f == super::netc::AF_INET6 as i32 => JSValue::js_number(6.0),
             _ => JSValue::js_number(0.0),
         },
     );

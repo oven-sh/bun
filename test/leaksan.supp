@@ -126,3 +126,10 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# AsyncHTTP::send_sync wraps the response metadata in ManuallyDrop (the
+# returned Response<'static> borrows into metadata.owned_buf; Zig's sendSync
+# never deinit'd it either — "one-shot CLI"). clone_metadata allocates the
+# header buffer via heap::release (= Box::leak). Callers that keep the
+# Response on the stack until exit stay reachable; callers that drop it
+# (bun_sigstore::http_json) surface the leak here. Bounded: ≤3 per publish.
+leak:HTTPClient>::clone_metadata

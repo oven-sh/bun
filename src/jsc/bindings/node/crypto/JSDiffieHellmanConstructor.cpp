@@ -128,6 +128,14 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         if (!bn_p) {
             return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid prime"_s));
         }
+
+        // Node evaluates verifyError at construction; OpenSSL's DH_check() refuses
+        // a modulus wider than OPENSSL_DH_CHECK_MAX_MODULUS_BITS and that becomes
+        // this throw. Enforce the bound without running DH_check on every call.
+        if (ncrypto::BignumPointer::GetBitCount(bn_p.get()) > ncrypto::DHPointer::kCheckMaxModulusBits) {
+            return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
+        }
+
         ncrypto::BignumPointer bn_g;
 
         if (generatorValue.isNumber()) {

@@ -1773,6 +1773,18 @@ DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
+
+    // BoringSSL's DH_check() hard-fails past OPENSSL_DH_MAX_MODULUS_BITS. OpenSSL
+    // only does so past OPENSSL_DH_CHECK_MAX_MODULUS_BITS and reports
+    // DH_MODULUS_TOO_LARGE as a flag for widths in between; mirror that.
+    const BIGNUM* p = DH_get0_p(dh_.get());
+    if (p == nullptr) return DHPointer::CheckResult::CHECK_FAILED;
+    int bits = BignumPointer::GetBitCount(p);
+    if (bits > kCheckMaxModulusBits)
+        return DHPointer::CheckResult::CHECK_FAILED;
+    if (bits > OPENSSL_DH_MAX_MODULUS_BITS)
+        return DHPointer::CheckResult::MODULUS_TOO_LARGE;
+
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)
         return DHPointer::CheckResult::CHECK_FAILED;

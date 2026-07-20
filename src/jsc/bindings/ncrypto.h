@@ -1004,6 +1004,11 @@ public:
     static DHPointer FromGroup(const WTF::StringView name,
         FindGroupOption option = FindGroupOption::NONE);
 
+    // OpenSSL's OPENSSL_DH_CHECK_MAX_MODULUS_BITS. DH_check() refuses to run at
+    // all (returns 0) for a modulus wider than this; BoringSSL has no separate
+    // constant for it.
+    static constexpr int kCheckMaxModulusBits = 32768;
+
     static DHPointer New(BignumPointer&& p, BignumPointer&& g);
     static DHPointer New(size_t bits, unsigned int generator);
 
@@ -1031,6 +1036,10 @@ public:
         // Boringssl does not define the DH_CHECK_INVALID_[Q or J]_VALUE
         INVALID_Q = DH_CHECK_INVALID_Q_VALUE,
         INVALID_J = DH_CHECK_INVALID_J_VALUE,
+        MODULUS_TOO_LARGE = DH_MODULUS_TOO_LARGE,
+#else
+        // Boringssl does not define DH_MODULUS_TOO_LARGE; this is OpenSSL's value.
+        MODULUS_TOO_LARGE = 0x100,
 #endif
         CHECK_FAILED = 512,
     };

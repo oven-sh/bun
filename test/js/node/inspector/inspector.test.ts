@@ -1095,9 +1095,11 @@ async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: st
     awaiting = "the debugger-statement pause";
     await sawPauses.promise;
 
-    const done = () => {
+    const done = async () => {
       ws.close();
       proc.kill();
+      // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
+      await proc.exited;
       dir[Symbol.dispose]();
     };
     return { send, done, userScript, pauses, line: (n: number) => pauses[n].callFrames[0].location.lineNumber };
@@ -1127,7 +1129,7 @@ test("CDP clients see positions and source from the file the user wrote", async 
   // A breakpoint is named in the same coordinates and comes back in them.
   const resolved = await send("Debugger.setBreakpointByUrl", { lineNumber: 1, url: userScript.url });
   expect(resolved.locations[0].lineNumber).toBe(2);
-  done();
+  await done();
 }, 30_000);
 
 test("JSC-protocol clients keep seeing generated positions and Bun's source map", async () => {
@@ -1152,5 +1154,5 @@ test("JSC-protocol clients keep seeing generated positions and Bun's source map"
   expect(scriptSource).toContain("//# sourceMappingURL=data:application/json;base64,");
   expect(scriptSource.split("\n")[0]).toBe("debugger;");
   expect(userScript.sourceMapURL).toStartWith("data:application/json");
-  done();
+  await done();
 }, 30_000);

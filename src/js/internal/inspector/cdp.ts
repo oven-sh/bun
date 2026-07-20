@@ -208,10 +208,7 @@ function decodeMappings(mappings: string): ScriptSourceMap {
 }
 
 function compareOriginalOrder(a: AnyObject, b: AnyObject): number {
-  if (a.lineNumber !== b.lineNumber) return a.lineNumber - b.lineNumber;
-  if (a.columnNumber !== b.columnNumber) return a.columnNumber - b.columnNumber;
-  if (a.genLine !== b.genLine) return a.genLine - b.genLine;
-  return a.genColumn - b.genColumn;
+  return a.lineNumber - b.lineNumber || a.columnNumber - b.columnNumber || a.genLine - b.genLine || a.genColumn - b.genColumn;
 }
 
 // The last mapping at or before `columnNumber` on `lineNumber`. Falls forward

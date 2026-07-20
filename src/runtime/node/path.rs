@@ -3046,11 +3046,8 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
-                    // Store the env path in tmp_buf AFTER the resolved device.
-                    // buf2[0..resolved_tail_len] already holds the accumulated
-                    // tail; writing the value there (as before) clobbered it,
-                    // which is why `resolve("C:foo")` produced corrupted output
-                    // on Windows. tmp_buf past the device is scratch here.
+                    // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
+                    // already backs the accumulated tail, so writing there clobbers it.
                     if T::IS_U16 {
                         buf_size = r.len().min(tmp_buf.len() - resolved_device_len);
                         // T == u16 when IS_U16; bytemuck checks the layout at runtime.

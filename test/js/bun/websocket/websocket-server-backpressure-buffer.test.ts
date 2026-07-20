@@ -58,7 +58,7 @@ describe("BackPressure buffer", () => {
   // unwritten tail into BackPressure; drain exercises erase() as a pure
   // head-cursor bump.
   it("delivers a large direct send byte-for-byte while draining", async () => {
-    const SIZE = 32 * 1024 * 1024;
+    const SIZE = 8 * 1024 * 1024;
     const payload = patternBuffer(SIZE, 0xabcd);
     const expectedHash = crypto.createHash("sha1").update(payload).digest("hex");
 
@@ -97,7 +97,7 @@ describe("BackPressure buffer", () => {
     const { sock, initial } = await pausedClient(server.port);
     await sentSignal.promise;
 
-    // 32MB cannot fit in the kernel send buffer, so a non-empty remainder must
+    // 8MB cannot fit in the kernel send buffer, so a non-empty remainder must
     // have been copied into the BackPressure buffer.
     expect(bufferedAfterSend).toBeGreaterThan(0);
     expect(bufferedAfterSend).toBeLessThanOrEqual(SIZE + 10);
@@ -138,14 +138,14 @@ describe("BackPressure buffer", () => {
     expect(drainSawDecrease).toBe(true);
     expect(received).toBe(target);
     expect(hash.digest("hex")).toBe(expectedHash);
-  }, 30_000);
+  });
 
   // Small (<16KB) sends go through getSendBuffer(): cork overflow hits
   // BackPressure.resize() then erase(); keeping the window full makes
   // append() compact into the drained head gap instead of reallocating.
   it("delivers many corked frames while appending into a partly-drained buffer", async () => {
     const FRAME = 4096;
-    const COUNT = 4096; // 16MB of payload through the cork->backpressure path
+    const COUNT = 2048; // 8MB: exceeds Linux tcp_wmem max (4MB) so the window fills
     const WINDOW = 1 * 1024 * 1024;
     const headerLen = 4; // server frame, 16-bit extended length, no mask
 
@@ -233,5 +233,5 @@ describe("BackPressure buffer", () => {
     expect(sent).toBe(COUNT);
     expect(received).toBe(target);
     expect(hash.digest("hex")).toBe(expectedHash);
-  }, 30_000);
+  });
 });

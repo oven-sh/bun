@@ -267,6 +267,10 @@ impl NetworkTask {
                 // `response_buffer` intact so the buffered extractor
                 // handles it.
                 if committed {
+                    // Record a transport failure before the hand-off: if
+                    // `finish()` returns this task to the main thread for a
+                    // re-download, the retry gate keys off `response.fail`.
+                    this.response.fail = result.fail;
                     // SAFETY: see the `on_chunk` call above — `stream` is
                     // live and `on_chunk` takes `*mut Self` per its
                     // freely-aliasing contract.

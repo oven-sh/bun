@@ -1,7 +1,8 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import * as net from "node:net";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -419,5 +420,133 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
       expect(out).not.toContain("Failed to install");
       expect(exitCode).toBe(0);
     }
+  });
+});
+
+// A response that promises `Content-Length` bytes but closes the connection
+// early must be retried as a failed download instead of feeding the truncated
+// body to the extractor ("Fail extracting tarball", #34821) or manifest
+// parser. The buffered and streaming extraction paths fail differently, so
+// both are covered; `BUN_INSTALL_STREAMING_MIN_SIZE=1` forces streaming.
+describe.concurrent("truncated download", () => {
+  async function startRegistry(truncate: {
+    tarball?: (requestNumber: number) => boolean;
+    manifest?: (requestNumber: number) => boolean;
+  }) {
+    const tgz = Buffer.from(await file(join(import.meta.dir, "bar-0.0.2.tgz")).arrayBuffer());
+    let tarballRequests = 0;
+    let manifestRequests = 0;
+    // Writes a response with the full Content-Length header, but hard-closes
+    // the socket halfway through the body when `truncated` is set.
+    function respond(socket: net.Socket, contentType: string, body: Buffer, truncated: boolean) {
+      socket.write(
+        `HTTP/1.1 200 OK\r\nContent-Type: ${contentType}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+      );
+      if (truncated) {
+        socket.write(body.subarray(0, body.length >> 1), () => socket.destroy());
+      } else {
+        socket.write(body, () => socket.end());
+      }
+    }
+    const server = net.createServer(socket => {
+      let buf = "";
+      socket.on("data", data => {
+        buf += data.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const pathname = buf.split(" ")[1];
+        buf = "";
+        if (pathname === "/bar-0.0.2.tgz") {
+          tarballRequests++;
+          respond(socket, "application/octet-stream", tgz, truncate.tarball?.(tarballRequests) ?? false);
+        } else {
+          manifestRequests++;
+          const { port } = server.address() as net.AddressInfo;
+          const body = Buffer.from(
+            JSON.stringify({
+              name: "bar",
+              versions: {
+                "0.0.2": {
+                  name: "bar",
+                  version: "0.0.2",
+                  dist: { tarball: `http://127.0.0.1:${port}/bar-0.0.2.tgz` },
+                },
+              },
+              "dist-tags": { latest: "0.0.2" },
+            }),
+          );
+          respond(socket, "application/json", body, truncate.manifest?.(manifestRequests) ?? false);
+        }
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      tarballRequests: () => tarballRequests,
+      manifestRequests: () => manifestRequests,
+      [Symbol.dispose]() {
+        server.close();
+      },
+    };
+  }
+
+  async function runInstall(port: number, extraEnv: Record<string, string> = {}) {
+    using dir = tempDir("truncated-tarball", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"), ...extraEnv },
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    const barJson = file(join(String(dir), "node_modules", "bar", "package.json"));
+    const installedBar = (await barJson.exists()) ? await barJson.json() : null;
+    return { err, out, exitCode, installedBar };
+  }
+
+  it("retries a truncated tarball once and succeeds (buffered path)", async () => {
+    using registry = await startRegistry({ tarball: n => n === 1 });
+    const { err, exitCode, installedBar } = await runInstall(registry.port);
+    expect(err).not.toContain("error:");
+    expect(installedBar).toMatchObject({ name: "bar", version: "0.0.2" });
+    expect(registry.tarballRequests()).toBe(2);
+    expect(exitCode).toBe(0);
+  });
+
+  it("retries a truncated tarball once and succeeds (streaming path)", async () => {
+    using registry = await startRegistry({ tarball: n => n === 1 });
+    const { err, exitCode, installedBar } = await runInstall(registry.port, {
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+    });
+    expect(err).not.toContain("error:");
+    expect(installedBar).toMatchObject({ name: "bar", version: "0.0.2" });
+    expect(registry.tarballRequests()).toBe(2);
+    expect(exitCode).toBe(0);
+  });
+
+  it("fails as a download error once tarball retries are exhausted", async () => {
+    using registry = await startRegistry({ tarball: () => true });
+    const { err, exitCode, installedBar } = await runInstall(registry.port, {
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+      BUN_CONFIG_HTTP_RETRY_COUNT: "2",
+    });
+    expect(err).toContain("downloading tarball");
+    expect(err).not.toContain("extracting tarball");
+    expect(installedBar).toBeNull();
+    expect(registry.tarballRequests()).toBe(3);
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("retries a truncated manifest once and succeeds", async () => {
+    using registry = await startRegistry({ manifest: n => n === 1 });
+    const { err, exitCode, installedBar } = await runInstall(registry.port);
+    expect(err).not.toContain("error:");
+    expect(installedBar).toMatchObject({ name: "bar", version: "0.0.2" });
+    expect(registry.manifestRequests()).toBe(2);
+    expect(exitCode).toBe(0);
   });
 });

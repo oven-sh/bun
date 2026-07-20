@@ -980,11 +980,22 @@ impl TarballStream {
             // SAFETY: see comment above; network_task is live until published below.
             (*network).response_buffer = Default::default();
 
-            // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
-            // `(*this).extract_task` is a raw `*mut Task` (not `&mut`), so this
-            // is the only writer — no aliasing with a stored reference.
-            // `populate_result` does not touch `(*this).extract_task`.
-            (*this).populate_result(task);
+            // A transport failure mid-stream means the extraction error is a
+            // symptom of a truncated download, not a bad tarball. Instead of
+            // publishing a terminal failure, hand the NetworkTask back to the
+            // main thread so the download retry gate in `run_tasks` can
+            // re-request it (re-arming a fresh stream, since this one is
+            // consumed and dropped below).
+            let retry_download =
+                (*this).fail.is_some() && (*this).http_err.is_some() && !(*this).invalid_name;
+
+            if !retry_download {
+                // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
+                // `(*this).extract_task` is a raw `*mut Task` (not `&mut`), so this
+                // is the only writer — no aliasing with a stored reference.
+                // `populate_result` does not touch `(*this).extract_task`.
+                (*this).populate_result(task);
+            }
 
             // Temp-dir cleanup must happen before we release the stream or
             // publish the task: both `(*this).tmpname` and
@@ -1019,6 +1030,25 @@ impl TarballStream {
                 "TarballStream::finish: network.tarball_stream != this",
             );
             drop((*network).tarball_stream.take());
+
+            if retry_download {
+                // Un-commit so the main thread's `.extract` arm (which
+                // asserts `!streaming_committed`) takes over; it observes
+                // `response.fail` (stored by `notify` before the final
+                // chunk) and either re-enqueues the download or reports it
+                // as a failed download. The pre-created extract Task stays
+                // in `streaming_extract_task` and is recycled there.
+                (*network).streaming_committed = false;
+                // SAFETY: `network`/`manager` outlive this stream by
+                // construction; the queue is internally synchronized
+                // (`UnboundedQueue::push` takes `&self`). Once pushed, the
+                // main thread owns the NetworkTask — touch nothing after.
+                (*manager)
+                    .async_network_task_queue
+                    .push(core::ptr::NonNull::new_unchecked(network));
+                PackageManager::wake_raw(manager);
+                return;
+            }
 
             // `task.apply_patch_task` is intentionally not touched: the
             // buffered `.extract` path (`enqueueExtractNPMPackage` →

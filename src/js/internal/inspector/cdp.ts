@@ -219,7 +219,11 @@ function compareOriginalOrder(a: AnyObject, b: AnyObject): number {
 // code Bun injected, and `--inspect-brk`'s prepended `debugger;` is exactly
 // that. Node breaks on the first statement of the user's script, which is what
 // falling forward from the injected line resolves to.
-function generatedToOriginal(map: ScriptSourceMap, lineNumber: number, columnNumber: number): OriginalPosition | undefined {
+function generatedToOriginal(
+  map: ScriptSourceMap,
+  lineNumber: number,
+  columnNumber: number,
+): OriginalPosition | undefined {
   const { byGeneratedLine } = map;
   const line = byGeneratedLine[lineNumber];
   if (line) {
@@ -248,7 +252,11 @@ function generatedToOriginal(map: ScriptSourceMap, lineNumber: number, columnNum
 
 // The first generated position at or after an original one, so a breakpoint
 // set on a line the transpiler moved still lands on that line's code.
-function originalToGenerated(map: ScriptSourceMap, lineNumber: number, columnNumber: number): OriginalPosition | undefined {
+function originalToGenerated(
+  map: ScriptSourceMap,
+  lineNumber: number,
+  columnNumber: number,
+): OriginalPosition | undefined {
   const entries = map.originalOrder;
   let low = 0;
   let high = entries.length - 1;

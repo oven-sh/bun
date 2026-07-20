@@ -61,35 +61,19 @@ impl ShellCompletions {
             b"\n"
         };
 
-        if writer.write_all(self.commands[0]).is_err() {
-            return;
-        }
-
-        if !self.descriptions.is_empty() {
-            if writer.write_all(b"\t").is_err() {
+        for (i, cmd) in self.commands.iter().enumerate() {
+            if i > 0 && writer.write_all(delimiter).is_err() {
                 return;
             }
-            if writer.write_all(self.descriptions[0]).is_err() {
+            if writer.write_all(cmd).is_err() {
                 return;
             }
-        }
-
-        if self.commands.len() > 1 {
-            for (i, cmd) in self.commands[1..].iter().enumerate() {
-                if writer.write_all(delimiter).is_err() {
+            if let Some(desc) = self.descriptions.get(i) {
+                if writer.write_all(b"\t").is_err() {
                     return;
                 }
-
-                if writer.write_all(cmd).is_err() {
+                if writer.write_all(desc).is_err() {
                     return;
-                }
-                if !self.descriptions.is_empty() {
-                    if writer.write_all(b"\t").is_err() {
-                        return;
-                    }
-                    if writer.write_all(self.descriptions[i]).is_err() {
-                        return;
-                    }
                 }
             }
         }

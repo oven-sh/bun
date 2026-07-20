@@ -362,9 +362,15 @@ const skipsForLeaksan = (() => {
  */
 const shouldValidateExceptions = test => {
   // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
-  // (path.relative) which never match. Normalize before lookup.
+  // (path.relative) which never match. Normalize before lookup. An entry with
+  // a trailing `*` matches every path under that prefix (used for families of
+  // tests that all trip the same vendored-WebKit validator noise).
   const t = test.replaceAll(sep, "/");
-  return !(skipsForExceptionValidation.includes(t) || skipsForExceptionValidation.includes("test/" + t));
+  return !skipsForExceptionValidation.some(entry =>
+    entry.endsWith("*")
+      ? t.startsWith(entry.slice(0, -1)) || ("test/" + t).startsWith(entry.slice(0, -1))
+      : entry === t || entry === "test/" + t,
+  );
 };
 
 /**

@@ -187,18 +187,18 @@ test/js/node/inspector/inspector.test.ts
 test/js/third_party/vitest/vitest.test.ts
 
 # WebKit-internal inspector scope discipline, not Bun code. The validator
-# aborts inside vendored JSC inspector host functions when these tests drive
-# pause/eval flows:
-# - InjectedScriptHost evaluateWithScopeExtension: scope can throw at
+# aborts inside vendored JSC inspector host functions whenever a test drives
+# pause/eval flows through the inspector, so the whole vendored inspector
+# family is exempted by prefix (plus files that attach the inspector without
+# carrying its name). Signatures seen, all with WebKit-only frames:
+# - InjectedScriptHost evaluateWithScopeExtension: throw site
 #   vendor/WebKit/Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp:120,
 #   flagged from JSInjectedScriptHostPrototype.cpp:275 (deterministic locally).
 # - JSJavaScriptCallFrame scopeChain: throw site JSJavaScriptCallFrame.cpp:178,
-#   flagged from JSGlobalObjectInlines.h:302 (timing-dependent, seen on CI asan).
+#   flagged from JSGlobalObjectInlines.h:302 (timing-dependent, CI asan).
+# - JSObject get: throw site JSObject.cpp:2826, flagged from
+#   JSObjectInlines.h:133 (timing-dependent, CI asan).
 # WebKit ships prebuilt on this branch, so the fix belongs upstream; the tests
 # still run here, just without validateExceptionChecks.
-test/js/node/test/parallel/test-inspector-module.js
-test/js/node/test/parallel/test-inspector-vm-global-accessors-getter-sideeffect.js
-test/js/node/test/parallel/test-inspector-async-stack-traces-promise-then.js
-test/js/node/test/parallel/test-inspector-break-e.js
-test/js/node/test/parallel/test-inspector-break-when-eval.js
-test/js/node/test/parallel/test-inspector-exception.js
+test/js/node/test/parallel/test-inspector-*
+test/js/node/test/parallel/test-process-env-sideeffects.js

@@ -670,6 +670,22 @@ mod draft {
                 | CrashReason::OutOfMemory => libc::SIGABRT,
             }
         }
+
+        /// True for hardware faults delivered via a signal/exception handler
+        /// (reason codes '2'..'7'). These are the only variants that ever carry
+        /// a `FaultRegisters` context and whose reason payload is
+        /// self-delimiting, so the v3/v4 register block is appended for them.
+        const fn is_fault(&self) -> bool {
+            matches!(
+                self,
+                CrashReason::SegmentationFault(_)
+                    | CrashReason::IllegalInstruction(_)
+                    | CrashReason::BusError(_)
+                    | CrashReason::FloatingPointError(_)
+                    | CrashReason::DatatypeMisalignment
+                    | CrashReason::StackOverflow
+            )
+        }
     }
 
     impl fmt::Display for CrashReason {
@@ -874,6 +890,9 @@ mod draft {
     impl FaultRegisters {
         pub const MAX: usize = 34;
 
+        /// Register names in encoding order. Source of truth for `COUNT`; the
+        /// per-target ucontext/CONTEXT readers assign `r.count = Self::COUNT`
+        /// so a drift between this table and the readers fails at compile time.
         #[cfg(target_arch = "x86_64")]
         pub const NAMES: &[&str] = &[
             "rax", "rbx", "rcx", "rdx", "rdi", "rsi", "rbp", "rsp", "r8", "r9", "r10", "r11",
@@ -887,6 +906,9 @@ mod draft {
         ];
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         pub const NAMES: &[&str] = &[];
+
+        pub const COUNT: u8 = Self::NAMES.len() as u8;
+        const _CHECK: () = assert!(Self::NAMES.len() <= Self::MAX);
 
         const fn empty(pc: usize, fp: usize) -> Self {
             Self {
@@ -1717,7 +1739,7 @@ mod draft {
             {
                 r.values[i] = g[slot as usize] as u64;
             }
-            r.count = 17;
+            r.count = FaultRegisters::COUNT;
             Some(r)
         }
         #[cfg(all(
@@ -1735,7 +1757,7 @@ mod draft {
             r.values[30] = mc.regs[30] as u64; // lr
             r.values[31] = mc.sp as u64;
             r.values[32] = mc.pc as u64;
-            r.count = 33;
+            r.count = FaultRegisters::COUNT;
             Some(r)
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
@@ -1752,7 +1774,7 @@ mod draft {
                 ss.__r8, ss.__r9, ss.__r10, ss.__r11, ss.__r12, ss.__r13, ss.__r14, ss.__r15,
                 ss.__rip, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ];
-            r.count = 17;
+            r.count = FaultRegisters::COUNT;
             Some(r)
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -1771,7 +1793,7 @@ mod draft {
             r.values[30] = ss.__lr;
             r.values[31] = ss.__sp;
             r.values[32] = ss.__pc;
-            r.count = 33;
+            r.count = FaultRegisters::COUNT;
             Some(r)
         }
         #[cfg(not(any(
@@ -1854,7 +1876,7 @@ mod draft {
                 0,
                 0,
             ];
-            r.count = 17;
+            r.count = FaultRegisters::COUNT;
             r
         }
         #[cfg(target_arch = "aarch64")]
@@ -1870,7 +1892,7 @@ mod draft {
             }
             r.values[31] = read(0x100); // sp
             r.values[32] = pc;
-            r.count = 33;
+            r.count = FaultRegisters::COUNT;
             r
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -2586,11 +2608,14 @@ mod draft {
     ///
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
-    /// '3' - same as '1' with a trailing fault-register block appended after the
-    ///       reason payload (see `encode_trace_string`): one `StackLine`-encoded
-    ///       fault pc, a VLQ register count, then count * 2-VLQ register values.
-    ///       A decoder that only knows '1'/'2' can treat '3' as '1' and stop at
-    ///       the end of the reason payload; everything after it is additive.
+    /// '3' - same as '1' plus, for hardware-fault reasons '2'..'7' only, a
+    ///       trailing register block after the reason payload: one
+    ///       `StackLine`-encoded fault pc, a VLQ register count, then
+    ///       count * 2-VLQ register values. Reasons '0'/'1'/'8'/'9' are
+    ///       byte-identical to v1, so a decoder that only knows '1'/'2' can
+    ///       treat '3' as '1': the fault reasons' payloads are self-delimiting
+    ///       and the appended block is additive; the non-fault reasons are
+    ///       unchanged.
     /// '4' - same as '3' but this build is known to be a canary build
     const VERSION_CHAR: &str = if Environment::IS_CANARY { "4" } else { "3" };
 
@@ -2912,22 +2937,29 @@ mod draft {
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
         }
 
-        // v3/v4 register block. Always present so the decoder does not have to
-        // branch on which reason codes carry one; `_A` (= no pc, 0 regs) marks
-        // "no fault context" (panic/OOM/unknown arch).
-        match opts.regs {
-            None => {
-                StackLine::write_encoded(None, writer)?;
-                writer.write_all(VLQ::ZERO.slice())?;
-            }
-            Some(regs) => {
-                let pc_line = StackLine::from_address(regs.pc, &mut name_bytes);
-                StackLine::write_encoded(pc_line.as_ref(), writer)?;
-                writer.write_all(VLQ::encode(regs.count as i32).slice())?;
-                for &v in regs.values() {
-                    write_u64_as_two_vlqs(writer, v as usize)?;
+        // v3/v4 register block. Only emitted for hardware-fault reasons
+        // ('2'..'7'), whose payloads are self-delimiting (fixed VLQ count or
+        // empty). Reasons '0' (Panic: base64 to end-of-string) and '8'
+        // (ZigError: identifier to end-of-string) are left byte-identical to
+        // v1/v2 so a decoder can still read the payload to end-of-string; they
+        // never carry a fault context anyway. '1'/'9' likewise never do.
+        if opts.reason.is_fault() {
+            match opts.regs {
+                None => {
+                    StackLine::write_encoded(None, writer)?;
+                    writer.write_all(VLQ::ZERO.slice())?;
+                }
+                Some(regs) => {
+                    let pc_line = StackLine::from_address(regs.pc, &mut name_bytes);
+                    StackLine::write_encoded(pc_line.as_ref(), writer)?;
+                    writer.write_all(VLQ::encode(regs.count as i32).slice())?;
+                    for &v in regs.values() {
+                        write_u64_as_two_vlqs(writer, v as usize)?;
+                    }
                 }
             }
+        } else {
+            debug_assert!(opts.regs.is_none());
         }
 
         if opts.action == TraceStringAction::ViewTrace {

@@ -173,7 +173,7 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("non-fault crashes encode an empty register block (`_A` suffix)", async () => {
+  test("non-fault crashes are byte-identical to v1 (no register block)", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -191,9 +191,12 @@ describe("trace string v3/v4 (fault pc + register block)", () => {
     expect(["3", "4"], `payload=${payload}`).toContain(payload[2]);
 
     const body = payload.replace(/\/view$/, "");
-    // OutOfMemory reason code is '9' with no trailing data in v1; v3 appends
-    // the empty register block: '_' (no pc) + 'A' (VLQ 0 = no registers).
-    expect(body.endsWith("9_A"), `payload=${body}`).toBe(true);
+    // OutOfMemory reason code is '9' with no trailing data. v3 leaves
+    // non-fault reasons byte-identical to v1 so Panic ('0', base64 to EOS)
+    // and ZigError ('8', identifier to EOS) stay decodable: the body must
+    // end exactly at '9', no `_A` suffix.
+    expect(body.endsWith("A9"), `payload=${body}`).toBe(true);
+    expect(body.endsWith("_A"), `payload=${body}`).toBe(false);
 
     expect(exitCode).not.toBe(0);
   });

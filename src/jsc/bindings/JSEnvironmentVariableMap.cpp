@@ -541,6 +541,11 @@ private:
 
 const JSC::ClassInfo JSSharedEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
 
+bool isProcessEnvClassInfo(const JSC::ClassInfo* info)
+{
+    return info == JSProcessEnvMap::info() || info == JSSharedEnvMap::info();
+}
+
 bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = JSC::getVM(globalObject);

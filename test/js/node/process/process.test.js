@@ -257,6 +257,19 @@ it("Object.defineProperty on process.env rejects accessor and partial descriptor
   delete process.env.goo;
 });
 
+// process.env is no longer a JSFinalObject; it must still structured-clone as
+// a plain object so postMessage / workerData keep working like Node.
+it("structuredClone(process.env) produces a plain-object snapshot", () => {
+  process.env.__SC_PROBE = "hello";
+  try {
+    const clone = structuredClone(process.env);
+    expect(clone.__SC_PROBE).toBe("hello");
+    expect(Object.getPrototypeOf(clone)).toBe(Object.prototype);
+  } finally {
+    delete process.env.__SC_PROBE;
+  }
+});
+
 it("process.env is spreadable and editable", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";
   const { "LOL SMILE UTF16 😂": lol, ...rest } = process.env;

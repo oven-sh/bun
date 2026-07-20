@@ -18,6 +18,10 @@ JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 // worker threads too. Caller populates it.
 JSC::JSObject* createEmptyProcessEnvMap(Zig::GlobalObject* globalObject);
 
+// JSProcessEnvMap or JSSharedEnvMap. Both behave as plain objects for structured
+// cloning and are whitelisted at SerializedScriptValue's ObjectStartState gate.
+bool isProcessEnvClassInfo(const JSC::ClassInfo*);
+
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);

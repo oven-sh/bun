@@ -419,10 +419,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 // pin() blocks transfer(), not resize(); a shrink decommits pages the
                 // threadpool is still reading. Copy into a fixed Buffer rooted via
                 // `pending_input_set_cached` and unpinned on completion like the original.
-                let owned =
-                    buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize].to_vec();
+                let owned: Box<[u8]> =
+                    buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize].into();
                 arguments[1].unpin_array_buffer();
-                let copy_js = JSValue::create_buffer(global_this, owned.leak());
+                let copy_js = JSValue::create_buffer_from_box(global_this, owned);
                 let Some(copy) = copy_js.as_pinned_arraybuffer(global_this) else {
                     return Err(global_this.throw_out_of_memory());
                 };

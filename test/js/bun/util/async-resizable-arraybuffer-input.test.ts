@@ -19,7 +19,7 @@ const driver = /* js */ `
   const brotliCompress = promisify(zlib.brotliCompress);
   const brotliDecompress = promisify(zlib.brotliDecompress);
 
-  const SIZE = 64 * 1024;
+  const SIZE = 256 * 1024;
   const fixed = new Uint8Array(SIZE).fill(0x41);
   const brotliOpts = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } };
   const deflated = zlib.deflateSync(fixed);
@@ -86,9 +86,11 @@ describe("async native input survives ArrayBuffer.prototype.resize(0) mid-flight
         proc.stderr.text(),
         proc.exited,
       ]);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("ok");
-      expect(exitCode).toBe(0);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "ok",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
   }
 });

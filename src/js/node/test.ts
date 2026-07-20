@@ -401,8 +401,9 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       });
     }
 
-    if (counts.topLevel > 0) {
-      reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
+    const { topLevel } = counts;
+    if (topLevel > 0) {
+      reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: topLevel });
     }
     const durationMs = roundDurationMs(performance.now() - started);
     emitRunDiagnostics(reporter, counts, durationMs);
@@ -619,16 +620,25 @@ function republishChildEvent(
         if (code !== undefined) (error as any).code = code;
         if (failureType !== undefined) (error as any).failureType = failureType;
         if (cause !== undefined) {
+          const {
+            name: causeName,
+            generatedMessage: causeGeneratedMessage,
+            code: causeCode,
+            actual: causeActual,
+            expected: causeExpected,
+            operator: causeOperator,
+            diff: causeDiff,
+          } = cause;
           const rebuilt = new Error(cause.message) as Record<string, unknown> & Error;
           rebuilt.stack = cause.stack;
-          if (cause.name !== undefined && cause.name !== "Error") rebuilt.name = cause.name;
+          if (causeName !== undefined && causeName !== "Error") rebuilt.name = causeName;
           // Enumerable-property order mirrors node's AssertionError inspect.
-          if (cause.generatedMessage !== undefined) rebuilt.generatedMessage = cause.generatedMessage;
-          if (cause.code !== undefined) rebuilt.code = cause.code;
-          if (cause.actual !== undefined) rebuilt.actual = cause.actual;
-          if (cause.expected !== undefined) rebuilt.expected = cause.expected;
-          if (cause.operator !== undefined) rebuilt.operator = cause.operator;
-          if (cause.diff !== undefined) rebuilt.diff = cause.diff;
+          if (causeGeneratedMessage !== undefined) rebuilt.generatedMessage = causeGeneratedMessage;
+          if (causeCode !== undefined) rebuilt.code = causeCode;
+          if (causeActual !== undefined) rebuilt.actual = causeActual;
+          if (causeExpected !== undefined) rebuilt.expected = causeExpected;
+          if (causeOperator !== undefined) rebuilt.operator = causeOperator;
+          if (causeDiff !== undefined) rebuilt.diff = causeDiff;
           (error as { cause?: unknown }).cause = rebuilt;
         }
       }

@@ -276,24 +276,49 @@ impl<'a> ValkeyReader<'a> {
         }
     }
 
-    fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
+    /// Consume a CRLF at the current position. Unlike `read_until_crlf` this
+    /// inspects exactly two bytes, so a malformed trailer fails in O(1).
+    fn expect_crlf(&mut self, invalid: RedisError) -> Result<(), RedisError> {
+        match self.buffer.get(self.pos..self.pos + 2) {
+            Some([b'\r', b'\n']) => {
+                self.pos += 2;
+                Ok(())
+            }
+            Some(_) => Err(invalid),
+            None => Err(RedisError::InvalidResponse),
+        }
+    }
+
+    /// Read a length-prefixed blob (`$`, `!`, `=`) and its trailing CRLF.
+    /// Returns `Ok(None)` only when `allow_null` and the declared length is
+    /// negative (RESP2 `$-1`). The bounds check subtracts instead of adding so
+    /// `pos + len` can never wrap `usize`.
+    fn read_blob(
+        &mut self,
+        allow_null: bool,
+        invalid: RedisError,
+    ) -> Result<Option<&'a [u8]>, RedisError> {
         let len = self.read_integer()?;
-        if !(0..=Self::MAX_BULK_LEN).contains(&len) {
-            return Err(RedisError::InvalidVerbatimString);
+        if len < 0 {
+            return if allow_null { Ok(None) } else { Err(invalid) };
+        }
+        if len > Self::MAX_BULK_LEN {
+            return Err(invalid);
         }
         let len = usize::try_from(len).expect("int cast");
-        if self.pos + len > self.buffer.len() {
+        if self.buffer.len() - self.pos < len {
             return Err(RedisError::InvalidResponse);
         }
-
-        let content_with_format = &self.buffer[self.pos..self.pos + len];
+        let start = self.pos;
         self.pos += len;
+        self.expect_crlf(invalid)?;
+        Ok(Some(&self.buffer[start..start + len]))
+    }
 
-        // Expect CRLF after content
-        let crlf = self.read_until_crlf()?;
-        if !crlf.is_empty() {
-            return Err(RedisError::InvalidVerbatimString);
-        }
+    fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
+        let content_with_format = self
+            .read_blob(false, RedisError::InvalidVerbatimString)?
+            .expect("!allow_null");
 
         // Format should be "xxx:" followed by content
         if content_with_format.len() < 4 || content_with_format[3] != b':' {
@@ -335,9 +360,20 @@ impl<'a> ValkeyReader<'a> {
         cap
     }
 
-    pub fn read_value(&mut self) -> Result<RESPValue, RedisError> {
+    /// Parse one complete RESP value. Returns `Ok(None)` when the buffer ends
+    /// mid-value (caller should append more bytes and retry); `Err` is always a
+    /// real protocol error.
+    pub fn read_value(&mut self) -> Result<Option<RESPValue>, RedisError> {
         self.prealloc_budget = self.buffer.len() - self.pos;
-        self.read_value_with_depth(0)
+        let start = self.pos;
+        match self.read_value_with_depth(0) {
+            Ok(v) => Ok(Some(v)),
+            Err(RedisError::InvalidResponse) => {
+                self.pos = start;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn read_value_with_depth(&mut self, depth: usize) -> Result<RESPValue, RedisError> {
@@ -359,27 +395,10 @@ impl<'a> ValkeyReader<'a> {
                 let int = self.read_integer()?;
                 Ok(RESPValue::Integer(int))
             }
-            RESPType::BulkString => {
-                let len = self.read_integer()?;
-                if len < 0 {
-                    return Ok(RESPValue::BulkString(None));
-                }
-                if len > Self::MAX_BULK_LEN {
-                    return Err(RedisError::InvalidBulkString);
-                }
-                let len = usize::try_from(len).expect("int cast");
-                if self.pos + len > self.buffer.len() {
-                    return Err(RedisError::InvalidResponse);
-                }
-                let str = &self.buffer[self.pos..self.pos + len];
-                self.pos += len;
-                let crlf = self.read_until_crlf()?;
-                if !crlf.is_empty() {
-                    return Err(RedisError::InvalidBulkString);
-                }
-                let owned = Box::<[u8]>::from(str);
-                Ok(RESPValue::BulkString(Some(owned)))
-            }
+            RESPType::BulkString => Ok(RESPValue::BulkString(
+                self.read_blob(true, RedisError::InvalidBulkString)?
+                    .map(Box::<[u8]>::from),
+            )),
             RESPType::Array => {
                 if depth >= Self::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
@@ -401,9 +420,7 @@ impl<'a> ValkeyReader<'a> {
 
             // RESP3 types
             RESPType::Null => {
-                if !self.read_until_crlf()?.is_empty() {
-                    return Err(RedisError::InvalidResponseType);
-                }
+                self.expect_crlf(RedisError::InvalidResponseType)?;
                 Ok(RESPValue::Null)
             }
             RESPType::Double => {
@@ -415,22 +432,10 @@ impl<'a> ValkeyReader<'a> {
                 Ok(RESPValue::Boolean(b))
             }
             RESPType::BlobError => {
-                let len = self.read_integer()?;
-                if !(0..=Self::MAX_BULK_LEN).contains(&len) {
-                    return Err(RedisError::InvalidBlobError);
-                }
-                let len = usize::try_from(len).expect("int cast");
-                if self.pos + len > self.buffer.len() {
-                    return Err(RedisError::InvalidResponse);
-                }
-                let str = &self.buffer[self.pos..self.pos + len];
-                self.pos += len;
-                let crlf = self.read_until_crlf()?;
-                if !crlf.is_empty() {
-                    return Err(RedisError::InvalidBlobError);
-                }
-                let owned = Box::<[u8]>::from(str);
-                Ok(RESPValue::BlobError(owned))
+                let bytes = self
+                    .read_blob(false, RedisError::InvalidBlobError)?
+                    .expect("!allow_null");
+                Ok(RESPValue::BlobError(Box::<[u8]>::from(bytes)))
             }
             RESPType::VerbatimString => Ok(RESPValue::VerbatimString(self.read_verbatim_string()?)),
             RESPType::Map => {
@@ -627,7 +632,7 @@ impl ReplyScanner {
     /// Skip a single element starting at `reader.pos`. Returns `Some(n)` for an
     /// aggregate expecting `n` further child values, or `None` for a
     /// fully-skipped scalar. `InvalidResponse` means the element is not yet
-    /// fully buffered.
+    /// fully buffered and is never surfaced past [`ReplyScanner::scan`].
     fn scan_one(reader: &mut ValkeyReader<'_>, depth: usize) -> Result<Option<u64>, RedisError> {
         let type_byte = reader.read_byte()?;
         let ty = RESPType::from_byte(type_byte).ok_or(RedisError::InvalidResponseType)?;

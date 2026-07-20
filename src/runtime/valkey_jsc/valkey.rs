@@ -113,6 +113,10 @@ impl Protocol {
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
     }
+
+    pub fn is_unix(self) -> bool {
+        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
+    }
 }
 
 #[derive(Default)]
@@ -257,7 +261,6 @@ pub struct ValkeyClient {
     pub username: Box<[u8]>,
     pub database: u32,
     pub address: Address,
-    pub protocol: Protocol,
 
     // TLS support
     pub tls: TLS,
@@ -767,11 +770,14 @@ impl ValkeyClient {
                 let before_read_pos = reader.pos();
 
                 let value = match reader.read_value() {
-                    Ok(v) => v,
+                    Ok(Some(v)) => v,
+                    Ok(None) => {
+                        // Scanner said Complete but the tree parser ran out of
+                        // bytes — the two disagree, which is a protocol error.
+                        self.fail(b"Parser/scanner mismatch", RedisError::InvalidResponse)?;
+                        return Ok(());
+                    }
                     Err(err) => {
-                        // The scanner verified a complete reply is buffered, so
-                        // a parse failure here (including `InvalidResponse`) is
-                        // a protocol error, not a short read.
                         self.fail(b"Failed to parse server response", err)?;
                         return Ok(());
                     }
@@ -804,28 +810,25 @@ impl ValkeyClient {
             let before_read_pos = reader.pos();
 
             let value = match reader.read_value() {
-                Ok(v) => v,
-                Err(err) => {
-                    if err == RedisError::InvalidResponse {
-                        // Partial message encountered on the stack-allocated path.
-                        // Copy the *remaining* part of the stack data to the heap buffer
-                        // and wait for more data.
-                        if cfg!(debug_assertions) {
-                            debug!(
-                                "read_buffer: partial message on stack ({} bytes), switching to buffer",
-                                current_data_slice.len() - before_read_pos
-                            );
-                        }
-                        self.reply_scanner.reset();
-                        self.read_buffer
-                            .write(&current_data_slice[before_read_pos..])
-                            .unwrap_or_oom();
-                        return Ok(()); // Exit onData, next call will use the buffer path
-                    } else {
-                        // Any other error is fatal
-                        self.fail(b"Failed to parse server response", err)?;
-                        return Ok(());
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    // Partial message on the stack-allocated path — copy the
+                    // remainder to the heap buffer and wait for more data.
+                    if cfg!(debug_assertions) {
+                        debug!(
+                            "read_buffer: partial message on stack ({} bytes), switching to buffer",
+                            current_data_slice.len() - before_read_pos
+                        );
                     }
+                    self.reply_scanner.reset();
+                    self.read_buffer
+                        .write(&current_data_slice[before_read_pos..])
+                        .unwrap_or_oom();
+                    return Ok(());
+                }
+                Err(err) => {
+                    self.fail(b"Failed to parse server response", err)?;
+                    return Ok(());
                 }
             };
             // Successfully read a full message from the stack data

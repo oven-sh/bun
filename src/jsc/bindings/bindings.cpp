@@ -459,8 +459,13 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 }
             } else if (expectedTestValue.isCell() and expectedTestValue.asCell()->type() == RegExpObjectType) {
                 if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
-                    JSString* otherString = otherProp.toString(globalObject);
-                    if (regex->match(globalObject, otherString)) {
+                    auto otherView = JSC::asString(otherProp)->view(globalObject);
+                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+                    // Match the underlying RegExp from offset 0 so /g and /y regexes neither
+                    // consume nor mutate the user's lastIndex across matcher invocations.
+                    bool matched = !!regex->regExp()->match(globalObject, otherView, 0);
+                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+                    if (matched) {
                         return AsymmetricMatcherResult::PASS;
                     }
                 }
@@ -4521,7 +4526,13 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     }
     JSC::RegExpObject* regexObject = dynamicDowncast<JSC::RegExpObject>(regex);
 
-    return !!regexObject->match(global, JSC::asString(str));
+    JSC::VM& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto input = JSC::asString(str)->view(global);
+    RETURN_IF_EXCEPTION(scope, false);
+    // Match the underlying RegExp from offset 0 so /g and /y regexes neither
+    // consume nor mutate the user's lastIndex across matcher invocations.
+    RELEASE_AND_RETURN(scope, !!regexObject->regExp()->match(global, input, 0));
 }
 
 bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue other)

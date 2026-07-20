@@ -149,14 +149,9 @@ pub(crate) fn to_throw(
             if global.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
-            if let Some(test_fn) = expected_value.get(global, "test")? {
-                let matches = test_fn
-                    .call(global, expected_value, &[received_message])
-                    .unwrap_or_else(|err| global.take_exception(err));
-                if !matches.to_boolean() {
-                    return Ok(JSValue::UNDEFINED);
-                }
+            let received_message_str = JSValue::from_cell(received_message.to_js_string(global)?);
+            if !expected_value.to_match(global, received_message_str)? {
+                return Ok(JSValue::UNDEFINED);
             }
 
             let mut formatter2 = super::make_formatter(global);
@@ -271,14 +266,9 @@ pub(crate) fn to_throw(
 
         if expected_value.is_reg_exp() {
             if let Some(received_message) = received_message_opt {
-                // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
-                if let Some(test_fn) = expected_value.get(global, "test")? {
-                    let matches = test_fn
-                        .call(global, expected_value, &[received_message])
-                        .unwrap_or_else(|err| global.take_exception(err));
-                    if matches.to_boolean() {
-                        return Ok(JSValue::UNDEFINED);
-                    }
+                let received_message_str = JSValue::from_cell(received_message.to_js_string(global)?);
+                if expected_value.to_match(global, received_message_str)? {
+                    return Ok(JSValue::UNDEFINED);
                 }
             }
 

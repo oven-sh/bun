@@ -36,7 +36,10 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
   if (send(fd, "", 0, 0) != SOCKET_ERROR) {
     return 0;
   }
-  return WSAGetLastError() != WSAEWOULDBLOCK;
+  int err = WSAGetLastError();
+  /* WSAESHUTDOWN means our own shutdown(SD_SEND) ran; that is not a peer
+   * reset. The fin_deferred sweep probes sockets after local shutdown. */
+  return err != WSAEWOULDBLOCK && err != WSAESHUTDOWN;
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
@@ -141,9 +144,11 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
        * fin_deferred so the sweep timer escalates a later reset now that
        * DISCONNECT is disarmed. */
       struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
-      if (!sock->flags.is_closed &&
-          (us_socket_get_error(sock) != 0 ||
-           us_internal_libuv_peer_reset_probe(us_poll_fd(wp)))) {
+      if (sock->flags.is_closed) {
+        /* close_raw already cleared fin_deferred and unlinked from the group;
+         * setting it here would leak fin_deferred_count. */
+      } else if (us_socket_get_error(sock) != 0 ||
+                 us_internal_libuv_peer_reset_probe(us_poll_fd(wp))) {
         error = 1;
         events |= UV_READABLE;
       } else if (!sock->fin_deferred) {

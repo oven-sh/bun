@@ -124,6 +124,10 @@ pub fn build_request(
         buf.extend_from_slice(v);
         buf.push(b'\n');
     }
+    // Self-delimit the header block from the body so a body that happens to
+    // look like `name:value\n` cannot alias a header (header names can't be
+    // empty, so `\n\n` only occurs here).
+    buf.push(b'\n');
     if let Some(b) = body {
         buf.extend_from_slice(b);
     }

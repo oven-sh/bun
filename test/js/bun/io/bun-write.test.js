@@ -465,6 +465,60 @@ const IS_UV_FS_COPYFILE_DISABLED =
         }
       });
     });
+
+    it.skipIf(!(Bun.which("cc") || Bun.which("gcc") || Bun.which("clang")))(
+      "read/write fallback hints POSIX_FADV_SEQUENTIAL on the source fd",
+      async () => {
+        const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+        using dir = tempDir("bun-write-fadvise", {
+          "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <sys/types.h>
+static int (*real)(int, off_t, off_t, int);
+int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
+  if (!real) real = dlsym(RTLD_NEXT, "posix_fadvise");
+  fprintf(stderr, "[fadvise] fd=%d advice=%d\\n", fd, advice);
+  return real(fd, offset, len, advice);
+}
+`,
+          "src.bin": Buffer.alloc(128 * 1024, 0x41).toString(),
+        });
+        const shim = join(String(dir), "shim.so");
+        await using ccProc = Bun.spawn({
+          cmd: [cc, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [ccErr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+        if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+
+        const existing = bunEnv.LD_PRELOAD;
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            join(import.meta.dir, "./bun-write-exdev-fixture.js"),
+            join(String(dir), "src.bin"),
+            join(String(dir), "dst.bin"),
+          ],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            LD_PRELOAD: existing ? `${shim}:${existing}` : shim,
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect({ stderr, stdout }).toEqual({
+          stderr: expect.stringMatching(/\[fadvise\] fd=\d+ advice=2/),
+          stdout: "",
+        });
+        expect(exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), "dst.bin"))).toEqual(Buffer.alloc(128 * 1024, 0x41));
+      },
+    );
   }
 
   describe("ENOENT", () => {

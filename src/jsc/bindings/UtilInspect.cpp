@@ -7,10 +7,31 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/StructureRareData.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetSourceConstructorName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSValue value = callFrame->argument(0);
+    JSObject* object = value.getObject();
+    if (!object)
+        return JSValue::encode(jsUndefined());
+
+    // V8 only recovers the user's class name for plain objects; built-in subclass
+    // instances (Error, Array, ...) report the base type via Object.prototype.toString.
+    if (object->structure()->typeInfo().type() != FinalObjectType)
+        return JSValue::encode(jsUndefined());
+
+    String name = object->structure()->sourceConstructorName();
+    if (name.isEmpty() || name == "Object"_s)
+        return JSValue::encode(jsUndefined());
+
+    return JSValue::encode(jsString(vm, WTF::move(name)));
+}
 
 Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* globalObject)
 {

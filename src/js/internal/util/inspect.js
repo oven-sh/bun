@@ -149,6 +149,8 @@ const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
   1,
 );
 
+const getSourceConstructorName = $newCppFunction("UtilInspect.cpp", "jsFunctionGetSourceConstructorName", 1);
+
 const isAsyncFunction = v =>
   typeof v === "function" && StringPrototypeStartsWith(FunctionPrototypeToString(v), "async");
 const isGeneratorFunction = v =>
@@ -2746,6 +2748,8 @@ function internalGetConstructorName(val) {
   if (!val || typeof val !== "object") throw new Error("Invalid object");
   const ctorName = val.constructor?.name;
   if (ctorName) return ctorName;
+  const sourceName = getSourceConstructorName(val);
+  if (sourceName) return sourceName;
   const str = ObjectPrototypeToString(val);
   const m = StringPrototypeMatch(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
   return m ? m[1] : "Object";

@@ -184,11 +184,7 @@ test("no assertion failures", () => {
       }
     }
     assert.strictEqual(util.format("%s", new Foo()), "Bar");
-    // TODO: null prototypes
-    // assert.strictEqual(
-    //   util.format('%s', Object.setPrototypeOf(new Foo(), null)),
-    //   '[Foo: null prototype] {}'
-    // );
+    assert.strictEqual(util.format("%s", Object.setPrototypeOf(new Foo(), null)), "[Foo: null prototype] {}");
     global.Foo = Foo;
     assert.strictEqual(util.format("%s", new Foo()), "Bar");
     delete global.Foo;

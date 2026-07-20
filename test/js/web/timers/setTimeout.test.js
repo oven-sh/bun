@@ -535,8 +535,10 @@ it("timer heap clock is monotonic, not wall-clock", () => {
   // The clock that schedules setTimeout/setInterval deadlines must be monotonic
   // (boot-relative) on every platform so NTP steps / user clock changes can't
   // stall or mass-fire timers. A wall-clock reading here would be ~= Date.now().
-  const timerNow = timerInternals.timerClockMs();
+  const t0 = timerInternals.timerClockMs();
+  const t1 = timerInternals.timerClockMs();
   const wallNow = Date.now();
-  expect(timerNow).toBeGreaterThan(0);
-  expect(timerNow).toBeLessThan(wallNow / 2);
+  expect(t0).toBeGreaterThan(0);
+  expect(t1).toBeGreaterThanOrEqual(t0);
+  expect(t1).toBeLessThan(wallNow / 2);
 });

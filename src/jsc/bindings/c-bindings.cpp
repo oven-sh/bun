@@ -235,17 +235,19 @@ extern "C" size_t Bun__memoryFootprint()
 
 extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
-    static LARGE_INTEGER ticksPerSec;
-    LARGE_INTEGER ticks;
-
+    // C++11 thread-safe static init: Timespec::now() runs on multiple threads.
+    // QueryPerformanceFrequency is documented to always succeed on Windows XP+.
+    static const LARGE_INTEGER ticksPerSec = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
     if (!ticksPerSec.QuadPart) {
-        QueryPerformanceFrequency(&ticksPerSec);
-        if (!ticksPerSec.QuadPart) {
-            errno = ENOTSUP;
-            return -1;
-        }
+        errno = ENOTSUP;
+        return -1;
     }
 
+    LARGE_INTEGER ticks;
     QueryPerformanceCounter(&ticks);
 
     *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);

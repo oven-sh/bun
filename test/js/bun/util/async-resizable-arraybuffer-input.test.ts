@@ -81,11 +81,7 @@ describe("async native input survives ArrayBuffer.prototype.resize(0) mid-flight
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
         stdout: "ok",
         stderr: expect.any(String),

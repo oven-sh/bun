@@ -369,7 +369,72 @@ console.log("Large data length:", JSON.stringify(largeData).length);
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
     expect(bunSection.characteristics & IMAGE_SCN_MEM_EXECUTE).toBe(0);
 
+    // Should NOT be writable: StandaloneModuleGraph hands the embedded
+    // bytecode to JSC as a read-only span; JSC never mutates it.
+    const IMAGE_SCN_MEM_WRITE = 0x80000000;
+    expect(bunSection.characteristics & IMAGE_SCN_MEM_WRITE).toBe(0);
+
     // Cleanup
+    unlinkSync(testFile);
+    unlinkSync(exePath);
+  });
+
+  it("should run embedded bytecode from a read-only .bun section", async () => {
+    // StandaloneModuleGraph treats the embedded bytecode as immutable
+    // (`&'static [u8]`), and the PE writer marks `.bun` without
+    // IMAGE_SCN_MEM_WRITE, so the loader maps it PAGE_READONLY. Any in-place
+    // write by the JSC decoder would fault; running this binary to completion
+    // proves the decoder is read-only.
+    const testFile = join(tempDir, "test-pe-bytecode-ro.js");
+    await Bun.write(
+      testFile,
+      `
+function outer(a) {
+  function mid(b) {
+    function inner(c) { return a + b + c; }
+    return inner;
+  }
+  return mid;
+}
+let s = 0;
+for (let i = 0; i < 50; i++) s += outer(i)(i * 2)(i * 3);
+console.log("SUM", s);
+    `.trim(),
+    );
+
+    const exePath = join(tempDir, "test-pe-bytecode-ro.exe");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--bytecode", "--outfile", exePath, testFile],
+      env: bunEnv,
+      cwd: tempDir,
+      stderr: "pipe",
+    });
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildErr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+
+    // Verify the .bun section carries bytecode (not just source) and is read-only.
+    const peData = readFileSync(exePath);
+    const parser = new PEParser(peData);
+    const validation = parser.validatePE();
+    const bunSection = validation.bunSection!.section;
+    const IMAGE_SCN_MEM_WRITE = 0x80000000;
+    expect(bunSection.characteristics & IMAGE_SCN_MEM_WRITE).toBe(0);
+    // With --bytecode the section is at least several KB.
+    expect(validation.bunSection!.dataSize).toBeGreaterThan(4096);
+
+    // Running against PAGE_READONLY pages: any in-place write would crash here.
+    await using proc = Bun.spawn({
+      cmd: [exePath],
+      env: bunEnv,
+      cwd: tempDir,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("SUM 7350");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
     unlinkSync(testFile);
     unlinkSync(exePath);
   });

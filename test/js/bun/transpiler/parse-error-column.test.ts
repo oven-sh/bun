@@ -140,3 +140,23 @@ test.concurrent("long non-ASCII line's lineText window does not split a UTF-8 se
     exitCode: 0,
   });
 });
+
+test.concurrent("CLI caret stays under the token for an error at the end of a long line", async () => {
+  // `write_format` offsets the caret by `column - 1` with no knowledge of any
+  // left-trim, so the window gate must not left-trim this case.
+  using dir = tempDir("parse-col-caret", {
+    "long.js": Buffer.alloc(150, "a").toString() + "]",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "long.js"],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stderr.split("\n");
+  const textLine = lines.find(l => l.includes("]"))!;
+  const caretLine = lines.find(l => l.trimEnd().endsWith("^"))!;
+  expect({ token: textLine.indexOf("]"), caret: caretLine.indexOf("^") }).toEqual({ token: 154, caret: 154 });
+});

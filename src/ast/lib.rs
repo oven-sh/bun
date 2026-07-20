@@ -881,13 +881,13 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a very long line to ~120 bytes around the error. The
-            // window bounds are BYTE offsets into `full_line`; `column_count`
-            // is UTF-16 units, so windowing on it mis-slices non-ASCII lines.
-            if full_line.len() > 120 {
-                let offset_in_line = clamp_error_offset(&source.contents, r.loc)
-                    .saturating_sub(data.line_start)
-                    .min(full_line.len());
+            // Window a long line to ~120 bytes around the error. Bounds are
+            // BYTE offsets; the gate keeps the original shape (no left trim for
+            // an error in the last 80 bytes) so `write_format`'s caret aligns.
+            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
+                .saturating_sub(data.line_start)
+                .min(full_line.len());
+            if full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {

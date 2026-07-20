@@ -220,6 +220,8 @@ describe("fetch store", () => {
     await expect(fetch("http://example.com", { store: { type: "nope" } })).rejects.toThrow(/store\.type/);
     // @ts-expect-error missing path
     await expect(fetch("http://example.com", { store: { type: "dir" } })).rejects.toThrow(/store\.path/);
+    // @ts-expect-error not an object
+    await expect(fetch("http://example.com", { store: 123 })).rejects.toThrow(/'store' must be an object/);
   });
 
   test("Bun.file() request bodies are buffered and persist into the store", async () => {

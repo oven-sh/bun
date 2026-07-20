@@ -165,8 +165,13 @@ impl FetchStore {
 
     /// Read `{ type: "dir" | "memory", ... }` from a JS options value.
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
-        if value.is_undefined_or_null() || !value.is_object() {
+        if value.is_undefined_or_null() {
             return Ok(None);
+        }
+        if !value.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "fetch: 'store' must be an object"
+            )));
         }
         let Some(ty) = value.get(global, "type")? else {
             return Ok(None);
@@ -193,19 +198,20 @@ impl FetchStore {
             return Ok(Some(FetchStore::Dir { path }));
         }
         if ty.eql_comptime(b"memory") {
+            let clamp_u32 = |v: JSValue| -> u32 {
+                let n = v.as_number();
+                if n.is_finite() && n > 0.0 {
+                    n.min(u32::MAX as f64) as u32
+                } else {
+                    0
+                }
+            };
             let max = match value.get(global, "max")? {
-                Some(v) if v.is_number() => v.to_int32().max(0) as u32,
+                Some(v) if v.is_number() => clamp_u32(v),
                 _ => 0,
             };
             let ttl_ms = match value.get(global, "ttl")? {
-                Some(v) if v.is_number() => {
-                    let ms = v.as_number();
-                    if ms.is_finite() && ms > 0.0 {
-                        ms.min(u32::MAX as f64) as u32
-                    } else {
-                        0
-                    }
-                }
+                Some(v) if v.is_number() => clamp_u32(v),
                 _ => 0,
             };
             return Ok(Some(FetchStore::Memory { ttl_ms, max }));
@@ -404,26 +410,38 @@ fn write_dir_entry(dir: &[u8], req: &StoredRequest, resp: &StoredResponse) -> bu
     let _ = write!(&mut out, "{}", bun_core::time::milli_timestamp());
     out.extend_from_slice(b"}\n");
 
-    // Write to a sibling temp file and rename over the target so concurrent
-    // readers (Workers, `bun test --parallel`) and crash-interrupted writes
-    // never observe a truncated entry.
+    // Write to a per-writer temp sibling and rename over the target so
+    // concurrent readers and crash-interrupted writes never see a partial
+    // file. 0o600 because request headers/bodies can carry credentials.
+    static TMP_SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let seq = TMP_SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let mut tmp_path = path.clone();
-    tmp_path.extend_from_slice(b".tmp");
-    {
-        let file =
-            bun_sys::File::openat(Fd::cwd(), &tmp_path, O::WRONLY | O::CREAT | O::TRUNC, 0o644)?;
-        file.write_all(&out)?;
-    }
+    let _ = write!(&mut tmp_path, ".{}.{seq}.tmp", std::process::id());
     tmp_path.push(0);
-    let mut path = path;
-    path.push(0);
-    bun_sys::renameat(
-        Fd::cwd(),
-        bun_core::ZStr::from_slice_with_nul(&tmp_path),
-        Fd::cwd(),
-        bun_core::ZStr::from_slice_with_nul(&path),
-    )?;
-    Ok(())
+    let tmp_z = bun_core::ZStr::from_slice_with_nul(&tmp_path);
+    let write = || -> bun_sys::Result<()> {
+        let file = bun_sys::File::openat(
+            Fd::cwd(),
+            &tmp_path[..tmp_path.len() - 1],
+            O::WRONLY | O::CREAT | O::TRUNC,
+            0o600,
+        )?;
+        file.write_all(&out)?;
+        drop(file);
+        let mut path = path;
+        path.push(0);
+        bun_sys::renameat(
+            Fd::cwd(),
+            tmp_z,
+            Fd::cwd(),
+            bun_core::ZStr::from_slice_with_nul(&path),
+        )
+    };
+    let result = write();
+    if result.is_err() {
+        let _ = bun_sys::unlink(tmp_z);
+    }
+    result
 }
 
 // ─── dir backend: read-back JSON parse ────────────────────────────────────

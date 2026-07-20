@@ -9,15 +9,16 @@
  */
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { generateCargoConfig } from "../../scripts/build/cargo-config.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
-import { rustCanCrossFromLinux, rustTarget } from "../../scripts/build/rust.ts";
+import { rustCanCrossFromLinux, rustForcesFuseLdLld, rustTarget } from "../../scripts/build/rust.ts";
 import { machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
@@ -332,5 +333,78 @@ describe("macOS SDK resolution", () => {
     } finally {
       if (previous !== undefined) process.env.MACOS_SDK_PATH = previous;
     }
+  });
+});
+
+// Regression tests for https://github.com/oven-sh/bun/issues/30870.
+//
+// Before the fix, both the generated `.cargo/config.toml` (read by plain
+// `cargo check` / rust-analyzer) and `CARGO_ENCODED_RUSTFLAGS` (the ninja
+// build) forced `-fuse-ld=lld` on every non-windows target, darwin included.
+// A Homebrew `clang++` without the `lld` driver alias rejects that flag
+// ("invalid linker name in argument '-fuse-ld=lld'"), so `bun run rust:check`
+// and `bun bd` broke on contributor macs. macOS uses ld64 by default — the
+// flag is now skipped on darwin unless cross-language LTO is explicitly on.
+describe("darwin rust linker: no forced -fuse-ld=lld (#30870)", () => {
+  /**
+   * Slice out one `[target.<triple>]` block from the generated TOML: from its
+   * header up to the next `[` section header or EOF. `.cargo/config.toml` is a
+   * flat list of sections, so substring scanning suffices — no TOML parse.
+   */
+  function targetSection(toml: string, triple: string): string {
+    const header = `[target.${triple}]`;
+    const start = toml.indexOf(header);
+    if (start === -1) throw new Error(`missing section: ${header}`);
+    const next = toml.indexOf("\n[", start + header.length);
+    return next === -1 ? toml.slice(start) : toml.slice(start, next);
+  }
+
+  test("rustForcesFuseLdLld: darwin skips lld unless cross-lang LTO", () => {
+    // Resolve real configs via the same path the build uses. On a non-darwin
+    // host these are cross-compile configs; on darwin they're native. Either
+    // way the `-fuse-ld=lld` decision is platform-derived, so the assertions
+    // hold on every host.
+    const darwin = resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release" }, mockToolchain());
+    expect(darwin.crossLangLto).toBe(false); // LTO is off by default for darwin
+    expect(rustForcesFuseLdLld(darwin)).toBe(false);
+
+    // Explicit --lto on darwin re-enables it (needs an lld-capable clang++,
+    // same requirement as linux LTO).
+    const darwinLto = resolveConfig(
+      { os: "darwin", arch: "aarch64", buildType: "Release", lto: true },
+      mockToolchain(),
+    );
+    expect(darwinLto.crossLangLto).toBe(true);
+    expect(rustForcesFuseLdLld(darwinLto)).toBe(true);
+
+    // Linux keeps forcing lld (the default `cc` driver would pick BFD ld).
+    const linux = resolveConfig({ os: "linux", arch: "x64", buildType: "Release" }, mockToolchain());
+    expect(rustForcesFuseLdLld(linux)).toBe(true);
+  });
+
+  test("generated .cargo/config.toml: darwin sections are lld-free, linux keeps the flag", () => {
+    using dir = tempDir("cargo-config-darwin", {});
+    // generateCargoConfig writes to `cfg.cwd/.cargo/config.toml` — point cwd at
+    // a scratch dir so the repo's real file is untouched. The file contains a
+    // section for every triple in `allRustTargets`, so one run covers both
+    // apple-darwin triples plus the linux regression guard.
+    const cfg = { ...resolveConfig({ os: "linux", arch: "x64" }, mockToolchain()), cwd: String(dir) } as Config;
+    const outPath = generateCargoConfig(cfg);
+    expect(outPath).toBe(join(String(dir), ".cargo", "config.toml"));
+    const toml = readFileSync(outPath, "utf8");
+
+    for (const triple of ["x86_64-apple-darwin", "aarch64-apple-darwin"]) {
+      const section = targetSection(toml, triple);
+      // linker is still the discovered clang++ driver — only the flag is gone.
+      expect(section).toContain("linker = ");
+      expect(section).not.toContain("-fuse-ld=lld");
+      // The lint-quieting rustflags stay (matches rust.ts keeping them on darwin).
+      expect(section).toContain("-Qunused-arguments");
+      expect(section).toContain("linker_messages");
+    }
+
+    // Linux must still force lld.
+    const linux = targetSection(toml, "x86_64-unknown-linux-gnu");
+    expect(linux).toContain("link-arg=-fuse-ld=lld");
   });
 });

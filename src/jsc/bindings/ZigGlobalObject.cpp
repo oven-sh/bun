@@ -549,6 +549,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
+            // Outermost exception scope: this runs from Rust with no scope on the
+            // stack, and numeric env keys reach JSProcessEnvMap::defineOwnProperty
+            // (a throwing path) via putDirectMayBeIndex.
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             if (options.env.has_value()) {
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
@@ -568,6 +572,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    // Numeric keys route through JSProcessEnvMap::defineOwnProperty,
+                    // a throwing path; check between calls to satisfy scope discipline.
+                    if (catchScope.exception()) [[unlikely]]
+                        break;
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {
@@ -578,6 +586,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
+            // Only fully-permissive data descriptors are defined above, so the
+            // env hook cannot reject them; nothing here may leave an exception.
+            catchScope.assertNoException();
 
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we

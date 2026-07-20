@@ -3273,7 +3273,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             }
             buf_size = slice_len;
             if slice_len > 0 {
-                // path may alias buf2 (env path branch); use ptr::copy.
+                // path may alias buf2 (drive-mismatch fallback); use ptr::copy.
                 // SAFETY: handles overlap.
                 unsafe {
                     core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);

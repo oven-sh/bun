@@ -2636,6 +2636,9 @@ pub mod ffi {
     unsafe impl Zeroable for libc::pollfd {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
+    unsafe impl Zeroable for libc::tm {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
     unsafe impl Zeroable for libc::Dl_info {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]

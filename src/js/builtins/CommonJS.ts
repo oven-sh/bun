@@ -149,8 +149,8 @@ export function requireResolve(
   id: string,
   options: { paths?: string[] } = {},
 ) {
-  if (typeof options === "object" && options !== null && options.paths !== undefined) {
-    const paths = options.paths;
+  const paths = typeof options === "object" && options !== null ? options.paths : undefined;
+  if (paths !== undefined) {
     if (!$isArray(paths)) {
       throw $ERR_INVALID_ARG_VALUE("options.paths", paths);
     }
@@ -160,13 +160,7 @@ export function requireResolve(
       }
     }
   }
-  return $resolveSync(
-    id,
-    typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
-    false,
-    true,
-    options ? options.paths : undefined,
-  );
+  return $resolveSync(id, typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""), false, true, paths);
 }
 
 $visibility = "Private";

@@ -225,9 +225,9 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs()) as libc::time_t;
-    let mut tm: libc::tm = unsafe { core::mem::zeroed() };
+    let mut tm: libc::tm = bun_core::ffi::zeroed();
     // SAFETY: localtime_r only writes into `tm` and is thread-safe.
-    unsafe { libc::localtime_r(&secs, &mut tm) };
+    unsafe { libc::localtime_r(&raw const secs, &raw mut tm) };
     (
         tm.tm_year + 1900,
         (tm.tm_mon + 1) as u32,

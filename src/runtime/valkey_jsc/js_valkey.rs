@@ -420,9 +420,18 @@ fn parse_valkey_url(
     let uri: valkey::Protocol = if !protocol_slice.is_empty() {
         match valkey::Protocol::MAP.get(protocol_slice) {
             Some(v) => *v,
-            None => return Err(global_object.throw(format_args!(
-                "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
-            ))),
+            None => {
+                let mut list = std::string::String::new();
+                for (i, k) in valkey::Protocol::MAP.keys().enumerate() {
+                    if i > 0 {
+                        list.push_str(", ");
+                    }
+                    list.push_str(core::str::from_utf8(k).unwrap_or("?"));
+                }
+                return Err(global_object.throw(format_args!(
+                    "Expected url protocol to be one of {list}",
+                )));
+            }
         }
     } else {
         valkey::Protocol::Standalone

@@ -773,6 +773,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_git"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_alloc",
+ "bun_boringssl_sys",
+ "bun_collections",
+ "bun_core",
+ "bun_errno",
+ "bun_http",
+ "bun_libdeflate_sys",
+ "bun_paths",
+ "bun_ptr",
+ "bun_sys",
+ "bun_threading",
+ "bun_url",
+ "bun_wyhash",
+ "itoa",
+ "libc",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_glob"
 version = "0.0.0"
 dependencies = [
@@ -1649,6 +1672,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_git",
  "bun_glob",
  "bun_hash",
  "bun_highway",

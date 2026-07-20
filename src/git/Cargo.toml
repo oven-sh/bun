@@ -1,0 +1,29 @@
+[package]
+name = "bun_git"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+libc.workspace = true
+itoa.workspace = true
+bstr.workspace = true
+bun_errno.workspace = true
+bun_core.workspace = true
+bun_libdeflate_sys.workspace = true
+bun_boringssl_sys.workspace = true
+bun_alloc.workspace = true
+bun_sys.workspace = true
+bun_paths.workspace = true
+bun_threading.workspace = true
+bun_collections.workspace = true
+bun_http.workspace = true
+bun_url.workspace = true
+bun_ptr.workspace = true
+bun_wyhash.workspace = true

@@ -47,6 +47,7 @@ bun_css.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
+bun_git.workspace = true
 bun_glob.workspace = true
 bun_highway.workspace = true
 bun_http.workspace = true

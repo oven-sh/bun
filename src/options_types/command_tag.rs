@@ -43,6 +43,7 @@ pub enum Tag {
     AuditCommand,
     WhyCommand,
     FuzzilliCommand,
+    GitCloneCommand,
 }
 
 impl Tag {
@@ -83,6 +84,7 @@ impl Tag {
             Tag::AuditCommand => b'A',
             Tag::WhyCommand => b'W',
             Tag::FuzzilliCommand => b'F',
+            Tag::GitCloneCommand => b'q',
         }
     }
 
@@ -204,5 +206,6 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::RemoveCommand as usize] = false;
     a[Tag::UnlinkCommand as usize] = false;
     a[Tag::UpdateCommand as usize] = false;
+    a[Tag::GitCloneCommand as usize] = false;
     a
 });

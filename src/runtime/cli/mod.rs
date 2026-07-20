@@ -215,6 +215,8 @@ pub mod add_completions;
 pub mod colon_list_type;
 #[path = "discord_command.rs"]
 pub mod discord_command;
+#[path = "git_clone_command.rs"]
+pub mod git_clone_command;
 #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
 #[path = "shell_completions.rs"]
@@ -984,6 +986,9 @@ pub mod command {
         if x == RootCommandMatcher::case(b"discord") {
             return Tag::DiscordCommand;
         }
+        if x == RootCommandMatcher::case(b"git-clone") {
+            return Tag::GitCloneCommand;
+        }
         if x == RootCommandMatcher::case(b"upgrade") {
             return Tag::UpgradeCommand;
         }
@@ -1308,6 +1313,7 @@ pub mod command {
             Tag::HelpCommand => HelpCommand::exec(),
             Tag::ReservedCommand => ReservedCommand::exec(),
             Tag::DiscordCommand => super::discord_command::DiscordCommand::exec(),
+            Tag::GitCloneCommand => super::git_clone_command::GitCloneCommand::exec(),
             Tag::InitCommand => exec_init(),
             Tag::InstallCompletionsCommand => exec_install_completions(),
             Tag::PackageManagerCommand => exec_pm(log),

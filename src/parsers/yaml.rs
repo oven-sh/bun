@@ -2355,7 +2355,8 @@ pub struct Parser<'i, Enc: Encoding> {
 
     /// Collection nodes whose anchor is registered but whose body is still
     /// being parsed. An alias that resolves to one of these is a
-    /// self-reference (`&a {self: *a}`).
+    /// self-reference (`&a {self: *a}`). A merge key that resolves to one is
+    /// rejected because the placeholder is still empty at merge time.
     pub open_anchors: Vec<*const ()>,
     /// Collection nodes known to be on a cycle. `charge_alias_expansion`
     /// must not descend into these.
@@ -2789,7 +2790,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, self.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(
+                        key,
+                        value,
+                        &mut self.merge_props_budget,
+                        &self.open_anchors,
+                    )?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2922,7 +2928,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
                     })?;
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(
+                        key,
+                        value,
+                        &mut self.merge_props_budget,
+                        &self.open_anchors,
+                    )?;
                 }
 
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
@@ -3112,7 +3123,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
-                props.append_maybe_merge(first_key, value, &mut self.merge_props_budget)?;
+                props.append_maybe_merge(
+                    first_key,
+                    value,
+                    &mut self.merge_props_budget,
+                    &self.open_anchors,
+                )?;
             }
 
             if self.context.get() == Context::FlowIn {
@@ -3244,7 +3260,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(
+                        key,
+                        value,
+                        &mut self.merge_props_budget,
+                        &self.open_anchors,
+                    )?;
                 }
 
                 Ok(Expr::init(
@@ -3349,37 +3370,49 @@ impl MappingProps {
         key: Expr,
         value: Expr,
         budget: &mut usize,
-    ) -> Result<(), AllocError> {
+        open_anchors: &[*const ()],
+    ) -> Result<(), ParseError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
         };
 
         if !is_merge_key {
-            return self.append(G::Property {
+            return Ok(self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
-            });
+            })?);
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice(), budget),
+            ast::ExprData::EObject(value_obj) => {
+                if open_anchors.contains(&(value_obj.as_ptr() as *const ())) {
+                    return Err(ParseError::UnresolvedAlias);
+                }
+                Ok(self.merge(value_obj.properties.slice(), budget)?)
+            }
             ast::ExprData::EArray(value_arr) => {
+                if open_anchors.contains(&(value_arr.as_ptr() as *const ())) {
+                    return Err(ParseError::UnresolvedAlias);
+                }
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {
                         ast::ExprData::EObject(obj) => obj,
                         _ => continue,
                     };
+                    if open_anchors.contains(&(item_obj.as_ptr() as *const ())) {
+                        return Err(ParseError::UnresolvedAlias);
+                    }
                     self.merge(item_obj.properties.slice(), budget)?;
                 }
                 Ok(())
             }
-            _ => self.append(G::Property {
+            _ => Ok(self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
-            }),
+            })?),
         }
     }
 
@@ -3418,6 +3451,12 @@ impl<Enc: Encoding> Default for NodeProperties<Enc> {
 pub struct ImplicitKeyAnchors {
     pub key_anchor: Option<StringRange>,
     pub mapping_anchor: Option<StringRange>,
+}
+
+#[derive(Clone, Copy)]
+pub enum AnchorPlaceholder {
+    Array,
+    Object,
 }
 
 impl<Enc: Encoding> NodeProperties<Enc> {
@@ -3812,14 +3851,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Register `anchor` with an empty collection node before parsing the
     /// body so a self-referential alias inside the body resolves to it.
     /// Returns the placeholder; the caller passes it to
-    /// `adopt_preregistered` once the body is parsed.
+    /// `adopt_preregistered` once the body is parsed. The placeholder is
+    /// only allocated when `anchor` is `Some`.
     fn preregister_collection_anchor(
         &mut self,
         anchor: Option<StringRange>,
-        placeholder: Expr,
+        kind: AnchorPlaceholder,
+        loc: Loc,
     ) -> Result<Option<Expr>, ParseError> {
         let Some(anchor) = anchor else {
             return Ok(None);
+        };
+        let placeholder = match kind {
+            AnchorPlaceholder::Array => Expr::init(E::Array::default(), loc),
+            AnchorPlaceholder::Object => Expr::init(E::Object::default(), loc),
         };
         self.anchors
             .put(Enc::key_bytes(anchor.slice(self.input)), placeholder)?;
@@ -4033,9 +4078,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
                     let sequence_tab_after_indent = self.tab_after_indent;
+                    // A prior-line anchor may belong to the enclosing block
+                    // mapping (implicit_key_anchors decides after the body is
+                    // parsed); only a same-line anchor is guaranteed to anchor
+                    // this flow sequence itself.
                     let preregistered = self.preregister_collection_anchor(
-                        node_props.anchor(),
-                        Expr::init(E::Array::default(), sequence_start.loc()),
+                        node_props
+                            .anchor()
+                            .filter(|_| node_props.anchor_line() == Some(sequence_line)),
+                        AnchorPlaceholder::Array,
+                        sequence_start.loc(),
                     )?;
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
                     let seq = self.parse_flow_sequence();
@@ -4083,6 +4135,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 .put(Enc::key_bytes(key_anchor.slice(self.input)), seq)?;
                         }
 
+                        let preregistered_map = self.preregister_collection_anchor(
+                            implicit_key_anchors.mapping_anchor,
+                            AnchorPlaceholder::Object,
+                            sequence_start.loc(),
+                        )?;
                         let map = self.parse_block_mapping(
                             seq,
                             sequence_start,
@@ -4090,6 +4147,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             sequence_line,
                             opts.flow_pair_allowed,
                         )?;
+                        let map = self.adopt_preregistered(preregistered_map, map);
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
                             self.anchors
@@ -4122,7 +4180,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     let preregistered = self.preregister_collection_anchor(
                         node_props.anchor(),
-                        Expr::init(E::Array::default(), self.token.start.loc()),
+                        AnchorPlaceholder::Array,
+                        self.token.start.loc(),
                     )?;
                     let seq = self.parse_block_sequence()?;
                     break 'node self.adopt_preregistered(preregistered, seq);
@@ -4134,9 +4193,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_line = self.token.line;
                     let mapping_tab_after_indent = self.tab_after_indent;
 
+                    // Same-line only; a prior-line anchor may belong to the
+                    // enclosing block mapping (see SequenceStart above).
                     let preregistered = self.preregister_collection_anchor(
-                        node_props.anchor(),
-                        Expr::init(E::Object::default(), mapping_start.loc()),
+                        node_props
+                            .anchor()
+                            .filter(|_| node_props.anchor_line() == Some(mapping_line)),
+                        AnchorPlaceholder::Object,
+                        mapping_start.loc(),
                     )?;
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
                     let map = self.parse_flow_mapping();
@@ -4183,6 +4247,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 .put(Enc::key_bytes(key_anchor.slice(self.input)), map)?;
                         }
 
+                        let preregistered_parent = self.preregister_collection_anchor(
+                            implicit_key_anchors.mapping_anchor,
+                            AnchorPlaceholder::Object,
+                            mapping_start.loc(),
+                        )?;
                         let parent_map = self.parse_block_mapping(
                             map,
                             mapping_start,
@@ -4190,6 +4259,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             mapping_line,
                             opts.flow_pair_allowed,
                         )?;
+                        let parent_map = self.adopt_preregistered(preregistered_parent, parent_map);
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
                             self.anchors.put(
@@ -4245,7 +4315,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let preregistered = self.preregister_collection_anchor(
                         node_props.anchor(),
-                        Expr::init(E::Object::default(), mapping_start.loc()),
+                        AnchorPlaceholder::Object,
+                        mapping_start.loc(),
                     )?;
                     let mapping = self.parse_block_mapping(
                         key,
@@ -4290,7 +4361,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let preregistered = self.preregister_collection_anchor(
                         implicit_key_anchors.mapping_anchor,
-                        Expr::init(E::Object::default(), self.token.start.loc()),
+                        AnchorPlaceholder::Object,
+                        self.token.start.loc(),
                     )?;
                     let mapping = self.parse_block_mapping(
                         first_key,
@@ -4415,7 +4487,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let preregistered = self.preregister_collection_anchor(
                             implicit_key_anchors.mapping_anchor,
-                            Expr::init(E::Object::default(), scalar_start.loc()),
+                            AnchorPlaceholder::Object,
+                            scalar_start.loc(),
                         )?;
                         let mapping = self.parse_block_mapping(
                             implicit_key,

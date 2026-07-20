@@ -599,6 +599,31 @@ parent: &ref
         }
         expect(() => YAML.parse(lines.join("\n"))).toThrow("Excessive aliasing");
       });
+
+      test("prior-line anchor on a flow-sequence implicit key anchors the outer mapping", () => {
+        const result = YAML.parse("&a\n[1, 2]: *a\n");
+        expect(Object.keys(result)).toEqual(["1,2"]);
+        expect(result["1,2"]).toBe(result);
+      });
+
+      test("prior-line anchor on a flow-mapping implicit key anchors the outer mapping", () => {
+        const result = YAML.parse("&a\n{k: 1}: *a\n");
+        const [key] = Object.keys(result);
+        expect(result[key]).toBe(result);
+      });
+
+      test("a merge key cannot alias a mapping whose body is still being parsed", () => {
+        expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: *outer\n  extra: 1\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("&outer\nname: root\ninner:\n  <<: [*outer]\n  extra: 1\n")).toThrow("Unresolved alias");
+      });
+
+      test("a merge key can alias a fully-parsed cyclic mapping", () => {
+        const result = YAML.parse("a: &a\n  self: *a\n  k: 1\nb:\n  <<: *a\n  extra: 2\n");
+        expect(Object.keys(result.b).sort()).toEqual(["extra", "k", "self"]);
+        expect(result.b.self).toBe(result.a);
+        expect(result.b.k).toBe(1);
+        expect(result.b.extra).toBe(2);
+      });
     });
 
     test("handles multiple documents", () => {

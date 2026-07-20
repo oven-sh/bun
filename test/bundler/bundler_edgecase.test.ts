@@ -2819,18 +2819,24 @@ describe("bundler", () => {
     format: "internal_bake_dev",
     files: {
       "/entry.ts": /* js */ `
-        import { microtask } from "./util";
+        import { microtask, tag } from "./util";
         microtask(() => {});
         const alias = microtask;
         console.log(alias, microtask(alias));
+        console.log(tag\`template\`);
       `,
-      "/util.ts": `export const microtask = queueMicrotask;`,
+      "/util.ts": `
+        export const microtask = queueMicrotask;
+        export function tag(strings: TemplateStringsArray) { return this; }
+      `,
     },
     onAfterBundle(api) {
       const output = api.readFile("/out.js");
       // Calls are wrapped so "this" stays undefined.
       expect(output).toContain("(0, import_util.microtask)(() => {");
       expect(output).toContain("(0, import_util.microtask)(alias)");
+      // Tagged templates receive "this" the same way.
+      expect(output).toContain("(0, import_util.tag)`template`");
       // Non-call uses keep the plain property access.
       expect(output).toContain("alias = import_util.microtask;");
       expect(output).toContain("console.log(alias, ");

@@ -4168,6 +4168,8 @@ pub mod __gated_printer {
                             ExprData::ECall(c) => c.optional_chain.is_some(),
                             _ => false,
                         };
+                        // A template tag receives "this" like a call target does.
+                        self.call_target = Some(tag.data);
                         if is_optional_chain {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
@@ -4175,6 +4177,7 @@ pub mod __gated_printer {
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
                         }
+                        self.call_target = None;
                     } else {
                         self.add_source_mapping(expr.loc);
                     }

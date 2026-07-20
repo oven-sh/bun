@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isWindows } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
 
@@ -56,8 +57,10 @@ async function pausedClient(port: number): Promise<{ sock: net.Socket; initial: 
 describe("BackPressure buffer", () => {
   // >16KB sends take the direct us_socket_write2 path and then append() the
   // unwritten tail into BackPressure; drain exercises erase() as a pure
-  // head-cursor bump.
-  it("delivers a large direct send byte-for-byte while draining", async () => {
+  // head-cursor bump. Winsock's loopback send() accepts the entire payload
+  // (100MB+ observed with the client paused), so this path never reaches
+  // BackPressure on Windows; the cork-overflow test below covers that platform.
+  it.skipIf(isWindows)("delivers a large direct send byte-for-byte while draining", async () => {
     const SIZE = 8 * 1024 * 1024;
     const payload = patternBuffer(SIZE, 0xabcd);
     const expectedHash = crypto.createHash("sha1").update(payload).digest("hex");
@@ -65,7 +68,7 @@ describe("BackPressure buffer", () => {
     let bufferedAfterSend = 0;
     let drainSawDecrease = true;
     let prev = Infinity;
-    const sentSignal = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<import("bun").ServerWebSocket<unknown>>();
     const drained = Promise.withResolvers<void>();
     await using server = Bun.serve({
       port: 0,
@@ -77,9 +80,7 @@ describe("BackPressure buffer", () => {
         maxBackpressure: SIZE * 2,
         idleTimeout: 0,
         open(ws) {
-          ws.sendBinary(payload);
-          bufferedAfterSend = ws.getBufferedAmount();
-          sentSignal.resolve();
+          opened.resolve(ws);
         },
         drain(ws) {
           const b = ws.getBufferedAmount();
@@ -95,10 +96,11 @@ describe("BackPressure buffer", () => {
     });
 
     const { sock, initial } = await pausedClient(server.port);
-    await sentSignal.promise;
-
-    // 8MB cannot fit in the kernel send buffer, so a non-empty remainder must
-    // have been copied into the BackPressure buffer.
+    const ws = await opened.promise;
+    // Send only after the client has paused its read side so the kernel send
+    // buffer is the only sink; a non-empty remainder lands in BackPressure.
+    ws.sendBinary(payload);
+    bufferedAfterSend = ws.getBufferedAmount();
     expect(bufferedAfterSend).toBeGreaterThan(0);
     expect(bufferedAfterSend).toBeLessThanOrEqual(SIZE + 10);
 

@@ -203,13 +203,15 @@ afterAll(() => {
   fat32?.cleanup();
 });
 
-test.skipIf(!fat32)("fs.rm recursive deletes a read-only file on a filesystem without POSIX delete semantics", async () => {
-  const { mount } = fat32!;
-  const root = path.join(mount, "tree");
-  // Run the actual deletion in a child so the DeleteFileBun path is exercised
-  // by the bun binary under test, and so a crash surfaces as a non-zero exit
-  // rather than killing the runner.
-  const fixture = `
+test.skipIf(!fat32)(
+  "fs.rm recursive deletes a read-only file on a filesystem without POSIX delete semantics",
+  async () => {
+    const { mount } = fat32!;
+    const root = path.join(mount, "tree");
+    // Run the actual deletion in a child so the DeleteFileBun path is exercised
+    // by the bun binary under test, and so a crash surfaces as a non-zero exit
+    // rather than killing the runner.
+    const fixture = `
     const fs = require("node:fs");
     const path = require("node:path");
     const root = process.env.TEST_RM_ROOT;
@@ -232,22 +234,23 @@ test.skipIf(!fat32)("fs.rm recursive deletes a read-only file on a filesystem wi
       roExists: fs.existsSync(ro),
     }));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, TEST_RM_ROOT: root },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, TEST_RM_ROOT: root },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
-  const result = JSON.parse(stdout) as {
-    err: null | { code?: string; message: string };
-    rootExists: boolean;
-    roExists: boolean;
-  };
-  expect(result).toEqual({ err: null, rootExists: false, roExists: false });
-});
+    const result = JSON.parse(stdout) as {
+      err: null | { code?: string; message: string };
+      rootExists: boolean;
+      roExists: boolean;
+    };
+    expect(result).toEqual({ err: null, rootExists: false, roExists: false });
+  },
+);
 
 // Non-regression: the same operation must keep working on the default
 // filesystem (NTFS), where FileDispositionInformationEx succeeds directly.

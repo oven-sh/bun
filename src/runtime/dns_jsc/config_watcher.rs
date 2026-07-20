@@ -178,8 +178,9 @@ mod posix {
         }
         // SAFETY: `poll` just successfully registered; exclusive on the JS thread.
         unsafe { (*poll).disable_keeping_process_alive(ctx) };
-        *VirtualMachine::get_mut().rare_data().dns_config_watcher_slot() =
-            NonNull::new(poll.cast());
+        *VirtualMachine::get_mut()
+            .rare_data()
+            .dns_config_watcher_slot() = NonNull::new(poll.cast());
     }
 
     /// `__bun_run_file_poll` dispatch target for `poll_tag::DNS_CONFIG`.

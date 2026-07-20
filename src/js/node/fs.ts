@@ -667,10 +667,9 @@ function encodeRealpathResult(result, encoding) {
 
 let assertEncodingForWindows: any = undefined;
 let insideAppContainer: boolean | undefined;
-// Defer a denied component to the native resolver only inside an AppContainer
-// (denied ancestors are the sandbox norm there and can hide links). Outside
-// one, Node parity: the walk's own error propagates unchanged. Lazy so the
-// token probe only runs on the first denied component, not at module load.
+// Defer a denied component to native only inside an AppContainer (denied
+// ancestors are the sandbox norm and can hide links); outside one, Node
+// parity: the walk's error propagates. Lazy: probe on first denial only.
 function shouldDeferDeniedComponent(err: any) {
   if (!(insideAppContainer ??= fs.isInsideAppContainer())) return false;
   const code = err?.code;

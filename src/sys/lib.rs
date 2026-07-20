@@ -6997,10 +6997,9 @@ pub fn open_dir_at_windows_nt_path(
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
     let first = open_dir_at_windows_nt_path_impl(dir_fd, path, options);
-    // Plain opens request FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY for later use,
-    // which a read-only ACL grant (sandboxed project trees, Program Files,
-    // read-only shares) cannot satisfy; retry read-only, so creates fail at
-    // create time instead.
+    // Plain opens request FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY; a read-only ACL
+    // grant (sandboxed trees, Program Files, RO shares) denies that. Retry
+    // read-only so creates fail at create time instead.
     if let Err(ref e) = first {
         if !options.read_only
             && !options.can_rename_or_delete

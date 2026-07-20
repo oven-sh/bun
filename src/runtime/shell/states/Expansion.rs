@@ -337,12 +337,18 @@ impl Expansion {
         }
         drop(arena);
 
-        // Push each variant as its own word; word boundaries are recorded
-        // via `bounds`.
+        // Push each variant as its own word. Unquoted empty variants are
+        // dropped (bash null-argument removal). `has_quoted_empty` is
+        // word-level: `{,""}` over-keeps, `"$VAR"` (no quoted flag) under-keeps.
+        let mut pushed_any = !me.out.buf.is_empty();
         for s in expanded {
-            if !me.out.buf.is_empty() {
+            if s.is_empty() && !me.has_quoted_empty {
+                continue;
+            }
+            if pushed_any {
                 me.out.bounds.push(me.out.buf.len() as u32);
             }
+            pushed_any = true;
             me.out.buf.extend_from_slice(&s);
         }
 
@@ -625,6 +631,11 @@ impl Expansion {
                 let mut hi = stdout.len();
                 while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
                     hi -= 1;
+                }
+                if hi == 0 {
+                    // A quoted `"$(...)"` that produces no output is a quoted
+                    // empty: `"$(true)"` is one empty argv word, not zero.
+                    me.has_quoted_empty = true;
                 }
                 me.current_out.extend_from_slice(&stdout[..hi]);
             } else {

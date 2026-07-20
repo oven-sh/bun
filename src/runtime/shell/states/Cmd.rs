@@ -442,9 +442,9 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → exit
-        // with the exit code from a sole command-substitution (stashed by
-        // `child_done` from `Expansion::out_exit_code`), else 0.
+        // No argv at all → exit with the sole command-substitution's exit
+        // code (stashed by `child_done` from `Expansion::out_exit_code`),
+        // else 0. An empty argv[0] word is a real command name: error.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {
@@ -452,7 +452,14 @@ impl Cmd {
                     // strip the trailing NUL we just added
                     a[..a.len() - 1].to_vec()
                 }
-                _ => {
+                Some(_) => {
+                    return Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!("bun: command not found: \n"),
+                    );
+                }
+                None => {
                     let exit = me.exit_code.unwrap_or(0);
                     let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);

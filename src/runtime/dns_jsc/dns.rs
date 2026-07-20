@@ -5881,7 +5881,11 @@ impl Resolver {
         for af in [c_ares::AF::INET, c_ares::AF::INET6] {
             // SAFETY: FFI; `slice` is NUL-terminated; `addr` is a 16-byte stack buffer.
             if unsafe {
-                c_ares::ares_inet_pton(af, slice.as_ptr().cast::<c_char>(), addr.as_mut_ptr().cast())
+                c_ares::ares_inet_pton(
+                    af,
+                    slice.as_ptr().cast::<c_char>(),
+                    addr.as_mut_ptr().cast(),
+                )
             } == 1
             {
                 return Ok((af, addr));
@@ -5899,8 +5903,9 @@ impl Resolver {
 
     fn commit_local_address(&self, af: c_int, addr: [u8; 16]) {
         if af == c_ares::AF::INET {
-            self.local_ip4
-                .set(Some(u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]])));
+            self.local_ip4.set(Some(u32::from_be_bytes([
+                addr[0], addr[1], addr[2], addr[3],
+            ])));
         } else {
             self.local_ip6.set(Some(addr));
         }

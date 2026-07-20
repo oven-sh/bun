@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -532,15 +532,17 @@ test("run(): an uncaught exception during a pending body fails that test instead
     stdout: "pipe",
     stderr: "pipe",
   });
-  // Well under bun:test's own 5s watchdog: the shim must fail the test as
-  // soon as the error is attributed, not wait for a timeout rescue.
-  const exited = await Promise.race([proc.exited, Bun.sleep(4000).then(() => "timeout" as const)]);
+  // The shim must fail the test as soon as the error is attributed, not wait
+  // for a timeout rescue. Debug+ASAN pays ~3s per nested spawn, so size the
+  // hang guard to clear two spawns there while staying tight on release.
+  const hangGuard = isDebug ? 20_000 : 4_000;
+  const exited = await Promise.race([proc.exited, Bun.sleep(hangGuard).then(() => "timeout" as const)]);
   if (exited === "timeout") proc.kill();
   const stdout = await proc.stdout.text();
   expect(exited).not.toBe("timeout");
   const fails = JSON.parse(stdout.trim() || "[]");
   expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
-});
+}, 30_000);
 
 test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned grandchildren", async () => {
   using dir = tempDir("node-test-env-leak", {

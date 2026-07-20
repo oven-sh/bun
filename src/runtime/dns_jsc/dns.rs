@@ -5843,10 +5843,12 @@ impl Resolver {
             let second_af = self.stash_local_address(global_this, arguments[1])?;
             if first_af == second_af {
                 return match first_af {
-                    x if x == c_ares::AF::INET => Err(global_this
-                        .throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
-                    x if x == c_ares::AF::INET6 => Err(global_this
-                        .throw_invalid_arguments(format_args!("Cannot specify two IPv6 addresses."))),
+                    x if x == c_ares::AF::INET => Err(global_this.throw_invalid_arguments(
+                        format_args!("Cannot specify two IPv4 addresses."),
+                    )),
+                    x if x == c_ares::AF::INET6 => Err(global_this.throw_invalid_arguments(
+                        format_args!("Cannot specify two IPv6 addresses."),
+                    )),
                     _ => unreachable!(),
                 };
             }

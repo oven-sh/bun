@@ -1,8 +1,7 @@
 // Win32 redirects reserved DOS device names (NUL, CON, PRN, AUX, COM1-9,
-// LPT1-9) to the corresponding device regardless of directory prefix, and
-// strips trailing dots/spaces from the final path component. Bun's NtCreateFile
-// open path must do the same so `fs.writeFileSync("nul", ...)` does not create
-// a literal `nul` file that Explorer and cmd cannot delete.
+// LPT1-9) to the corresponding device regardless of directory prefix. Bun's
+// NtCreateFile open path must do the same so `fs.writeFileSync("nul", ...)`
+// does not create a literal `nul` file that Explorer and cmd cannot delete.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -97,32 +96,6 @@ test.skipIf(!isWindows).concurrent("fs.readFileSync from a bare reserved name re
   `);
   expect({ stdout, stderr }).toEqual({
     stdout: ['nul ""', 'NUL ""', 'Nul ""', "isCharacterDevice true", "isFile false", ""].join("\n"),
-    stderr: "",
-  });
-  expect(exitCode).toBe(0);
-});
-
-test.skipIf(!isWindows).concurrent("trailing dots and spaces on the final component are stripped", async () => {
-  const { stdout, stderr, exitCode } = await runInTempDir(`
-      for (const n of ["foo.", "foo ", "foo. ", "foo..", "foo.bar.", ".foo."]) {
-        console.log(JSON.stringify(n), entriesAfter(n, () => fs.writeFileSync(n, "x")));
-      }
-      // The stripped name round-trips: write with a trailing dot, read without.
-      fs.writeFileSync("roundtrip.", "hello");
-      console.log("roundtrip", fs.readFileSync("roundtrip", "utf8"));
-      fs.unlinkSync("roundtrip");
-    `);
-  expect({ stdout, stderr }).toEqual({
-    stdout: [
-      '"foo." ["foo"]',
-      '"foo " ["foo"]',
-      '"foo. " ["foo"]',
-      '"foo.." ["foo"]',
-      '"foo.bar." ["foo.bar"]',
-      '".foo." [".foo"]',
-      "roundtrip hello",
-      "",
-    ].join("\n"),
     stderr: "",
   });
   expect(exitCode).toBe(0);

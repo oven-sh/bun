@@ -6649,13 +6649,12 @@ pub fn normalize_path_windows_opts<'a>(
 
     let mut path = path;
 
-    // Win32's `RtlGetFullPathName_U` only applies DOS-device translation and
-    // trailing-dot/space stripping to Relative / Rooted / DriveRelative /
-    // DriveAbsolute inputs, never to UNC (`\\server\…`), LocalDevice
-    // (`\\.\…`, `\\?\…`) or NT-object (`\??\…`) paths. node:fs hands every
-    // drive-absolute path through with a `\\?\` prefix
-    // (`slice_z_with_force_copy`), so `\\?\X:` is treated as DriveAbsolute
-    // here; `\\?\UNC\…` and `\\?\Volume{…}` stay exempt.
+    // Win32's `RtlGetFullPathName_U` only applies DOS-device translation to
+    // Relative / Rooted / DriveRelative / DriveAbsolute inputs, never to UNC
+    // (`\\server\…`), LocalDevice (`\\.\…`, `\\?\…`) or NT-object (`\??\…`)
+    // paths. node:fs hands every drive-absolute path through with a `\\?\`
+    // prefix (`slice_z_with_force_copy`), so `\\?\X:` is treated as
+    // DriveAbsolute here; `\\?\UNC\…` and `\\?\Volume{…}` stay exempt.
     let win32_normalizes = if path.len() >= 2 && is_sep(path[0]) {
         if is_sep(path[1]) {
             path.len() >= 6
@@ -6691,10 +6690,10 @@ pub fn normalize_path_windows_opts<'a>(
                 }
             });
 
-        // (a) Reserved DOS device names (`NUL`, `CON`, `PRN`, `AUX`,
-        // `COM1-9`, `LPT1-9`) name a device regardless of directory prefix
-        // and case-insensitively; `NtCreateFile` does not know about them,
-        // so a bare `nul` would otherwise create a literal file Explorer/cmd
+        // Reserved DOS device names (`NUL`, `CON`, `PRN`, `AUX`, `COM1-9`,
+        // `LPT1-9`) name a device regardless of directory prefix and
+        // case-insensitively; `NtCreateFile` does not know about them, so a
+        // bare `nul` would otherwise create a literal file Explorer/cmd
         // cannot remove.
         if let Some(device) = bun_paths::windows_reserved_device_name_t(&path[comp_start..]) {
             let prefix: &[u16] = if opts.add_nt_prefix {
@@ -6713,19 +6712,6 @@ pub fn normalize_path_windows_opts<'a>(
             buf[total] = 0;
             return Ok(WStr::from_buf(&buf[..], total));
         }
-
-        // (b) Win32 strips trailing `.` and ` ` from the final component; NT
-        // does not. Doing the strip here keeps both open paths agreeing on
-        // the same file and avoids creating names Explorer/cmd cannot
-        // address. The strip only applies when the component has a
-        // non-`.`/` ` character to anchor on, so `.`/`..` reach the
-        // normalizer unchanged.
-        if let Some(last) = path[comp_start..]
-            .iter()
-            .rposition(|&c| c != b'.' as u16 && c != b' ' as u16)
-        {
-            path = &path[..comp_start + last + 1];
-        }
     }
 
     if bun_paths::is_absolute_windows_wtf16(path) {
@@ -6737,7 +6723,12 @@ pub fn normalize_path_windows_opts<'a>(
             // Win32 spelling of `\??` (`\DosDevices`); `NtCreateFile` only
             // accepts the latter, so emit `\??\…` for NT callers and keep
             // `\\.\…` for kernel32.
-            if path[2] == b'.' as u16 {
+            if path[2] == b'.' as u16
+                || (path[2] == b'?' as u16 && !path[4..].iter().any(|&c| is_sep(c)))
+            {
+                // `\\.\…` and bare `\\?\<name>` name `\??\…` in DosDevices;
+                // `NtCreateFile` only accepts that spelling, so emit it for NT
+                // callers (with `/`→`\`) and keep the Win32 form for kernel32.
                 if path.len() >= buf.len() {
                     return Err(too_long());
                 }
@@ -6747,8 +6738,13 @@ pub fn normalize_path_windows_opts<'a>(
                     bun_core::w!("\\\\.\\")
                 };
                 buf[..4].copy_from_slice(prefix);
-                let rest = &path[4..];
-                buf[4..4 + rest.len()].copy_from_slice(rest);
+                for (i, &c) in path[4..].iter().enumerate() {
+                    buf[4 + i] = if opts.add_nt_prefix && c == b'/' as u16 {
+                        b'\\' as u16
+                    } else {
+                        c
+                    };
+                }
                 buf[path.len()] = 0;
                 return Ok(WStr::from_buf(&buf[..], path.len()));
             }
@@ -9941,10 +9937,13 @@ mod normalize_path_windows_tests {
         }
         // UNC, `\\.\`, `\\?\UNC\` and `\??\` paths are never device-translated
         // by Win32; named pipes and SMB files can legally use these names.
-        // `\\.\` becomes `\??\` for NT consumption but the path stays intact.
+        // `\\.\` and bare `\\?\<name>` become `\??\` for NT (with `/`→`\`).
         assert_eq!(normalize(cwd, "\\\\.\\pipe\\com1"), "\\??\\pipe\\com1");
         assert_eq!(normalize(cwd, "\\\\.\\pipe\\Nul"), "\\??\\pipe\\Nul");
         assert_eq!(normalize(cwd, "\\\\.\\nul"), "\\??\\nul");
+        assert_eq!(normalize(cwd, "\\\\.\\pipe/name"), "\\??\\pipe\\name");
+        assert_eq!(normalize(cwd, "\\\\?\\nul"), "\\??\\nul");
+        assert_eq!(normalize(cwd, "\\\\?\\Nul"), "\\??\\Nul");
         assert_eq!(normalize_opts(cwd, "\\\\.\\nul", false), "\\\\.\\nul");
         assert_eq!(
             normalize_opts(cwd, "\\\\.\\pipe\\com1", false),
@@ -9963,36 +9962,6 @@ mod normalize_path_windows_tests {
                 "{input:?} -> {got}"
             );
         }
-    }
-
-    #[test]
-    fn trailing_dots_and_spaces_stripped() {
-        let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let cwd = Fd::cwd();
-        // Bare relative with no `.` left after stripping is returned verbatim
-        // for `NtCreateFile` against `RootDirectory`.
-        for input in ["foo.", "foo ", "foo. ", "foo..", "foo . ", "foo"] {
-            assert_eq!(normalize(cwd, input), "foo", "{input:?}");
-        }
-        // A `.` left in the stripped name routes through the dirfd resolve.
-        for (input, tail) in [(".foo.", "\\.foo"), ("foo.bar.", "\\foo.bar")] {
-            let got = normalize(cwd, input);
-            assert!(got.starts_with("\\Device\\"), "{input:?} -> {got}");
-            assert!(got.ends_with(tail), "{input:?} -> {got}");
-        }
-        // `.` / `..` and all-dot/all-space names are left for the normalizer.
-        assert_ne!(normalize(cwd, ".."), ".");
-        assert!(normalize(cwd, ".").starts_with("\\Device\\"));
-        assert_eq!(normalize(cwd, "sub\\.."), normalize(cwd, "."));
-        // Absolute: only the final component is touched. The `\\?\X:` shape is
-        // treated as drive-absolute (node:fs adds that prefix itself).
-        assert_eq!(normalize(cwd, "C:\\a\\b. "), "\\??\\C:\\a\\b");
-        assert_eq!(normalize(cwd, "C:\\a \\b"), "\\??\\C:\\a \\b");
-        assert_eq!(normalize(cwd, "\\\\?\\C:\\a\\b. "), "\\??\\C:\\a\\b");
-        // UNC, `\\.\` and `\??\` keep their trailing characters.
-        assert_eq!(normalize(cwd, "\\\\.\\pipe\\name."), "\\??\\pipe\\name.");
-        assert!(normalize(cwd, "\\\\server\\share\\b. ").ends_with("\\b. "));
-        assert!(normalize(cwd, "\\??\\C:\\a\\b. ").ends_with("\\b. "));
     }
 
     #[test]

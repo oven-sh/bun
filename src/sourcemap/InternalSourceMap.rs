@@ -1410,7 +1410,5 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
     blob[16..24].copy_from_slice(&input_lines.to_ne_bytes());
 
-    let owned = core::mem::take(&mut out.list).into_boxed_slice();
-    builder.finalized = None;
-    Ok(owned)
+    Ok(core::mem::take(&mut out.list).into_boxed_slice())
 }

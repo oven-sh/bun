@@ -591,9 +591,7 @@ impl NewBuilder<VLQSourceMap> {
                     // This new line doesn't have a mapping yet
                     self.line_starts_with_mapping = false;
 
-                    needs_mapping = self.cover_lines_without_mappings
-                        && !self.line_starts_with_mapping
-                        && self.has_prev_state;
+                    needs_mapping = self.cover_lines_without_mappings && self.has_prev_state;
                 }
 
                 _ => {

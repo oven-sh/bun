@@ -1085,10 +1085,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
     };
 
     let content_slice: Option<Box<[u8]>> = match source_index {
-        Some(idx)
-            if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.items().len() =>
-        'content: {
+        Some(idx) if (idx as usize) < sources_content.items().len() => 'content: {
             let item = &sources_content.items()[idx as usize];
             let Some(str) = item.as_str() else {
                 break 'content None;

@@ -8,6 +8,7 @@
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
 const { pathToFileURL, fileURLToPath } = require("node:url");
+const { Buffer } = require("node:buffer");
 const { basename, isAbsolute } = require("node:path");
 
 const EXECUTION_CONTEXT_ID = 1;
@@ -68,6 +69,215 @@ function breakpointUrlRegex(url: string): string {
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
 }
 
+// ── Source maps ────────────────────────────────────────────────────────────
+// Bun transpiles every script it runs, so the code JSC parsed is not the code
+// the user wrote: `--inspect-brk` prepends a `debugger;`, comments and blank
+// lines are dropped, and constants are folded. V8 has no transpile step, so a
+// CDP client is entitled to positions in the original file. Bun's transpiler
+// appends an inline sourceMappingURL carrying both the mappings and the
+// original text, so the adapter can present the original script and translate
+// every position it reports or accepts.
+//
+// Only this adapter does so. Clients of Bun's own JSC endpoint keep seeing
+// generated positions plus the sourceMappingURL, and apply the map themselves.
+// Translating here and still advertising that map would make such a client
+// apply it twice, so the map is not forwarded: to a CDP client the script *is*
+// the original.
+
+interface OriginalPosition {
+  lineNumber: number;
+  columnNumber: number;
+}
+
+interface GeneratedLine {
+  // Parallel arrays, ascending by `columns`, of every mapping on one line of
+  // the generated script.
+  columns: number[];
+  lineNumbers: number[];
+  columnNumbers: number[];
+}
+
+interface ScriptSourceMap {
+  byGeneratedLine: (GeneratedLine | undefined)[];
+  // Every mapping, ascending by original position, for original -> generated.
+  originalOrder: { lineNumber: number; columnNumber: number; genLine: number; genColumn: number }[];
+}
+
+interface ScriptRecord {
+  cdpUrl: string;
+  endLine: number;
+  endColumn: number;
+  // Both undefined for a script with no map of Bun's own: an internal module,
+  // a `vm` compilation, or code the client itself evaluated.
+  source: string | undefined;
+  mappings: string | undefined;
+  map: ScriptSourceMap | undefined;
+}
+
+const VLQ_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const VLQ_VALUES = new Map<string, number>();
+for (let index = 0; index < VLQ_CHARACTERS.length; index++) {
+  VLQ_VALUES.$set(VLQ_CHARACTERS[index], index);
+}
+
+function decodeSourceMapURL(sourceMapURL: string | undefined): AnyObject | undefined {
+  // Only the inline map Bun itself produced. A `//# sourceMappingURL=foo.map`
+  // pointing at a file is the user's own map and is forwarded untouched.
+  if (!sourceMapURL || !sourceMapURL.startsWith("data:application/json")) return undefined;
+  const comma = sourceMapURL.indexOf(",");
+  if (comma < 0) return undefined;
+  try {
+    const payload = sourceMapURL.slice(comma + 1);
+    const text = sourceMapURL.slice(0, comma).endsWith(";base64")
+      ? Buffer.from(payload, "base64").toString("utf8")
+      : decodeURIComponent(payload);
+    const map = JSON.parse(text);
+    // A runtime-transpiled script has exactly one source. A pre-bundled file
+    // whose map names several cannot be shown as one original script, so it is
+    // left alone.
+    if (!map || typeof map.mappings !== "string") return undefined;
+    if (!Array.isArray(map.sources) || map.sources.length !== 1) return undefined;
+    return map;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeMappings(mappings: string): ScriptSourceMap {
+  const byGeneratedLine: (GeneratedLine | undefined)[] = [];
+  const originalOrder: ScriptSourceMap["originalOrder"] = [];
+  let genLine = 0;
+  let genColumn = 0;
+  let originalLine = 0;
+  let originalColumn = 0;
+  let index = 0;
+  const length = mappings.length;
+
+  while (index < length) {
+    const character = mappings[index];
+    if (character === ";") {
+      genLine++;
+      genColumn = 0;
+      index++;
+      continue;
+    }
+    if (character === ",") {
+      index++;
+      continue;
+    }
+    // Decode up to four VLQ fields: generated column, source index, original
+    // line, original column. A one-field segment marks generated code with no
+    // original position and is skipped.
+    const fields: number[] = [];
+    while (index < length && mappings[index] !== "," && mappings[index] !== ";") {
+      let shift = 0;
+      let value = 0;
+      let digit: number | undefined;
+      do {
+        digit = VLQ_VALUES.$get(mappings[index++]);
+        if (digit === undefined) return { byGeneratedLine, originalOrder };
+        value += (digit & 31) << shift;
+        shift += 5;
+      } while (digit & 32 && index < length);
+      fields.push(value & 1 ? -(value >> 1) : value >> 1);
+    }
+    if (fields.length === 0) continue;
+    genColumn += fields[0];
+    if (fields.length < 4) continue;
+    originalLine += fields[2];
+    originalColumn += fields[3];
+
+    let line = byGeneratedLine[genLine];
+    if (!line) {
+      line = { columns: [], lineNumbers: [], columnNumbers: [] };
+      byGeneratedLine[genLine] = line;
+    }
+    line.columns.push(genColumn);
+    line.lineNumbers.push(originalLine);
+    line.columnNumbers.push(originalColumn);
+    originalOrder.push({
+      lineNumber: originalLine,
+      columnNumber: originalColumn,
+      genLine,
+      genColumn,
+    });
+  }
+
+  originalOrder.sort(compareOriginalOrder);
+  return { byGeneratedLine, originalOrder };
+}
+
+function compareOriginalOrder(a: AnyObject, b: AnyObject): number {
+  if (a.lineNumber !== b.lineNumber) return a.lineNumber - b.lineNumber;
+  if (a.columnNumber !== b.columnNumber) return a.columnNumber - b.columnNumber;
+  if (a.genLine !== b.genLine) return a.genLine - b.genLine;
+  return a.genColumn - b.genColumn;
+}
+
+// The last mapping at or before `columnNumber` on `lineNumber`. Falls forward
+// to the next mapped position when there is none: the generated line may be
+// code Bun injected, and `--inspect-brk`'s prepended `debugger;` is exactly
+// that. Node breaks on the first statement of the user's script, which is what
+// falling forward from the injected line resolves to.
+function generatedToOriginal(map: ScriptSourceMap, lineNumber: number, columnNumber: number): OriginalPosition | undefined {
+  const { byGeneratedLine } = map;
+  const line = byGeneratedLine[lineNumber];
+  if (line) {
+    const { columns } = line;
+    let low = 0;
+    let high = columns.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (columns[middle] <= columnNumber) {
+        found = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    if (found < 0) found = 0;
+    return { lineNumber: line.lineNumbers[found], columnNumber: line.columnNumbers[found] };
+  }
+  for (let next = lineNumber + 1; next < byGeneratedLine.length; next++) {
+    const candidate = byGeneratedLine[next];
+    if (candidate) return { lineNumber: candidate.lineNumbers[0], columnNumber: candidate.columnNumbers[0] };
+  }
+  return undefined;
+}
+
+// The first generated position at or after an original one, so a breakpoint
+// set on a line the transpiler moved still lands on that line's code.
+function originalToGenerated(map: ScriptSourceMap, lineNumber: number, columnNumber: number): OriginalPosition | undefined {
+  const entries = map.originalOrder;
+  let low = 0;
+  let high = entries.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const entry = entries[middle];
+    if (entry.lineNumber > lineNumber || (entry.lineNumber === lineNumber && entry.columnNumber >= columnNumber)) {
+      found = middle;
+      high = middle - 1;
+    } else {
+      low = middle + 1;
+    }
+  }
+  if (found < 0) return undefined;
+  return { lineNumber: entries[found].genLine, columnNumber: entries[found].genColumn };
+}
+
+const SOURCE_MAPPING_URL_COMMENT = "//# sourceMappingURL=";
+
+// The original file's own sourceMappingURL, if it has one. Bun's is stripped:
+// it describes the generated text, which a CDP client never sees.
+function ownSourceMappingURL(source: string): string {
+  const at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT);
+  if (at < 0) return "";
+  const end = source.indexOf("\n", at);
+  return source.slice(at + SOURCE_MAPPING_URL_COMMENT.length, end < 0 ? source.length : end).trim();
+}
+
 const SCOPE_TYPE_MAP: Record<string, string> = {
   global: "global",
   with: "with",
@@ -124,7 +334,10 @@ class InspectorCDPAdapter {
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
-  #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
+  #scripts = new Map<string, ScriptRecord>();
+  // Every spelling of a script's URL, so a console message or a breakpoint
+  // request that names one can be matched back to its sourcemap.
+  #scriptIdsByUrl = new Map<string, string>();
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
@@ -195,6 +408,62 @@ class InspectorCDPAdapter {
     this.#emitToClient("Runtime.executionContextDestroyed", {
       executionContextId: EXECUTION_CONTEXT_ID,
     });
+  }
+
+  // Decoding the mappings is deferred: a session may never ask about a
+  // position in a given script, and every module Bun runs carries a map.
+  #sourceMapFor(scriptId: string | undefined): ScriptSourceMap | undefined {
+    if (!scriptId) return undefined;
+    const script = this.#scripts.$get(scriptId);
+    if (!script) return undefined;
+    if (script.map === undefined && script.mappings !== undefined) {
+      script.map = decodeMappings(script.mappings);
+      script.mappings = undefined;
+    }
+    return script.map;
+  }
+
+  #toOriginalLocation(location: AnyObject | undefined): AnyObject | undefined {
+    if (!location) return location;
+    const map = this.#sourceMapFor(location.scriptId);
+    if (!map) return location;
+    const position = generatedToOriginal(map, location.lineNumber ?? 0, location.columnNumber ?? 0);
+    if (!position) return location;
+    const translated: AnyObject = { scriptId: location.scriptId, lineNumber: position.lineNumber };
+    translated.columnNumber = position.columnNumber;
+    return translated;
+  }
+
+  #toGeneratedLocation(location: AnyObject | undefined): AnyObject | undefined {
+    if (!location) return location;
+    const map = this.#sourceMapFor(location.scriptId);
+    if (!map) return location;
+    const position = originalToGenerated(map, location.lineNumber ?? 0, location.columnNumber ?? 0);
+    if (!position) return location;
+    const translated: AnyObject = { scriptId: location.scriptId, lineNumber: position.lineNumber };
+    translated.columnNumber = position.columnNumber;
+    return translated;
+  }
+
+  // A client may address a script by pattern rather than by URL. Matching it
+  // against the scripts already announced keeps a breakpoint request in the
+  // same coordinates as the response it gets back.
+  #scriptIdMatching(urlRegex: string): string | undefined {
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(urlRegex);
+    } catch {
+      return undefined;
+    }
+    for (const [candidate, scriptId] of this.#scriptIdsByUrl) {
+      if (pattern.test(candidate)) return scriptId;
+    }
+    return undefined;
+  }
+
+  #toOriginalLocations(locations: AnyObject[] | undefined): AnyObject[] {
+    if (!locations) return [];
+    return locations.map(location => this.#toOriginalLocation(location) as AnyObject);
   }
 
   handleClientMessage(message: string): void {
@@ -465,10 +734,29 @@ class InspectorCDPAdapter {
       case "Debugger.stepOver":
       case "Debugger.setBreakpointsActive":
       case "Debugger.removeBreakpoint":
-      case "Debugger.continueToLocation":
-      case "Debugger.getScriptSource":
         this.#sendToBackend(method, params, id, method);
         return;
+
+      case "Debugger.continueToLocation":
+        this.#sendToBackend(
+          "Debugger.continueToLocation",
+          { location: this.#toGeneratedLocation(params.location) },
+          id,
+          method,
+        );
+        return;
+
+      case "Debugger.getScriptSource": {
+        // The client is shown the original file, so serve it from the map
+        // rather than handing back what the transpiler produced.
+        const script = this.#scripts.$get(params.scriptId);
+        if (script?.source !== undefined) {
+          this.#replyToClient(id, { scriptSource: script.source });
+          return;
+        }
+        this.#sendToBackend(method, params, id, method);
+        return;
+      }
 
       case "Debugger.setPauseOnExceptions":
         this.#sendToBackend(
@@ -487,9 +775,18 @@ class InspectorCDPAdapter {
         const { condition, urlRegex, url } = params;
         const options: AnyObject = {};
         if (condition) options.condition = condition;
+        // The line the client names is a line of the original file. Resolve it
+        // through the map of the script it refers to; a breakpoint set before
+        // that script is parsed has no map yet and is passed through.
+        const known = url ? this.#scriptIdsByUrl.$get(url) : urlRegex ? this.#scriptIdMatching(urlRegex) : undefined;
+        const generated = this.#toGeneratedLocation({
+          scriptId: known,
+          lineNumber: params.lineNumber ?? 0,
+          columnNumber: params.columnNumber ?? 0,
+        }) as AnyObject;
         const jscParams: AnyObject = {
-          lineNumber: params.lineNumber,
-          columnNumber: params.columnNumber,
+          lineNumber: generated.lineNumber,
+          columnNumber: generated.columnNumber,
           options,
         };
         if (urlRegex) {
@@ -509,7 +806,7 @@ class InspectorCDPAdapter {
         this.#sendToBackend(
           "Debugger.setBreakpoint",
           {
-            location: params.location,
+            location: this.#toGeneratedLocation(params.location),
             options: condition ? { condition } : undefined,
           },
           id,
@@ -529,7 +826,12 @@ class InspectorCDPAdapter {
             columnNumber: script ? script.endColumn : 0,
           };
         }
-        this.#sendToBackend("Debugger.getBreakpointLocations", { start, end }, id, method);
+        this.#sendToBackend(
+          "Debugger.getBreakpointLocations",
+          { start: this.#toGeneratedLocation(start), end: this.#toGeneratedLocation(end) },
+          id,
+          method,
+        );
         return;
       }
 
@@ -660,7 +962,16 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.getPossibleBreakpoints":
-        return { locations: result.locations ?? [] };
+        return { locations: this.#toOriginalLocations(result.locations) };
+
+      case "Debugger.setBreakpointByUrl":
+        return { breakpointId: result.breakpointId, locations: this.#toOriginalLocations(result.locations) };
+
+      case "Debugger.setBreakpoint":
+        return {
+          breakpointId: result.breakpointId,
+          actualLocation: this.#toOriginalLocation(result.actualLocation ?? result.location),
+        };
 
       default:
         return result;
@@ -672,22 +983,42 @@ class InspectorCDPAdapter {
       case "Debugger.scriptParsed": {
         const url = params.sourceURL || params.url || "";
         const cdpUrl = toCdpUrl(url);
+        const decoded = decodeSourceMapURL(params.sourceMapURL);
+        const contents = decoded?.sourcesContent;
+        const source = typeof contents?.[0] === "string" ? contents[0] : undefined;
+        let endLine = params.endLine ?? 0;
+        let endColumn = params.endColumn ?? 0;
+        let sourceMapURL = params.sourceMapURL;
+        if (source !== undefined) {
+          // The client is told the shape of the original file, not of the
+          // transpiler's output, and is not handed Bun's map for it.
+          const lastNewline = source.lastIndexOf("\n");
+          endLine = 0;
+          for (let at = source.indexOf("\n"); at >= 0; at = source.indexOf("\n", at + 1)) endLine++;
+          endColumn = source.length - lastNewline - 1;
+          sourceMapURL = ownSourceMappingURL(source);
+        }
         this.#scripts.$set(params.scriptId, {
           cdpUrl,
-          endLine: params.endLine ?? 0,
-          endColumn: params.endColumn ?? 0,
+          endLine,
+          endColumn,
+          source,
+          mappings: source === undefined ? undefined : decoded!.mappings,
+          map: undefined,
         });
+        if (url) this.#scriptIdsByUrl.$set(url, params.scriptId);
+        if (cdpUrl) this.#scriptIdsByUrl.$set(cdpUrl, params.scriptId);
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
           startLine: params.startLine ?? 0,
           startColumn: params.startColumn ?? 0,
-          endLine: params.endLine ?? 0,
-          endColumn: params.endColumn ?? 0,
+          endLine,
+          endColumn,
           executionContextId: EXECUTION_CONTEXT_ID,
           hash: "",
           isModule: !!params.module,
-          sourceMapURL: params.sourceMapURL,
+          sourceMapURL,
           embedderName: cdpUrl,
           scriptLanguage: "JavaScript",
         });
@@ -698,7 +1029,7 @@ class InspectorCDPAdapter {
         const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
-          location: frame.location,
+          location: this.#toOriginalLocation(frame.location),
           url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
           scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
             type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
@@ -733,7 +1064,7 @@ class InspectorCDPAdapter {
       case "Debugger.breakpointResolved":
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: params.breakpointId,
-          location: params.location,
+          location: this.#toOriginalLocation(params.location),
         });
         return;
 
@@ -777,13 +1108,21 @@ class InspectorCDPAdapter {
   #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {
     if (!stackTrace) return undefined;
     const translated: AnyObject = {
-      callFrames: (stackTrace.callFrames ?? []).map((frame: AnyObject) => ({
-        functionName: frame.functionName ?? "",
-        scriptId: frame.scriptId ?? "",
-        url: toCdpUrl(frame.url ?? ""),
-        lineNumber: frame.lineNumber ?? 0,
-        columnNumber: frame.columnNumber ?? 0,
-      })),
+      callFrames: (stackTrace.callFrames ?? []).map((frame: AnyObject) => {
+        const scriptId = frame.scriptId ?? this.#scriptIdsByUrl.$get(frame.url ?? "") ?? "";
+        const location = this.#toOriginalLocation({
+          scriptId,
+          lineNumber: frame.lineNumber ?? 0,
+          columnNumber: frame.columnNumber ?? 0,
+        }) as AnyObject;
+        return {
+          functionName: frame.functionName ?? "",
+          scriptId,
+          url: toCdpUrl(frame.url ?? ""),
+          lineNumber: location.lineNumber,
+          columnNumber: location.columnNumber,
+        };
+      }),
     };
     const { parentStackTrace } = stackTrace;
     if (parentStackTrace) {
@@ -797,13 +1136,18 @@ class InspectorCDPAdapter {
     const args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
 
     if (message.source !== "console-api" && level === "error") {
+      const reported = this.#toOriginalLocation({
+        scriptId: this.#scriptIdsByUrl.$get(message.url ?? ""),
+        lineNumber: Math.max((message.line ?? 1) - 1, 0),
+        columnNumber: Math.max((message.column ?? 1) - 1, 0),
+      }) as AnyObject;
       this.#emitToClient("Runtime.exceptionThrown", {
         timestamp: message.timestamp ?? Date.now(),
         exceptionDetails: {
           exceptionId: this.#nextExceptionId++,
           text: message.text ?? "Uncaught",
-          lineNumber: Math.max((message.line ?? 1) - 1, 0),
-          columnNumber: Math.max((message.column ?? 1) - 1, 0),
+          lineNumber: reported.lineNumber,
+          columnNumber: reported.columnNumber,
           url: toCdpUrl(message.url ?? ""),
           stackTrace: this.#translateStackTrace(message.stackTrace),
         },

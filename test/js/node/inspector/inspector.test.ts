@@ -994,3 +994,163 @@ test("disconnect does not clobber a console method reassigned by user code", () 
     console.log = before;
   }
 });
+
+// Line 0 is a comment, 1/3/4/8 are blank, the `if` on line 5 folds away and the
+// quotes on line 2 are rewritten: nothing about the transpiler's output lines
+// up with this file, which is what makes it a position oracle.
+const transpileShiftFixture = `// leading comment
+
+const s = 'single quotes';
+
+
+if (1 > 0) {
+  // folded
+}
+
+function f() {
+  debugger;
+}
+setInterval(f, 50);
+`;
+
+// Drives one inspector endpoint of a `--inspect-brk` child to its first two
+// pauses. `banner` picks the endpoint out of the startup notice.
+async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: string) {
+  const dir = tempDir("inspector-positions", { "gnarly.js": transpileShiftFixture });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect-brk=0", "gnarly.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  {
+    const decoder = new TextDecoder();
+    const stderrReader = proc.stderr.getReader();
+    let stderrText = "";
+    let wsUrl: string | undefined;
+    while (!wsUrl) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`stderr closed before the banner: ${stderrText}`);
+      stderrText += decoder.decode(value);
+      wsUrl = stderrText.match(banner)?.[1];
+    }
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = err => reject(err);
+    });
+    let nextId = 1;
+    let awaiting = "";
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const scripts = new Map<string, any>();
+    const pauses: any[] = [];
+    let wantPauses = 1;
+    let sawPauses = Promise.withResolvers<void>();
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+      } else if (msg.method === "Debugger.scriptParsed") {
+        scripts.set(msg.params.scriptId, msg.params);
+      } else if (msg.method === "Debugger.paused") {
+        pauses.push(msg.params);
+        if (pauses.length >= wantPauses) sawPauses.resolve();
+      }
+    };
+    const abandon = (why: string) => {
+      const err = new Error(`${why} while awaiting ${awaiting}; stderr: ${stderrText}`);
+      sawPauses.reject(err);
+      for (const p of pending.values()) p.reject(err);
+      pending.clear();
+    };
+    ws.onerror = () => abandon("inspector websocket errored");
+    ws.onclose = () => abandon("inspector websocket closed");
+    proc.exited.then(code => abandon(`child exited (code ${code})`));
+    function send(method: string, params?: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        awaiting = method;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    }
+
+    for (const [method, params] of enable) await send(method, params ?? {});
+    await send(resume, {});
+
+    awaiting = "the break-on-start pause";
+    await sawPauses.promise;
+    const userScript = [...scripts.values()].find(script =>
+      String(script.url ?? script.sourceURL ?? "").endsWith("gnarly.js"),
+    );
+
+    // Resume into the interval callback's `debugger`.
+    wantPauses = 2;
+    sawPauses = Promise.withResolvers<void>();
+    ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume", params: {} }));
+    awaiting = "the debugger-statement pause";
+    await sawPauses.promise;
+
+    const done = () => {
+      ws.close();
+      proc.kill();
+      dir[Symbol.dispose]();
+    };
+    return { send, done, userScript, pauses, line: (n: number) => pauses[n].callFrames[0].location.lineNumber };
+  }
+}
+
+test("CDP clients see positions and source from the file the user wrote", async () => {
+  const { send, done, userScript, line } = await pausesAt(
+    /Debugger listening on (ws:\S+)/,
+    [["Runtime.enable"], ["Debugger.enable"]],
+    "Runtime.runIfWaitingForDebugger",
+  );
+
+  // Node reports both of these against the original file. Bun prepends the
+  // break-on-start `debugger;` and reflows everything below it, so untranslated
+  // these are lines 0 and 4.
+  expect(line(0)).toBe(2);
+  expect(line(1)).toBe(10);
+
+  const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
+  expect(scriptSource).toBe(transpileShiftFixture);
+  // Bun's own map describes text this client never sees; forwarding it would
+  // make a client that applies source maps translate a second time.
+  expect(userScript.sourceMapURL).toBe("");
+  expect(userScript.endLine).toBe(13);
+
+  // A breakpoint is named in the same coordinates and comes back in them.
+  const resolved = await send("Debugger.setBreakpointByUrl", { lineNumber: 1, url: userScript.url });
+  expect(resolved.locations[0].lineNumber).toBe(2);
+  done();
+}, 30_000);
+
+test("JSC-protocol clients keep seeing generated positions and Bun's source map", async () => {
+  const { send, done, userScript, line } = await pausesAt(
+    /Listening:\s*\n\s*(ws:\S+)/,
+    [
+      ["Inspector.enable"],
+      ["Runtime.enable"],
+      ["Debugger.enable"],
+      ["Debugger.setBreakpointsActive", { active: true }],
+      ["Debugger.setPauseOnDebuggerStatements", { enabled: true }],
+    ],
+    "Inspector.initialized",
+  );
+
+  // debug.bun.sh and the VS Code extension apply the map themselves, so this
+  // endpoint must keep reporting the transpiler's own coordinates.
+  expect(line(0)).toBe(0);
+  expect(line(1)).toBe(4);
+
+  const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
+  expect(scriptSource).toContain("//# sourceMappingURL=data:application/json;base64,");
+  expect(scriptSource.split("\n")[0]).toBe("debugger;");
+  expect(userScript.sourceMapURL).toStartWith("data:application/json");
+  done();
+}, 30_000);

@@ -1116,7 +1116,13 @@ impl Tag {
         }
         let mut result = TagResult::default();
         // Common case: no allocation is necessary.
-        let mut state = State::None;
+        // A non-zero initial_pre_count means the caller already consumed the start of
+        // an implicit prerelease ("1.0.0rc.1" style), so we are already inside it.
+        let mut state = if initial_pre_count > 0 {
+            State::Pre
+        } else {
+            State::None
+        };
         let mut start: usize = 0;
 
         let mut i: usize = 0;
@@ -1126,7 +1132,7 @@ impl Tag {
             match c {
                 b'+' => {
                     // qualifier  ::= ( '-' pre )? ( '+' build )?
-                    if state == State::Pre || state == State::None && initial_pre_count > 0 {
+                    if state == State::Pre {
                         result.tag.pre = sliced_string.sub(&input[start..i]).external();
                     }
 
@@ -1136,7 +1142,10 @@ impl Tag {
                     }
                 }
                 b'-' => {
-                    if state != State::Pre {
+                    // '-' only begins a prerelease before the '+'. Inside prerelease or
+                    // build metadata it is an ordinary identifier character (semver 2.0
+                    // items 9 and 10), so "1.0.0+sha-abc" is a release with build "sha-abc".
+                    if state == State::None {
                         state = State::Pre;
                         start = i + 1;
                     }
@@ -1156,12 +1165,6 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(!strings::contains_char(
-                                    result.tag.build.slice(sliced_string.buf),
-                                    b'-'
-                                ));
-                            }
                             state = State::None;
                         }
                     }
@@ -1170,11 +1173,6 @@ impl Tag {
                 }
             }
             i += 1;
-        }
-
-        if state == State::None && initial_pre_count > 0 {
-            state = State::Pre;
-            start = 0;
         }
 
         match state {

@@ -178,6 +178,37 @@ describe("Bun.semver.order()", () => {
       expect(order(right, left)).toBe(0);
     }
   });
+
+  test("build metadata containing '-' is ignored", () => {
+    // '-' is a plain identifier character inside build metadata (semver 2.0 item 10),
+    // it must not start a prerelease once the '+' has been seen.
+    const tests = [
+      ["1.0.0+sha-abc", "1.0.0"],
+      ["1.0.0+sha-abc", "1.0.0+other"],
+      ["1.0.0-beta+sha-abc", "1.0.0-beta"],
+      ["1.2.3+build-2024.01.05", "1.2.3"],
+    ];
+
+    for (const [left, right] of tests) {
+      expect(order(left, right)).toBe(0);
+      expect(order(right, left)).toBe(0);
+    }
+  });
+
+  test("a '-' inside an implicit prerelease stays in the prerelease", () => {
+    // "1.0.0rc-1" is the loose spelling of "1.0.0-rc-1"; node-semver's loose
+    // parser keeps "rc-1" as the whole prerelease identifier.
+    const tests = [
+      ["1.0.0rc-1", "1.0.0-rc-1"],
+      ["1.0.0alpha-2", "1.0.0-alpha-2"],
+      ["1.0.0rc.1", "1.0.0-rc.1"],
+    ];
+
+    for (const [left, right] of tests) {
+      expect(order(left, right)).toBe(0);
+      expect(order(right, left)).toBe(0);
+    }
+  });
 });
 
 describe("Bun.semver.satisfies()", () => {
@@ -804,6 +835,45 @@ describe("Bun.semver.satisfies()", () => {
     for (const [range, version] of tests) {
       expect(satisfies(version, range)).toBeFalse();
     }
+  });
+
+  test("build metadata containing '-' is ignored", () => {
+    // Expected values verified against node-semver. Build metadata never affects
+    // range matching; '-' after the '+' must not be read as a prerelease marker.
+    const passing = [
+      ["*", "1.0.0+sha-abc"],
+      ["1.0.0", "1.0.0+sha-abc"],
+      [">=1.0.0", "1.0.0+sha-abc"],
+      ["^2.0.0", "2.1.0+build-2024"],
+      ["1.0.0-beta", "1.0.0-beta+sha-abc"],
+      ["1.0.0", "1.0.0+a-b-c.d-e"],
+      ["1.2.3+sha-abc", "1.2.3"],
+      ["^1.2.3+sha-abc", "1.3.0"],
+      ["1.2.3+sha-a - 2.4.3+sha-b", "1.5.0"],
+    ];
+
+    for (const [range, version] of passing) {
+      expect(satisfies(version, range)).toBeTrue();
+    }
+
+    // '-' before any '+' still starts a prerelease.
+    const failing = [
+      ["1.0.1", "1.0.0+sha-abc"],
+      ["^1.2.3+sha-abc", "1.2.0"],
+      ["^2.0.0", "2.1.0-build-2024"],
+      ["1.2.3+sha-a - 2.4.3+sha-b", "1.2.3-pre.2"],
+    ];
+
+    for (const [range, version] of failing) {
+      expect(satisfies(version, range)).toBeFalse();
+    }
+  });
+
+  test("a '-' inside an implicit prerelease stays in the prerelease", () => {
+    expect(satisfies("1.0.0rc-1", "1.0.0-rc-1")).toBeTrue();
+    expect(satisfies("1.0.0alpha-2", "1.0.0-alpha-2")).toBeTrue();
+    // A different prerelease still does not satisfy.
+    expect(satisfies("1.0.0rc-2", "1.0.0-rc-1")).toBeFalse();
   });
 
   test("pre-release snapshot", () => {

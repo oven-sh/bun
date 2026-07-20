@@ -126,11 +126,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn int<Int: ProtocolInt>(&mut self) -> Result<Int, AnyPostgresError> {
         let data = self.read(Int::SIZE)?;
-        let slice = data.slice();
-        if slice.len() < Int::SIZE {
-            return Err(AnyPostgresError::ShortRead);
-        }
-        Ok(Int::from_be_slice(&slice[0..Int::SIZE]))
+        Ok(Int::from_be_slice(data.slice()))
     }
 
     pub fn peek_int<Int: ProtocolInt>(&self) -> Option<Int> {

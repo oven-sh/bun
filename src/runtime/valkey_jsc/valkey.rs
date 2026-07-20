@@ -148,7 +148,6 @@ impl Clone for TLS {
         match self {
             TLS::None => TLS::None,
             TLS::Enabled => TLS::Enabled,
-            // TODO: we could ref count it instead of cloning it
             TLS::Custom(c) => TLS::Custom(c.clone()),
         }
     }

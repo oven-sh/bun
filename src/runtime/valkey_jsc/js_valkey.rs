@@ -350,12 +350,8 @@ fn parse_valkey_url(
 ) -> JsResult<ParsedValkeyUrl> {
     let mut fallback_url_buf = [0u8; 2048];
 
-    // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs
-    // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
-    // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
-    // the case right now and I do not understand why. It will take some work in JSC to
-    // understand why this is happening, but since I need to uncork valkey, I'm adding this as
-    // a stop-gap.
+    // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs.
+    // `URL::from_string` does not reject scheme-less input, so check for `://` explicitly first.
     let parsed_url: NonNull<URL> = 'get_url: {
         let url_slice = url_str.to_utf8();
         let url_byte_slice = url_slice.slice();

@@ -4207,12 +4207,6 @@ pub mod bv2_impl {
                             template
                                 .print(&mut v, !self.transpiler.options.compile)
                                 .expect("oom");
-                            // An empty `[ext]` leaves a dangling `.`; Win32
-                            // strips trailing `.`/` ` at open time, so trim here
-                            // so the written file and generated import agree.
-                            while matches!(v.last(), Some(&b'.' | &b' ')) {
-                                v.pop();
-                            }
                             v.into_boxed_slice()
                         };
 

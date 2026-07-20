@@ -1357,7 +1357,9 @@ impl NodeHTTPResponse {
         // Body already delivered: nothing to buffer, and re-arming onData would
         // overwrite a pipelined request's userData on the shared HttpResponseData.
         // pause_socket() still runs so pausePipelineReads can gate the fd.
-        if self.body_read_state.get() == BodyReadState::Pending {
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
             raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
         }
@@ -1421,14 +1423,18 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
-            // Body already delivered: re-arming onData/onTimeout would overwrite
-            // a pipelined request's userData on the shared HttpResponseData.
-            || self.body_read_state.get() != BodyReadState::Pending
         {
             return JSValue::FALSE;
         }
-        self.set_on_aborted_handler();
-        raw.on_data(on_data_shim, self.as_ctx_ptr());
+        // Body already delivered: re-arming onData/onTimeout would overwrite a
+        // pipelined request's userData on the shared HttpResponseData. The drain
+        // below still runs so a body buffered-while-paused reaches its own caller.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.set_on_aborted_handler();
+            raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         let mut result: JSValue = JSValue::TRUE;
 

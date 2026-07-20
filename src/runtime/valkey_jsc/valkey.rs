@@ -28,11 +28,7 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
-    // These flags could be refactored into an enumerated state machine, which
-    // would read more naturally than a bag of booleans.
-    pub is_authenticated: bool,
     pub is_manually_closed: bool,
-    pub is_selecting_db_internal: bool,
     pub enable_offline_queue: bool,
     pub needs_to_open_socket: bool,
     pub enable_auto_reconnect: bool,
@@ -55,9 +51,7 @@ pub struct ConnectionFlags {
 impl Default for ConnectionFlags {
     fn default() -> Self {
         Self {
-            is_authenticated: false,
             is_manually_closed: false,
-            is_selecting_db_internal: false,
             enable_offline_queue: true,
             needs_to_open_socket: true,
             enable_auto_reconnect: true,
@@ -76,6 +70,15 @@ pub enum Status {
     Disconnected,
     Connecting,
     Connected,
+}
+
+/// Response-dispatch state for the HELLO/SELECT handshake.
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
+pub enum Handshake {
+    #[default]
+    AwaitingHello,
+    SelectingDb,
+    Ready,
 }
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
@@ -110,10 +113,6 @@ impl Protocol {
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
     }
-
-    pub fn is_unix(self) -> bool {
-        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
-    }
 }
 
 #[derive(Default)]
@@ -136,6 +135,17 @@ impl TLS {
     #[inline]
     pub fn is_none(&self) -> bool {
         matches!(self, TLS::None)
+    }
+}
+
+impl Clone for TLS {
+    fn clone(&self) -> Self {
+        match self {
+            TLS::None => TLS::None,
+            TLS::Enabled => TLS::Enabled,
+            // TODO: we could ref count it instead of cloning it
+            TLS::Custom(c) => TLS::Custom(c.clone()),
+        }
     }
 }
 
@@ -165,19 +175,13 @@ impl Default for Options {
     }
 }
 
+#[derive(Clone)]
 pub enum Address {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
 
 impl Address {
-    pub(crate) fn hostname(&self) -> &[u8] {
-        match self {
-            Address::Unix(unix_addr) => unix_addr,
-            Address::Host { host, .. } => host,
-        }
-    }
-
     /// Open a TCP/TLS/Unix socket via
     /// `uws::Socket{TLS,TCP}::connect_*_group`.
     ///
@@ -234,6 +238,7 @@ impl Address {
 pub struct ValkeyClient {
     pub socket: AnySocket,
     pub status: Status,
+    pub handshake: Handshake,
 
     // Buffer management
     pub write_buffer: OffsetByteList,
@@ -664,8 +669,7 @@ impl ValkeyClient {
         );
 
         self.flags.is_reconnecting = true;
-        self.flags.is_authenticated = false;
-        self.flags.is_selecting_db_internal = false;
+        self.handshake = Handshake::AwaitingHello;
 
         self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
 
@@ -954,12 +958,7 @@ impl ValkeyClient {
             }
             RESPValue::SimpleString(str_) => {
                 if str_.as_ref() == b"OK" {
-                    self.status = Status::Connected;
-                    self.flags.is_authenticated = true;
-                    self.flags.is_reconnecting = false;
-                    self.retry_attempts = 0;
-                    self.on_valkey_connect(value)?;
-                    return Ok(());
+                    return self.mark_connected(value);
                 }
                 self.fail(
                     b"Authentication failed (unexpected response)",
@@ -994,12 +993,7 @@ impl ValkeyClient {
                 }
 
                 // Authentication successful via HELLO
-                self.status = Status::Connected;
-                self.flags.is_authenticated = true;
-                self.flags.is_reconnecting = false;
-                self.retry_attempts = 0;
-                self.on_valkey_connect(value)?;
-                Ok(())
+                self.mark_connected(value)
             }
             _ => {
                 self.fail(

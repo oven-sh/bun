@@ -1007,6 +1007,32 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("passes module.exports (not the module) to napi_module_register's init callback", async () => {
+    // Node.js passes module.exports as the `exports` argument to nm_register_func.
+    // Bun used to pass the JSCommonJSModule itself, so addons that wrote to
+    // `exports` and returned it produced a self-referential module object.
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "exports_identity_addon.node");
+    const script = `
+      const addon = require(${JSON.stringify(addonPath)});
+      console.log("own_names=" + Object.getOwnPropertyNames(addon).sort().join(","));
+      console.log("self_referential=" + (addon === addon.exports));
+    `;
+    const run = async (exe: string) => {
+      await using proc = spawn({ cmd: [exe, "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.split(/\r?\n/).filter(Boolean), stderr, exitCode };
+    };
+    const bunResult = await run(bunExe());
+    expect(bunResult.stderr).toBe("");
+    expect(bunResult.stdout).toEqual([
+      "exports_has_own_exports=0",
+      "own_names=marker",
+      "self_referential=false",
+    ]);
+    expect(bunResult.exitCode).toBe(0);
+    expect(await run(await nodeExeMatchingAbi())).toEqual(bunResult);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });

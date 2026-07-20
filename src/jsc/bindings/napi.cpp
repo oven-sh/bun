@@ -750,7 +750,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     JSValue resultValue;
 
     if (mod.nm_register_func) {
-        resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
+        resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(JSValue(strongExportsObject.get()), globalObject)));
     } else {
         JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
         globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);

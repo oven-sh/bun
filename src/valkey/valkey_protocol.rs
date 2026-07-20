@@ -5,29 +5,23 @@ use bstr::BStr;
 #[derive(strum::IntoStaticStr, strum::EnumString, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisError {
     AuthenticationFailed,
+    ServerError,
     ConnectionClosed,
     InvalidArgument,
-    InvalidArray,
     InvalidAttribute,
-    InvalidBigNumber,
     InvalidBlobError,
     InvalidBoolean,
     InvalidBulkString,
     InvalidCommand,
     InvalidDouble,
-    InvalidErrorString,
     InvalidInteger,
     InvalidMap,
-    InvalidNull,
     InvalidPush,
     InvalidResponse,
     InvalidResponseType,
     InvalidSet,
-    InvalidSimpleString,
     InvalidVerbatimString,
-    JSError,
     OutOfMemory,
-    JSTerminated,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
@@ -36,20 +30,6 @@ pub enum RedisError {
 }
 
 bun_core::impl_tag_error!(RedisError);
-
-impl From<bun_core::Error> for RedisError {
-    /// Reverse of the `RedisError → bun_core::Error` interning above so the
-    /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
-    /// `bun_core::Error` without losing the variant.
-    /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
-    /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
-    /// already covers.
-    fn from(e: bun_core::Error) -> Self {
-        e.name().parse().unwrap_or(RedisError::ConnectionClosed)
-    }
-}
-
-// `valkeyErrorToJS` alias deleted — lives in bun_runtime::valkey_jsc::protocol_jsc (extension trait).
 
 /// RESP protocol types
 #[repr(u8)]
@@ -118,8 +98,6 @@ pub enum RESPValue {
     Push(Push),
     BigNumber(Box<[u8]>),
 }
-
-// `deinit` deleted — all payloads are Box/Vec; Drop is automatic.
 
 impl fmt::Display for RESPValue {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -208,9 +186,6 @@ impl fmt::Display for RESPValue {
     }
 }
 
-// `toJS` / `ToJSOptions` / `toJSWithOptions` aliases deleted — live in
-// bun_runtime::valkey_jsc::protocol_jsc as extension-trait methods.
-
 pub struct ValkeyReader<'a> {
     buffer: &'a [u8],
     pos: usize,
@@ -238,7 +213,7 @@ impl<'a> ValkeyReader<'a> {
         self.pos
     }
 
-    pub fn read_byte(&mut self) -> Result<u8, RedisError> {
+    fn read_byte(&mut self) -> Result<u8, RedisError> {
         if self.pos >= self.buffer.len() {
             return Err(RedisError::InvalidResponse);
         }
@@ -247,7 +222,7 @@ impl<'a> ValkeyReader<'a> {
         Ok(byte)
     }
 
-    pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
+    fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
         let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
         let start = self.crlf_skip.min(limit);
@@ -265,12 +240,12 @@ impl<'a> ValkeyReader<'a> {
         Err(RedisError::InvalidResponse)
     }
 
-    pub fn read_integer(&mut self) -> Result<i64, RedisError> {
+    fn read_integer(&mut self) -> Result<i64, RedisError> {
         let str = self.read_until_crlf()?;
         bun_core::fmt::parse_int::<i64>(str, 10).map_err(|_| RedisError::InvalidInteger)
     }
 
-    pub fn read_double(&mut self) -> Result<f64, RedisError> {
+    fn read_double(&mut self) -> Result<f64, RedisError> {
         let str = self.read_until_crlf()?;
 
         // Handle special values
@@ -288,7 +263,7 @@ impl<'a> ValkeyReader<'a> {
         bun_core::fmt::parse_f64(str).ok_or(RedisError::InvalidDouble)
     }
 
-    pub fn read_boolean(&mut self) -> Result<bool, RedisError> {
+    fn read_boolean(&mut self) -> Result<bool, RedisError> {
         let str = self.read_until_crlf()?;
         if str.len() != 1 {
             return Err(RedisError::InvalidBoolean);
@@ -301,7 +276,7 @@ impl<'a> ValkeyReader<'a> {
         }
     }
 
-    pub fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
+    fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
         let len = self.read_integer()?;
         if !(0..=Self::MAX_BULK_LEN).contains(&len) {
             return Err(RedisError::InvalidVerbatimString);
@@ -325,7 +300,7 @@ impl<'a> ValkeyReader<'a> {
             return Err(RedisError::InvalidVerbatimString);
         }
 
-        let format = Box::<[u8]>::from(&content_with_format[0..3]);
+        let format: [u8; 3] = content_with_format[0..3].try_into().expect("3-byte slice");
         let content = Box::<[u8]>::from(&content_with_format[4..]);
 
         Ok(VerbatimString { format, content })
@@ -416,7 +391,6 @@ impl<'a> ValkeyReader<'a> {
                 let len = usize::try_from(len).expect("int cast");
                 let mut array =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
-                // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
                     array.push(self.read_value_with_depth(depth + 1)?);
@@ -469,11 +443,9 @@ impl<'a> ValkeyReader<'a> {
 
                 let mut entries =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
-                // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
                     let key = self.read_value_with_depth(depth + 1)?;
-                    // errdefer key.deinit() — `key` drops automatically on `?` below
                     let value = self.read_value_with_depth(depth + 1)?;
                     entries.push(MapEntry { key, value });
                     i += 1;
@@ -492,7 +464,6 @@ impl<'a> ValkeyReader<'a> {
 
                 let mut set =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
-                // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
                     set.push(self.read_value_with_depth(depth + 1)?);
@@ -512,11 +483,9 @@ impl<'a> ValkeyReader<'a> {
 
                 let mut attrs =
                     Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
-                // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
                     let key = self.read_value_with_depth(depth + 1)?;
-                    // errdefer key.deinit() — `key` drops automatically on `?` below
                     let value = self.read_value_with_depth(depth + 1)?;
                     attrs.push(MapEntry { key, value });
                     i += 1;
@@ -540,39 +509,22 @@ impl<'a> ValkeyReader<'a> {
                 }
 
                 // First element is the push type
-                let push_type = self.read_value_with_depth(depth + 1)?;
-                // defer push_type.deinit() — drops at scope end
-                let push_type_str: &[u8] = match &push_type {
-                    RESPValue::SimpleString(str) => str,
-                    RESPValue::BulkString(maybe_str) => {
-                        if let Some(str) = maybe_str {
-                            str
-                        } else {
-                            return Err(RedisError::InvalidPush);
-                        }
-                    }
+                let kind: Box<[u8]> = match self.read_value_with_depth(depth + 1)? {
+                    RESPValue::SimpleString(s) | RESPValue::BulkString(Some(s)) => s,
                     _ => return Err(RedisError::InvalidPush),
                 };
-
-                // Copy the push type string since the original will be freed
-                let push_type_dup = Box::<[u8]>::from(push_type_str);
-                // errdefer free(push_type_dup) — drops automatically on `?`
 
                 // Read the rest of the data
                 let data_len = usize::try_from(len - 1).expect("int cast");
                 let mut data =
                     Vec::with_capacity(self.take_prealloc_budget(data_len, size_of::<RESPValue>()));
-                // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < data_len {
                     data.push(self.read_value_with_depth(depth + 1)?);
                     i += 1;
                 }
 
-                Ok(RESPValue::Push(Push {
-                    kind: push_type_dup,
-                    data,
-                }))
+                Ok(RESPValue::Push(Push { kind, data }))
             }
             RESPType::BigNumber => {
                 let str = self.read_until_crlf()?;
@@ -770,28 +722,20 @@ pub struct MapEntry {
     pub value: RESPValue,
 }
 
-// `MapEntry::deinit` deleted — fields drop automatically.
-
 pub struct VerbatimString {
-    pub format: Box<[u8]>, // e.g. "txt" or "mkd"
+    pub format: [u8; 3], // e.g. "txt" or "mkd"
     pub content: Box<[u8]>,
 }
-
-// `VerbatimString::deinit` deleted — Box<[u8]> fields drop automatically.
 
 pub struct Push {
     pub kind: Box<[u8]>,
     pub data: Vec<RESPValue>,
 }
 
-// `Push::deinit` deleted — Box/Vec fields drop automatically.
-
 pub struct Attribute {
     pub attributes: Vec<MapEntry>,
     pub value: Box<RESPValue>,
 }
-
-// `Attribute::deinit` deleted — Vec/Box fields drop automatically.
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

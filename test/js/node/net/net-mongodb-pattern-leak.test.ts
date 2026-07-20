@@ -199,8 +199,9 @@ describe.each([
       expect(after2.AsyncGenerator - after1.AsyncGenerator).toBeLessThanOrEqual(2);
       expect(after2.Promise - after1.Promise).toBeLessThanOrEqual(10);
       expect(after2.Function - after1.Function).toBeLessThanOrEqual(20);
-      // JS heap must be flat once warm. ±1 MB covers scavenger jitter.
-      expect(after2.heapSize - after1.heapSize).toBeLessThan(1024 * 1024);
+      // vm.heap.size() after a sync full GC: live-cell bytes, not affected by
+      // allocator/JIT. Observed r2-r1 range -38..+8 KB; a listener leak is ~56 MB.
+      expect(after2.heapSize - after1.heapSize).toBeLessThan(256 * 1024);
 
       // The Transform must not have accumulated listeners (onData removes its
       // pair on .return(); a missed cleanup would grow this by ITER).

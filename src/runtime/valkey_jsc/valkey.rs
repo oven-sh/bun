@@ -890,12 +890,6 @@ impl ValkeyClient {
         // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
         let _exit = self.vm.enter_event_loop_scope();
 
-        let p = self.parent();
-        let sub_count = p
-            ._subscription_ctx
-            .get()
-            .channels_subscribed_to_count(&global_this);
-
         if kind.is_message() {
             // RESP3 `pmessage` data is [pattern, channel, payload]; skip the
             // leading pattern so `on_valkey_message` sees [channel, payload].
@@ -911,6 +905,11 @@ impl ValkeyClient {
             return Ok(());
         }
         if kind.is_subscribe_ack() {
+            let p = self.parent();
+            let sub_count = p
+                ._subscription_ctx
+                .get()
+                .channels_subscribed_to_count(&global_this);
             p.add_subscription();
             self.parent().on_valkey_subscribe();
 

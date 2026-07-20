@@ -3334,6 +3334,125 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
+  // https://github.com/oven-sh/bun/issues/32185
+  it("strict mode reserved words in declarations", () => {
+    const reservedPackage = '"package" is a reserved word and cannot be used in strict mode';
+
+    const expectParseErrorWithNote = (code, message, note) => {
+      let err;
+      try {
+        parsed(code, false, false);
+      } catch (e) {
+        if (e instanceof AggregateError) {
+          expect(e.errors.length).toBe(1);
+          err = e.errors[0];
+        } else {
+          err = e;
+        }
+      }
+      expect(err?.message).toBe(message);
+      expect(err?.notes?.[0]?.message).toBe(note);
+    };
+
+    // Implicit strict mode from ESM keywords applies to declarations, not
+    // just references, even when the declaration comes before the keyword
+    const exportNote = 'This file is implicitly in strict mode because of the "export" keyword here';
+    expectParseErrorWithNote("export {}; let package = 1", reservedPackage, exportNote);
+    expectParseErrorWithNote("let package = 1; export {}", reservedPackage, exportNote);
+    expectParseErrorWithNote(
+      'import "x"; let package = 1',
+      reservedPackage,
+      'This file is implicitly in strict mode because of the "import" keyword here',
+    );
+    expectParseErrorWithNote(
+      "await 1; let package = 1",
+      reservedPackage,
+      'This file is implicitly in strict mode because of the "await" keyword here',
+    );
+
+    // Every declaration position is checked
+    expectParseError("export {}; var static = 1", '"static" is a reserved word and cannot be used in strict mode');
+    expectParseError("export {}; function package() {}", reservedPackage);
+    expectParseError("export {}; (function package() {})", reservedPackage);
+    expectParseError("export {}; class package {}", reservedPackage);
+    expectParseError("export {}; function f(package) {}", reservedPackage);
+    expectParseError("export {}; try {} catch (package) {}", reservedPackage);
+    expectParseError("export {}; var { package } = p", reservedPackage);
+    expectParseError("export {}; package: ;", reservedPackage);
+    expectParseError('import package from "x"', reservedPackage);
+    expectParseError('import * as package from "x"', reservedPackage);
+    {
+      // The caret points at the local binding name, not the import alias
+      let err;
+      try {
+        parsed('import { a as package } from "x"', false, false);
+      } catch (e) {
+        err = e instanceof AggregateError ? e.errors[0] : e;
+      }
+      expect(err?.message).toBe(reservedPackage);
+      expect(err?.position).toMatchObject({ column: 15, length: 7 });
+    }
+    expectParseError("export {}; let eval = 1", 'Declarations with the name "eval" cannot be used in strict mode');
+    expectParseError(
+      "export {}; function arguments() {}",
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+
+    // Class code is always strict mode code, including the class name
+    const classNote = "All code inside a class is implicitly in strict mode";
+    expectParseErrorWithNote("class package {}", reservedPackage, classNote);
+    expectParseErrorWithNote("(class package {})", reservedPackage, classNote);
+    expectParseErrorWithNote("class C { m() { var package; } }", reservedPackage, classNote);
+
+    // Explicit "use strict", with the note pointing at the directive
+    const useStrictNote = 'Strict mode is triggered by the "use strict" directive here';
+    expectParseErrorWithNote('"use strict"; let package = 1', reservedPackage, useStrictNote);
+    expectParseErrorWithNote('"use strict"; package: ;', reservedPackage, useStrictNote);
+    // A function name is subject to the function's own strictness
+    expectParseErrorWithNote('function package() { "use strict" }', reservedPackage, useStrictNote);
+    // A "use strict" directive in the body makes the parameter list strict too
+    expectParseErrorWithNote('function f(package) { "use strict" }', reservedPackage, useStrictNote);
+    expectParseErrorWithNote('((package) => { "use strict" })', reservedPackage, useStrictNote);
+    expectParseError(
+      'function f(eval) { "use strict" }',
+      'Declarations with the name "eval" cannot be used in strict mode',
+    );
+    expectParseError(
+      'function f(arguments) { "use strict" }',
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    // Body "use strict" also reaches scopes pushed for parameter defaults, and
+    // the note keeps a source location pointing at the directive there
+    {
+      let err;
+      try {
+        parsed('function f(x = (() => package)()) { "use strict" }', false, false);
+      } catch (e) {
+        err = e instanceof AggregateError ? e.errors[0] : e;
+      }
+      expect(err?.message).toBe(reservedPackage);
+      expect(err?.notes?.[0]?.message).toBe(useStrictNote);
+      expect(err?.notes?.[0]?.position).toMatchObject({ column: 37, length: 12 });
+    }
+
+    // TypeScript constructs that lower to "var" declarations
+    ts.expectParseError('"use strict"; enum package { A }', reservedPackage);
+    ts.expectParseError("export {}; enum package { A }", reservedPackage);
+    ts.expectParseError('"use strict"; namespace package { export const x = 1 }', reservedPackage);
+    ts.expectParseError('"use strict"; import package = require("x")', reservedPackage);
+
+    // Still allowed in sloppy mode
+    expect(() => parsed("let package = 1", false, false)).not.toThrow();
+    expect(() => parsed("function package() {}", false, false)).not.toThrow();
+    expect(() => parsed("function f(package) {}", false, false)).not.toThrow();
+    expect(() => parsed("package: ;", false, false)).not.toThrow();
+    expect(() => parsed("var eval = 1", false, false)).not.toThrow();
+    // Reserved words are valid export aliases
+    expect(() => parsed("const x = 1; export { x as package }", false, false)).not.toThrow();
+    // Method names are not bindings
+    expect(() => parsed("export {}; class C { static package() {} }", false, false)).not.toThrow();
+  });
+
   describe("simplification", () => {
     const transpiler = new Bun.Transpiler({
       loader: "tsx",

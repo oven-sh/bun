@@ -46,6 +46,11 @@ pub struct Scope {
 
     pub strict_mode: StrictModeKind,
 
+    // Location of the "use strict" directive when `strict_mode` is
+    // `ExplicitStrictMode`. Inherited by child scopes along with
+    // `strict_mode` so error notes can point at the directive.
+    pub use_strict_loc: crate::Loc,
+
     pub is_after_const_local_prefix: bool,
 
     // This will be non-null if this is a TypeScript "namespace" or "enum"
@@ -75,6 +80,7 @@ impl Scope {
         contains_direct_eval: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,
+        use_strict_loc: crate::Loc::EMPTY,
         is_after_const_local_prefix: false,
         ts_namespace: None,
     };
@@ -133,6 +139,7 @@ impl Scope {
         self.label_stmt_is_loop = false;
         self.contains_direct_eval = false;
         self.strict_mode = StrictModeKind::SloppyMode;
+        self.use_strict_loc = crate::Loc::EMPTY;
         self.kind = Kind::Block;
     }
 
@@ -238,11 +245,17 @@ impl Scope {
         SymbolMergeResult::Forbidden
     }
 
-    pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind) {
+    /// `use_strict_loc` is the directive location to stamp when `kind` is
+    /// `ExplicitStrictMode`; pass `Loc::EMPTY` for implicit-strict kinds (their
+    /// diagnostic location comes from the ESM/class keyword, not the scope).
+    /// Set together with `strict_mode` so child scopes already pushed for
+    /// parameter-default expressions carry the directive location too.
+    pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind, use_strict_loc: crate::Loc) {
         if self.strict_mode == StrictModeKind::SloppyMode {
             self.strict_mode = kind;
+            self.use_strict_loc = use_strict_loc;
             for child in self.children.slice_mut() {
-                child.recursive_set_strict_mode(kind);
+                child.recursive_set_strict_mode(kind, use_strict_loc);
             }
         }
     }

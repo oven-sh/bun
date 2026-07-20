@@ -10,8 +10,7 @@ use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, TempRef,
-    VisitArgsOpts, is_eval_or_arguments,
+    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StringVoidMap, TempRef, VisitArgsOpts,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -106,15 +105,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol(name_ref);
-                let symbol_name = self.load_name_from_ref(name_ref);
-                if is_eval_or_arguments(symbol_name) {
-                    self.mark_strict_mode_feature(
-                        StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, name.loc),
-                        symbol_name,
-                    )
-                    .expect("unreachable");
-                }
             }
         }
 
@@ -135,6 +125,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionBody, body_loc)
             .expect("unreachable");
+        // Validate the function name inside the function-body scope: the name
+        // is subject to the function's own strictness, including a
+        // "use strict" directive in the body.
+        if let Some(name) = func.name {
+            if let Some(name_ref) = name.ref_.to_nullable() {
+                let symbol_name = self.load_name_from_ref(name_ref);
+                self.validate_declared_symbol_name(name.loc, symbol_name)
+                    .expect("unreachable");
+            }
+        }
         // Stmt is Copy — copy the slice into a bump-backed Vec.
         let mut stmts = BumpVec::with_capacity_in(body_stmts.len(), self.arena);
         stmts.extend_from_slice(body_stmts);
@@ -629,14 +629,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name
                     .slice();
-                if is_eval_or_arguments(name) {
-                    self.mark_strict_mode_feature(
-                        StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, binding.loc),
-                        name,
-                    )
+                self.validate_declared_symbol_name(binding.loc, name)
                     .expect("unreachable");
-                }
                 if let Some(dup) = duplicate_arg_check {
                     if dup.get_or_put_contains(name) {
                         self.log().add_range_error_fmt(
@@ -810,7 +804,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_enclosing_class_keyword = self.enclosing_class_keyword;
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
-            .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
+            .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass, js_ast::Loc::EMPTY);
+        // The class name is part of the class, which is always strict mode
+        // code, so validate it inside the class-name scope.
+        if let Some(name) = class.class_name {
+            let name_ref = name.ref_;
+            let symbol_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
+                .original_name
+                .slice();
+            self.validate_declared_symbol_name(name.loc, symbol_name)
+                .expect("unreachable");
+        }
         // `FnOnlyDataVisit::class_name_ref` is `Option<&'a Cell<Ref>>`, so the
         // shadow ref must outlive the parser borrow. Allocate it in the bump arena.
         // `Cell` lets us hand out a shared `&'a Cell<Ref>` to nested frames while

@@ -221,7 +221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     original_name = p.lexer.identifier;
                     name = LocRef {
-                        loc: alias_loc,
+                        loc: p.lexer.loc(),
                         ref_: p.store_name_in_ref(original_name)?,
                     };
                     p.lexer.expect(T::TIdentifier)?;

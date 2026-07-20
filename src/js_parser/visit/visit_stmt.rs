@@ -4,7 +4,7 @@ use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    StrictModeFeature, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::flags;
@@ -134,15 +134,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Import,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.namespace_ref);
+        if let Some(star_name_loc) = data.star_name_loc.to_nullable() {
+            let name = p.load_name_from_ref(data.namespace_ref);
+            p.validate_declared_symbol_name(star_name_loc, name)?;
+        }
 
         if let Some(default_name) = data.default_name {
-            p.record_declared_symbol(default_name.ref_);
+            let name_ref = default_name.ref_;
+            p.record_declared_symbol(name_ref);
+            let name = p.load_name_from_ref(name_ref);
+            p.validate_declared_symbol_name(default_name.loc, name)?;
         }
 
         let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
-                p.record_declared_symbol(item.name.ref_);
+                let name_ref = item.name.ref_;
+                p.record_declared_symbol(name_ref);
+                let name = p.load_name_from_ref(name_ref);
+                p.validate_declared_symbol_name(item.name.loc, name)?;
             }
         }
 
@@ -1333,6 +1343,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            p.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(p.source, data.name.loc),
+                name,
+            )?;
+        }
         let ref_ = p
             .new_symbol(js_ast::symbol::Kind::Label, name)
             .expect("unreachable");
@@ -2152,11 +2169,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // referencing, `esbuild` builds a separate hash map of hash
         // maps. We are avoiding that to reduce memory usage, since
         // enum inlining already uses alot of hash maps.
+        let name_ref = data.name.ref_;
         if p.current_scope == p.module_scope && p.options.bundle {
-            p.top_level_enums.push(data.name.ref_);
+            p.top_level_enums.push(name_ref);
         }
 
-        p.record_declared_symbol(data.name.ref_);
+        p.record_declared_symbol(name_ref);
+        // The enum lowers to a "var" declaration with this name.
+        let enum_name = p.load_name_from_ref(name_ref);
+        p.validate_declared_symbol_name(data.name.loc, enum_name)?;
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
         p.record_declared_symbol(data.arg);
 
@@ -2349,7 +2370,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Namespace,
     ) -> Result<(), Error> {
-        p.record_declared_symbol(data.name.ref_);
+        let name_ref = data.name.ref_;
+        p.record_declared_symbol(name_ref);
+        // The namespace lowers to a "var" declaration with this name.
+        let namespace_name = p.load_name_from_ref(name_ref);
+        p.validate_declared_symbol_name(data.name.loc, namespace_name)?;
 
         // Scan ahead for any variables inside this namespace. This must be done
         // ahead of time before visiting any statements inside the namespace

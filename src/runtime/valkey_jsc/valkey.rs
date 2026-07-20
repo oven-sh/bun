@@ -247,10 +247,10 @@ pub struct ValkeyClient {
     pub reply_scanner: protocol::ReplyScanner,
 
     /// In-flight commands, after the data has been written to the network socket
-    pub in_flight: command::promise::Queue,
+    pub in_flight: command::PromiseQueue,
 
     /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.
-    pub queue: command::entry::Queue,
+    pub queue: command::EntryQueue,
 
     // Connection parameters
     pub password: Box<[u8]>,
@@ -280,8 +280,8 @@ pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
-    in_flight: command::promise::Queue,
-    queue: command::entry::Queue,
+    in_flight: command::PromiseQueue,
+    queue: command::EntryQueue,
 }
 
 impl DeferredFailure {
@@ -324,8 +324,8 @@ impl ValkeyClient {
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
     pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
         let mut pending =
-            core::mem::replace(&mut self.in_flight, command::promise::Queue::init());
-        let mut commands = core::mem::replace(&mut self.queue, command::entry::Queue::init());
+            core::mem::replace(&mut self.in_flight, command::PromiseQueue::init());
+        let mut commands = core::mem::replace(&mut self.queue, command::EntryQueue::init());
 
         if let Some(global_this) = global_object_or_finalizing {
             let object = valkey_error_to_js(
@@ -473,13 +473,13 @@ impl ValkeyClient {
     /// unconditionally; the first error (if any) is returned afterwards so no
     /// promise is left forever-pending on an early `?` bailout.
     fn reject_all_pending_commands(
-        pending_ptr: &mut command::promise::Queue,
-        entries_ptr: &mut command::entry::Queue,
+        pending_ptr: &mut command::PromiseQueue,
+        entries_ptr: &mut command::EntryQueue,
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
     ) -> JsResult<()> {
-        let mut pending = core::mem::replace(pending_ptr, command::promise::Queue::init());
-        let mut entries = core::mem::replace(entries_ptr, command::entry::Queue::init());
+        let mut pending = core::mem::replace(pending_ptr, command::PromiseQueue::init());
+        let mut entries = core::mem::replace(entries_ptr, command::EntryQueue::init());
         let mut first_err: JsResult<()> = Ok(());
 
         while let Some(mut promise) = pending.read_item() {
@@ -509,9 +509,9 @@ impl ValkeyClient {
                 global_this: GlobalRef::from(vm.global()),
                 in_flight: core::mem::replace(
                     &mut self.in_flight,
-                    command::promise::Queue::init(),
+                    command::PromiseQueue::init(),
                 ),
-                queue: command::entry::Queue::init(),
+                queue: command::EntryQueue::init(),
             });
             deferred_failure.enqueue();
             return Ok(());
@@ -519,7 +519,7 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         let jsvalue = valkey_error_to_js(&global_this, message, err);
-        let mut entries = command::entry::Queue::init();
+        let mut entries = command::EntryQueue::init();
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
 
@@ -555,9 +555,9 @@ impl ValkeyClient {
                     global_this: GlobalRef::from(vm.global()),
                     in_flight: core::mem::replace(
                         &mut self.in_flight,
-                        command::promise::Queue::init(),
+                        command::PromiseQueue::init(),
                     ),
-                    queue: core::mem::replace(&mut self.queue, command::entry::Queue::init()),
+                    queue: core::mem::replace(&mut self.queue, command::EntryQueue::init()),
                 });
                 deferred_failure.enqueue();
             }
@@ -1214,7 +1214,7 @@ impl ValkeyClient {
     /// Test whether we are ready to run "normal" RESP commands, such as
     /// get/set, pub/sub, etc.
     fn connection_ready(&self) -> bool {
-        self.handshake == Handshake::Ready
+        self.status == Status::Connected && self.handshake == Handshake::Ready
     }
 
     fn mark_connected(&mut self, hello: &mut RESPValue) -> JsResult<()> {
@@ -1311,15 +1311,11 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        match self.status {
-            Status::Connecting | Status::Connected => {
-                if command.write(&mut self.writer()).is_err() {
-                    let global = self.global_object();
-                    let _ = promise.reject(&global, global.create_out_of_memory_error());
-                    return Ok(());
-                }
-            }
-            _ => unreachable!(),
+        debug_assert!(self.status == Status::Connected);
+        if command.write(&mut self.writer()).is_err() {
+            let global = self.global_object();
+            let _ = promise.reject(&global, global.create_out_of_memory_error());
+            return Ok(());
         }
 
         // Add to queue with command type

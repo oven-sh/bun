@@ -9954,6 +9954,7 @@ mod normalize_path_windows_tests {
 
     #[test]
     fn dos_device_names_resolve_to_nt_device() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let cwd = Fd::cwd();
         // Bare, mixed case, relative, absolute, forward-slash, drive-relative,
         // `\\?\`-prefixed (the prefix does not suppress device recognition
@@ -10018,6 +10019,7 @@ mod normalize_path_windows_tests {
 
     #[test]
     fn trailing_dots_and_spaces_stripped() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let cwd = Fd::cwd();
         // Bare relative with no `.` left after stripping is returned verbatim
         // for `NtCreateFile` against `RootDirectory`.

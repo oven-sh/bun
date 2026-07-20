@@ -357,9 +357,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         // Handle options.paths if provided
         JSC::JSValue pathsValue = JSC::jsUndefined();
         if (optionsValue.isObject()) {
-            pathsValue = optionsValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
+            pathsValue = optionsValue.getObject()->get(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            if (!pathsValue) pathsValue = JSC::jsUndefined();
         }
 
         JSC::EncodedJSValue result;
@@ -881,14 +880,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     // Matches `typeof options === "object"`, so a callable is not an options bag.
     if (optionsValue.isObject() && !optionsValue.isCallable()) {
         auto* options = optionsValue.getObject();
-        directoryValue = options->getIfPropertyExists(
-            globalObject, JSC::Identifier::fromString(vm, "directory"_s));
+        directoryValue = options->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (directoryValue.isEmpty()) directoryValue = JSC::jsUndefined();
         // Node reads `portable` before validating `directory`; the value is unused
         // here but a throwing getter still propagates.
-        options->getIfPropertyExists(
-            globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        options->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
         RETURN_IF_EXCEPTION(scope, {});
     }
 

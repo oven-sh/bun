@@ -56,6 +56,22 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     }
 }
 
+/// First path segment of a bare specifier ("@scope/name" keeps two),
+/// matching Node's ERR_MODULE_NOT_FOUND "Cannot find package '<name>'".
+fn esm_package_name(specifier: &[u8]) -> &[u8] {
+    let slash_after = |from: usize| {
+        specifier[from..]
+            .iter()
+            .position(|&b| b == b'/')
+            .map_or(specifier.len(), |i| from + i)
+    };
+    let mut end = slash_after(0);
+    if specifier.starts_with(b"@") && end < specifier.len() {
+        end = slash_after(end + 1);
+    }
+    &specifier[..end]
+}
+
 impl ResolveMessage {
     // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
     pub fn constructor(
@@ -325,9 +341,118 @@ impl ResolveMessage {
         ))
     }
 
+    /// Module-not-found for a runtime import kind whose `.message` /
+    /// `.requireStack` should match Node.js. Returns `(import_kind, specifier,
+    /// usable_referrer)`; `None` keeps the original Bun-formatted text.
+    fn node_error_shape(&self) -> Option<(ImportKind, &[u8], Option<&[u8]>)> {
+        let bun_ast::Metadata::Resolve(resolve) = &self.msg.metadata else {
+            return None;
+        };
+        match resolve.import_kind {
+            ImportKind::Require
+            | ImportKind::RequireResolve
+            | ImportKind::Stmt
+            | ImportKind::Dynamic => {}
+            _ => return None,
+        }
+        // Fallback paths tag every CrateError as `ModuleNotFound`, so gate on
+        // the formatted text rather than `resolve.err` to leave InvalidURL /
+        // InvalidDataURL / ENAMETOOLONG messages untouched.
+        let text: &[u8] = &self.msg.data.text;
+        if !(text.starts_with(b"Cannot find module '")
+            || text.starts_with(b"Cannot find package '"))
+        {
+            return None;
+        }
+        // `require.resolve('node:missing')` is a plain MODULE_NOT_FOUND in
+        // Node; every other kind reports ERR_UNKNOWN_BUILTIN_MODULE instead.
+        let specifier = resolve.specifier.slice(&self.msg.data.text);
+        if specifier.starts_with(b"node:") && resolve.import_kind != ImportKind::RequireResolve {
+            return None;
+        }
+        let referrer = self
+            .referrer
+            .as_deref()
+            .filter(|r| !r.is_empty() && *r != b"bun:main");
+        Some((resolve.import_kind, specifier, referrer))
+    }
+
+    /// Node's message for a module-not-found error, or `None` when the
+    /// original text should be kept.
+    fn node_message(&self) -> Option<Vec<u8>> {
+        use bstr::BStr;
+        let (kind, specifier, referrer) = self.node_error_shape()?;
+        let mut out = Vec::new();
+        match kind {
+            ImportKind::Require | ImportKind::RequireResolve => {
+                write!(&mut out, "Cannot find module '{}'", BStr::new(specifier)).ok();
+                if let Some(referrer) = referrer {
+                    write!(&mut out, "\nRequire stack:\n- {}", BStr::new(referrer)).ok();
+                }
+            }
+            ImportKind::Stmt | ImportKind::Dynamic => {
+                let referrer = referrer?;
+                if bun_resolver::is_package_path(specifier) {
+                    write!(
+                        &mut out,
+                        "Cannot find package '{}' imported from {}",
+                        BStr::new(esm_package_name(specifier)),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                } else {
+                    write!(
+                        &mut out,
+                        "Cannot find module '{}' imported from {}",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                }
+            }
+            _ => return None,
+        }
+        Some(out)
+    }
+
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if let Some(text) = this.node_message() {
+            return Ok(ZigString::init_utf8(&text).to_js(global));
+        }
         Ok(ZigString::init_utf8(&this.msg.data.text).to_js(global))
+    }
+
+    // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
+    // requiring files; Bun tracks only the direct referrer). CJS kinds only.
+    #[crate::host_fn(getter)]
+    pub fn get_require_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let Some((kind, _, referrer)) = this.node_error_shape() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        if !matches!(kind, ImportKind::Require | ImportKind::RequireResolve) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let mut entries: Vec<&[u8]> = Vec::new();
+        if let Some(r) = referrer {
+            entries.push(r);
+        }
+        JSValue::create_array_from_iter(global, entries.iter().copied(), |r| {
+            Ok(ZigString::init_utf8(r).to_js(global))
+        })
+    }
+
+    // A synthesized `name: message` header; Bun does not capture JS frames at
+    // module-resolution time, so there are no `at ...` lines.
+    #[crate::host_fn(getter)]
+    pub fn get_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"ResolveMessage: ");
+        match this.node_message() {
+            Some(text) => out.extend_from_slice(&text),
+            None => out.extend_from_slice(&this.msg.data.text),
+        }
+        Ok(ZigString::init_utf8(&out).to_js(global))
     }
 
     #[crate::host_fn(getter)]

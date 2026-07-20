@@ -149,6 +149,17 @@ export function requireResolve(
   id: string,
   options: { paths?: string[] } = {},
 ) {
+  if (typeof options === "object" && options !== null && options.paths !== undefined) {
+    const paths = options.paths;
+    if (!$isArray(paths)) {
+      throw $ERR_INVALID_ARG_VALUE("options.paths", paths);
+    }
+    for (let i = 0; i < paths.length; i++) {
+      if (typeof paths[i] !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("paths", "array of strings", paths);
+      }
+    }
+  }
   return $resolveSync(
     id,
     typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),

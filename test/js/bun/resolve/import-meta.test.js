@@ -73,7 +73,7 @@ it("Module.createRequire does not use file url as the referrer (err message chec
     expect(e.name).not.toBe("UnreachableError");
     expect(e.message).not.toInclude("file:///");
     expect(e.message).toInclude(`'whaaat'`);
-    expect(e.message).toInclude(`'` + import.meta.path + `'`);
+    expect(e.message).toInclude(import.meta.path);
   }
 });
 

@@ -2385,32 +2385,36 @@ my_config:
       expect(YAML.parse(input2)).toMatchSnapshot();
     });
 
-    test("handles YAML bombs", () => {
-      function buildTest(depth) {
-        const lines: string[] = [];
-        lines.push(`a0: &a0\n  k0: 0`);
-        for (let i = 1; i <= depth; i++) {
-          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
-          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+    test(
+      "handles YAML bombs",
+      () => {
+        function buildTest(depth) {
+          const lines: string[] = [];
+          lines.push(`a0: &a0\n  k0: 0`);
+          for (let i = 1; i <= depth; i++) {
+            const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+            lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+          }
+          lines.push(`root:\n  <<: *a${depth}`);
+          const input = lines.join("\n");
+
+          const expected: any = {};
+          for (let i = 0; i <= depth; i++) {
+            const record = {};
+            for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+            expected[`a${i}`] = record;
+          }
+          expected.root = { ...expected[`a${depth}`] };
+
+          return { input, expected };
         }
-        lines.push(`root:\n  <<: *a${depth}`);
-        const input = lines.join("\n");
 
-        const expected: any = {};
-        for (let i = 0; i <= depth; i++) {
-          const record = {};
-          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
-          expected[`a${i}`] = record;
-        }
-        expected.root = { ...expected[`a${depth}`] };
+        const { input, expected } = buildTest(24);
 
-        return { input, expected };
-      }
-
-      const { input, expected } = buildTest(24);
-
-      expect(YAML.parse(input)).toEqual(expected);
-    }, isDebug || isASAN ? 2000 : 100);
+        expect(YAML.parse(input)).toEqual(expected);
+      },
+      isDebug || isASAN ? 2000 : 100,
+    );
 
     describe("merge keys", () => {
       test("merge overrides", () => {

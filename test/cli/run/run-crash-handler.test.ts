@@ -139,15 +139,19 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
     ...noReportEnv,
     ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0:fast_unwind_on_fatal=1",
   };
+  // CI Linux runners set `ulimit -s unlimited`, so the main thread has no
+  // guard page and native recursion never faults. Bound the stack at exec
+  // time so both tests overflow deterministically.
+  const boundedStack = (argv: string[]) => ["/bin/sh", "-c", `ulimit -s 8192 && exec "$@"`, "--", ...argv];
 
   test("on the main thread", async () => {
     await using proc = Bun.spawn({
-      cmd: [
+      cmd: boundedStack([
         bunExe(),
         "--debug-crash-handler-use-trace-string",
         "-e",
         `require("bun:internal-for-testing").crash_handler.stackOverflow();`,
-      ],
+      ]),
       env: overflowEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -171,7 +175,7 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
         `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "entry.ts"],
+      cmd: boundedStack([bunExe(), "--debug-crash-handler-use-trace-string", "entry.ts"]),
       env: overflowEnv,
       cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],

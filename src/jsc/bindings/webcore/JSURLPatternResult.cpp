@@ -88,7 +88,7 @@ static JSC::JSValue convertURLPatternInputToJS(JSC::JSGlobalObject& lexicalGloba
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    return WTF::switchOn(input, [&](const String& str) -> JSValue { return toJS<IDLUSVString>(lexicalGlobalObject, throwScope, str); }, [&](const URLPatternInit& init) -> JSValue { return convertDictionaryToJS(lexicalGlobalObject, globalObject, init); });
+    RELEASE_AND_RETURN(throwScope, WTF::switchOn(input, [&](const String& str) -> JSValue { return toJS<IDLUSVString>(lexicalGlobalObject, throwScope, str); }, [&](const URLPatternInit& init) -> JSValue { return convertDictionaryToJS(lexicalGlobalObject, globalObject, init); }));
 }
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const URLPatternComponentResult& dictionary)

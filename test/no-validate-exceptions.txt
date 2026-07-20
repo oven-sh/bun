@@ -156,9 +156,6 @@ vendor/elysia/test/ws/message.test.ts
 
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
 
-# TODO: WebCore fixes
-test/js/web/urlpattern/urlpattern.test.ts
-
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
 test/regression/issue/isArray-proxy-crash.test.ts

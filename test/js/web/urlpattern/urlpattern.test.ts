@@ -1,6 +1,7 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import testData from "./urlpatterntestdata.json";
 
 const kComponents = ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"] as const;
@@ -204,6 +205,30 @@ describe("URLPattern", () => {
 
     test("complex pathname with regexp", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
+    });
+  });
+
+  // convertURLPatternInputToJS calls convertDictionaryToJS (which has its own throw scope) when the
+  // exec() input is a dictionary, and must release its scope so the caller owns the check.
+  // BUN_JSC_validateExceptionChecks=1 aborts the child if the scope is left unchecked.
+  test("exec() with a dictionary input under validateExceptionChecks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = new URLPattern({ pathname: "/foo" }).exec({ pathname: "/foo" }); console.log(JSON.stringify(r.inputs));`,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Combined assertion so the JSC exception-check failure on stderr appears in the diff.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: '[{"pathname":"/foo"}]\n',
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
     });
   });
 });

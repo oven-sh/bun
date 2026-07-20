@@ -624,6 +624,8 @@ pub(crate) fn is_exiting() -> bool {
 // args and are `noreturn`/kernel-validated — no memory-safety preconditions,
 // so `safe fn` discharges the link-time proof and the call sites are plain
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
+// The lint fires on the `safe` annotation only; the ABI matches std's.
+#[allow(suspicious_runtime_symbol_definitions)]
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;

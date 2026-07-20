@@ -1029,7 +1029,9 @@ async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>
     leafPid,
     async reap() {
       if (leafPid > 0 && isAlive(leafPid)) {
-        try { process.kill(leafPid, "SIGKILL"); } catch {}
+        try {
+          process.kill(leafPid, "SIGKILL");
+        } catch {}
         await waitUntilDead(leafPid, 2000);
       }
       dir[Symbol.dispose]();

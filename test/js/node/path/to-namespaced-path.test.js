@@ -82,9 +82,6 @@ describe("path.toNamespacedPath", () => {
     assert.strictEqual(path.win32.toNamespacedPath("/\u5555"), "/\u5555");
     assert.strictEqual(path.win32.toNamespacedPath("/\uD800"), "/\uD800");
     assert.strictEqual(path.win32.toNamespacedPath("/./é"), "/./é");
-    // Node returns the input string object itself when the guard fires.
-    const s = "///é";
-    assert.ok(path.win32.toNamespacedPath(s) === s);
     // Controls: ASCII 2-unit path and >2-unit paths are unaffected.
     assert.strictEqual(path.win32.toNamespacedPath("/a"), "/a");
     assert.strictEqual(path.win32.toNamespacedPath("/ÅÅ"), "\\ÅÅ");

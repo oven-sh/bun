@@ -189,8 +189,7 @@ mod posix {
         #[cfg(target_os = "macos")]
         let mut token: core::ffi::c_int = 0;
         #[cfg(target_os = "macos")]
-        let Some(fd) = open_watch_fd(&mut token)
-        else {
+        let Some(fd) = open_watch_fd(&mut token) else {
             return;
         };
         #[cfg(not(target_os = "macos"))]

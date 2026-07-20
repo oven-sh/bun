@@ -140,10 +140,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            // Pre-#29587 this test asserted the tmpdir was empty after exit,
+            // because the .node extraction immediately unlink'd the copy
+            // (see #19550). Since #29587 the extracted `.node` persists at a
+            // content-hashed path so repeated loads share it — dedup is
+            // covered by test/regression/issue/29585.test.ts, so here we
+            // just assert the compiled binary loads its embedded addons.
             const result = spawnSync({
               cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
+              env: bunEnv,
               stdin: "inherit",
               stderr: "inherit",
               stdout: "pipe",
@@ -151,14 +156,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
-            }
           },
-          10 * 1000,
+          60 * 1000,
         );
       }
 

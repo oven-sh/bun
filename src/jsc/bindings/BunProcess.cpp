@@ -384,9 +384,6 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-// "Fire and forget" wrapper around unlink for c usage that handles EINTR
-extern "C" void Bun__unlink(const char*, size_t);
-
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
@@ -460,22 +457,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #else
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
+#if OS(WINDOWS)
     bool deleteAfter = false;
+#endif
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
-            deleteAfter = !filename.startsWith("/proc/"_s);
+            // Pre-#29587, extraction wrote a fresh /tmp file per dlopen (see
+            // #19550), so we unlinked immediately after dlopen to avoid leaks.
+            // `resolveEmbeddedFile` now dedupes via a content-hashed path;
+            // deleting the file out from under that dedup would defeat the
+            // fix. Keep Windows' delete-on-reboot for hygiene (NTFS can't
+            // unlink an in-use file); POSIX leaves the tmpfile alone.
+#if OS(WINDOWS)
+            deleteAfter = true;
+#endif
         }
     }
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // For bun build --compile, we copy the .node file to a temp directory.
-    // It's best to delete it as soon as we can.
-    // https://github.com/oven-sh/bun/issues/19550
-    const auto tryToDeleteIfNecessary = [&]() {
 #if OS(WINDOWS)
+    const auto tryToDeleteIfNecessary = [&]() {
         if (deleteAfter) {
             // Only call it once
             deleteAfter = false;
@@ -499,13 +503,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 delete[] dupeZ;
             }
         }
-#else
-        if (deleteAfter) {
-            deleteAfter = false;
-            Bun__unlink(utf8.data(), utf8.length());
-        }
-#endif
     };
+#endif
 
     // Handle known yet-to-be-working in Bun
     {
@@ -537,8 +536,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
-
-    tryToDeleteIfNecessary();
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;

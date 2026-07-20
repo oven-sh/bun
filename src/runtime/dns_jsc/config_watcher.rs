@@ -84,20 +84,10 @@ mod posix {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_watch_fd() -> Option<Fd> {
-        use core::ffi::{c_char, c_int};
-        const IN_NONBLOCK: c_int = 0o4000;
-        const IN_CLOEXEC: c_int = 0o2000000;
-        const IN_MODIFY: u32 = 0x00000002;
-        const IN_MOVED_TO: u32 = 0x00000080;
-        const IN_CREATE: u32 = 0x00000100;
-        const IN_ONLYDIR: u32 = 0x01000000;
-        unsafe extern "C" {
-            fn inotify_init1(flags: c_int) -> c_int;
-            fn inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int;
-        }
+        use core::ffi::c_char;
+        use bun_sys::linux::{IN, inotify_add_watch, inotify_init1};
 
-        // SAFETY: FFI; both flags are valid.
-        let fd = unsafe { inotify_init1(IN_NONBLOCK | IN_CLOEXEC) };
+        let fd = inotify_init1(IN::NONBLOCK | IN::CLOEXEC);
         if fd < 0 {
             return None;
         }
@@ -111,8 +101,8 @@ mod posix {
                 }
                 _ => c"/etc".as_ptr(),
             };
-        // SAFETY: FFI; `dir` is NUL-terminated, `fd` is the live inotify instance.
-        if unsafe { inotify_add_watch(fd, dir, IN_CREATE | IN_MODIFY | IN_MOVED_TO | IN_ONLYDIR) }
+        // SAFETY: `dir` is NUL-terminated, `fd` is the live inotify instance.
+        if unsafe { inotify_add_watch(fd, dir, IN::CREATE | IN::MODIFY | IN::MOVED_TO | IN::ONLYDIR) }
             < 0
         {
             let _ = bun_sys::close(Fd::from_native(fd));
@@ -143,12 +133,9 @@ mod posix {
         if rc != NOTIFY_STATUS_OK || fd < 0 {
             return None;
         }
-        // SAFETY: FFI; `fd` is the live notify fd.
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
-        Some(Fd::from_native(fd))
+        let fd = Fd::from_native(fd);
+        let _ = bun_sys::set_nonblocking(fd);
+        Some(fd)
     }
 
     pub(super) fn install(vm: &VirtualMachine) {

@@ -47,6 +47,38 @@ test("dns resolver re-initializes after a config-change signal", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("config-change signal preserves setLocalAddress binding", async () => {
+  // setLocalAddress writes directly onto the c-ares channel; a config-change
+  // recreate must replay it so subsequent queries don't silently rebind to
+  // the default interface. There's no public getter, so we assert the
+  // recreate path with a stashed local address doesn't throw.
+  const src = `
+    const dns = require("node:dns");
+    const { dnsConfigChanged, dnsConfigGeneration } = require("bun:internal-for-testing");
+
+    const r = new dns.Resolver();
+    r.setLocalAddress("127.0.0.1");
+    void r.getServers();
+
+    const g0 = dnsConfigGeneration();
+    dnsConfigChanged();
+    if (dnsConfigGeneration() !== g0 + 1) throw new Error("generation did not advance");
+
+    void r.getServers();
+
+    console.log("PASS");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("PASS");
+  expect(exitCode).toBe(0);
+});
+
 test("config-change signal does not override user-set servers", async () => {
   const src = `
     const dns = require("node:dns");

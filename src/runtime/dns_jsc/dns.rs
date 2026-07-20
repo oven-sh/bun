@@ -3721,6 +3721,11 @@ pub struct Resolver {
     pub query_last_ok: Cell<bool>,
     /// Snapshot of `config_watcher::generation()` when `channel` was created.
     pub config_generation: Cell<u64>,
+    /// Last `setLocalAddress()` IPv4 (host order, 0 = unset); replayed after
+    /// `reset_channel()` so a config-change recreate doesn't drop the binding.
+    pub local_ip4: Cell<u32>,
+    /// Last `setLocalAddress()` IPv6 (all-zero = unset); see `local_ip4`.
+    pub local_ip6: Cell<[u8; 16]>,
 
     pub event_loop_timer: JsCell<EventLoopTimer>,
 
@@ -4082,6 +4087,8 @@ impl Resolver {
             is_servers_default: Cell::new(true),
             query_last_ok: Cell::new(true),
             config_generation: Cell::new(super::config_watcher::generation()),
+            local_ip4: Cell::new(0),
+            local_ip6: Cell::new([0u8; 16]),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::DNSResolver,
             )),
@@ -4787,6 +4794,7 @@ impl Resolver {
             self.config_generation
                 .set(super::config_watcher::generation());
             self.query_last_ok.set(true);
+            self.replay_local_address();
             super::config_watcher::install(self.vm());
         }
         // SAFETY: channel set by init() on success
@@ -4875,6 +4883,25 @@ impl Resolver {
             c_ares::ares_cancel(unsafe { &mut *channel });
             // SAFETY: `channel` is the live handle owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
+        }
+    }
+
+    /// Reapply `setLocalAddress()` bindings after the channel was (re)created;
+    /// `ares_set_local_ip4/ip6` write directly onto the channel, so a
+    /// `reset_channel()` would otherwise silently drop them.
+    fn replay_local_address(&self) {
+        let Some(channel) = self.channel.get() else {
+            return;
+        };
+        let ip4 = self.local_ip4.get();
+        if ip4 != 0 {
+            // SAFETY: `channel` is the live handle owned by this resolver.
+            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip4);
+        }
+        let ip6 = self.local_ip6.get();
+        if ip6 != [0u8; 16] {
+            // SAFETY: `channel` is live; `ip6` is the 16-byte in6_addr.
+            unsafe { c_ares::ares_set_local_ip6(channel, ip6.as_ptr()) };
         }
     }
 
@@ -5797,30 +5824,19 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_channel_local_addresses(
-            self.get_channel_or_error(global_this)?,
-            global_this,
-            callframe,
-        )
-    }
-
-    fn set_channel_local_addresses(
-        channel: *mut c_ares::Channel,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        let channel = self.get_channel_or_error(global_this)?;
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             return Err(global_this.throw_not_enough_arguments("setLocalAddress", 1, 0));
         }
 
-        let first_af = Self::set_channel_local_address(channel, global_this, arguments[0])?;
+        let first_af = self.set_channel_local_address(channel, global_this, arguments[0])?;
 
         if arguments.len() < 2 || arguments[1].is_undefined() {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let second_af = Self::set_channel_local_address(channel, global_this, arguments[1])?;
+        let second_af = self.set_channel_local_address(channel, global_this, arguments[1])?;
 
         if first_af != second_af {
             return Ok(JSValue::UNDEFINED);
@@ -5836,6 +5852,7 @@ impl Resolver {
     }
 
     fn set_channel_local_address(
+        &self,
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -5859,6 +5876,7 @@ impl Resolver {
         } == 1
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
+            self.local_ip4.set(ip);
             // SAFETY: `channel` is a live handle returned by `ares_init_options`.
             c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
             return Ok(c_ares::AF::INET);
@@ -5873,6 +5891,7 @@ impl Resolver {
             )
         } == 1
         {
+            self.local_ip6.set(addr);
             // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
             unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
             return Ok(c_ares::AF::INET6);

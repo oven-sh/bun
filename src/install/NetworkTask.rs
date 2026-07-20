@@ -89,11 +89,13 @@ pub struct NetworkTask {
     pub streaming_extract_task: *mut Task<'static>,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
-    /// `async_network_task_queue` — the extract Task published by
-    /// `TarballStream.finish()` owns the NetworkTask's lifetime instead
-    /// (its `resolve_tasks` handler returns it to the pool). Also read by
-    /// the main-thread fallback / retry paths in `run_tasks` to assert
-    /// the stream was never started.
+    /// `async_network_task_queue` — `TarballStream.finish()` owns the
+    /// NetworkTask's lifetime instead, and either publishes the extract
+    /// Task to `resolve_tasks` (whose handler returns the NetworkTask to
+    /// the pool) or, on a mid-stream transport failure, clears this flag
+    /// and hands the NetworkTask back via `async_network_task_queue` for
+    /// a re-download. The main-thread fallback / retry paths in
+    /// `run_tasks` assert the flag is clear.
     pub streaming_committed: bool,
     /// Backing store for the streaming signal the HTTP client polls.
     pub signal_store: http::signals::Store,
@@ -286,13 +288,14 @@ impl NetworkTask {
                     // this point: `on_chunk(…, true, …)` sets `closed` and
                     // schedules a drain that may reach `finish()` on a
                     // worker thread before we return here. `finish()`
-                    // frees `response_buffer`, publishes the extract Task
-                    // to `resolve_tasks`, and the main thread's processing
-                    // of that Task returns this NetworkTask to
-                    // `preallocated_network_tasks` (poisoning it under
-                    // ASAN). The NetworkTask is therefore *not* pushed to
-                    // `async_network_task_queue` here; the extract Task
-                    // owns its lifetime from now on.
+                    // frees `response_buffer` and publishes either the
+                    // extract Task to `resolve_tasks` (whose main-thread
+                    // handler returns this NetworkTask to
+                    // `preallocated_network_tasks`, poisoning it under
+                    // ASAN) or, on a mid-stream transport failure, this
+                    // NetworkTask back to `async_network_task_queue` for a
+                    // re-download. Either way `finish()` owns the hand-off;
+                    // nothing is pushed here.
                     return;
                 }
             } else if result.has_more {
@@ -929,9 +932,11 @@ impl NetworkTask {
         }
     }
 
-    /// Prepare this task for another HTTP attempt (used by retry logic when
-    /// streaming extraction never started). Keeps the stream allocation so the
-    /// retry can still benefit from streaming.
+    /// Prepare this task for another HTTP attempt (used by the download
+    /// retry logic in `run_tasks`). Keeps the stream allocation, when still
+    /// present, so the retry can still benefit from streaming; a committed
+    /// stream that failed was already consumed by `TarballStream::finish()`
+    /// and the caller re-arms a fresh one.
     pub fn reset_streaming_for_retry(&mut self) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.as_deref_mut() {

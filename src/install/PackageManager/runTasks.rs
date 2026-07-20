@@ -634,11 +634,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // touch `task.callback` (see `NetworkTask::reset_streaming_*`
                 // / `discard_unused_streaming_state`).
                 let extract = unsafe { &mut *extract_ptr };
-                // Streaming extraction never pushes its NetworkTask to
-                // `async_network_task_queue` once committed — the
-                // extract Task published by `TarballStream.finish()`
-                // owns its lifetime — so every `.extract` task that
-                // arrives here is taking the buffered path.
+                // Two ways to get here: streaming never committed (the
+                // extract Task published by `TarballStream.finish()` owns a
+                // committed task's lifetime), or `finish()` un-committed the
+                // task and pushed it back for a re-download after a
+                // mid-stream transport failure. Either way the flag is clear.
                 debug_assert!(!task.streaming_committed);
 
                 if !has_network_error && task.response.metadata.is_none() {
@@ -673,9 +673,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        // Streaming never committed (asserted above), so
-                        // the pre-allocated stream is safe to reuse for
-                        // the retry attempt.
+                        // If streaming never committed, the pre-allocated
+                        // stream is still present and safe to reuse for the
+                        // retry attempt; no-op on the stream otherwise.
                         task.reset_streaming_for_retry();
                         // A committed stream that hit a transport failure was
                         // consumed and dropped by `TarballStream::finish()`

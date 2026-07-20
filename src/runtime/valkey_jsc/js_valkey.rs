@@ -1133,6 +1133,7 @@ impl JSValkeyClient {
         let _exit = self.vm().enter_event_loop_scope();
 
         if let Some(this_value) = self.this_value.get().try_get() {
+            let value = core::mem::replace(value, protocol::RESPValue::Null);
             let hello_value: JSValue = 'js_hello: {
                 match protocol_jsc::resp_value_to_js(value, &global_object) {
                     Ok(v) => break 'js_hello v,
@@ -1214,14 +1215,16 @@ impl JSValkeyClient {
         }
 
         // Extract channel and message
-        let channel_value = match protocol_jsc::resp_value_to_js(&mut value[0], &global_object) {
+        let channel = core::mem::replace(&mut value[0], protocol::RESPValue::Null);
+        let channel_value = match protocol_jsc::resp_value_to_js(channel, &global_object) {
             Ok(v) => v,
             Err(e) => {
                 global_object.report_active_exception_as_unhandled(e);
                 return;
             }
         };
-        let message_value = match protocol_jsc::resp_value_to_js(&mut value[1], &global_object) {
+        let message = core::mem::replace(&mut value[1], protocol::RESPValue::Null);
+        let message_value = match protocol_jsc::resp_value_to_js(message, &global_object) {
             Ok(v) => v,
             Err(e) => {
                 global_object.report_active_exception_as_unhandled(e);

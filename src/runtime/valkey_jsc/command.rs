@@ -216,7 +216,7 @@ impl Promise {
     pub fn resolve(
         &mut self,
         global_object: &JSGlobalObject,
-        value: &mut protocol::RESPValue,
+        value: protocol::RESPValue,
     ) -> Result<(), jsc::JsTerminated> {
         let options = ToJSOptions {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),

@@ -707,6 +707,19 @@ impl ValkeyClient {
         self.flush_data();
     }
 
+    /// Shared tail of both `on_data` parse loops: hand a fully-parsed reply to
+    /// `handle_response`, then drive the next command if the connection is
+    /// still live. Returns `false` when the caller should stop looping.
+    fn dispatch_reply(&mut self, value: RESPValue) -> JsResult<bool> {
+        let mut value = value;
+        self.handle_response(&mut value)?;
+        if self.status == Status::Disconnected || self.flags.failed {
+            return Ok(false);
+        }
+        self.send_next_command();
+        Ok(true)
+    }
+
     /// Process data received from socket
     ///
     /// Caller refs / derefs.
@@ -759,7 +772,7 @@ impl ValkeyClient {
                         // The scanner verified a complete reply is buffered, so
                         // a parse failure here (including `InvalidResponse`) is
                         // a protocol error, not a short read.
-                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        self.fail(b"Failed to parse server response", err)?;
                         return Ok(());
                     }
                 };
@@ -767,7 +780,7 @@ impl ValkeyClient {
                 let bytes_consumed = reader.pos() - before_read_pos;
                 if bytes_consumed == 0 && !remaining_buffer.is_empty() {
                     self.fail(
-                        b"Parser consumed 0 bytes unexpectedly (buffer path)",
+                        b"Parser consumed 0 bytes unexpectedly",
                         RedisError::InvalidResponse,
                     )?;
                     return Ok(());
@@ -777,13 +790,9 @@ impl ValkeyClient {
                     .consume(u32::try_from(bytes_consumed).expect("int cast"));
                 self.reply_scanner.reset();
 
-                let mut value_to_handle = value; // Use temp var for defer
-                self.handle_response(&mut value_to_handle)?;
-
-                if self.status == Status::Disconnected || self.flags.failed {
+                if !self.dispatch_reply(value)? {
                     return Ok(());
                 }
-                self.send_next_command();
             }
             return Ok(()); // Finished processing buffered data for now
         }
@@ -810,11 +819,11 @@ impl ValkeyClient {
                         self.reply_scanner.reset();
                         self.read_buffer
                             .write(&current_data_slice[before_read_pos..])
-                            .expect("failed to write remaining stack data to buffer");
+                            .unwrap_or_oom();
                         return Ok(()); // Exit onData, next call will use the buffer path
                     } else {
                         // Any other error is fatal
-                        self.fail(b"Failed to read data (stack path)", err)?;
+                        self.fail(b"Failed to parse server response", err)?;
                         return Ok(());
                     }
                 }
@@ -825,7 +834,7 @@ impl ValkeyClient {
             if bytes_consumed == 0 {
                 // This case should ideally not happen if readValue succeeded and slice wasn't empty
                 self.fail(
-                    b"Parser consumed 0 bytes unexpectedly (stack path)",
+                    b"Parser consumed 0 bytes unexpectedly",
                     RedisError::InvalidResponse,
                 )?;
                 return Ok(());
@@ -834,18 +843,9 @@ impl ValkeyClient {
             // Advance the view into the stack data slice for the next iteration
             current_data_slice = &current_data_slice[bytes_consumed..];
 
-            // Handle the successfully parsed response
-            let mut value_to_handle = value; // Use temp var for defer
-            self.handle_response(&mut value_to_handle)?;
-
-            // Check connection status after handling
-            if self.status == Status::Disconnected || self.flags.failed {
+            if !self.dispatch_reply(value)? {
                 return Ok(());
             }
-
-            // After handling a response, try to send the next command
-            self.send_next_command();
-
             // Loop continues with the remainder of current_data_slice
         }
 
@@ -1097,6 +1097,7 @@ impl ValkeyClient {
 
         let _exit = self.vm.enter_event_loop_scope();
 
+        let value = core::mem::replace(value, RESPValue::Null);
         if matches!(value, RESPValue::Error(_)) {
             let js_err = match resp_value_to_js(value, &global_this) {
                 Ok(v) => v,
@@ -1262,9 +1263,8 @@ impl ValkeyClient {
     }
 
     pub fn on_writable(&mut self) {
-        self.ref_();
+        let _guard = self.parent().ref_scope();
         self.send_next_command();
-        self.deref();
     }
 
     fn enqueue(
@@ -1396,19 +1396,6 @@ impl ValkeyClient {
     /// Get a writer targeting the outgoing write buffer.
     pub(crate) fn writer(&mut self) -> WriteBufWriter<'_> {
         WriteBufWriter(&mut self.write_buffer)
-    }
-
-    /// Increment reference count
-    pub fn ref_(&mut self) {
-        self.parent().ref_();
-    }
-
-    pub fn deref(&mut self) {
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
-        // SAFETY: only called in balanced `ref_()`/`deref()` pairs
-        // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
-        // outer `&mut self` protector is never invalidated by deallocation.
-        unsafe { JSValkeyClient::deref(parent) };
     }
 
     #[inline]

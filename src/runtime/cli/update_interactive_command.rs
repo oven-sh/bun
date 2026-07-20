@@ -1311,11 +1311,7 @@ impl UpdateInteractiveCommand {
         } else if state.cursor >= state.viewport_start + state.viewport_height {
             // Cursor is below viewport - put it at the end of viewport
             if !state.packages.is_empty() {
-                let max_cursor = if state.packages.len() > 1 {
-                    state.packages.len() - 1
-                } else {
-                    0
-                };
+                let max_cursor = state.packages.len() - 1;
                 let viewport_end = state.viewport_start + state.viewport_height;
                 state.cursor = (viewport_end - 1).min(max_cursor);
             }
@@ -1368,11 +1364,7 @@ impl UpdateInteractiveCommand {
             } else {
                 0
             };
-            let desired_start = if state.viewport_height > context_below {
-                state.cursor - (state.viewport_height - context_below)
-            } else {
-                state.cursor
-            };
+            let desired_start = state.cursor - (state.viewport_height - context_below);
             state.viewport_start = desired_start.min(max_start);
         }
         // If cursor is near top of viewport, adjust to maintain context

@@ -3826,11 +3826,18 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     };
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut tmp_handle: HANDLE = ptr::null_mut();
+    // FILE_READ_ATTRIBUTES + FILE_WRITE_ATTRIBUTES let the legacy-disposition
+    // fallback query and clear FILE_ATTRIBUTE_READONLY on filesystems that
+    // reject FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE (FAT32/exFAT/SMB).
+    let mut have_write_attrs = true;
     // SAFETY: all out-params are valid
     let mut rc = unsafe {
         ntdll::NtCreateFile(
             &mut tmp_handle,
-            windows::SYNCHRONIZE | windows::DELETE,
+            windows::SYNCHRONIZE
+                | windows::DELETE
+                | windows::FILE_READ_ATTRIBUTES
+                | windows::FILE_WRITE_ATTRIBUTES,
             &mut attr,
             &mut io,
             ptr::null_mut(),
@@ -3842,6 +3849,27 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             0,
         )
     };
+    if rc == windows::ntstatus::ACCESS_DENIED {
+        // The DACL may grant DELETE but not FILE_WRITE_ATTRIBUTES; retry
+        // without it so the previous behavior is preserved.
+        have_write_attrs = false;
+        // SAFETY: all out-params are valid
+        rc = unsafe {
+            ntdll::NtCreateFile(
+                &mut tmp_handle,
+                windows::SYNCHRONIZE | windows::DELETE,
+                &mut attr,
+                &mut io,
+                ptr::null_mut(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                windows::FILE_OPEN,
+                create_options_flags,
+                ptr::null_mut(),
+                0,
+            )
+        };
+    }
     bun_sys::syslog!(
         "NtCreateFile({}, DELETE) = {:?}",
         bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
@@ -3867,7 +3895,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
     // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
     // like FAT32, we need to fallback to FileDispositionInformation if the usage of FileDispositionInformationEx gives
-    // us INVALID_PARAMETER.
+    // us INVALID_PARAMETER / INVALID_INFO_CLASS / NOT_SUPPORTED.
     // The same reasoning for win10_rs5 as in os.renameatW() applies (FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5).
     let mut need_fallback = true;
     // Deletion with posix semantics if the filesystem supports it.
@@ -3894,8 +3922,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     );
     match rc {
         x if x == windows::ntstatus::SUCCESS => return bun_sys::Result::success(),
-        // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
-        x if x == windows::ntstatus::INVALID_PARAMETER => {}
+        // The filesystem does not support FileDispositionInformationEx. Seen
+        // as INVALID_PARAMETER on FAT32/exFAT, INVALID_INFO_CLASS or
+        // NOT_SUPPORTED on SMB redirectors and some ReFS variants.
+        x if x == windows::ntstatus::INVALID_PARAMETER
+            || x == windows::ntstatus::INVALID_INFO_CLASS
+            || x == windows::ntstatus::NOT_SUPPORTED => {}
         // For all other statuses, fall down to the switch below to handle them.
         _ => need_fallback = false,
     }
@@ -3921,6 +3953,83 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
             rc
         );
+
+        if rc == windows::ntstatus::CANNOT_DELETE && have_write_attrs {
+            // The legacy disposition has no IGNORE_READONLY_ATTRIBUTE; clear
+            // FILE_ATTRIBUTE_READONLY ourselves and retry (libuv's
+            // `fs__unlink_rmdir` does the same).
+            let mut basic: windows::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+            // SAFETY: tmp_handle and io are valid
+            let qrc = unsafe {
+                ntdll::NtQueryInformationFile(
+                    tmp_handle,
+                    &mut io,
+                    core::ptr::from_mut(&mut basic).cast::<c_void>(),
+                    size_of::<windows::FILE_BASIC_INFORMATION>() as u32,
+                    windows::FileInformationClass::FileBasicInformation,
+                )
+            };
+            bun_sys::syslog!(
+                "NtQueryInformationFile({}, BASIC) = {:?} attrs={:#x}",
+                bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
+                qrc,
+                basic.FileAttributes
+            );
+            if qrc == windows::ntstatus::SUCCESS
+                && (basic.FileAttributes & windows::FILE_ATTRIBUTE_READONLY) != 0
+            {
+                let prev_attrs = basic.FileAttributes;
+                let mut new_attrs = prev_attrs & !windows::FILE_ATTRIBUTE_READONLY;
+                if new_attrs == 0 {
+                    new_attrs = windows::FILE_ATTRIBUTE_NORMAL;
+                }
+                // Zero time fields = "do not change" per wdm.h.
+                let mut set: windows::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+                set.FileAttributes = new_attrs;
+                // SAFETY: tmp_handle and io are valid
+                let src = unsafe {
+                    ntdll::NtSetInformationFile(
+                        tmp_handle,
+                        &mut io,
+                        core::ptr::from_mut(&mut set).cast::<c_void>(),
+                        size_of::<windows::FILE_BASIC_INFORMATION>() as u32,
+                        windows::FileInformationClass::FileBasicInformation,
+                    )
+                };
+                if src == windows::ntstatus::SUCCESS {
+                    // SAFETY: tmp_handle and io are valid
+                    rc = unsafe {
+                        ntdll::NtSetInformationFile(
+                            tmp_handle,
+                            &mut io,
+                            core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
+                            size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
+                            windows::FileInformationClass::FileDispositionInformation,
+                        )
+                    };
+                    bun_sys::syslog!(
+                        "NtSetInformationFile({}, DELETE retry) = {:?}",
+                        bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
+                        rc
+                    );
+                    if rc != windows::ntstatus::SUCCESS {
+                        // Restore the attribute we cleared so a failed delete
+                        // does not leave the file silently mutated.
+                        set.FileAttributes = prev_attrs;
+                        // SAFETY: tmp_handle and io are valid
+                        let _ = unsafe {
+                            ntdll::NtSetInformationFile(
+                                tmp_handle,
+                                &mut io,
+                                core::ptr::from_mut(&mut set).cast::<c_void>(),
+                                size_of::<windows::FILE_BASIC_INFORMATION>() as u32,
+                                windows::FileInformationClass::FileBasicInformation,
+                            )
+                        };
+                    }
+                }
+            }
+        }
     }
     // Another handle already set the delete disposition; the file is on its
     // way out, which is what the caller asked for. Checked here so it covers

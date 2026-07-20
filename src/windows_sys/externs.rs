@@ -901,6 +901,13 @@ impl NTSTATUS {
     pub const CANNOT_DELETE: NTSTATUS = NTSTATUS(0xC000_0121);
     pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
     pub const NOT_IMPLEMENTED: NTSTATUS = NTSTATUS(0xC000_0002);
+    /// `STATUS_INVALID_INFO_CLASS` — the specified information class is not a
+    /// valid information class for the specified object (driver does not
+    /// implement it). Maps to `ERROR_INVALID_FUNCTION`.
+    pub const INVALID_INFO_CLASS: NTSTATUS = NTSTATUS(0xC000_0003);
+    /// `STATUS_NOT_SUPPORTED` — the request is not supported. Returned by
+    /// filesystem/redirector drivers for info classes they do not implement.
+    pub const NOT_SUPPORTED: NTSTATUS = NTSTATUS(0xC000_00BB);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /

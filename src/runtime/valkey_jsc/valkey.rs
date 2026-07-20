@@ -15,6 +15,7 @@ use super::js_valkey::JSValkeyClient;
 use super::protocol_jsc::valkey_error_to_js;
 use super::command;
 use super::command::{Args, Command};
+use crate::webcore::{AutoFlusher, HasAutoFlusher};
 
 /// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
 /// `generate-classes.ts` resolves the native backing struct to
@@ -367,17 +368,11 @@ impl ValkeyClient {
 
     // ** Auto-pipelining **
     fn register_auto_flusher(&mut self) {
-        if !self.auto_flusher.registered.get() {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, self.vm);
-            self.auto_flusher.registered.set(true);
-        }
+        AutoFlusher::register_deferred_microtask_with_type::<Self>(self, self.vm);
     }
 
     fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered.get() {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, self.vm);
-            self.auto_flusher.registered.set(false);
-        }
+        AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, self.vm);
     }
 
     // Drain auto-pipelined commands
@@ -395,9 +390,8 @@ impl ValkeyClient {
 
         // We compute the count first, then drain by `read_item`.
         let pipelineable_count: usize = {
-            let to_process = self.queue.readable_slice(0);
             let mut total: usize = 0;
-            for command in to_process {
+            for command in command::iter_entries(&self.queue) {
                 if !command
                     .promise
                     .meta
@@ -636,12 +630,13 @@ impl ValkeyClient {
         // Decide the outcome first. `fail()` / `reject_in_flight_commands()` may
         // return Err, but the parent callback that releases connect()'s
         // socket-ref must run regardless or the `JSValkeyClient` leaks.
-        let will_reconnect = !self.flags.is_manually_closed
-            && self.flags.enable_auto_reconnect
-            && {
-                self.retry_attempts += 1;
-                self.retry_attempts <= self.max_retries
-            };
+        let auto_reconnect = !self.flags.is_manually_closed && self.flags.enable_auto_reconnect;
+        let will_reconnect = if auto_reconnect {
+            self.retry_attempts += 1;
+            self.retry_attempts <= self.max_retries
+        } else {
+            false
+        };
 
         let fail_result: JsResult<()> = if will_reconnect {
             debug!(
@@ -652,7 +647,7 @@ impl ValkeyClient {
             self.handshake = Handshake::AwaitingHello;
             self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)
         } else {
-            let msg: &[u8] = if self.flags.is_manually_closed || !self.flags.enable_auto_reconnect {
+            let msg: &[u8] = if !auto_reconnect {
                 debug!("skip reconnecting (manually closed or auto-reconnect disabled)");
                 b"Connection closed"
             } else {
@@ -1280,16 +1275,12 @@ impl ValkeyClient {
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
             && self.flags.enable_auto_pipelining;
 
-        if
-        // If there are any pending commands, queue this one
-        self.queue.readable_length() > 0
-            // With auto pipelining, we can accept commands regardless of in_flight commands
-            || (!can_pipeline && self.in_flight.readable_length() > 0)
-            // We need authentication before processing commands
-            || !self.connection_ready()
-            // If can pipeline, we can accept commands regardless of in_flight commands
-            || can_pipeline
-        {
+        let write_now = !can_pipeline
+            && self.connection_ready()
+            && self.queue.readable_length() == 0
+            && self.in_flight.readable_length() == 0;
+
+        if !write_now {
             // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
             let entry = command::Entry::create(command, promise)?;
             self.queue
@@ -1402,9 +1393,6 @@ impl ValkeyClient {
         self.parent().global_object
     }
 }
-
-// Auto-pipelining
-use crate::webcore::{AutoFlusher, HasAutoFlusher};
 
 impl HasAutoFlusher for ValkeyClient {
     #[inline]

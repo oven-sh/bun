@@ -1649,6 +1649,7 @@ impl JSValkeyClient {
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
+        let mut inserted_channels: Vec<JSValue> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
@@ -1676,15 +1677,12 @@ impl JSValkeyClient {
 
                 // What we do here is add our receive handler. Notice that this doesn't really do anything until the
                 // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // This is less-than-ideal, still, because this assumes a happy path. What happens if
-                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                // handler.
                 this._subscription_ctx.get().upsert_receive_handler(
                     global,
                     channel_arg,
                     handler_callback,
                 )?;
+                inserted_channels.push(channel_arg);
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -1698,6 +1696,7 @@ impl JSValkeyClient {
                 channel_or_many,
                 handler_callback,
             )?;
+            inserted_channels.push(channel_or_many);
         } else {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
@@ -1714,10 +1713,11 @@ impl JSValkeyClient {
         let promise = match this.send(global, frame.this(), &command) {
             Ok(p) => p,
             Err(err) => {
-                // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this._subscription_ctx
-                    .get()
-                    .clear_all_receive_handlers(global)?;
+                for ch in &inserted_channels {
+                    this._subscription_ctx
+                        .get()
+                        .clear_receive_handlers(global, *ch)?;
+                }
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
         };

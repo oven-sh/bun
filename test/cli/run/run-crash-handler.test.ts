@@ -133,9 +133,7 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
   // diagnostic stays in charge; the handler chain is WTF -> ASAN there. Either
   // way the process must emit a diagnostic rather than dying silently.
   const expectCrashDiagnostic = (stderr: string) => {
-    const patterns = isASAN
-      ? [/AddressSanitizer:.*stack-overflow/]
-      : [/Segmentation fault at address/, /bun\.report/];
+    const patterns = isASAN ? [/AddressSanitizer:.*stack-overflow/] : [/Segmentation fault at address/, /bun\.report/];
     for (const p of patterns) expect(stderr).toMatch(p);
   };
   // Skip llvm-symbolizer in the child; the unwinder walks hundreds of
@@ -145,32 +143,26 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
     ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0:fast_unwind_on_fatal=1",
   };
 
-  test(
-    "on the main thread",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--debug-crash-handler-use-trace-string",
-          "-e",
-          `require("bun:internal-for-testing").crash_handler.stackOverflow();`,
-        ],
-        env: overflowEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expectCrashDiagnostic(stderr);
-      expect(stderr).not.toContain("unreachable");
-      expect(exitCode).not.toBe(0);
-    },
-    20_000,
-  );
+  test("on the main thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.stackOverflow();`,
+      ],
+      env: overflowEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expectCrashDiagnostic(stderr);
+    expect(stderr).not.toContain("unreachable");
+    expect(exitCode).not.toBe(0);
+  }, 20_000);
 
-  test(
-    "on a worker thread",
-    async () => {
-      using dir = tempDir("crash-handler-worker-stackoverflow", {
-        "entry.ts": `
+  test("on a worker thread", async () => {
+    using dir = tempDir("crash-handler-worker-stackoverflow", {
+      "entry.ts": `
           import { Worker, isMainThread } from "worker_threads";
           if (isMainThread) {
             const w = new Worker(new URL(import.meta.url));
@@ -180,20 +172,18 @@ describe.if(isPosix)("native stack overflow produces a crash report", () => {
             process.stderr.write("unreachable\\n");
           }
         `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "entry.ts"],
-        env: overflowEnv,
-        cwd: String(dir),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expectCrashDiagnostic(stderr);
-      expect(stderr).not.toContain("unreachable");
-      expect(exitCode).not.toBe(0);
-    },
-    20_000,
-  );
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "entry.ts"],
+      env: overflowEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expectCrashDiagnostic(stderr);
+    expect(stderr).not.toContain("unreachable");
+    expect(exitCode).not.toBe(0);
+  }, 20_000);
 });
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {

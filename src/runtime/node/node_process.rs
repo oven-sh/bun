@@ -444,7 +444,7 @@ mod _impl {
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
         let top_level_dir: &[u8] = fs.top_level_dir;
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         match Syscall::chdir_getcwd(slice, &mut cwd_buf[..]) {
             bun_sys::Result::Ok(into_cwd_len) => {
                 // When we update the cwd from JS, we have to update the bundler's version as well
@@ -482,15 +482,12 @@ mod _impl {
                 let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));
                 str_.transfer_to_js(global_object)
             }
-            bun_sys::Result::Err(e) if e.syscall == bun_sys::Tag::chdir => {
-                let e = e.with_path_dest(top_level_dir, slice.as_bytes());
-                Err(global_object.throw_value(e.to_js(global_object)))
-            }
             bun_sys::Result::Err(e) => {
-                // getcwd failed after a successful chdir: roll back to the
-                // previous top_level_dir so `process.cwd()` stays consistent.
-                let mut rollback = PathBuffer::uninit();
-                let _ = Syscall::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
+                let e = if e.syscall == bun_sys::Tag::chdir {
+                    e.with_path_dest(top_level_dir, slice.as_bytes())
+                } else {
+                    e
+                };
                 Err(global_object.throw_value(e.to_js(global_object)))
             }
         }

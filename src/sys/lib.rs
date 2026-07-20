@@ -9997,7 +9997,10 @@ mod normalize_path_windows_tests {
         assert_eq!(normalize(cwd, "\\\\.\\pipe\\Nul"), "\\??\\pipe\\Nul");
         assert_eq!(normalize(cwd, "\\\\.\\nul"), "\\??\\nul");
         assert_eq!(normalize_opts(cwd, "\\\\.\\nul", false), "\\\\.\\nul");
-        assert_eq!(normalize_opts(cwd, "\\\\.\\pipe\\com1", false), "\\\\.\\pipe\\com1");
+        assert_eq!(
+            normalize_opts(cwd, "\\\\.\\pipe\\com1", false),
+            "\\\\.\\pipe\\com1"
+        );
         for input in [
             "\\\\server\\share\\aux",
             "\\\\?\\UNC\\srv\\s\\nul",

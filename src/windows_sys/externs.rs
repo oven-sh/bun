@@ -339,10 +339,9 @@ pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
 pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 
-// Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate(tag)` == bit 29 set:
-// the reparse point names another filesystem entity (symlink, mount point).
-// Non-surrogate tags (e.g. `IO_REPARSE_TAG_APPEXECLINK`) are opaque and must
-// not be traversed.
+// Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
+// point names another filesystem entity (symlink, mount point). Non-surrogate
+// tags such as `IO_REPARSE_TAG_APPEXECLINK` are opaque and not traversed.
 pub const IO_REPARSE_TAG_SYMLINK: DWORD = 0xA000_000C;
 pub const IO_REPARSE_TAG_MOUNT_POINT: DWORD = 0xA000_0003;
 pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;

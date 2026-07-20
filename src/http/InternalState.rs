@@ -167,10 +167,6 @@ impl<'a> InternalState<'a> {
     }
 
     pub fn reset(&mut self) {
-        // allocator param dropped (global mimalloc).
-        self.compressed_body = MutableString::init_empty();
-        self.response_message_buffer = MutableString::init_empty();
-
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();

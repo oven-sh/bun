@@ -55,11 +55,9 @@ async function pausedClient(port: number): Promise<{ sock: net.Socket; initial: 
 }
 
 describe("BackPressure buffer", () => {
-  // >16KB sends take the direct us_socket_write2 path and then append() the
-  // unwritten tail into BackPressure; drain exercises erase() as a pure
-  // head-cursor bump. Winsock's loopback send() accepts the entire payload
-  // (100MB+ observed with the client paused), so this path never reaches
-  // BackPressure on Windows; the cork-overflow test below covers that platform.
+  // >16KB sends take the direct write2 path and append() the unwritten tail;
+  // drain exercises erase() as a head-cursor bump. Skipped on Windows: Winsock
+  // loopback accepts the full payload so BackPressure is never reached there.
   it.skipIf(isWindows)("delivers a large direct send byte-for-byte while draining", async () => {
     const SIZE = 8 * 1024 * 1024;
     const payload = patternBuffer(SIZE, 0xabcd);

@@ -454,8 +454,19 @@ impl StringOrBuffer {
             | JSType::BigUint64Array
             | JSType::DataView => {
                 let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                    match Buffer::from_js_pinned(global, value) {
+                        Some(buf) if buf.buffer.resizable && !buf.buffer.shared => {
+                            // pin() blocks transfer(), not resize(); a shrink
+                            // decommits pages the threadpool is still reading.
+                            let owned = buf.slice().to_vec();
+                            buf.buffer.unpin();
+                            global.vm().report_extra_memory(owned.len());
+                            *out = Self::EncodedSlice(ZigStringSlice::init_owned(owned));
+                            return Ok(true);
+                        }
+                        Some(buf) => buf,
+                        None => Buffer::from_array_buffer(global, value),
+                    }
                 } else {
                     Buffer::from_array_buffer(global, value)
                 };
@@ -525,8 +536,17 @@ impl StringOrBuffer {
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
             let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                match Buffer::from_js_pinned(global, value) {
+                    Some(buf) if buf.buffer.resizable && !buf.buffer.shared => {
+                        let owned = buf.slice().to_vec();
+                        buf.buffer.unpin();
+                        global.vm().report_extra_memory(owned.len());
+                        *out = Self::EncodedSlice(ZigStringSlice::init_owned(owned));
+                        return Ok(true);
+                    }
+                    Some(buf) => buf,
+                    None => Buffer::from_array_buffer(global, value),
+                }
             } else {
                 Buffer::from_array_buffer(global, value)
             };

@@ -403,6 +403,12 @@ function processChunk(self, chunk, flushFlag, cb) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
 
+  // A resizable ArrayBuffer can shrink while the threadpool reads it; copy once so
+  // this chunk and any continuation writes in processCallback see stable bytes.
+  if (chunk.buffer?.resizable) {
+    chunk = Buffer.from(chunk);
+  }
+
   handle.buffer = chunk;
   handle.cb = cb;
   handle.availOutBefore = self._chunkSize - self._outOffset;

@@ -498,7 +498,39 @@ impl JSValkeyClient {
         NotSubscriber,
         CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING
     );
-    cmd_key_value!(expire, "expire", "EXPIRE", "key", "seconds", NotSubscriber);
+    // Hand-written (not `cmd_key_value!`) to keep the client-side
+    // `validate_integer_range` guard + default-0-when-undefined for `seconds`.
+    #[bun_jsc::host_fn(method)]
+    pub fn expire(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        require_not_subscriber(this, "expire")?;
+
+        let Some(key) = from_js(global, frame.argument(0))? else {
+            return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
+        };
+
+        let seconds = global.validate_integer_range::<i32>(
+            frame.argument(1),
+            0,
+            jsc::IntegerRange {
+                min: 0,
+                max: 2147483647,
+                field_name: b"seconds",
+                ..Default::default()
+            },
+        )?;
+
+        let mut int_buf = bun_core::fmt::ItoaBuf::new();
+        let seconds_slice = bun_core::fmt::itoa(&mut int_buf, seconds);
+        send_cmd(
+            this,
+            global,
+            b"EXPIRE",
+            CommandArgs::Raw(&[key.slice(), seconds_slice]),
+            CommandMeta::default(),
+            "Failed to send EXPIRE command",
+        )
+    }
+
     cmd_key!(ttl, "ttl", "TTL", "key", NotSubscriber);
 
     // Implement srem (remove value from a set)

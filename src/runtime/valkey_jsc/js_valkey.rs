@@ -1141,14 +1141,9 @@ impl JSValkeyClient {
         debug_assert!(self.this_value.get().is_strong());
 
         let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: `p` was `self.as_ctx_ptr()` at guard creation; the caller
-            // holds an intrusive ref across this scope so `*p` is live here.
-            unsafe {
-                (*p).client_mut().on_writable();
-                (*p).update_poll_ref();
-            }
-        });
+        // SAFETY: `p` was `self.as_ctx_ptr()` at guard creation; the caller
+        // holds an intrusive ref across this scope so `*p` is live here.
+        let _defer = scopeguard::guard(self_ptr, |p| unsafe { (*p).flush_and_update_poll_ref() });
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
 
@@ -1196,9 +1191,7 @@ impl JSValkeyClient {
     /// `SubscriptionCtx` will invoke this to communicate that it has added a new listener.
     pub fn on_new_subscription_callback_insert(&self) {
         let _guard = self.ref_scope();
-
-        self.client_mut().on_writable();
-        self.update_poll_ref();
+        self.flush_and_update_poll_ref();
     }
 
     pub fn on_valkey_subscribe(&self) {
@@ -1206,17 +1199,14 @@ impl JSValkeyClient {
         debug_assert!(self.this_value.get().is_strong());
 
         let _guard = self.ref_scope();
-
-        self.client_mut().on_writable();
-        self.update_poll_ref();
+        self.flush_and_update_poll_ref();
     }
 
     pub fn on_valkey_unsubscribe(&self) {
         debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
-        self.client_mut().on_writable();
-        self.update_poll_ref();
+        self.flush_and_update_poll_ref();
     }
 
     pub fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) {
@@ -1262,8 +1252,7 @@ impl JSValkeyClient {
             return;
         }
 
-        self.client_mut().on_writable();
-        self.update_poll_ref();
+        self.flush_and_update_poll_ref();
     }
 
     // Callback for when Valkey client needs to reconnect
@@ -1628,6 +1617,13 @@ impl JSValkeyClient {
         // borrow above has ended, and `this` is the original raw pointer with
         // its Box-derived write provenance intact.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+
+    /// Flush any buffered outbound writes, then re-evaluate event-loop keep-alive.
+    #[inline]
+    fn flush_and_update_poll_ref(&self) {
+        self.client_mut().on_writable();
+        self.update_poll_ref();
     }
 
     /// Keep the event loop alive, or don't keep it alive

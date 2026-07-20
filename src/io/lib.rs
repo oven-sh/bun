@@ -321,8 +321,6 @@ bun_dispatch::link_interface! {
     }
 }
 
-pub type EventLoopKind = EventLoopCtxKind;
-
 impl EventLoopCtx {
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
@@ -665,9 +663,6 @@ pub use source::Source;
 pub enum Source {}
 
 pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
-/// Downstream alias (`BufferedReader` is sometimes referenced as
-/// `PipeReader`).
-pub type PipeReader = BufferedReader;
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

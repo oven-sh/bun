@@ -202,7 +202,6 @@ pub mod linker_context {
 // modules above.
 // ---------------------------------------------------------------------------
 
-pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
 /// See `chunk` module.
@@ -314,7 +313,6 @@ pub mod options {
 /// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
 /// live on `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
-pub use cache::Set as Cache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from

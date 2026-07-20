@@ -32,7 +32,6 @@ pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
-pub use guarded::Debug as DebugGuarded;
 pub use guarded::RawMutex;
 pub use guarded::{Guarded, GuardedBy, GuardedLock};
 pub use mutex::{Mutex, MutexGuard};

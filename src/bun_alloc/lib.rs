@@ -114,8 +114,6 @@ pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
     pub vtable: &'static AllocatorVTable,
 }
-/// Legacy alias for `AllocatorVTable`.
-pub type VTable = AllocatorVTable;
 
 // SAFETY: `ptr` is an opaque tag/context handle; the vtable is `&'static`.
 // Thread-safety of dispatch is the implementor's concern (mimalloc is
@@ -185,14 +183,8 @@ impl StdAllocator {
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
-//
-// `bumpalo::Bump` is kept as `Bump` for genuinely bump-only scratch (parser
-// node stores that are never resized and where the no-op `deallocate` is the
-// point).
 pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
-/// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
-pub type Bump = bumpalo::Bump;
 mod baby_vec;
 pub use baby_vec::BabyVec;
 /// Arena-backed `Vec` with `u32` length/capacity.
@@ -2025,7 +2017,6 @@ impl core::hash::Hasher for IdentityU64Hasher {
 type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
 
 pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
-pub type IndexMapManaged = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
 #[derive(Clone, Copy)]
 pub struct Result {

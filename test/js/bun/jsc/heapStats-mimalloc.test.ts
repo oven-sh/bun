@@ -82,17 +82,23 @@ describe("heapStats() mimalloc integration", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface stderr/exitCode before parsing so a subprocess crash reports the real diagnostic
+    // instead of a bare JSON SyntaxError.
+    expect({ stdout: stdout.trim() || null, stderr, exitCode }).toMatchObject({
+      stdout: expect.any(String),
+      exitCode: 0,
+    });
     const { stat, dump, binSum, theapsBefore, theaps } = JSON.parse(stdout);
     // The Worker allocates on its own thread; if that didn't create a new theap the assertion
     // below would be vacuous (only the caller's theap exists, which the old aggregate already
     // folded in). The static main theap is not counted, so before is 0 in practice.
     expect({ theapsBefore, theaps }).toSatisfy(v => v.theaps > v.theapsBefore);
-    // The live heap walk is ground truth. A small slack covers the few pages that can change
-    // between the two reads; before the fix the counter sat tens of pages below the walk here.
+    // The live heap walk is ground truth. Bracket the counter: the lower bound catches the
+    // pre-fix underreport (~-36 here), the upper bound catches a double-fold. Slack covers the
+    // few pages that can change between the two reads plus a concurrent merge-and-zero.
     expect(stat).toBeGreaterThanOrEqual(0);
-    expect({ stat, dump }).toSatisfy(v => v.stat >= v.dump - 5);
-    expect({ binSum, dump }).toSatisfy(v => v.binSum >= v.dump - 5);
-    expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    expect({ stat, dump }).toSatisfy(v => v.stat >= v.dump - 5 && v.stat <= v.dump + 10);
+    expect({ binSum, dump }).toSatisfy(v => v.binSum >= v.dump - 5 && v.binSum <= v.dump + 10);
   });
 
   test("dump reflects new heaps and allocations", () => {

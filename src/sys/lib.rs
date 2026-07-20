@@ -838,7 +838,6 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
             path,
             WindowsOpenDirOptions {
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         )
@@ -6483,7 +6482,6 @@ pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<F
         WindowsOpenDirOptions {
             iterable: true,
             can_rename_or_delete: false,
-            read_only: true,
             ..Default::default()
         },
     )
@@ -6514,7 +6512,6 @@ pub struct WindowsOpenDirOptions {
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
     pub op: WindowsOpenDirOp,
-    pub read_only: bool,
 }
 #[cfg(windows)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -6955,37 +6952,10 @@ pub fn open_dir_at_windows_nt_path(
     path: &bun_core::WStr,
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
-    let first = open_dir_at_windows_nt_path_impl(dir_fd, path, options);
-    // Plain opens request FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY; a read-only ACL
-    // grant (sandboxed trees, Program Files, RO shares) denies that. Retry
-    // read-only so creates fail at create time instead.
-    if let Err(ref e) = first {
-        if !options.read_only
-            && !options.can_rename_or_delete
-            && options.op == WindowsOpenDirOp::OnlyOpen
-            && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES)
-        {
-            return open_dir_at_windows_nt_path_impl(
-                dir_fd,
-                path,
-                WindowsOpenDirOptions {
-                    read_only: true,
-                    ..options
-                },
-            )
-            .or(first);
-        }
-    }
-    first
-}
-
-#[cfg(windows)]
-fn open_dir_at_windows_nt_path_impl(
-    dir_fd: Fd,
-    path: &bun_core::WStr,
-    options: WindowsOpenDirOptions,
-) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
+    // No FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY: child creates via RootDirectory
+    // check the directory's ACL, not this handle's access mask, so requesting
+    // them only narrows where this open is admitted.
     let base_flags = w::STANDARD_RIGHTS_READ
         | w::FILE_READ_ATTRIBUTES
         | w::FILE_READ_EA
@@ -7001,12 +6971,7 @@ fn open_dir_at_windows_nt_path_impl(
     } else {
         0
     };
-    let read_only_flag: u32 = if options.read_only {
-        0
-    } else {
-        w::FILE_ADD_FILE | w::FILE_ADD_SUBDIRECTORY
-    };
-    let flags = iterable_flag | base_flags | rename_flag | read_only_flag;
+    let flags = iterable_flag | base_flags | rename_flag;
     let open_reparse: u32 = if options.no_follow {
         w::FILE_OPEN_REPARSE_POINT
     } else {

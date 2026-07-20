@@ -235,7 +235,6 @@ impl NodeModulesFolder {
                     self.path.as_slice(),
                     bun_sys::WindowsOpenDirOptions {
                         can_rename_or_delete: false,
-                        read_only: false,
                         ..Default::default()
                     },
                 )
@@ -266,7 +265,6 @@ impl NodeModulesFolder {
                         bun_sys::WindowsOpenDirOptions {
                             can_rename_or_delete: false,
                             op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
-                            read_only: false,
                             ..Default::default()
                         },
                     )

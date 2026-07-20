@@ -4436,7 +4436,6 @@ impl<'a> Resolver<'a> {
                             bun_sys::WindowsOpenDirOptions {
                                 iterable: true,
                                 no_follow: false,
-                                read_only: true,
                                 ..Default::default()
                             },
                         )

@@ -109,9 +109,6 @@ test.skipIf(!isWindows)("trailing dots and spaces on the final component are str
       fs.writeFileSync("roundtrip.", "hello");
       console.log("roundtrip", fs.readFileSync("roundtrip", "utf8"));
       fs.unlinkSync("roundtrip");
-      // A verbatim \\\\?\\ path keeps the trailing dot (opt-out).
-      const verbatim = "\\\\\\\\?\\\\" + path.join(process.cwd(), "keep.");
-      console.log("verbatim", entriesAfter("v", () => fs.writeFileSync(verbatim, "x")));
     `);
   expect({ stdout, stderr }).toEqual({
     stdout: [
@@ -122,13 +119,36 @@ test.skipIf(!isWindows)("trailing dots and spaces on the final component are str
       '"foo.bar." ["foo.bar"]',
       '".foo." [".foo"]',
       "roundtrip hello",
-      'verbatim ["keep."]',
       "",
     ].join("\n"),
     stderr: "",
   });
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(!isWindows)(
+  "a named pipe whose last path component is a reserved word is not redirected to the device",
+  async () => {
+    // `\\.\pipe\<name>` is in the LocalDevice namespace, where Win32 never
+    // applies DOS-device translation. A pipe name may contain backslashes, so
+    // the last separator-delimited component can be exactly `nul`; that must
+    // reach the pipe, not `\??\NUL`.
+    const { stdout, stderr, exitCode } = await runInTempDir(`
+      const net = require("net");
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-" + process.pid + "\\\\nul";
+      const server = net.createServer(s => { s.end("from-pipe"); });
+      await new Promise((res, rej) => server.listen(pipe, res).on("error", rej));
+      try {
+        // Reading the NUL device yields ""; reading the pipe yields the payload.
+        console.log(JSON.stringify(fs.readFileSync(pipe, "utf8")));
+      } finally {
+        await new Promise(r => server.close(r));
+      }
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: '"from-pipe"\n', stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.skipIf(!isWindows)("Bun.write to a bare reserved name writes to the device", async () => {
   const { stdout, stderr, exitCode } = await runInTempDir(`

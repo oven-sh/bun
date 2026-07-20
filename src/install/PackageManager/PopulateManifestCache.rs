@@ -50,6 +50,22 @@ fn start_manifest_task(
     dep: &Dependency,
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
+    // Same guard as `enqueue_dependency_with_main_and_success_fn`: reject
+    // before `scope_for_package_name` so a crafted lockfile name like
+    // `@priv%2fx` can't bypass `[install.scopes]`.
+    if !bun_core::strings::is_url_safe_package_name(pkg_name) {
+        if dep.behavior.is_required() {
+            manager.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Invalid package name \"{}\" (package names may only contain URL-friendly characters)",
+                    bstr::BStr::new(pkg_name),
+                ),
+            );
+        }
+        return Ok(());
+    }
     let task_id = Task::Id::for_manifest(pkg_name);
     // Read the *raw* OPTIONAL bit
     // — not `Behavior.isOptional()` (which is `optional && !peer`). For

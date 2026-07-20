@@ -222,6 +222,11 @@ pub fn copy_file_with_state(
 
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
+        // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
+        #[cfg(target_os = "freebsd")]
+        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
+        let _ = unsafe { libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+
         loop {
             {
                 let amt =

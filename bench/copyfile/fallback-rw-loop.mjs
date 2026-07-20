@@ -6,7 +6,12 @@ import { dlopen, FFIType } from "bun:ffi";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
+if (process.platform !== "linux") {
+  console.error("this bench targets the Linux read/write fallback; skipping");
+  process.exit(0);
+}
+
+const libc = dlopen("libc.so.6", {
   posix_fadvise: {
     args: [FFIType.i32, FFIType.i64, FFIType.i64, FFIType.i32],
     returns: FFIType.i32,

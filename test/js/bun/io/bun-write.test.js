@@ -515,8 +515,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           stderr: expect.stringMatching(/\[fadvise\] fd=\d+ advice=2/),
           stdout: "",
         });
-        expect(exitCode).toBe(0);
         expect(fs.readFileSync(join(String(dir), "dst.bin"))).toEqual(Buffer.alloc(128 * 1024, 0x41));
+        expect(exitCode).toBe(0);
       },
     );
   }

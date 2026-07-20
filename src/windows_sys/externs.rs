@@ -1468,6 +1468,8 @@ unsafe extern "system" {
 
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
+    pub fn SetEnvironmentVariableA(lpName: LPCSTR, lpValue: LPCSTR) -> BOOL;
+
     pub fn GetTempPathW(
         nBufferLength: DWORD, // [in]
         lpBuffer: LPCWSTR,    // [out]

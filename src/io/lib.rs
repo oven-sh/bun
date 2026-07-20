@@ -105,6 +105,12 @@ pub mod parent_death_watchdog {
         }
         // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
         unsafe {
+            // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
+            // ...])` self-arms its own Job and parent-watch (POSIX parity).
+            let _ = windows::SetEnvironmentVariableA(
+                c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr().cast(),
+                c"1".as_ptr().cast(),
+            );
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
             if !job.is_null() {
                 let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =

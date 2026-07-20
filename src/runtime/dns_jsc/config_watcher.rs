@@ -194,8 +194,8 @@ mod posix {
                     // The header is `{ wd:i32, mask:u32, cookie:u32, len:u32 }`;
                     // we only need `len` (bytes 12..16). The kernel never
                     // returns a partial event.
-                    let name_len = u32::from_ne_bytes(buf[off + 12..off + 16].try_into().unwrap())
-                        as usize;
+                    let name_len =
+                        u32::from_ne_bytes(buf[off + 12..off + 16].try_into().unwrap()) as usize;
                     let name_off = off + HDR;
                     let name = &buf[name_off..name_off + name_len];
                     let name = name.split(|&b| b == 0).next().unwrap_or(name);

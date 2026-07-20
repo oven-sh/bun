@@ -70,6 +70,16 @@ pub fn install(vm: &VirtualMachine) {
     let _ = vm;
 }
 
+/// Release the per-VM watcher (POSIX: unregister the FilePoll and close the
+/// inotify/notify fd) so a terminating Worker doesn't leak an inotify instance.
+/// Called from `close_dns_for_terminate()` alongside the c-ares channel
+/// teardown. No-op on Windows (the `NotifyIpInterfaceChange` registration is
+/// process-scoped).
+pub fn uninstall() {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    posix::uninstall();
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // POSIX backend: inotify (Linux) / notify(3) (macOS), polled via FilePoll
 // ────────────────────────────────────────────────────────────────────────────
@@ -81,6 +91,26 @@ mod posix {
     use bun_io::posix_event_loop::{FilePoll, Flags, Owner, poll_tag};
     use bun_jsc::virtual_machine::VirtualMachine;
     use bun_sys::Fd;
+
+    /// Stored type-erased in `RareData.dns_config_watcher`. Owns the FilePoll
+    /// slot and (on macOS) the notify(3) token so `uninstall()` can fully
+    /// release the OS resource.
+    struct Watcher {
+        poll: NonNull<FilePoll>,
+        #[cfg(target_os = "macos")]
+        token: core::ffi::c_int,
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        fn notify_register_file_descriptor(
+            name: *const core::ffi::c_char,
+            fd: *mut core::ffi::c_int,
+            flags: core::ffi::c_int,
+            token: *mut core::ffi::c_int,
+        ) -> u32;
+        fn notify_cancel(token: core::ffi::c_int) -> u32;
+    }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_watch_fd() -> Option<Fd> {
@@ -117,30 +147,35 @@ mod posix {
     }
 
     #[cfg(target_os = "macos")]
-    fn open_watch_fd() -> Option<Fd> {
-        use core::ffi::{c_char, c_int};
+    fn open_watch_fd(token: &mut core::ffi::c_int) -> Option<Fd> {
         const NOTIFY_STATUS_OK: u32 = 0;
-        unsafe extern "C" {
-            fn notify_register_file_descriptor(
-                name: *const c_char,
-                fd: *mut c_int,
-                flags: c_int,
-                token: *mut c_int,
-            ) -> u32;
-        }
         // `dns_configuration_notify_key()` in SystemConfiguration has returned
         // this constant since 10.4; hardcoding it avoids a dlsym round-trip.
         let key = c"com.apple.system.SystemConfiguration.dns_configuration";
-        let mut fd: c_int = -1;
-        let mut token: c_int = 0;
+        let mut fd: core::ffi::c_int = -1;
         // SAFETY: FFI; out-params are stack locals, key is NUL-terminated.
-        let rc = unsafe { notify_register_file_descriptor(key.as_ptr(), &mut fd, 0, &mut token) };
+        let rc = unsafe { notify_register_file_descriptor(key.as_ptr(), &mut fd, 0, token) };
         if rc != NOTIFY_STATUS_OK || fd < 0 {
             return None;
         }
         let fd = Fd::from_native(fd);
         let _ = bun_sys::set_nonblocking(fd);
         Some(fd)
+    }
+
+    fn close_watch_fd(watcher: &Watcher, fd: Fd) {
+        #[cfg(target_os = "macos")]
+        {
+            // `notify_cancel` closes the fd itself.
+            // SAFETY: `token` is the live registration from `open_watch_fd`.
+            let _ = unsafe { notify_cancel(watcher.token) };
+            let _ = fd;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = watcher;
+            let _ = bun_sys::close(fd);
+        }
     }
 
     pub(super) fn install(vm: &VirtualMachine) {
@@ -151,6 +186,14 @@ mod posix {
         {
             return;
         }
+        #[cfg(target_os = "macos")]
+        let mut token: core::ffi::c_int = 0;
+        #[cfg(target_os = "macos")]
+        let Some(fd) = open_watch_fd(&mut token)
+        else {
+            return;
+        };
+        #[cfg(not(target_os = "macos"))]
         let Some(fd) = open_watch_fd() else {
             return;
         };
@@ -161,18 +204,41 @@ mod posix {
             Default::default(),
             Owner::new(poll_tag::DNS_CONFIG, NonNull::<()>::dangling().as_ptr()),
         );
+        let watcher = Box::new(Watcher {
+            // SAFETY: `FilePoll::init` never returns null.
+            poll: unsafe { NonNull::new_unchecked(poll) },
+            #[cfg(target_os = "macos")]
+            token,
+        });
         // SAFETY: `poll` is the fresh hive slot; `platform_event_loop` is the live uws loop.
         if unsafe { (*poll).register(ctx.platform_event_loop(), Flags::Readable, false) }.is_err() {
             // SAFETY: fresh hive slot never handed out.
             unsafe { (*poll).deinit() };
-            let _ = bun_sys::close(fd);
+            close_watch_fd(&watcher, fd);
             return;
         }
         // SAFETY: `poll` just successfully registered; exclusive on the JS thread.
         unsafe { (*poll).disable_keeping_process_alive(ctx) };
         *VirtualMachine::get_mut()
             .rare_data()
-            .dns_config_watcher_slot() = NonNull::new(poll.cast());
+            .dns_config_watcher_slot() = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+    }
+
+    pub(super) fn uninstall() {
+        let Some(raw) = VirtualMachine::get_mut()
+            .rare_data()
+            .dns_config_watcher_slot()
+            .take()
+        else {
+            return;
+        };
+        // SAFETY: slot is populated only by `install` with a `Box<Watcher>`.
+        let watcher = unsafe { bun_core::heap::take(raw.as_ptr().cast::<Watcher>()) };
+        // SAFETY: exclusive on the JS thread; `on_poll` never frees the poll.
+        let poll = unsafe { watcher.poll.as_ptr().as_mut().unwrap() };
+        let fd = poll.fd;
+        poll.deinit();
+        close_watch_fd(&watcher, fd);
     }
 
     /// `__bun_run_file_poll` dispatch target for `poll_tag::DNS_CONFIG`.

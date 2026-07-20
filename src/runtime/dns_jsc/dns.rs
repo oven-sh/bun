@@ -4787,12 +4787,14 @@ impl Resolver {
             self.ensure_servers();
         }
         if self.channel.get().is_none() {
+            // Snapshot before init: on Windows the watcher can bump GENERATION
+            // off-thread between init's config read and the store below.
+            let gen_before = super::config_watcher::generation();
             let opts = self.options.get();
             if let Some(err) = c_ares::Channel::init(self, opts) {
                 return ChannelResult::Err(err);
             }
-            self.config_generation
-                .set(super::config_watcher::generation());
+            self.config_generation.set(gen_before);
             self.query_last_ok.set(true);
             self.replay_local_address();
             super::config_watcher::install(self.vm());

@@ -7,8 +7,18 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 // the boot-time servers. These tests exercise the config-change generation
 // counter and the OS watcher that drives it.
 
+async function run(src: string, extraEnv: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, ...extraEnv },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toEqual({ stdout: "PASS", exitCode: 0 });
+}
+
 test("dns resolver re-initializes after a config-change signal", async () => {
-  const src = `
+  await run(`
     const dns = require("node:dns");
     const { dnsConfigChanged, dnsConfigGeneration } = require("bun:internal-for-testing");
 
@@ -35,24 +45,14 @@ test("dns resolver re-initializes after a config-change signal", async () => {
     }
 
     console.log("PASS");
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("PASS");
-  expect(exitCode).toBe(0);
+  `);
 });
 
 test("config-change signal preserves setLocalAddress binding", async () => {
   // setLocalAddress writes directly onto the c-ares channel; a config-change
-  // recreate must replay it so subsequent queries don't silently rebind to
-  // the default interface. There's no public getter, so we assert the
-  // recreate path with a stashed local address doesn't throw.
-  const src = `
+  // recreate must replay it. No public getter exists, so assert the recreate
+  // path with a stashed local address doesn't throw.
+  await run(`
     const dns = require("node:dns");
     const { dnsConfigChanged, dnsConfigGeneration } = require("bun:internal-for-testing");
 
@@ -67,20 +67,11 @@ test("config-change signal preserves setLocalAddress binding", async () => {
     void r.getServers();
 
     console.log("PASS");
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("PASS");
-  expect(exitCode).toBe(0);
+  `);
 });
 
 test("config-change signal does not override user-set servers", async () => {
-  const src = `
+  await run(`
     const dns = require("node:dns");
     const { dnsConfigChanged } = require("bun:internal-for-testing");
 
@@ -105,23 +96,15 @@ test("config-change signal does not override user-set servers", async () => {
     void r.getServers(); // recreate path must not throw
 
     console.log("PASS");
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("PASS");
-  expect(exitCode).toBe(0);
+  `);
 });
 
 test.skipIf(!isLinux)("inotify watcher fires on resolv.conf change", async () => {
   using dir = tempDir("dns-config-watch", {
     "resolv.conf": "nameserver 127.0.0.1\n",
   });
-  const src = `
+  await run(
+    `
     const dns = require("node:dns");
     const { dnsConfigGeneration } = require("bun:internal-for-testing");
     const { writeFileSync } = require("node:fs");
@@ -140,18 +123,11 @@ test.skipIf(!isLinux)("inotify watcher fires on resolv.conf change", async () =>
       if (Date.now() > deadline) {
         throw new Error("inotify watcher did not fire within 5s");
       }
-      await new Promise(r => setTimeout(r, 50));
+      await Bun.sleep(0);
     }
 
     console.log("PASS");
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: { ...bunEnv, BUN_DNS_CONFIG_WATCH_DIR: String(dir), WATCH_DIR: String(dir) },
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("PASS");
-  expect(exitCode).toBe(0);
+  `,
+    { BUN_DNS_CONFIG_WATCH_DIR: String(dir), WATCH_DIR: String(dir) },
+  );
 });

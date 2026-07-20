@@ -1634,6 +1634,7 @@ fn close_dns_for_terminate() {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
     }
+    crate::dns_jsc::config_watcher::uninstall();
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {

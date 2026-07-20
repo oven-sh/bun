@@ -632,7 +632,7 @@ impl ValkeyClient {
         if self.flags.is_manually_closed {
             debug!("skip reconnecting since the connection is manually closed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
+            self.parent().on_valkey_close()?;
             return Ok(());
         }
 
@@ -640,7 +640,7 @@ impl ValkeyClient {
         if !self.flags.enable_auto_reconnect {
             debug!("skip reconnecting since auto reconnect is disabled");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
+            self.parent().on_valkey_close()?;
             return Ok(());
         }
 
@@ -654,7 +654,7 @@ impl ValkeyClient {
                 b"Max reconnection attempts reached",
                 RedisError::ConnectionClosed,
             )?;
-            self.on_valkey_close()?;
+            self.parent().on_valkey_close()?;
             return Ok(());
         }
 
@@ -669,7 +669,7 @@ impl ValkeyClient {
         self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
 
         // Signal reconnect timer should be started
-        self.on_valkey_reconnect();
+        self.parent().on_valkey_reconnect();
         Ok(())
     }
 
@@ -875,7 +875,7 @@ impl ValkeyClient {
         let sub_count = p
             ._subscription_ctx
             .get()
-            .channels_subscribed_to_count(&global_this)?;
+            .channels_subscribed_to_count(&global_this);
 
         if kind.is_message() {
             // RESP3 `pmessage` data is [pattern, channel, payload]; skip the
@@ -888,12 +888,12 @@ impl ValkeyClient {
                 } else {
                     &mut push.data
                 };
-            self.on_valkey_message(data);
+            self.parent().on_valkey_message(data);
             return Ok(());
         }
         if kind.is_subscribe_ack() {
             p.add_subscription();
-            self.on_valkey_subscribe();
+            self.parent().on_valkey_subscribe();
 
             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
@@ -905,7 +905,7 @@ impl ValkeyClient {
             return Ok(());
         }
         debug_assert!(kind.is_unsubscribe_ack());
-        self.on_valkey_unsubscribe();
+        self.parent().on_valkey_unsubscribe();
         self.parent().remove_subscription();
 
         // For UNSUBSCRIBE responses, only resolve the promise if we have one
@@ -1229,7 +1229,7 @@ impl ValkeyClient {
         };
         self.flags.is_reconnecting = false;
         self.retry_attempts = 0;
-        self.on_valkey_connect(hello)
+        self.parent().on_valkey_connect(hello)
     }
 
     /// Process queued commands in the offline queue
@@ -1408,32 +1408,8 @@ impl ValkeyClient {
     }
 
     #[inline]
-    fn global_object(&mut self) -> GlobalRef {
+    fn global_object(&self) -> GlobalRef {
         self.parent().global_object
-    }
-
-    pub fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsResult<()> {
-        self.parent().on_valkey_connect(value)
-    }
-
-    pub fn on_valkey_subscribe(&mut self) {
-        self.parent().on_valkey_subscribe();
-    }
-
-    pub fn on_valkey_unsubscribe(&mut self) {
-        self.parent().on_valkey_unsubscribe();
-    }
-
-    pub fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
-        self.parent().on_valkey_message(value);
-    }
-
-    pub fn on_valkey_reconnect(&mut self) {
-        self.parent().on_valkey_reconnect();
-    }
-
-    pub fn on_valkey_close(&mut self) -> JsResult<()> {
-        self.parent().on_valkey_close()
     }
 }
 

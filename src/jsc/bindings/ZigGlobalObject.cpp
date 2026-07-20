@@ -1484,6 +1484,40 @@ extern "C" JSC::EncodedJSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject*
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
+// Returns a new Uint8Array view over the first `length` bytes of `encodedView`
+// (an ArrayBufferView or ArrayBuffer), sharing its backing store; a view's
+// byteOffset is preserved. If `length` covers the whole view and it is already
+// a Uint8Array, the original value is returned unchanged.
+extern "C" JSC::EncodedJSValue Bun__createUint8ArraySubarray(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedView, size_t length)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedView);
+    RefPtr<JSC::ArrayBuffer> buffer;
+    size_t byteOffset = 0;
+    size_t byteLength = 0;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        byteOffset = view->byteOffset();
+        byteLength = view->byteLength();
+        if (length >= byteLength && view->type() == JSC::JSType::Uint8ArrayType)
+            return encodedView;
+        buffer = view->possiblySharedBuffer();
+    } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        buffer = jsBuffer->impl();
+        byteLength = buffer ? buffer->byteLength() : 0;
+    }
+    if (!buffer) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    if (length > byteLength)
+        length = byteLength;
+    auto* structure = globalObject->typedArrayStructure(JSC::TypeUint8, buffer->isResizableOrGrowableShared());
+    auto* result = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), byteOffset, length);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
 extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
 {
     auto& vm = JSC::getVM(globalObject);

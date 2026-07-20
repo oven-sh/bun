@@ -934,7 +934,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd() {
+        if stdio[fd_index].can_use_memfd(fd_index as u32) {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }

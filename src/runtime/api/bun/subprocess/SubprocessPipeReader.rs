@@ -50,6 +50,10 @@ pub struct PipeReader {
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
     pub stdio_result: StdioResult,
+    /// Caller-provided stdout/stderr `Uint8Array` (`Bun.spawnSync` only). When
+    /// set, `to_buffer` copies the collected bytes into it and returns a
+    /// subarray instead of a fresh Buffer.
+    pub sink: Option<jsc::array_buffer::ArrayBufferStrong>,
 }
 
 // `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call
@@ -117,6 +121,7 @@ impl PipeReader {
             event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
             state: State::Pending,
+            sink: None,
         });
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
@@ -275,6 +280,11 @@ impl PipeReader {
             unsafe { PipeReader::detach(this_ptr) };
         }
 
+        if let Some(result) = self.fill_sink(global_object) {
+            self.state = State::Done(Vec::new());
+            return Ok(result);
+        }
+
         match &self.state {
             State::Pending => {
                 // `_parent` is unused in `from_pipe`; pass the raw ptr instead
@@ -304,7 +314,37 @@ impl PipeReader {
         }
     }
 
+    /// If a caller-provided `Uint8Array` sink is attached and the pipe has
+    /// finished, copy the collected output into it and return a `Uint8Array`
+    /// subarray over the bytes that were written. Returns `None` when no sink
+    /// is attached (the normal case), the pipe is still pending, or the sink
+    /// can no longer be resolved.
+    fn fill_sink(&mut self, global_this: &JSGlobalObject) -> Option<JSValue> {
+        if !matches!(self.state, State::Done(_)) {
+            return None;
+        }
+        let sink = self.sink.take()?;
+        let value = sink.held.get()?;
+        // Refetch the backing slice now: the `ArrayBuffer` view cached at
+        // `extract()` time may be stale if GC moved a FastTypedArray while the
+        // child ran.
+        let mut ab = value.as_array_buffer(global_this)?;
+        let dst = ab.byte_slice_mut();
+        let State::Done(done) = &self.state else {
+            unreachable!()
+        };
+        let n = done.len().min(dst.len());
+        dst[..n].copy_from_slice(&done[..n]);
+        Some(
+            jsc::array_buffer::ArrayBuffer::create_subarray(global_this, value, n)
+                .unwrap_or(JSValue::UNDEFINED),
+        )
+    }
+
     pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        if let Some(result) = self.fill_sink(global_this) {
+            return result;
+        }
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);

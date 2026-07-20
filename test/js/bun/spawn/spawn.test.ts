@@ -214,14 +214,14 @@ for (let [gcTick, label] of [
         }
       }, 60_000_0);
 
-      // FIXME: fix the assertion failure
-      it.skip("Uint8Array works as stdout", () => {
+      it("Uint8Array works as stdout", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(11);
-        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
+        const { stdout } = spawnSync([bunExe(), "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: bunEnv,
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -231,13 +231,14 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it.skip("Uint8Array works as stdout when is smaller than output", () => {
+      it("Uint8Array works as stdout when is smaller than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(5);
-        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
+        const { stdout } = spawnSync([bunExe(), "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: bunEnv,
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -247,13 +248,14 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it.skip("Uint8Array works as stdout when is the exactly size than output", () => {
+      it("Uint8Array works as stdout when is the exactly size than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(12);
-        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
+        const { stdout } = spawnSync([bunExe(), "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: bunEnv,
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -263,19 +265,36 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it.skip("Uint8Array works as stdout when is larger than output", () => {
+      it("Uint8Array works as stdout when is larger than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(15);
-        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
+        const { stdout } = spawnSync([bunExe(), "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: bunEnv,
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
         const text2 = new TextDecoder().decode(stdout_buffer);
         expect(text).toBe("hello world\n");
         expect(text2).toBe("hello world\n\u0000\u0000\u0000");
+        expect((stdout as Uint8Array).buffer).toBe(stdout_buffer.buffer);
+        gcTick();
+      });
+
+      it("Uint8Array works as stderr", () => {
+        gcTick();
+        const stderr_buffer = new Uint8Array(15);
+        const { stderr } = spawnSync([bunExe(), "-e", "console.error('hello world')"], {
+          stdout: null,
+          stderr: stderr_buffer,
+          stdin: null,
+          env: bunEnv,
+        });
+        gcTick();
+        expect(new TextDecoder().decode(stderr)).toBe("hello world\n");
+        expect(new TextDecoder().decode(stderr_buffer)).toBe("hello world\n\u0000\u0000\u0000");
         gcTick();
       });
 

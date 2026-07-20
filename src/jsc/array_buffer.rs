@@ -91,6 +91,13 @@ unsafe extern "C" {
         len: usize,
         buffer: bool,
     ) -> JSValue;
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; `view`
+    // and `length` are by-value. Returns `undefined` for non-view input.
+    safe fn Bun__createUint8ArraySubarray(
+        global: &JSGlobalObject,
+        view: JSValue,
+        length: usize,
+    ) -> JSValue;
     fn Bun__createArrayBufferForCopy(
         global: *const JSGlobalObject,
         ptr: *const c_void,
@@ -330,6 +337,16 @@ impl ArrayBuffer {
             }),
             _ => panic!("ArrayBuffer::create: KIND not implemented"),
         }
+    }
+
+    /// `view.subarray(0, length)` without going through the (overridable) JS
+    /// prototype method: a fresh `Uint8Array` over the same backing store,
+    /// length clamped to `view.byteLength`. Returns `view` itself when no
+    /// narrowing is needed.
+    pub fn create_subarray(global: &JSGlobalObject, view: JSValue, length: usize) -> JsResult<JSValue> {
+        crate::host_fn::from_js_host_call(global, || {
+            Bun__createUint8ArraySubarray(global, view, length)
+        })
     }
 
     pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {

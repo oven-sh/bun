@@ -550,7 +550,7 @@ pub(crate) fn braces(
     // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
     const MAX_BRACE_EXPANSIONS: u32 = 65536;
     if expansion_count > MAX_BRACE_EXPANSIONS {
-        return Err(global.throw_pretty(format_args!(
+        return Err(global.throw(format_args!(
             "Too many brace expansions ({} > {})",
             expansion_count, MAX_BRACE_EXPANSIONS
         )));
@@ -572,12 +572,10 @@ pub(crate) fn braces(
         Ok(()) => {}
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
-            return Err(
-                global.throw_pretty(format_args!("Unexpected token while expanding braces"))
-            );
+            return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
         Err(Braces::ParserError::TooManyBraces) => {
-            return Err(global.throw_pretty(format_args!("Too many braces in brace expansion")));
+            return Err(global.throw(format_args!("Too many braces in brace expansion")));
         }
     }
 
@@ -1611,6 +1609,19 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
         break 'brk config;
     };
 
+    // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
+    // past that point the raw-`JSValue` handler shadows have no GC root until
+    // `wrap_handler_slot` writes them into the wrapper's WriteBarrier slots.
+    // For a data-property options object the user's `{ fetch: fn }` on this
+    // stack still retains them, but a Proxy- or accessor-backed options
+    // object returns a fresh fn that nothing else holds. `compute_id`,
+    // `listen()`'s `set_routes`, and the `ptr_to_js` wrapper allocation can
+    // all trigger a GC in that window, so gcProtect each handler for its
+    // duration. `Protected`'s `Drop` unprotects on every exit path (including
+    // a thrown `listen()` and the hot-reload early return).
+    let _handler_pins: [bun_jsc::js_value::Protected; 10] =
+        crate::server::protect_handler_shadows(&config);
+
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
@@ -1675,7 +1686,40 @@ pub(crate) fn serve<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
+            // Mirror the handler callbacks into the wrapper's WriteBarrier
+            // slots — the wrapper is the sole GC root for these; `ServerConfig`
+            // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
+            // The async-context wrap is applied here (not in `from_js`) so the
+            // freshly-allocated wrapper fn is rooted by the slot immediately.
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_request,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_request_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_error,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_error_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_node_http_request,
+                obj,
+                global_object,
+                <$ServerType>::js_gc_on_node_http_request_set,
+            );
+            // Skip the 7-slot write when there's no websocket config: the
+            // slots default ZERO so `write_ws_handler_slots`'s clear path
+            // would be 7 wasted FFI calls.
+            if server_ref.config.websocket.is_some() {
+                server_ref.write_ws_handler_slots(obj, global_object);
+            }
             server_ref.js_value.set_strong(obj, global_object);
+            // Slots are rooted; release the scoped gcProtects and run the
+            // "server just started" GC nudge split out of `listen()`.
+            drop(_handler_pins);
+            server_ref.gc_hint_after_listen();
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {
@@ -1841,9 +1885,6 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
                         )));
                     }
                     offset = usize::try_from(offset_value).expect("int cast");
-                    // Align the offset down to a page boundary.
-                    let page = bun_sys::page_size();
-                    offset -= offset % page;
                 }
             } else if !opts.is_undefined_or_null() {
                 return Err(global_this
@@ -1851,8 +1892,8 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
             }
         }
 
-        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
-            Ok(map) => map,
+        let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+            Ok(result) => result,
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
                 return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1860,22 +1901,31 @@ pub(crate) fn mmap_file<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsR
         };
 
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // SAFETY: ptr is the original mmap base, size is its length stuffed into a pointer.
-            let _ = sys::munmap(ptr.cast::<u8>(), size as usize);
+            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
+            // `delta < page_size`, so rounding down recovers the mmap base.
+            let page = bun_sys::page_size();
+            let addr = ptr as usize;
+            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
         }
+
+        let map_len = map.len();
+        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
+        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
+        let view_ptr = unsafe { map.as_ptr().add(delta) };
+        let view_len = map_len - delta;
 
         // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
         // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the length stuffed
-        // into the ctx pointer.
+        // unmaps it exactly once via `munmap_dealloc` with the full mapping
+        // length stuffed into the ctx pointer.
         let v = unsafe {
             jsc::array_buffer::make_typed_array_with_bytes_no_copy(
                 global_this,
                 jsc::TypedArrayType::TypeUint8,
-                map.as_ptr().cast_mut().cast::<c_void>(),
-                map.len(),
+                view_ptr.cast_mut().cast::<c_void>(),
+                view_len,
                 Some(munmap_dealloc),
-                map.len() as *mut c_void,
+                map_len as *mut c_void,
             )
         }?;
         Ok(scope.local(v))
@@ -2608,17 +2658,21 @@ pub mod JSZlib {
                 } else {
                     bun_libdeflate::Encoding::Deflate
                 };
-                let result = decompressor.decompress_to_vec_grow(
-                    compressed,
-                    &mut list,
-                    encoding,
-                    1024 * 1024 * 1024,
-                );
+                let max_output = ArrayBuffer::MAX_SIZE as usize;
+                let result = decompressor
+                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output);
                 match result.status {
-                    bun_libdeflate::Status::Success => {}
-                    bun_libdeflate::Status::InsufficientSpace => {
+                    bun_libdeflate::Status::Success if list.len() <= max_output => {}
+                    bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
                         drop(list);
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(global_this
+                            .err(
+                                jsc::ErrCode::BUFFER_TOO_LARGE,
+                                format_args!(
+                                    "Cannot create a Buffer larger than {max_output} bytes",
+                                ),
+                            )
+                            .throw());
                     }
                     _ => {
                         drop(list);

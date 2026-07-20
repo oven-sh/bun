@@ -529,7 +529,7 @@ pub mod random {
                 entropy
                     .copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
             }
-            let uuid = UUID7::init(now_ms, entropy);
+            let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 
             let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
             uuid.print(

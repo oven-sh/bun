@@ -22,7 +22,7 @@ bun_output::declare_scope!(zlib, hidden);
 // ─── type defs ────────────────────────────────────────────────────────────
 
 /// This is a mixin: methods all take `this: *T` and access fields on `T`
-/// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
+/// (write_in_progress, pending_close, closed, stream, this_value,
 /// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
 /// `T.ref()/deref()`.
 // Expressed as a marker struct + trait bound. Field accesses on
@@ -244,7 +244,6 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pending_close(&self) -> &Cell<bool>;
-    fn pending_reset(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
@@ -566,9 +565,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .run_callback(write_callback, global, this_value, &[]);
         }
 
-        if this.pending_reset().get() {
-            Self::reset_internal(&this, global, this_value);
-        }
         if this.pending_close().get() {
             Self::close_internal(&this);
         }
@@ -710,21 +706,27 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn reset(this: &T, global_this: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+    pub(crate) fn reset(
+        this: &T,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // reset() destroys and re-creates the brotli/zstd encoder state (or
+        // mutates the z_stream). Doing so while an async write is running on
+        // the threadpool would be a use-after-free / data race, so node throws
+        // a plain Error here rather than touching live state.
+        if this.write_in_progress().get() {
+            return Err(
+                global_this.throw_value(global_this.create_error_instance(format_args!(
+                    "Cannot reset zlib stream while a write is in progress"
+                ))),
+            );
+        }
         Self::reset_internal(this, global_this, callframe.this());
-        JSValue::UNDEFINED
+        Ok(JSValue::UNDEFINED)
     }
 
     fn reset_internal(this: &T, global_this: &JSGlobalObject, this_value: JSValue) {
-        // reset() destroys and re-creates the brotli/zstd encoder state (or
-        // mutates the z_stream). Doing so while an async write is running on
-        // the threadpool would be a use-after-free / data race, so defer it
-        // until the in-flight write completes (mirrors pending_close).
-        if this.write_in_progress().get() {
-            this.pending_reset().set(true);
-            return;
-        }
-        this.pending_reset().set(false);
         if this.closed().get() {
             return;
         }
@@ -838,7 +840,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         // The `zlib.ts` wrapper installs `onerror` right after construction,
         // but a handle driven directly has none; there is nobody to notify.
-        // The pending reset/close handling below still runs either way.
+        // The pending close handling below still runs either way.
         if let Some(callback) = T::error_callback_get_cached(this_value) {
             // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
             let vm = global_this.bun_vm();
@@ -850,9 +852,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             );
         }
 
-        if this.pending_reset().get() {
-            Self::reset_internal(this, global_this, this_value);
-        }
         if this.pending_close().get() {
             Self::close_internal(this);
         }
@@ -900,7 +899,7 @@ macro_rules! __compression_stream_mixin_reexports {
                 this: &Self,
                 global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JSValue {
+            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::reset(
                     this, global, frame,
                 )
@@ -965,7 +964,7 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 ///
 /// All three `Native{Zlib,Brotli,Zstd}` structs share the exact field layout
 /// (`global_this`, `stream`, `poll_ref`, `this_value`,
-/// `write_in_progress`, `pending_close`, `pending_reset`, `closed`, `task`,
+/// `write_in_progress`, `pending_close`, `closed`, `task`,
 /// `ref_count`), so the macro can stamp the impls uniformly.
 ///
 /// `$type_name` is the C++-side class name (matches `.classes.ts`); the macro
@@ -1008,7 +1007,6 @@ macro_rules! __impl_compression_stream {
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
-            #[inline] fn pending_reset(&self) -> &::core::cell::Cell<bool> { &self.pending_reset }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]

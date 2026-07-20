@@ -1095,7 +1095,7 @@ impl Image {
         // option space isn't accidentally squatted.
         if args.len > 0 && !args.ptr[0].is_undefined_or_null() {
             let s = bun_core::OwnedString::new(args.ptr[0].to_bun_string(scope)?);
-            if !s.eql_utf8(b"dataurl") {
+            if !s.eql_comptime(b"dataurl") {
                 return Err(scope
                     .unscoped_global()
                     .throw_invalid_arguments(format_args!(

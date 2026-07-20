@@ -22,8 +22,7 @@ use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
-// borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
-// alias re-exported at `bun_ptr::CowString`).
+// borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;

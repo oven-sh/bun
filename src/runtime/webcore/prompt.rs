@@ -381,10 +381,8 @@ pub mod prompt {
             input.truncate(input.len() - 1);
         }
 
-        if cfg!(debug_assertions) {
-            debug_assert!(!input.is_empty());
-            debug_assert!(input[input.len() - 1] != b'\r');
-        }
+        debug_assert!(!input.is_empty());
+        debug_assert!(input[input.len() - 1] != b'\r');
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.

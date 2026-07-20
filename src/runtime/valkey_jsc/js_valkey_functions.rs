@@ -1731,6 +1731,11 @@ impl JSValkeyClient {
         scope: &mut Scope<'s>,
         frame: &CallFrame,
     ) -> JsResult<Local<'s>> {
+        // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
+        // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
+        // stays live across those calls.
+        let _guard = this.ref_scope();
+
         let global = scope.unscoped_global();
         let arguments = frame.scoped_arguments::<2>(scope);
         let (channel_or_many, handler_callback) = (arguments.ptr[0], arguments.ptr[1]);
@@ -1839,6 +1844,10 @@ impl JSValkeyClient {
         scope: &mut Scope<'s>,
         frame: &CallFrame,
     ) -> JsResult<Local<'s>> {
+        // Hold a ref so `*this` stays live across the handler-map updates and
+        // the `send()` below.
+        let _guard = this.ref_scope();
+
         let global = scope.unscoped_global();
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;

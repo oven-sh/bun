@@ -110,49 +110,19 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
                                     LOAD_LIBRARY_SEARCH_SYSTEM32);
 --- a/src/win/core.c
 +++ b/src/win/core.c
-@@ -39,6 +39,10 @@
- /* uv_once initialization guards */
- static uv_once_t uv_init_guard_ = UV_ONCE_INIT;
+@@ -224,6 +224,35 @@
+ }
  
-+/* Non-zero when CREATE_WAITABLE_TIMER_HIGH_RESOLUTION and the
-+ * Nt*WaitCompletionPacket family are both available (Win10 1803+). */
-+static int uv__have_hrtimer;
-+
  
- #if defined(_DEBUG) && (defined(_MSC_VER) || defined(__MINGW64_VERSION_MAJOR))
- /* Our crt debug report handler allows us to temporarily disable asserts
-@@ -221,6 +225,51 @@
- 
-   /* Initialize system wakeup detection */
-   uv__init_detect_system_wakeup();
-+
-+  /* Probe high-res waitable timer + wait-completion-packet support so
-+   * uv__poll can wake at sub-ms precision (see the hrtimer arm there).
-+   * Pre Win10 1803: probe fails, uv__poll keeps the plain GQCS ms wait. */
-+  uv__have_hrtimer = 0;
-+  if (pNtCreateWaitCompletionPacket != NULL &&
-+      pNtAssociateWaitCompletionPacket != NULL &&
-+      pNtCancelWaitCompletionPacket != NULL) {
-+    HANDLE h = CreateWaitableTimerExW(
-+        NULL,
-+        NULL,
-+        CREATE_WAITABLE_TIMER_MANUAL_RESET |
-+            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-+        SYNCHRONIZE | TIMER_QUERY_STATE | TIMER_MODIFY_STATE);
-+    if (h != NULL) {
-+      uv__have_hrtimer = 1;
-+      CloseHandle(h);
-+    }
-+  }
-+}
-+
-+
-+/* Per-loop: create the high-res waitable timer + wait-completion packet and
-+ * stash them on the loop's internal fields. hrtimer stays NULL on failure,
-+ * which uv__poll treats as "use the plain GQCS ms timeout". */
++/* Per-loop: create a high-res waitable timer + wait-completion packet so
++ * uv__poll can wake at sub-ms precision (see the hrtimer arm there). On
++ * pre-Win10-1803 either the Nt* pointers or the HIGH_RESOLUTION flag are
++ * absent; hrtimer stays NULL and uv__poll keeps its plain GQCS ms wait. */
 +static void uv__hrtimer_init(uv__loop_internal_fields_t* lfields) {
 +  HANDLE pkt;
-+  if (!uv__have_hrtimer)
++  if (pNtCreateWaitCompletionPacket == NULL ||
++      pNtAssociateWaitCompletionPacket == NULL ||
++      pNtCancelWaitCompletionPacket == NULL)
 +    return;
 +  lfields->hrtimer = CreateWaitableTimerExW(
 +      NULL,
@@ -170,10 +140,13 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
 +    return;
 +  }
 +  lfields->hrtimer_pkt = pkt;
- }
- 
- 
-@@ -300,6 +349,8 @@
++}
++
++
+ int uv_loop_init(uv_loop_t* loop) {
+   uv__loop_internal_fields_t* lfields;
+   struct heap* timer_heap;
+@@ -300,6 +329,8 @@
    if (err)
      goto fail_async_init;
  
@@ -182,7 +155,7 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
    return 0;
  
  fail_async_init:
-@@ -367,6 +418,12 @@
+@@ -367,6 +398,12 @@
    loop->timer_heap = NULL;
  
    lfields = uv__get_internal_fields(loop);
@@ -195,7 +168,7 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
    uv_mutex_destroy(&lfields->loop_metrics.lock);
    uv__free(lfields);
    loop->internal_fields = NULL;
-@@ -463,6 +520,34 @@
+@@ -463,6 +500,34 @@
       */
      lfields->current_timeout = timeout;
  
@@ -203,7 +176,7 @@ On older Windows the probe fails and uv__poll keeps the plain GQCS ms wait.
 +     * it posts a NULL-overlapped completion (already treated as a pure wakeup
 +     * below) so GQCS can block with INFINITE and skip its ~15.6ms-tick ms wait.
 +     * >100ms deadlines don't need sub-tick precision; skip the 3 syscalls. */
-+    if (timeout > 0 && timeout <= 100 && lfields->hrtimer != NULL) {
++    if (timeout - 1 < 100 && lfields->hrtimer != NULL) {
 +      LARGE_INTEGER due;
 +      BOOLEAN signaled;
 +      due.QuadPart = -(LONGLONG) timeout * 10000;  /* relative, 100ns units */

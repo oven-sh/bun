@@ -273,6 +273,8 @@ it("process.env coerces assigned values to strings", () => {
       };
     }).toThrow("boom");
     expect(process.env.COERCE_THROWS).toBeUndefined();
+
+    expect(structuredClone(process.env).COERCE_NUM).toBe("42");
   } finally {
     for (const k of [
       "COERCE_UNDEF",
@@ -301,8 +303,10 @@ it("process.env coerces assigned values to strings in a worker with an explicit 
           process.env.Y = undefined;
           Object.defineProperty(process.env, "Z", { value: 7, writable: true, enumerable: true, configurable: true });
           require("worker_threads").parentPort.postMessage({
+            SEED: process.env.SEED,
             X: process.env.X, Y: process.env.Y, Z: process.env.Z,
             xt: typeof process.env.X, yt: typeof process.env.Y, zt: typeof process.env.Z,
+            clone: structuredClone(process.env),
           });\`,
          { eval: true, env: { SEED: "seed" } },
        );
@@ -313,9 +317,19 @@ it("process.env coerces assigned values to strings in a worker with an explicit 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ X: "42", Y: "undefined", Z: "7", xt: "string", yt: "string", zt: "string" });
-  expect(exitCode).toBe(0);
+  expect({ result: JSON.parse(stdout.trim() || stderr), exitCode }).toEqual({
+    result: {
+      SEED: "seed",
+      X: "42",
+      Y: "undefined",
+      Z: "7",
+      xt: "string",
+      yt: "string",
+      zt: "string",
+      clone: { SEED: "seed", X: "42", Y: "undefined", Z: "7" },
+    },
+    exitCode: 0,
+  });
 });
 
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {

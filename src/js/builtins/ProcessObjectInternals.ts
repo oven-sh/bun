@@ -536,12 +536,12 @@ export function windowsEnv(
         coerced = String(attributes.value);
         attributes = { ...attributes, value: coerced };
       }
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      $Object.$defineProperty(internalEnv, k, attributes);
+      // Sync the new value and record the key for enumeration only after a
+      // successful define, so a failed define leaves no phantom state.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
-      $Object.$defineProperty(internalEnv, k, attributes);
-      // Sync the new value after a successful define so the OS env sees it (the
-      // pre-define internalEnv[k] was the old value, or undefined for a new key).
       if (coerced !== undefined) editWindowsEnvVar(k, coerced);
       return true;
     },

@@ -842,6 +842,11 @@ JSObject* createProcessEnvMapObject(Zig::GlobalObject* globalObject)
     return JSProcessEnvMap::create(vm, structure);
 }
 
+bool isEnvironmentVariablesMapObject(const JSC::ClassInfo* info)
+{
+    return info == JSProcessEnvMap::info() || info == JSSharedEnvMap::info();
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
